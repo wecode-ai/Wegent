@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { ChevronDown } from 'lucide-react'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -42,10 +43,8 @@ export function RequestUserInputComposer({
   const expand = useRef<HTMLButtonElement>(null)
   const canCollapse = payload && canDiscussQuestion(payload)
   const hidden = state.key === key && state.collapsed
-  useEffect(() => {
-    if (hidden) expand.current?.focus({ preventScroll: true })
-    else panel.current?.querySelector<HTMLElement>('form')?.focus({ preventScroll: true })
-  }, [hidden])
+  useFocusRequest(expand, undefined, { enabled: hidden, preventScroll: true })
+  useFocusRequest(panel, undefined, { enabled: !hidden, selector: 'form', preventScroll: true })
   return (
     <>
       {payload && (

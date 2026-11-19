@@ -2,91 +2,52 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import type { SharedWorkspaceApi, WorkspaceAutomationRule } from '../ports/SharedWorkspaceApi'
 
-import type {
-  SharedWorkspaceApi,
-  WorkspaceAutomationRule,
-} from "../ports/SharedWorkspaceApi";
+type AutomationsApi = NonNullable<SharedWorkspaceApi['automations']>
+type RulesResource = ReturnType<typeof createAsyncResource<WorkspaceAutomationRule[]>>
 
-type AutomationsApi = NonNullable<SharedWorkspaceApi["automations"]>;
-
-// Keep snapshots within the API session and project; reopening still revalidates them.
-const snapshots = new WeakMap<
-  AutomationsApi,
-  Map<string, WorkspaceAutomationRule[]>
->();
+// Keep the resource within its API session and project; reopening revalidates it.
+const resources = new WeakMap<AutomationsApi, Map<string, RulesResource>>()
+function rulesResource(api: SharedWorkspaceApi['automations'], projectId: string) {
+  let projects = api ? resources.get(api) : undefined
+  const cached = projects?.get(projectId)
+  if (cached) return cached
+  const resource = createAsyncResource(projectId, () => api!.list(projectId), {
+    refreshOnSubscribe: true,
+  })
+  if (api) {
+    if (!projects) {
+      projects = new Map()
+      resources.set(api, projects)
+    }
+    projects.set(projectId, resource)
+  }
+  return resource
+}
 
 export function useAutomaticProcessingRules(
-  api: SharedWorkspaceApi["automations"],
-  projectId: string,
+  api: SharedWorkspaceApi['automations'],
+  projectId: string
 ) {
-  const cached = api ? snapshots.get(api)?.get(projectId) : undefined;
-  const [state, setState] = useState({
+  const resource = useMemo(() => rulesResource(api, projectId), [api, projectId])
+  const query = useSyncExternalStore(
+    api ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  return {
     api,
     projectId,
-    rules: cached ?? [],
-    loading: Boolean(api) && cached === undefined,
-    error: null as unknown,
-  });
-  const requestId = useRef(0);
-  const activeScope = useRef<{ api: typeof api; projectId: string } | null>(
-    null,
-  );
-  const load = useCallback(async () => {
-    if (
-      activeScope.current?.api !== api ||
-      activeScope.current?.projectId !== projectId
-    )
-      return;
-    const id = ++requestId.current;
-    if (!api) return;
-    const previous = snapshots.get(api)?.get(projectId);
-    setState({
-      api,
-      projectId,
-      rules: previous ?? [],
-      loading: previous === undefined,
-      error: null,
-    });
-    try {
-      const rules = await api.list(projectId);
-      if (id !== requestId.current) return;
-      let projects = snapshots.get(api);
-      if (!projects) {
-        projects = new Map();
-        snapshots.set(api, projects);
-      }
-      projects.set(projectId, rules);
-      setState({ api, projectId, rules, loading: false, error: null });
-    } catch (error) {
-      if (id !== requestId.current) return;
-      setState({
-        api,
-        projectId,
-        rules: previous ?? [],
-        loading: false,
-        error,
-      });
-    }
-  }, [api, projectId]);
-
-  useEffect(() => {
-    activeScope.current = { api, projectId };
-    void load();
-    return () => {
-      activeScope.current = null;
-      requestId.current++;
-    };
-  }, [api, projectId, load]);
-
-  const current =
-    state.api === api && state.projectId === projectId
-      ? state
-      : {
-          rules: cached ?? [],
-          loading: Boolean(api) && cached === undefined,
-          error: null,
-        };
-  return { ...current, load };
+    rules: query.data ?? [],
+    loading: Boolean(api && !query.data && (query.status === 'idle' || query.status === 'loading')),
+    error: query.status === 'error' ? query.error : null,
+    load: resource.reload,
+  }
 }

@@ -2,35 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Tooltip } from '../issue-detail/Tooltip'
-import { useEffect, useState } from 'react'
+import { useClock } from '../clock'
 import type { CollaborationExecutionEnvironment } from '../types'
 import type { PlatformMessages } from './platformMessages'
 
 export function useDeviceLastSeenClock(enabled: boolean) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (!enabled) return
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
-    return () => window.clearInterval(timer)
-  }, [enabled])
-  return now
+  return useClock(enabled, { resolutionMs: 60_000 })
 }
 
 export function deviceLastSeenLabel(
   device: Pick<CollaborationExecutionEnvironment, 'status' | 'last_seen_at'>,
   locale: string,
   messages: PlatformMessages,
-  now: number,
+  now: number
 ): { label: string; timestamp?: string; full?: string } {
   const timestamp = device.last_seen_at ?? ''
   const date = new Date(timestamp)
   const valid = Boolean(timestamp) && Number.isFinite(date.getTime())
   if (!valid)
     return {
-      label:
-        device.status === 'online'
-          ? messages.currentlyOnline
-          : messages.lastSeenUnknown,
+      label: device.status === 'online' ? messages.currentlyOnline : messages.lastSeenUnknown,
     }
   const minutes = Math.floor(Math.max(0, now - date.getTime()) / 60_000)
   const unit = minutes >= 1440 ? 'day' : minutes >= 60 ? 'hour' : 'minute'
@@ -46,10 +37,7 @@ export function deviceLastSeenLabel(
         ? messages.currentlyOnline
         : minutes === 0
           ? messages.justNow
-          : new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(
-              -value,
-              unit,
-            ),
+          : new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(-value, unit),
     timestamp,
     full: new Intl.DateTimeFormat(locale, {
       dateStyle: 'full',

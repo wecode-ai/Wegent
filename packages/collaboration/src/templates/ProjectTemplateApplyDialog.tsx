@@ -1,19 +1,27 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import { subscribeIdleResource, createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import type { CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { CollaborationTemplate } from './types'
-import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
+import { TemplateBindingsDialog } from './TemplateBindings'
+import {
+  loadTemplateProjectContext,
+  TemplateProjectManagementRequiredError,
+} from './templateProjectContext'
 import { TemplateDialog } from './TemplateDialog'
 import { templateFailureMessage, templateMessages } from './messages'
 import { templateRoutingResolver } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 import { TemplateProjectEnvironment } from './TemplateProjectEnvironment'
+import { createTemplateProjectEnvironmentResource } from './templateProjectEnvironmentResource'
+
+const noEnvironment = () => undefined
 
 export function ProjectTemplateApplyDialog({
   api,
@@ -35,60 +43,34 @@ export function ProjectTemplateApplyDialog({
   onApplied(project: CollaborationProject): void
 }) {
   const m = templateMessages[locale]
-  const [context, setContext] = useState<{
-    project: CollaborationProject
-    candidates: TemplateParticipant[]
-    names: string[]
-  } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  const [environmentId, setEnvironmentId] = useState<string>()
-  useEffect(() => {
-    let active = true
-    setContext(null)
-    setError(null)
-    void (async () => {
-      const project = await api.projects.get(projectId)
-      if (project.access_role !== 'Owner' && project.access_role !== 'Maintainer')
-        throw new TemplateConfigurationError(m.manageRequired)
-      const [members, agents, groups] = await Promise.all([
-        api.members.list(projectId),
-        api.agents.list(projectId),
-        api.projects.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
-      ])
-      if (!active) return
-      setContext({
-        project,
-        names: groups.map(group => group.name),
-        candidates: [
-          ...members.map(member => ({
-            kind: 'human' as const,
-            id: String(member.user_id),
-            name: member.user_name,
-            label: member.user_name,
-            responsibility: '',
-          })),
-          ...agents.map(agent => ({
-            kind: 'agent' as const,
-            id: String(agent.team_id ?? agent.id),
-            name: agent.name,
-            label: agent.name,
-            responsibility: '',
-          })),
-        ],
-      })
-    })().catch(cause => {
-      if (active)
-        setError(
-          cause instanceof TemplateConfigurationError
-            ? cause.message
-            : templateFailureMessage(cause, locale)
-        )
-    })
-    return () => {
-      active = false
-    }
-  }, [api, projectId, locale, m.manageRequired, attempt])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(projectId, signal => loadTemplateProjectContext(api, projectId, signal)),
+    [api, projectId]
+  )
+  const state = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot)
+  const context = state.data
+  const error =
+    state.status !== 'error'
+      ? undefined
+      : state.error instanceof TemplateProjectManagementRequiredError
+        ? m.manageRequired
+        : state.error instanceof TemplateConfigurationError
+          ? state.error.message
+          : templateFailureMessage(state.error, locale)
+  const environmentProject = context?.project
+  const environmentResource = useMemo(
+    () =>
+      environmentProject && agentConfiguration?.listTemplateAgentEnvironments
+        ? createTemplateProjectEnvironmentResource(agentConfiguration, environmentProject)
+        : undefined,
+    [agentConfiguration, environmentProject]
+  )
+  const environmentId = useSyncExternalStore(
+    environmentResource?.subscribeSelection ?? subscribeIdleResource,
+    environmentResource?.getSelection ?? noEnvironment,
+    environmentResource?.getSelection ?? noEnvironment
+  )
   if (!context)
     return (
       <TemplateDialog title={m.bindingsTitle} closeLabel={m.close} onClose={onClose}>
@@ -98,7 +80,7 @@ export function ProjectTemplateApplyDialog({
             <button
               type="button"
               data-testid="template-project-retry"
-              onClick={() => setAttempt(value => value + 1)}
+              onClick={() => void resource.reload()}
             >
               {m.retry}
             </button>
@@ -128,16 +110,12 @@ export function ProjectTemplateApplyDialog({
           : undefined
       }
       renderConfiguration={
-        agentConfiguration?.listTemplateAgentEnvironments &&
-        document.spec.resources.collaboration.agents?.length
+        environmentResource && document.spec.resources.collaboration.agents?.length
           ? disabled => (
               <TemplateProjectEnvironment
-                host={agentConfiguration}
-                project={context.project}
+                resource={environmentResource}
                 locale={locale}
-                selected={environmentId}
                 disabled={disabled}
-                onChange={setEnvironmentId}
               />
             )
           : undefined
@@ -153,7 +131,8 @@ export function ProjectTemplateApplyDialog({
           resolveRouting ?? templateRoutingResolver(environmentId)
         )
         try {
-          onApplied(await api.projects.get(projectId))
+          const latest = await api.projects.get(projectId)
+          if (resource.hasSubscribers()) onApplied(latest)
         } catch (cause) {
           throw new PartialTemplateApplyError(m.partial, { cause })
         }

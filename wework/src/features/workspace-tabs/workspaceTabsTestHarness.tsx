@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import {
   useOptionalWorkspaceTabActivity,
@@ -94,13 +95,25 @@ function TabsState() {
 
 function ContextValueProbe({ onChange }: { onChange: (value: WorkspaceTabsContextValue) => void }) {
   const value = useWorkspaceTabs()
-  useEffect(() => onChange(value), [onChange, value])
+  const read = useCallback(
+    (current: { value: WorkspaceTabsContextValue } | null) => {
+      if (current) onChange(current.value)
+    },
+    [onChange]
+  )
+  useImperativeHandle(read, () => ({ value }), [value])
   return null
 }
 
 function ActivityProbe({ onRead }: { onRead: (isActive: WorkspaceTabActivity | null) => void }) {
   const isActive = useOptionalWorkspaceTabActivity()
-  useEffect(() => onRead(isActive), [isActive, onRead])
+  const read = useCallback(
+    (current: { isActive: WorkspaceTabActivity | null } | null) => {
+      if (current) onRead(current.isActive)
+    },
+    [onRead]
+  )
+  useImperativeHandle(read, () => ({ isActive }), [isActive])
   return null
 }
 
@@ -130,15 +143,12 @@ export function RoutingHarness({
     search: window.location.search,
   }))
 
-  useEffect(() => {
-    const updateLocation = () =>
-      setLocation({
-        pathname: window.location.pathname,
-        search: window.location.search,
-      })
-    window.addEventListener('popstate', updateLocation)
-    return () => window.removeEventListener('popstate', updateLocation)
-  }, [])
+  useWindowEvent('popstate', () =>
+    setLocation({
+      pathname: window.location.pathname,
+      search: window.location.search,
+    })
+  )
 
   return (
     <WorkspaceTabsProvider

@@ -107,7 +107,7 @@ fn direct_task_binding(issue_id: &str, assignment_id: &str) -> Value {
 }
 
 /// `direct_human_assignment_id`: `uuid5(NAMESPACE_URL, ...)`.
-fn direct_human_assignment_id(issue_id: &str, assignment_id: &str) -> String {
+pub(super) fn direct_human_assignment_id(issue_id: &str, assignment_id: &str) -> String {
     uuid5_url(&format!("wegent:direct-human:{issue_id}:{assignment_id}"))
 }
 

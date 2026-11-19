@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { createSitesPageSource } from './sitesPageSource'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { Menu } from 'lucide-react'
-import { ApiError, createHttpClient } from '@/api/http'
+import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import { createSmartAppsApi } from '@/api/smartApps'
-import type { Site, SiteAppType } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -14,8 +14,6 @@ import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { SitesWorkspace } from '@/components/sites/SitesWorkspace'
-import { getApplicationTypeDefinition } from '@/components/sites/applicationTypeDefinitions'
-import type { ApplicationCreateStrategy } from '@/components/sites/applicationTypeDefinitions'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -24,47 +22,11 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import {
-  ApplicationPluginSyncConfirmationError,
-  PluginInstallationInspectionError,
-  applicationPluginReferenceName,
-  preparePluginTrial,
-} from '@/features/plugins/preparePluginTrial'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type { InstalledPlugin, RuntimeTaskAddress } from '@/types/api'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
-
-interface PreparedApplicationPlugin {
-  plugin: InstalledPlugin
-  pluginName: string
-  marketplaceName: string
-}
-
-function sanitizeMarkdownLinkLabel(value: string): string {
-  return value
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\[/g, ' ')
-    .replace(/]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function buildSiteContinueDevelopmentInput(
-  site: Pick<Site, 'name' | 'project_id' | 'siteid'>,
-  suffix: string
-): string | null {
-  const projectId = String(site.project_id || site.siteid || '').trim()
-  if (!projectId) return null
-  const label = sanitizeMarkdownLinkLabel(site.name) || projectId
-  const normalizedSuffix = suffix.trim()
-  return `[${label}](wegent-sites-project://${encodeURIComponent(projectId)})${
-    normalizedSuffix ? ` ${normalizedSuffix}` : ''
-  }`
-}
 
 interface SitesPageProps {
   onNavigate?: (path: string) => void
@@ -82,24 +44,14 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
-  const [createNotice, setCreateNotice] = useState<string | null>(null)
-  const [creatingType, setCreatingType] = useState<SiteAppType | null>(null)
-  const [continuingSiteId, setContinuingSiteId] = useState<string | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const searchParams = new URLSearchParams(search)
-  const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
   const smartAppsView = searchParams.get('view')
   const requestedSmartAppId = searchParams.get('smartAppId') ?? ''
   const targetSmartAppId = /^[1-9]\d{0,15}$/.test(requestedSmartAppId)
     ? Number(requestedSmartAppId)
     : null
 
-  useEffect(() => {
-    if (smartAppsRequested && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
-      navigateTo('/sites')
-    }
-  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, smartAppsRequested])
   const {
     state,
     cloudWorkStatus,
@@ -201,15 +153,55 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
     isLocalFirst,
   ])
 
+  const targetDeviceId = getPreferredStandaloneDeviceId(
+    state.devices,
+    state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+  )
+  const runtimeInstance = state.devices.find(
+    device => device.device_id === targetDeviceId
+  )?.runtime_instance_id
+  const [pageSource] = useState(createSitesPageSource)
+  const owner = useMemo(
+    () => ({
+      sitesApi,
+      pluginApi,
+      localPluginApi,
+      userId: state.user?.id,
+      targetDeviceId,
+      runtimeInstance,
+      backendUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    }),
+    [
+      sitesApi,
+      pluginApi,
+      localPluginApi,
+      state.user?.id,
+      targetDeviceId,
+      runtimeInstance,
+      cloudConnection.apiBaseUrl,
+      cloudConnection.token,
+    ]
+  )
+  const pageView = useMemo(() => pageSource.observe(owner), [pageSource, owner])
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      pageView.subscribe(listener, { t, isDesktop, search, experimentalFeatures, openRuntimeTask }),
+    [pageView, t, isDesktop, search, experimentalFeatures, openRuntimeTask]
+  )
+  const { createError, createNotice, creatingType, continuingSiteId } = useSyncExternalStore(
+    subscribe,
+    pageView.getSnapshot,
+    pageView.getSnapshot
+  )
+  const handleCreate = pageView.create
+  const handleContinueDevelopment = pageView.continueDevelopment
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
     selectProject(projectId)
   }
 
-  const handleOpenRuntimeTask = async (address: RuntimeTaskAddress) => {
-    await openRuntimeTask(address)
-    navigateTo(buildRuntimeTaskRoute(address))
-  }
+  const handleOpenRuntimeTask = pageView.openTask
 
   const handleNewChat = () => {
     navigateTo('/')
@@ -224,157 +216,6 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   const handleStartNewProjectChat = (projectId: number) => {
     navigateTo('/')
     startNewProjectChat(projectId)
-  }
-
-  const prepareApplicationPlugin = async (
-    createStrategy: ApplicationCreateStrategy
-  ): Promise<PreparedApplicationPlugin | null> => {
-    if (!createStrategy.pluginName || !createStrategy.marketplaceName) {
-      setCreateError(
-        t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
-      )
-      return null
-    }
-    if (!pluginApi) {
-      setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
-      return null
-    }
-    const targetDeviceId = getPreferredStandaloneDeviceId(
-      state.devices,
-      state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-    )
-    if (!targetDeviceId) {
-      setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建应用'))
-      return null
-    }
-
-    const plugin = await preparePluginTrial({
-      pluginName: createStrategy.pluginName,
-      marketplaceName: createStrategy.marketplaceName,
-      deviceId: targetDeviceId,
-      readLocalInstalledPlugins: isDesktop
-        ? () =>
-            localPluginApi.listInstalledPlugins({
-              refresh: true,
-              requireComplete: true,
-            })
-        : undefined,
-      listInstalledPlugins: deviceId => pluginApi.listInstalledPlugins(deviceId),
-      ensureInstalled: (pluginName, deviceId) =>
-        pluginApi.ensureBuiltinPluginInstalled(pluginName, { deviceId }),
-      onInstalling: () =>
-        setCreateNotice(t('plugin_installing', '正在安装应用插件，完成后将进入会话...')),
-    })
-    return {
-      plugin,
-      pluginName: createStrategy.pluginName,
-      marketplaceName: createStrategy.marketplaceName,
-    }
-  }
-
-  const handleApplicationPluginError = (error: unknown) => {
-    console.error('[Wework Applications] plugin preparation failed', error)
-    if (error instanceof PluginInstallationInspectionError) {
-      setCreateError(t('plugin_inspection_failed', '无法确认目标设备的插件安装状态，请重试'))
-    } else if (error instanceof ApiError && error.status === 404) {
-      setCreateError(
-        t(
-          'plugin_backend_upgrade_required',
-          '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
-        )
-      )
-    } else if (error instanceof ApiError && error.status === 503) {
-      setCreateError(
-        t('plugin_not_published', '云端市场尚未发布对应的应用插件，请检查内置插件打包配置')
-      )
-    } else if (error instanceof ApiError && error.status === 409) {
-      setCreateError(t('plugin_device_unavailable', '目标设备当前离线，请连接设备后重试'))
-    } else if (error instanceof ApiError && error.status === 502) {
-      setCreateError(t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试'))
-    } else if (error instanceof ApplicationPluginSyncConfirmationError) {
-      setCreateError(t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试'))
-    } else {
-      setCreateError(t('plugin_install_failed', '应用插件安装失败，请重试'))
-    }
-  }
-
-  const handleCreate = async (appType: SiteAppType, createStrategy: ApplicationCreateStrategy) => {
-    if (creatingType) return
-    setCreatingType(appType)
-    setCreateError(null)
-    try {
-      const definition = getApplicationTypeDefinition(appType)
-      if (!definition) {
-        setCreateError(t('unsupported_application_type', '当前版本不支持该应用类型'))
-        return
-      }
-      const prepared = await prepareApplicationPlugin(createStrategy)
-      if (!prepared) return
-      const queued = queuePluginTrial(prepared.plugin, {
-        openInNewChat: true,
-        reference: {
-          pluginName: prepared.pluginName,
-          marketplaceName: prepared.marketplaceName,
-          displayName: applicationPluginReferenceName(prepared.plugin, prepared.pluginName),
-        },
-      })
-      if (!queued) {
-        throw new Error('The installed application plugin cannot be referenced in chat')
-      }
-
-      notifyLocalPluginSkillsChanged()
-      setCreateError(null)
-      setCreateNotice(null)
-      navigateTo('/')
-    } catch (error) {
-      handleApplicationPluginError(error)
-    } finally {
-      setCreateNotice(null)
-      setCreatingType(null)
-    }
-  }
-
-  const handleContinueDevelopment = async (
-    site: Site,
-    createStrategy: ApplicationCreateStrategy
-  ) => {
-    if (continuingSiteId) return
-    setContinuingSiteId(site.siteid)
-    setCreateError(null)
-    try {
-      const prepared = await prepareApplicationPlugin(createStrategy)
-      if (!prepared) return
-      const suffix = t('continue_development_prompt_suffix', '请说出你要做的改动')
-      const input = buildSiteContinueDevelopmentInput(site, suffix)
-      if (!input) {
-        setCreateError(
-          t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
-        )
-        return
-      }
-      const queued = queuePluginTrial(prepared.plugin, {
-        openInNewChat: true,
-        reference: {
-          pluginName: prepared.pluginName,
-          marketplaceName: prepared.marketplaceName,
-          displayName: applicationPluginReferenceName(prepared.plugin, prepared.pluginName),
-        },
-        prompt: input,
-      })
-      if (!queued) {
-        throw new Error('The installed application plugin cannot be referenced in chat')
-      }
-
-      notifyLocalPluginSkillsChanged()
-      setCreateError(null)
-      setCreateNotice(null)
-      navigateTo('/')
-    } catch (error) {
-      handleApplicationPluginError(error)
-    } finally {
-      setCreateNotice(null)
-      setContinuingSiteId(null)
-    }
   }
 
   if (settingsOpen) {

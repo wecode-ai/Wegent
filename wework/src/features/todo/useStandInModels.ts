@@ -1,5 +1,7 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import {
   runnerModelCatalog,
   runnerModelKey,
@@ -53,6 +55,99 @@ function publishedSource(previous: SourceState, result: CatalogResult): SourceSt
   }
 }
 
+/** A device/runtime catalog owns its independent source revisions and subscriptions. */
+function createStandInModelCatalog(
+  services: WorkbenchServices | undefined,
+  deviceId: string | undefined,
+  runtime: RunnerModelIdentity['runtime']
+) {
+  let snapshot = { native: emptySource(), cloud: emptySource() }
+  const listeners = new Set<() => void>()
+  const revisions = { native: 0, cloud: 0 }
+  let unsubscribe: (() => void) | undefined
+  const publish = (source: CatalogSource, state: SourceState) => {
+    snapshot = { ...snapshot, [source]: state }
+    listeners.forEach(listener => listener())
+  }
+  const loadSource = async (
+    source: CatalogSource,
+    read: () => Promise<CatalogResult>,
+    invalidate = false
+  ) => {
+    const revision = ++revisions[source]
+    publish(source, {
+      ...(invalidate ? emptySource() : snapshot[source]),
+      pending: true,
+      error: null,
+    })
+    let result: CatalogResult
+    try {
+      result = await read()
+    } catch (error) {
+      result = { entries: [], error }
+    }
+    if (listeners.size && revision === revisions[source])
+      publish(source, publishedSource(snapshot[source], result))
+  }
+  const load = (invalidateNative = false, forceRefresh = false) => {
+    if (!listeners.size || !services?.standInApi || !deviceId) return
+    void loadSource(
+      'native',
+      async () => {
+        const response = await services.standInApi!.catalog(deviceId)
+        const prefix = runtime === 'claude_code' ? 'claude_' : 'codex_'
+        const code = response.errors?.find(error => error.startsWith(prefix))
+        return {
+          entries: runnerModelCatalog(response.models, [], runtime),
+          error: code ? { code } : undefined,
+        }
+      },
+      invalidateNative
+    )
+    void loadSource('cloud', async () => ({
+      entries: runnerModelCatalog(
+        [],
+        (await services.modelApi.listModels(forceRefresh ? { forceRefresh: true } : undefined))
+          .data,
+        runtime
+      ),
+    }))
+  }
+  return {
+    getSnapshot: () => snapshot,
+    invalidateNative: () => load(true),
+    refresh() {
+      if (!listeners.size || !services?.standInApi || !deviceId) return
+      services.modelApi.refresh?.()
+      load(false, true)
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      if (listeners.size === 1 && services?.standInApi && deviceId) {
+        unsubscribe = services.modelApi.subscribe?.(() => load())
+        const initialRevision = revisions.native
+        queueMicrotask(() => {
+          if (listeners.size && revisions.native === initialRevision) load()
+        })
+      }
+      return () => {
+        listeners.delete(listener)
+        if (!listeners.size) {
+          unsubscribe?.()
+          unsubscribe = undefined
+          revisions.native++
+          revisions.cloud++
+          // Retain display metadata, but revalidate identities on the next subscription.
+          snapshot = {
+            native: { ...snapshot.native, valid: false, pending: false },
+            cloud: { ...snapshot.cloud, valid: false, pending: false },
+          }
+        }
+      }
+    },
+  }
+}
+
 /** Model references remain device-scoped; credentials are resolved by the Executor. */
 export function useStandInModels(
   services: WorkbenchServices | undefined,
@@ -61,110 +156,28 @@ export function useStandInModels(
   active = true
 ) {
   const deviceId = draft.executionDeviceId
-  const scope = useMemo(() => ({ services, deviceId, runtime }), [services, deviceId, runtime])
-  const [catalog, setCatalog] = useState<{
-    scope: object
-    native: SourceState
-    cloud: SourceState
-  } | null>(null)
-  const revisions = useRef({ native: 0, cloud: 0 })
-  const loadSource = useCallback(
-    async (source: CatalogSource, read: () => Promise<CatalogResult>, invalidate = false) => {
-      if (!active || !services?.standInApi || !deviceId) return
-      const revision = ++revisions.current[source]
-      setCatalog(current => {
-        const value =
-          current?.scope === scope
-            ? current
-            : { scope, native: emptySource(), cloud: emptySource() }
-        return {
-          ...value,
-          [source]: { ...(invalidate ? emptySource() : value[source]), pending: true, error: null },
-        }
-      })
-      let result: CatalogResult
-      try {
-        result = await read()
-      } catch (error) {
-        result = { entries: [], error }
-      }
-      if (revision !== revisions.current[source]) return
-      setCatalog(current =>
-        current?.scope === scope
-          ? { ...current, [source]: publishedSource(current[source], result) }
-          : current
-      )
-    },
-    [active, services, deviceId, scope]
+  const store = useMemo(
+    () => createStandInModelCatalog(services, deviceId, runtime),
+    [services, deviceId, runtime]
   )
-  const loadCatalog = useCallback(
-    (invalidateNative = false, forceRefresh = false) => {
-      if (!active || !services?.standInApi || !deviceId) return
-      void loadSource(
-        'native',
-        async () => {
-          const response = await services.standInApi!.catalog(deviceId)
-          const prefix = runtime === 'claude_code' ? 'claude_' : 'codex_'
-          const code = response.errors?.find(error => error.startsWith(prefix))
-          return {
-            entries: runnerModelCatalog(response.models, [], runtime),
-            error: code ? { code } : undefined,
-          }
-        },
-        invalidateNative
-      )
-      void loadSource('cloud', async () => ({
-        entries: runnerModelCatalog(
-          [],
-          (await services.modelApi.listModels(forceRefresh ? { forceRefresh: true } : undefined))
-            .data,
-          runtime
-        ),
-      }))
-    },
-    [active, services, deviceId, runtime, loadSource]
+  const catalog = useSyncExternalStore(
+    active ? store.subscribe : subscribeIdleResource,
+    store.getSnapshot,
+    store.getSnapshot
   )
-  const refresh = useCallback(() => {
-    if (!active || !services?.standInApi || !deviceId) return
-    services?.modelApi.refresh?.()
-    loadCatalog(false, true)
-  }, [active, services, deviceId, loadCatalog])
-  useEffect(() => {
-    if (!active || !services?.standInApi || !deviceId) return
-    let cancelled = false
-    const requestRevisions = revisions.current
-    const reload = () => loadCatalog()
-    const invalidateNative = () => loadCatalog(true)
-    const unsubscribe = services.modelApi.subscribe?.(reload)
-    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, invalidateNative)
-    queueMicrotask(() => {
-      if (!cancelled) loadCatalog()
-    })
-    return () => {
-      cancelled = true
-      requestRevisions.native += 1
-      requestRevisions.cloud += 1
-      unsubscribe?.()
-      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, invalidateNative)
-      // Keep display data while hidden, but revalidate identities before sending again.
-      setCatalog(current =>
-        current?.scope === scope
-          ? {
-              ...current,
-              native: { ...current.native, valid: false, pending: false },
-              cloud: { ...current.cloud, valid: false, pending: false },
-            }
-          : current
-      )
-    }
-  }, [active, services, deviceId, loadCatalog, scope])
-  const readyCatalog = catalog?.scope === scope ? catalog : null
+  useDOMEvent('window', LOCAL_MODEL_SETTINGS_CHANGED_EVENT, store.invalidateNative, {
+    enabled: active,
+  })
+  const refresh = () => {
+    if (active) store.refresh()
+  }
+  const readyCatalog = services?.standInApi && deviceId ? catalog : null
   const entries = useMemo(
     () => [
-      ...(readyCatalog?.native.valid ? readyCatalog.native.entries : []),
-      ...(readyCatalog?.cloud.valid ? readyCatalog.cloud.entries : []),
+      ...(active && readyCatalog?.native.valid ? readyCatalog.native.entries : []),
+      ...(active && readyCatalog?.cloud.valid ? readyCatalog.cloud.entries : []),
     ],
-    [readyCatalog]
+    [active, readyCatalog]
   )
   // Cloud entries never supply an implicit default.
   const defaults = entries.filter(entry => entry.isDefault)

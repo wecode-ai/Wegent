@@ -1,5 +1,6 @@
-import { forwardRef, useCallback, useMemo, useState } from 'react'
+import { forwardRef, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { ComposerAutocompleteInput } from '@wegent/collaboration/composer/ComposerAutocompleteInput'
+import { createComposerAutocompleteState } from '@wegent/collaboration/composer'
 import type { ComposerHostBindingProps } from '@wegent/collaboration/composer/composerAutocompleteInputTypes'
 import type { ComposerInputHandle } from '@wegent/collaboration/composer'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -52,7 +53,13 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
     const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
     const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open')
     const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
-    const [mentionQuery, setMentionQuery] = useState('')
+    const [ownAutocompleteState] = useState(() => createComposerAutocompleteState(props.value))
+    const autocompleteState = props.autocompleteState ?? ownAutocompleteState
+    const mentionQuery = useSyncExternalStore(
+      autocompleteState.subscribe,
+      autocompleteState.getMentionQuery,
+      autocompleteState.getMentionQuery
+    )
     const contributions = useDesktopComposerContributions(mentionQuery)
     const editorServices = useMemo(() => getDesktopComposerEditorServices(), [])
     const { openDrawing, drawingDialog } = useComposerDrawing(props.onPasteFiles, props.disabled)
@@ -104,7 +111,7 @@ export const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextarea
               : undefined
           }
           {...contributions}
-          onMentionQueryChange={setMentionQuery}
+          autocompleteState={autocompleteState}
           onExecuteCommand={(command, composer) =>
             executeDshCommand(command.command, undefined, {
               composer,

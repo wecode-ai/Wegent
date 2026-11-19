@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import type { createWorkspaceTabsSession } from './workspaceTabsSession'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 
 export interface WorkspaceTabsContextValue {
@@ -17,6 +18,16 @@ export interface WorkspaceTabsContextValue {
   moveTab: (sourceId: string, targetId: string) => void
   updateTab: (tabId: string, updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => void
   updateActiveTab: (updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => void
+}
+
+export const WorkspaceTabsSessionContext = createContext<ReturnType<
+  typeof createWorkspaceTabsSession
+> | null>(null)
+
+export function useWorkspaceTabsSession() {
+  const session = useContext(WorkspaceTabsSessionContext)
+  if (!session) throw new Error('useWorkspaceTabsSession must be used inside WorkspaceTabsProvider')
+  return session
 }
 
 export const WorkspaceTabsContext = createContext<WorkspaceTabsContextValue | null>(null)

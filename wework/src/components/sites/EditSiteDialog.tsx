@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import type { FormEvent } from 'react'
 import { Loader2, Pencil } from 'lucide-react'
 import type { Site } from '@/api/sites'
@@ -14,7 +15,10 @@ interface EditSiteDialogProps {
 
 export function EditSiteDialog({ site, loading, error, onCancel, onConfirm }: EditSiteDialogProps) {
   const { t } = useTranslation('sites')
-  const titleInputRef = useRef<HTMLInputElement>(null)
+  const focusTitle = useCallback((input: HTMLInputElement | null) => {
+    input?.focus()
+    input?.select()
+  }, [])
   const [title, setTitle] = useState(site.name)
   const [customDomainPrefix, setCustomDomainPrefix] = useState(site.custom_domain_prefix ?? '')
   const trimmedTitle = title.trim()
@@ -23,18 +27,9 @@ export function EditSiteDialog({ site, loading, error, onCancel, onConfirm }: Ed
   const hasChanges = trimmedTitle !== site.name || normalizedPrefix !== currentPrefix
   const canSave = Boolean(trimmedTitle) && hasChanges && !loading
 
-  useEffect(() => {
-    titleInputRef.current?.focus()
-    titleInputRef.current?.select()
-  }, [])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !loading) onCancel()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [loading, onCancel])
+  useDocumentEvent('keydown', event => {
+    if (event.key === 'Escape' && !loading) onCancel()
+  })
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -75,7 +70,7 @@ export function EditSiteDialog({ site, loading, error, onCancel, onConfirm }: Ed
                   {t('edit_site_title_label', '标题')}
                 </span>
                 <input
-                  ref={titleInputRef}
+                  ref={focusTitle}
                   value={title}
                   onChange={event => setTitle(event.target.value)}
                   data-testid="site-edit-title-input"

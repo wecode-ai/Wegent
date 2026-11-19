@@ -70,7 +70,15 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let projects = result_value(
         call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
     );
-    assert_eq!(projects["items"][0]["id"], "12");
+    let backend_projects = projects["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|project| project["space"]["project_store"] == "backend")
+        .collect::<Vec<_>>();
+    assert_eq!(backend_projects.len(), 1);
+    assert_eq!(backend_projects[0]["id"], "12");
+    assert_eq!(backend_projects[0]["space"]["space_id"], "12");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     server.abort();
 }

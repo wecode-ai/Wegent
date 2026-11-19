@@ -9,7 +9,8 @@ impl LocalTaskStore {
             receipt["userId"],
             receipt["issueId"],
             receipt["assignmentId"],
-            receipt["taskId"]
+            receipt["taskId"],
+            receipt["dispatch"]
         ]);
         let id = format!(
             "assignment-receipt:{:x}",
@@ -63,7 +64,16 @@ impl LocalTaskStore {
     }
 
     pub fn expire_assignment_receipts(&self, before: &str) -> Result<usize, TaskRuntimeError> {
-        Ok(self.connection()?.execute(
+        let connection = self.connection()?;
+        let expired = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items WHERE resource_type='assignment_receipt' AND created_at < ?1)",
+            [before],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !expired {
+            return Ok(0);
+        }
+        Ok(connection.execute(
             "DELETE FROM loop_items WHERE resource_type='assignment_receipt' AND created_at < ?1",
             [before],
         )?)

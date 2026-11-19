@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationGroup, CollaborationProject } from '../types'
+import type { CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import { useCollaborationTemplateStore } from './context'
 import { downloadTemplate, templateFromProject } from './document'
@@ -35,45 +36,51 @@ export function ProjectTemplateSettings({
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [configurationProject, setConfigurationProject] = useState(project)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const projectId = project.id
+  const projectStore = project.project_store
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        `${projectStore}:${projectId}`,
+        async () => {
+          const [groups, latest, rules] = await Promise.all([
+            api.projects.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
+            api.projects.get(projectId),
+            api.automations?.list(projectId) ?? Promise.resolve([]),
+          ])
+          return { groups, project: { ...latest, automatic_processing_rules: rules } }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api, projectId, projectStore]
+  )
+  const state = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot)
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<{ error: unknown } | null>(null)
   const [choosing, setChoosing] = useState(false)
   const [selected, setSelected] = useState<CollaborationTemplate | null>(null)
   const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
-  const scope = useRef(0)
-  const reload = useCallback(async () => {
-    const generation = ++scope.current
-    setLoading(true)
-    try {
-      const [result, latest, rules] = await Promise.all([
-        api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
-        api.projects.get(project.id),
-        api.automations?.list(project.id) ?? Promise.resolve([]),
-      ])
-      if (scope.current === generation) {
-        setGroups(result)
-        setConfigurationProject({
-          ...latest,
-          automatic_processing_rules: rules,
-        })
-        setError(null)
-        return latest
-      }
-    } catch {
-      if (scope.current === generation) setError(m.failed)
-    } finally {
-      if (scope.current === generation) setLoading(false)
-    }
-  }, [api, project.id, m.failed])
-  useEffect(() => {
-    setGroups([])
-    void reload()
-    return () => {
-      scope.current++
-    }
-  }, [reload])
+  const [selectionScope, setSelectionScope] = useState(resource)
+  if (selectionScope !== resource) {
+    setSelectionScope(resource)
+    setBusy(false)
+    setFailure(null)
+    setChoosing(false)
+    setSelected(null)
+    setSaving(null)
+  }
+  const groups = state.data?.groups ?? []
+  const configurationProject = state.data?.project ?? project
+  const loading = busy || state.status === 'idle' || state.status === 'loading'
+  const error = failure
+    ? templateFailureMessage(failure.error, locale)
+    : state.status === 'error'
+      ? m.failed
+      : null
+  const reload = () => {
+    setFailure(null)
+    return resource.reload()
+  }
   if (!store) return null
   const snapshot = async () =>
     templateFromProject(
@@ -129,14 +136,15 @@ export function ProjectTemplateSettings({
           data-testid="project-template-save"
           disabled={loading || !!error}
           onClick={async () => {
-            setLoading(true)
-            setError(null)
+            setBusy(true)
+            setFailure(null)
             try {
-              setSaving(await snapshot())
+              const document = await snapshot()
+              if (resource.hasSubscribers()) setSaving(document)
             } catch (error) {
-              setError(templateFailureMessage(error, locale))
+              if (resource.hasSubscribers()) setFailure({ error })
             } finally {
-              setLoading(false)
+              if (resource.hasSubscribers()) setBusy(false)
             }
           }}
         >
@@ -154,14 +162,16 @@ export function ProjectTemplateSettings({
           data-testid="project-template-export"
           disabled={loading || !!error}
           onClick={async () => {
-            setLoading(true)
-            setError(null)
+            setBusy(true)
+            setFailure(null)
             try {
-              downloadTemplate(await snapshot(), 'collaboration-template.yaml')
+              const document = await snapshot()
+              if (resource.hasSubscribers())
+                downloadTemplate(document, 'collaboration-template.yaml')
             } catch (error) {
-              setError(templateFailureMessage(error, locale))
+              if (resource.hasSubscribers()) setFailure({ error })
             } finally {
-              setLoading(false)
+              setBusy(false)
             }
           }}
         >

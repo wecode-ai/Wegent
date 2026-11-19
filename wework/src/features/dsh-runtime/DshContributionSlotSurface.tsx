@@ -1,4 +1,5 @@
-import { createElement, Fragment, useEffect, useState, type ComponentType } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { createElement, Fragment, useMemo, useSyncExternalStore, type ComponentType } from 'react'
 
 import { DshSlotSurface } from './DshSlotSurface'
 import {
@@ -25,25 +26,20 @@ interface DshContributionModule {
 }
 
 function DshContributionModuleLoader({ module, props }: { module: string; props: object }) {
-  const [loaded, setLoaded] = useState<DshContributionModule | null>(() =>
-    getLoadedDshUiModule<DshContributionModule>(module)
+  const resource = useMemo(
+    () =>
+      createAsyncResource(module, () => importDshUiModule<DshContributionModule>(module), {
+        initialData: getLoadedDshUiModule<DshContributionModule>(module) ?? undefined,
+      }),
+    [module]
   )
-  const [error, setError] = useState<unknown>(null)
-
-  useEffect(() => {
-    let active = true
-    void importDshUiModule<DshContributionModule>(module).then(
-      value => {
-        if (active) setLoaded(value)
-      },
-      reason => {
-        if (active) setError(reason)
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [module])
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const loaded = snapshot.data
+  const error = snapshot.error
 
   if (error) throw error
   if (!loaded) return null

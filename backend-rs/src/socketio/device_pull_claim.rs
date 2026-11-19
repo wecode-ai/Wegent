@@ -506,6 +506,8 @@ fn queue_sql(placeholders: &str) -> String {
               AND loop_item_executions.execution_environment = ? \
               OR loop_item_executions.execution_device_id = '') \
          AND loop_item_executions.status = 'queued' \
+         AND loop_item_executions.execution_environment IN ('local','cloud') \
+         AND loop_item_executions.team_id = 0 \
          AND {ASSIGNMENT_REQUEST_OBJECT_EXPR} = 0 \
          ORDER BY loop_item_executions.priority_weight DESC, \
                   loop_item_executions.queued_at ASC, loop_item_executions.id ASC"
@@ -550,7 +552,10 @@ async fn claimable_by_device(
     row: &QueueExecutionRow,
 ) -> anyhow::Result<bool> {
     let execution = row.execution();
-    if execution.assignment_pending() {
+    if execution.assignment_pending()
+        || execution.team_id != 0
+        || !matches!(execution.execution_environment.as_str(), "local" | "cloud")
+    {
         return Ok(false);
     }
     let runner = resolve_owned_device_alias(&app.mysql, owner_user_id, execution_target_id).await?;
@@ -778,6 +783,20 @@ fn occupied_scopes_sql(placeholders: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+    async fn device_queue_never_consumes_managed_teams() -> anyhow::Result<()> {
+        crate::migrations::mysql_tests::isolated(async |mysql| {
+            crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+            for (id, environment, team) in [(1,"local",0), (2,"wegent",42), (3,"cloud",42)] {
+                mysql.execute("INSERT INTO loop_item_executions(id,loop_item_id,cloud_project_id,executor_owner_user_id,status,execution_environment,execution_device_id,team_id,execution_payload,error_message) VALUES (?,'root','1001',7,'queued',?,'',?,'{}','')",(id,environment,team)).await?;
+            }
+            let rows: Vec<QueueExecutionRow> = mysql.fetch_all(queue_sql("?"),(7,"device","local")).await?;
+            assert_eq!(rows.iter().map(|row|row.execution().id).collect::<Vec<_>>(),vec![1]);
+            Ok(())
+        }).await
+    }
 
     #[test]
     fn a_queued_reply_reuses_its_task_and_gets_its_own_turn() {

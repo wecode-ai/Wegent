@@ -150,6 +150,17 @@ pub(crate) enum WeworkMcpSurface {
     Control,
 }
 
+impl WeworkMcpSurface {
+    pub(super) fn server_name(&self) -> &'static str {
+        match self {
+            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
+            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpaceMcpClientConfig {
     pub(crate) url: String,
@@ -242,15 +253,6 @@ impl SpaceMcpRequestContext {
 
     pub(crate) fn surface(&self) -> WeworkMcpSurface {
         self.surface
-    }
-
-    fn server_name(&self) -> &'static str {
-        match self.surface {
-            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
-            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
-            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
-            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
-        }
     }
 
     pub(crate) fn set_cloud_collaboration_dispatcher(
@@ -482,7 +484,7 @@ pub(crate) async fn handle_request_with_context(
                 "protocolVersion": protocol_version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {
-                    "name": context.server_name(),
+                    "name": context.surface().server_name(),
                     "version": env!("CARGO_PKG_VERSION")
                 }
             });
@@ -2302,16 +2304,29 @@ async fn call_backend_tool(
                 ("after_sequence", arguments.get("after_sequence").and_then(Value::as_i64).unwrap_or(0)),
                 ("limit", arguments.get("limit").and_then(Value::as_i64).unwrap_or(200)),
             ]),
-        "add_board_item_comment" => client
-            .post(format!(
-                "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
-                encode_segment(project_id),
-                encode_segment(task_id()?)
-            ))
-            .json(&json!({
+        "add_board_item_comment" => {
+            let item = task_id()?;
+            let mut body = json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
                 "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
-            })),
+            });
+            // A model cannot select or replace its publication identity. The
+            // server independently validates the current owned Issue binding.
+            if let Some(address) = grant
+                .filter(|grant| grant.item_id.as_deref() == Some(item))
+                .and_then(|grant| delivery_address(Some(grant)).ok())
+            {
+                body["assistant_source"] = json!({
+                    "device_id": address.device_id, "task_id": address.task_id,
+                    "requires_confirmation": true
+                });
+            }
+            client.post(format!(
+                "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
+                encode_segment(project_id),
+                encode_segment(item)
+            )).json(&body)
+        },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)

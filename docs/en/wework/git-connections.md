@@ -30,6 +30,8 @@ To sync manually:
 
 Only the first effective account per domain in configuration order is synced. Success does not prove repository permission, branch availability or commit identity. Cloning and environment preparation first check actual device access; only HTTP(S) authentication failures trigger synchronization of existing accounts and one recheck. Sync failures retain the original Git diagnosis and configuration action.
 
+Account metadata and the device list load independently; a device-list failure does not hide loaded accounts. Failed refreshes retain existing data and selections for the same connection; use Refresh to retry. Switching cloud accounts or connections requires selecting the target again; prior results and clear confirmations do not carry over.
+
 Clearing is independent: when there are no effective cloud accounts, ordinary sync is disabled. Select a target, choose **Clear Wegent Git configuration**, and confirm to remove that device's managed configuration. Empty accounts, refreshes and authentication failures never clear it automatically or alter native local configuration.
 
 Local devices use existing Git, credential managers and SSH configuration, including `core.sshCommand`, `GIT_SSH` and `GIT_SSH_COMMAND`. Repair SSH keys on the selected device rather than opening HTTP(S) accounts. Network, TLS, SSH host trust and 403/404 permission errors do not prove expired login. See [Git projects](../wegent/user-guide/coding/git-workspace-projects.md#configuration-and-recovery) for cloning and recovery.
@@ -103,7 +105,7 @@ Consumer changes and source reference counts commit together. Each background pa
 
 ## Wait for an exact GitHub workflow run
 
-Ask in a task conversation to wait for a main-branch build, supplying its run URL or letting AI resolve the intended run. AI reads current state first and reports immediately if complete; otherwise it discovers the exact repository `workflow_run` object and subscribes. The `monitoredObjects` number is the Actions run ID, not a PR number. Match the canonical run URL, run ID, commit SHA and `status: completed` so success, failure and cancellation all resume the original conversation. One successful job does not establish workflow completion.
+Ask in a task conversation to wait for a main-branch build, supplying its run URL or letting AI resolve the intended run. AI reads current state first and reports immediately if complete; otherwise it discovers the exact repository `workflow_run` object and subscribes. The `monitoredObjects` number is the Actions run ID, not a PR number. The subscription pins the canonical run URL, run ID and commit SHA. Success, failure and cancellation resume the original conversation. If GitHub associates the run with a single open PR at the same commit, a merge conflict also resumes the conversation while the run is in progress. One successful job does not establish workflow completion.
 
 Reruns share a run ID and differ by `run_attempt`; match that field when waiting for one specific attempt. A post-merge main build must use its merge commit, rather than PR head checks. Keep the execution device running. The host collects and deduplicates events without repeated model sleeps and queries. Permission loss retains the last snapshot with an explicit unavailable state.
 
@@ -111,7 +113,9 @@ A subscription can combine common `match` conditions with `$any` alternatives. P
 
 When a subscription is armed, retained shared-collector events after its activation boundary remain eligible, so a run completing during setup is not skipped by the sequence baseline. Local and cloud paths share that boundary calculation. Earlier history is not replayed; later events retain the existing sequence, deduplication and durable-delivery flow.
 
-For routine waits, prefer `git_wait` with exact `head_sha` and a discovered source selecting one object, omitting `match`. `merge` generates alternatives for terminal checks, merge conflicts even with PENDING checks, and closed or merged PRs. `checks` waits only for check results; `run` waits for completion including cancellation. Expansion happens once at registration; local and cloud delivery store the same actual predicate and the UI describes it without new collectors. Handle existing blockers immediately. A wake still requires checking reviews and protection rules; it is not merge authorization.
+When asked to merge a PR, publish a release, or verify a workflow, the agent subscribes to pending checks or runs required for that outcome, even when waiting is implicit.
+
+For routine waits, prefer `git_wait` with exact `head_sha` and a discovered source selecting one object, omitting `match`. When following up on PR check failures or conflicts, select the PR itself and use `merge`, including when the task must leave the PR open. This covers terminal checks, merge conflicts even with PENDING checks, and closed or merged PRs. `checks` waits only for check results; `run` waits for completion including cancellation. Expansion happens once at registration; local and cloud delivery store the same actual predicate and the UI describes it without new collectors. Handle existing blockers immediately. A wake still requires checking reviews and protection rules; it is not merge authorization.
 
 Subscriptions wait for new changes after their activation boundary; they do not replay earlier history. A run completing between the initial state read and activation can otherwise be missed by an existing shared collector. Immediately read current state once more after arming; if satisfied, cancel the wait and handle the result. This confirmation is not a polling loop.
 

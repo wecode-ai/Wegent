@@ -1,3 +1,4 @@
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
 import {
   ArrowUp,
   Camera,
@@ -22,7 +23,6 @@ import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -193,8 +193,14 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const fullscreenInputRef = useRef<HTMLElement>(null)
     const [contextSheetOpen, setContextSheetOpen] = useState(false)
     const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
-    const [canExpandInput, setCanExpandInput] = useState(false)
-    const [hasText, setHasText] = useState(value.trim().length > 0)
+    const geometry = useElementGeometry([textareaRef])
+    const [textState, setTextState] = useState({
+      external: value,
+      hasText: value.trim().length > 0,
+    })
+    if (textState.external !== value)
+      setTextState({ external: value, hasText: value.trim().length > 0 })
+    const hasText = textState.hasText
     const [phraseError, setPhraseError] = useState<string | null>(null)
 
     useImperativeHandle(
@@ -257,15 +263,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       !submitDisabled
     const explicitLineCount = value.split('\n').length
 
-    useEffect(() => {
-      // Sync local hasText with external value changes (e.g. clear after submit).
-
-      setHasText(value.trim().length > 0)
-    }, [value])
-
     const handleComposerChange = useCallback(
       (nextValue: string) => {
-        setHasText(nextValue.trim().length > 0)
+        setTextState(current => ({ ...current, hasText: nextValue.trim().length > 0 }))
         onChange(nextValue)
       },
       [onChange]
@@ -324,15 +324,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onSetPlanMode?.()
     }
 
-    useEffect(() => {
-      const textarea = textareaRef.current
-      if (!textarea) {
-        setCanExpandInput(explicitLineCount > 4)
-        return
-      }
-
-      setCanExpandInput(explicitLineCount > 4 || textarea.scrollHeight > 124)
-    }, [explicitLineCount, textareaRef, value])
+    const canExpandInput = explicitLineCount > 4 || (geometry?.elements[0]?.scrollHeight ?? 0) > 124
 
     const renderModelSelector = (control: ReturnType<typeof useComposerModelSelector>) => (
       <ModelSelector
