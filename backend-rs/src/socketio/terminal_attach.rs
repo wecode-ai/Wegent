@@ -217,6 +217,9 @@ fn set_coherent(coherent: bool) {
 /// `_handle_invalidation` for one parsed `kind|session_id` message.
 fn handle_invalidation(kind: &str, session_id: &str) {
     with_cache(|cache| cache.handle_invalidation(kind, session_id));
+    if kind == "revoke" {
+        tracing::info!(session_id, "terminal session revocation applied");
+    }
 }
 
 /// `_resynchronize`: clear cached state and advance the authentication epoch.

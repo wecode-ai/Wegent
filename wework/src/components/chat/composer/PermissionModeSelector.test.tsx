@@ -127,6 +127,24 @@ describe('PermissionModeSelector', () => {
     expect(onCommandApprovalChange).toHaveBeenCalledWith('ai')
   })
 
+  test('reports confirmation of the current command approval when enabling full access', () => {
+    const onChange = vi.fn()
+    render(
+      <PermissionModeSelector
+        value="workspace-write"
+        commandApproval="manual"
+        onChange={onChange}
+        onCommandApprovalChange={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
+    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+
+    expect(onChange).toHaveBeenCalledWith('full-access', 'manual')
+  })
+
   test('traps keyboard focus and restores it to the permission trigger', async () => {
     const user = userEvent.setup()
     render(<PermissionModeSelector value="workspace-write" onChange={vi.fn()} />)

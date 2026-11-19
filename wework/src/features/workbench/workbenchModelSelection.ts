@@ -1,6 +1,10 @@
 import type { ModelApi } from '@/api/models'
 import { ApiError } from '@/api/http'
 import { isSameModelSelection } from '@/lib/model-ui'
+import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
+  type RuntimeCommandApprovalMode,
+} from '@wegent/chat-core/runtime-permission'
 import { findModelForSelection } from './runtimeContextUsage'
 import {
   CLOUD_MODEL_NAMESPACE_OPTION,
@@ -31,6 +35,7 @@ export interface UseWorkbenchModelsOptions {
   fallbackWhenConfiguredModelUnavailable?: boolean
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
+  onScopedCommandApprovalChange?: (mode: RuntimeCommandApprovalMode) => void
   onSelectionBlocked?: (
     reason: ModelCompatibilityDisabledReason | 'locked',
     model?: UnifiedModel | null
@@ -146,13 +151,26 @@ export function deriveWorkbenchModelSelection(
     !selectionConfig?.modelName && selectedModel
       ? models.find(model => isSameModelSelection(model, selectedModel))
       : null
-  const effectiveSelectionConfig =
+  const resolvedSelectionConfig =
     selectionConfig?.modelName &&
     (findModelForSelection(models, selectionConfig) || !fallbackWhenConfiguredModelUnavailable)
       ? selectionConfig
       : currentDefaultModel
         ? toSelectionConfig(currentDefaultModel, selectedModelOptions)
         : (defaultSelectionConfig?.(models) ?? selectionConfig ?? null)
+  const commandApproval = selectionConfig?.options?.[RUNTIME_COMMAND_APPROVAL_OPTION]
+  const effectiveSelectionConfig =
+    commandApproval !== undefined &&
+    resolvedSelectionConfig !== selectionConfig &&
+    resolvedSelectionConfig
+      ? {
+          ...resolvedSelectionConfig,
+          options: {
+            ...resolvedSelectionConfig.options,
+            [RUNTIME_COMMAND_APPROVAL_OPTION]: commandApproval,
+          },
+        }
+      : resolvedSelectionConfig
   const selectionKey = getSelectionKey(effectiveSelectionConfig)
   const configuredModelAvailable = Boolean(
     effectiveSelectionConfig?.modelName && findModelForSelection(models, effectiveSelectionConfig)

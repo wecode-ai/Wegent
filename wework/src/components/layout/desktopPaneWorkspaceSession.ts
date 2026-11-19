@@ -24,6 +24,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import { DEFAULT_EMBEDDED_BROWSER_LABEL, setEmbeddedBrowserActiveTab } from '@/lib/embedded-browser'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   projectDesktopPanePanels,
   type DesktopPanePanelProjectionInput,
@@ -515,9 +516,31 @@ export function createDesktopPaneWorkspaceSession(
     captureScope() {
       const accepted = inputs()
       const key = scopeSignature(accepted)
+      const task = accepted.currentRuntimeTask
+      const issueContext = (address: RuntimeTaskAddress) =>
+        JSON.stringify([address.issueExecution, address.projectSession])
+      const isOwnerCurrent = () =>
+        isHeld() &&
+        input?.services === accepted.services &&
+        input.paneKey === accepted.paneKey &&
+        input.ownershipKey === accepted.ownershipKey
       return {
-        isCurrent: () =>
-          isHeld() && input?.services === accepted.services && scopeSignature(inputs()) === key,
+        isCurrent: () => isOwnerCurrent() && scopeSignature(inputs()) === key,
+        isConversationCurrentOnDevice: (deviceId: string) => {
+          const current = input?.currentRuntimeTask
+          return Boolean(
+            isOwnerCurrent() &&
+            task &&
+            current &&
+            current.deviceId === task.deviceId &&
+            current.taskId === task.taskId &&
+            resolveLocalWorkbenchDeviceId(
+              accepted.activeBottomPanelContext.devices,
+              task.deviceId
+            ) === deviceId &&
+            issueContext(current) === issueContext(task)
+          )
+        },
       }
     },
     observe(next: DesktopPaneWorkspaceInput) {

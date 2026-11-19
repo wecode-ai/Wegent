@@ -20,16 +20,16 @@ export function registerApplicationActivation(
   },
   actions: {
     keepInBackground: () => boolean
-    openMainWindow: () => Promise<void>
+    openWorkbenchWindow: () => Promise<void>
     reportError: (error: unknown) => void
   }
 ) {
   application.on('activate', () => {
     if (actions.keepInBackground()) return
-    void actions.openMainWindow().catch(actions.reportError)
+    void actions.openWorkbenchWindow().catch(actions.reportError)
   })
   application.on('did-become-active', () => {
-    // Focusing an auxiliary window also activates the app, without requesting the main window.
+    // Focusing an auxiliary window activates the app without a Dock reopen request.
     if (actions.keepInBackground()) application.hide()
   })
 }
@@ -53,4 +53,14 @@ export function presentWindow(target: PresentableWindow): boolean {
   target.focus()
   if (!target.webContents.isDestroyed()) target.webContents.focus()
   return true
+}
+
+export function presentWorkbenchWindow<T extends PresentableWindow>(
+  preferredWindow: T | null,
+  mainWindow: T | null
+): T | null {
+  if (preferredWindow && presentWindow(preferredWindow)) return preferredWindow
+  return mainWindow && mainWindow !== preferredWindow && presentWindow(mainWindow)
+    ? mainWindow
+    : null
 }

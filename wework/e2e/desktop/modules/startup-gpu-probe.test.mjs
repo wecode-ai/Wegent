@@ -52,12 +52,19 @@ async function withNativeGpuLaunch(disableGpuSandbox, verify) {
         ...launch.arguments.filter(value => disableGpuSandbox || value !== '--disable-gpu-sandbox'),
       ],
     })
-    probe = spawnStartupGdbProbe(require('electron'), [...args, 'startup-gpu-smoke.mjs'], {
-      cwd: fixtureDirectory,
-      env: environment,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    probe = spawnStartupGdbProbe(
+      require('electron'),
+      [...args, 'startup-gpu-smoke.mjs'],
+      {
+        cwd: fixtureDirectory,
+        env: environment,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+      // The expected trap needs the crashing thread and exit marker. Dumping
+      // every thread can prevent GDB from reaching the marker before the deadline.
+      { allThreads: disableGpuSandbox }
+    )
     const ended = once(probe.child, 'exit')
     const closed = new Promise(resolve => probe.child.once('close', resolve))
     await inspectBeforeStart(

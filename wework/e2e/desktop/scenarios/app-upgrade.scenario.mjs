@@ -1,16 +1,6 @@
 import { confirmUpgradeRecovery } from '../modules/upgrade-recovery-consent.mjs'
 import assert from 'node:assert/strict'
-import {
-  mkdir,
-  readFile,
-  stat,
-  writeFile,
-  rename,
-  lstat,
-  realpath,
-  rm,
-  symlink,
-} from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile, symlink } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
@@ -107,7 +97,6 @@ export async function createDesktopScenario(options) {
     usesDefaultUserData &&
     checkpoint === 'app-rollback' &&
     (pair.kind === 'regression' || Boolean(pair.from.installedSource))
-  let legacyDataDirectory
   let launchEnvironment
   assert.equal(pair.schemaVersion, 1)
   assert.equal(
@@ -172,13 +161,7 @@ export async function createDesktopScenario(options) {
   const credentials = upgradeCredentials()
   let rollbackProtection
   const verifyCredentials = (stage, options) =>
-    credentials.verify(
-      control,
-      inspectorPorts,
-      stage,
-      [electronUserDataDirectory, legacyDataDirectory].filter(Boolean),
-      options
-    )
+    credentials.verify(control, inspectorPorts, stage, [electronUserDataDirectory], options)
   let macosIdentity
   const assertSelectedComposition = version =>
     assertUpgradeComposition({
@@ -332,18 +315,8 @@ export async function createDesktopScenario(options) {
       }
     },
     async prepareUserDataLaunch() {
+      // A previously installed release starts with its existing Workbench profile.
       await credentials.seed(electronUserDataDirectory)
-      if (usesDefaultUserData) {
-        // Start from the real default application-data location. The shipped
-        // migration, bootstrap and updater must agree on the resulting userData.
-        const applicationData = options.upgradeHome?.applicationData
-        assert.ok(applicationData)
-        assert.match(pair.applicationId, /^io\.wecode\.wework(?:\.[a-z0-9-]+)*$/)
-        const legacyTarget = join(applicationData, pair.applicationId)
-        await assert.rejects(stat(legacyTarget), { code: 'ENOENT' })
-        await rename(electronUserDataDirectory, legacyTarget)
-        legacyDataDirectory = legacyTarget
-      }
     },
     async handleHttp(request, response, url) {
       if (credentials.handleHttp(request, response, url)) return true
@@ -909,7 +882,6 @@ export async function createDesktopScenario(options) {
             version: pair.to.version,
             resultDir,
             electronUserDataDirectory,
-            legacyDataDirectory,
           })
         }
         // A failed activation can leave the native recovery shell waiting for
@@ -944,22 +916,6 @@ export async function createDesktopScenario(options) {
           assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
         }
         if (passed) await fs.rm(root, { recursive: true, force: true })
-        if (legacyDataDirectory) {
-          const legacy = await lstat(legacyDataDirectory).catch(error => {
-            if (error.code !== 'ENOENT') throw error
-            return null
-          })
-          if (legacy?.isSymbolicLink()) {
-            assert.equal(
-              await realpath(legacyDataDirectory),
-              await realpath(electronUserDataDirectory)
-            )
-            await rm(legacyDataDirectory)
-          } else if (legacy) {
-            // Preparation can fail before the application migrates its fixture.
-            await rename(legacyDataDirectory, electronUserDataDirectory)
-          }
-        }
       } catch (error) {
         errors.push(error)
       }

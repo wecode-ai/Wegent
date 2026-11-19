@@ -108,4 +108,32 @@ export async function verifyRiskyCommandApproval(control, workspacePath) {
     })
     await assert.rejects(access(path), { code: 'ENOENT' })
   }
+
+  // The choices made in an existing conversation become the default for new ones.
+  const selectedTask = '[data-testid^="runtime-local-task-row-"][aria-current="page"]'
+  const taskTestId = await control.command('getAttribute', selectedTask, { value: 'data-testid' })
+  assert.ok(taskTestId, 'The risky-command conversation is not selected')
+  const taskRow = `[data-testid="${taskTestId}"]`
+  for (const [mode, labels] of [
+    ['automatic', ['Run risky commands automatically', '自动执行高危命令']],
+    ['ai', ['Review risky commands with AI', 'AI 审核高危命令']],
+    ['manual', ['Confirm risky commands manually', '人工确认高危命令']],
+  ]) {
+    if (mode !== 'automatic') {
+      await control.command('click', taskRow)
+      await control.command('waitFor', `${taskRow}[aria-current="page"]`, {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('click', trigger)
+      await control.command('click', `[data-testid="command-approval-${mode}"]`)
+    }
+    await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+    const restored = labels
+      .map(label => `body:not(:has(${selectedTask})) ${trigger}[aria-label$="${label}"]`)
+      .join(', ')
+    await control.command('waitFor', restored, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
 }

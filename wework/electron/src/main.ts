@@ -121,6 +121,7 @@ import {
 import {
   createSingleFlight,
   presentWindow,
+  presentWorkbenchWindow,
   registerApplicationActivation,
 } from './host/window-presentation.js'
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
@@ -358,7 +359,7 @@ let cloudModelRuntime: CloudModelRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
 let nativeDialogLanguage: string | undefined
-let lastMenuWindow: BrowserWindow | null = null
+let lastFocusedWorkbenchWindow: BrowserWindow | null = null
 const menuCapabilities = new Map<string, ApplicationMenuCapabilityState>()
 let primaryDshLoaded = false
 let primaryDshSecurityInstalled = false
@@ -1813,11 +1814,13 @@ const rendererStartupReady = createStartupReadyHandler(async (source: string) =>
 })
 
 async function reactivateMainWindow(): Promise<void> {
+  await reactivateWorkbenchWindow(null)
+}
+
+async function reactivateWorkbenchWindow(preferredWindow: BrowserWindow | null): Promise<void> {
   if (focusStartupRecoveryIfActive()) return
   if (focusStartupSplashIfActive()) return
   if (quitting) return
-  const target = mainWindow
-  if (!target || target.isDestroyed()) return
   if (keepE2EWindowInBackground) {
     e2eForegroundActivationAllowed = true
     app.setActivationPolicy('regular')
@@ -1826,8 +1829,8 @@ async function reactivateMainWindow(): Promise<void> {
   } else {
     await setDockVisible(true)
   }
-  presentWindow(target)
-  await loadPrimaryDshView()
+  const presented = presentWorkbenchWindow(preferredWindow, mainWindow)
+  if (presented && presented === mainWindow) await loadPrimaryDshView()
 }
 
 function dispatchTrayAction(action: TrayAction): void {
@@ -1852,7 +1855,9 @@ function applicationMenuWindow(label?: string): BrowserWindow | null {
   if (focused && (focused === mainWindow || [...workspaceWindows.values()].includes(focused))) {
     return focused
   }
-  return lastMenuWindow && !lastMenuWindow.isDestroyed() ? lastMenuWindow : mainWindow
+  return lastFocusedWorkbenchWindow && !lastFocusedWorkbenchWindow.isDestroyed()
+    ? lastFocusedWorkbenchWindow
+    : mainWindow
 }
 
 function menuLabelForWindow(window: BrowserWindow): string {
@@ -1932,14 +1937,6 @@ function installApplicationMenu(): void {
   // preference through applicationMenu.setLanguage once it mounts, so the menu
   // follows the in-app language instead of the system locale.
   applicationMenu.setLanguage(app.getLocale())
-  app.on('browser-window-created', (_event, window) => {
-    window.on('focus', () => {
-      if (window === mainWindow || [...workspaceWindows.values()].includes(window)) {
-        lastMenuWindow = window
-        syncApplicationMenuCapabilities()
-      }
-    })
-  })
   syncApplicationMenuCapabilities()
 }
 
@@ -3133,8 +3130,6 @@ if (hasSingleInstanceLock) {
           await preferences?.update({ closeToTrayHintSeen: true })
         },
       })
-      // Install the menu before any window is created so the
-      // browser-window-created focus hook covers every workbench window.
       try {
         installApplicationMenu()
       } catch (error) {
@@ -3576,11 +3571,18 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+app.on('browser-window-focus', (_event, window) => {
+  if (window === mainWindow || [...workspaceWindows.values()].includes(window)) {
+    lastFocusedWorkbenchWindow = window
+    syncApplicationMenuCapabilities()
+  }
+})
+
 registerApplicationActivation(app, {
   keepInBackground: () => keepE2EWindowInBackground && !e2eForegroundActivationAllowed,
-  openMainWindow: reactivateMainWindow,
+  openWorkbenchWindow: () => reactivateWorkbenchWindow(lastFocusedWorkbenchWindow),
   reportError: error => {
-    console.error('[window] failed to reactivate main window', error)
+    console.error('[window] failed to reactivate workbench window', error)
   },
 })
 
