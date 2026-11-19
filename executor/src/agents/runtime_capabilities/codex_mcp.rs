@@ -109,6 +109,10 @@ fn normalize_templates(
 ) -> Result<(), String> {
     remove_managed_servers(servers);
     retain_available_servers(servers, request, "native_configuration", |name, server| {
+        if let Some(server_type) = server.get_mut("type") {
+            *server_type =
+                crate::mcp_utils::replace_mcp_server_variables(server_type, Some(request));
+        }
         let native = native_definition(server.clone())?;
         let mut candidate = BTreeMap::from([(name.to_owned(), native)]);
         super::mcp_environment::prepare_context(&mut candidate, request)?;

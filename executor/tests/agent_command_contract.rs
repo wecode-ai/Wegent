@@ -16,6 +16,7 @@ use wegent_executor::{
 
 // Run the shared pre-main host environment scrubber in this integration binary.
 use wegent_executor_test_support as _;
+use wegent_mcp_runtime::mcp_environment::AVAILABILITY_INSTRUCTIONS;
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -84,6 +85,7 @@ fn claude_command_sends_text_prompt_through_stream_json_stdin() {
     let spec = build_claude_command(&request, "claude");
 
     assert_eq!(spec.program(), "claude");
+    let instructions = format!("{AGENT_INSTRUCTIONS}\n\n{AVAILABILITY_INSTRUCTIONS}");
     assert_eq!(
         spec.args(),
         &[
@@ -99,7 +101,7 @@ fn claude_command_sends_text_prompt_through_stream_json_stdin() {
             "--permission-mode",
             "bypassPermissions",
             "--append-system-prompt",
-            AGENT_INSTRUCTIONS,
+            instructions.as_str(),
             "--model",
             "claude-sonnet-4-6"
         ]
@@ -670,7 +672,7 @@ fn claude_command_uses_bot_system_prompt_when_request_prompt_absent() {
 
     assert_eq!(
         spec.args()[append_flag_index + 1],
-        format!("You are helpful.\n\n{AGENT_INSTRUCTIONS}")
+        format!("You are helpful.\n\n{AGENT_INSTRUCTIONS}\n\n{AVAILABILITY_INSTRUCTIONS}")
     );
 }
 

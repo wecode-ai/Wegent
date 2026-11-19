@@ -169,6 +169,48 @@ fn native_transports_normalize_consumed_values_before_context_binding() {
 }
 
 #[test]
+fn templated_mcp_metadata_resolves_before_merging_and_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let request = ExecutionRequest {
+        auth_token: Some("synthetic-token".into()),
+        mcp_servers: vec![json!({
+            "name": "docs-${{task_data.region}}",
+            "type": "${{task_data.transport}}",
+            "command": "",
+            "args": ["${{backend_url}}"],
+            "url": "https://example.test/mcp",
+            "headers": {"Authorization": "Bearer ${{task_token}}"},
+            "defaultToolsApprovalMode": "prompt"
+        })],
+        extra: Map::from_iter([(
+            "task_data".into(),
+            json!({"region":"eu", "transport":"http"}),
+        )]),
+        ..Default::default()
+    };
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(
+        runtime["mcp_servers.docs-eu"]["url"],
+        "https://example.test/mcp"
+    );
+    assert_eq!(
+        runtime["mcp_servers.docs-eu"]["http_headers"]["Authorization"],
+        "Bearer synthetic-token"
+    );
+    assert_eq!(
+        runtime["mcp_servers.docs-eu"]["default_tools_approval_mode"],
+        "prompt"
+    );
+    assert!(runtime["mcp_servers.docs-eu"].get("command").is_none());
+    let saved = fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(!saved.contains("synthetic-token"));
+    let mut resumed = Map::new();
+    prepare(home.path(), &request, &mut resumed).unwrap();
+    assert_eq!(runtime, resumed);
+}
+
+#[test]
 fn stable_config_retains_omitted_services_and_refreshes_context() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("config.toml");

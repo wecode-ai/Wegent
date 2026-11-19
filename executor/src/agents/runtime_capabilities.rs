@@ -2171,16 +2171,22 @@ fn preserve_explicit_mcp_approval_modes(
         if let Some(bots) = request.bot.as_array() {
             for bot in bots {
                 preserve_explicit_mcp_approval_modes_from_value(
+                    request,
                     bot_mcp_servers_value(bot),
                     servers,
                 );
             }
         }
     } else if let Some(bot) = primary_bot(request) {
-        preserve_explicit_mcp_approval_modes_from_value(bot_mcp_servers_value(bot), servers);
+        preserve_explicit_mcp_approval_modes_from_value(
+            request,
+            bot_mcp_servers_value(bot),
+            servers,
+        );
     }
 
     preserve_explicit_mcp_approval_modes_from_value(
+        request,
         Some(&Value::Array(request.mcp_servers.clone())),
         servers,
     );
@@ -2191,19 +2197,20 @@ fn bot_mcp_servers_value(bot: &Value) -> Option<&Value> {
 }
 
 fn preserve_explicit_mcp_approval_modes_from_value(
+    request: &ExecutionRequest,
     value: Option<&Value>,
     servers: &mut BTreeMap<String, Value>,
 ) {
     match value {
         Some(Value::Object(object)) => {
             for (name, server) in object {
-                preserve_explicit_mcp_approval_mode(name, server, servers);
+                preserve_explicit_mcp_approval_mode(request, name, server, servers);
             }
         }
         Some(Value::Array(values)) => {
             for server in values {
                 if let Some(name) = server.get("name").and_then(Value::as_str) {
-                    preserve_explicit_mcp_approval_mode(name, server, servers);
+                    preserve_explicit_mcp_approval_mode(request, name, server, servers);
                 }
             }
         }
@@ -2212,6 +2219,7 @@ fn preserve_explicit_mcp_approval_modes_from_value(
 }
 
 fn preserve_explicit_mcp_approval_mode(
+    request: &ExecutionRequest,
     name: &str,
     source: &Value,
     servers: &mut BTreeMap<String, Value>,
@@ -2223,7 +2231,12 @@ fn preserve_explicit_mcp_approval_mode(
     else {
         return;
     };
-    let Some(server) = servers.get_mut(name).and_then(Value::as_object_mut) else {
+    let name = crate::mcp_utils::replace_mcp_server_variables(&json!(name), Some(request));
+    let Some(server) = name
+        .as_str()
+        .and_then(|name| servers.get_mut(name))
+        .and_then(Value::as_object_mut)
+    else {
         return;
     };
     server.insert("default_tools_approval_mode".to_owned(), mode);

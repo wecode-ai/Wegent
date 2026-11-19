@@ -2776,25 +2776,25 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
             ),
         ];
     };
-    let mcp_keys = config
-        .keys()
-        .filter(|key| key.starts_with("mcp_servers."))
-        .collect::<Vec<_>>();
-    let server_names = mcp_keys
-        .iter()
-        .filter_map(|key| {
-            key.strip_prefix("mcp_servers.")?
-                .split('.')
-                .next()
-                .map(|name| name.trim_matches('"').to_owned())
-        })
-        .filter(|name| !name.is_empty())
+    let servers = config.get("mcp_servers").and_then(Value::as_object);
+    let server_names = servers
+        .into_iter()
+        .flat_map(|servers| servers.keys().cloned())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>()
         .join(",");
     vec![
-        ("mcp_config_key_count", mcp_keys.len().to_string()),
+        (
+            "mcp_config_key_count",
+            servers
+                .into_iter()
+                .flat_map(|servers| servers.values())
+                .filter_map(Value::as_object)
+                .map(Map::len)
+                .sum::<usize>()
+                .to_string(),
+        ),
         ("mcp_server_names", server_names),
         ("reasoning_effort", reasoning_effort),
         (
@@ -7000,9 +7000,14 @@ fn append_thread_launch_params(
     let mut config = launch_config.thread_config.clone();
     for override_value in &launch_config.config_overrides {
         if let Some((key, value)) = config_override_entry(override_value) {
-            config.insert(key, value);
+            // The empty table clears saved definitions at child startup only.
+            // Thread RPC replaces the complete table after collecting this turn.
+            if key != "mcp_servers" || value != json!({}) {
+                config.insert(key, value);
+            }
         }
     }
+    mcp_config::consolidate_thread_config(&mut config);
     if !config.is_empty() {
         params.insert("config".to_owned(), Value::Object(config));
     }

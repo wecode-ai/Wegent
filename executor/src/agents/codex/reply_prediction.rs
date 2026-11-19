@@ -48,7 +48,9 @@ fn prediction_parent_resume_params(
                 .into_iter()
                 .flatten()
                 .filter(|(key, _)| {
-                    key.starts_with("mcp_servers.") || key.starts_with("model_providers.")
+                    *key == "mcp_servers"
+                        || key.starts_with("mcp_servers.")
+                        || key.starts_with("model_providers.")
                 })
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
@@ -354,10 +356,10 @@ mod tests {
         let params =
             prediction_parent_resume_params("source", &ExecutionRequest::default(), Some(&launch));
         assert_eq!(
-            params["config"]["mcp_servers.business.url"],
+            params["config"]["mcp_servers"]["business"]["url"],
             "http://localhost/mcp"
         );
-        assert_eq!(params["config"]["mcp_servers.business.enabled"], true);
+        assert_eq!(params["config"]["mcp_servers"]["business"]["enabled"], true);
         assert_eq!(
             params["config"]["model_providers.new-provider"]["base_url"],
             "http://localhost/official-route"

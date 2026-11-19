@@ -147,7 +147,7 @@ async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let starts: Vec<_> = messages.iter().filter(|message| message["method"] == "thread/start").collect();
     assert_eq!(starts.len(), 2);
     for (start, secret) in starts.iter().zip(["synthetic-first-secret", "synthetic-second-secret"]) {
-        assert_eq!(start["params"]["config"]["mcp_servers.retained"]["env"]["TOKEN"], secret);
+        assert_eq!(start["params"]["config"]["mcp_servers"]["retained"]["env"]["TOKEN"], secret);
     }
     let launches: Vec<_> = messages.iter().filter(|message| message.get("args").is_some()).collect();
     assert_eq!(launches.len(), 2);
@@ -1130,12 +1130,12 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with("mcp_servers.shell.env")));
     let start = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
     let config = &start["params"]["config"];
-    assert_eq!(config["mcp_servers.docs"]["url"], "https://mcp.example.com/docs");
-    assert_eq!(config["mcp_servers.docs"]["bearer_token_env_var"], "DOCS_TOKEN");
-    assert_eq!(config["mcp_servers.shell"]["command"], "uvx");
-    assert_eq!(config["mcp_servers.shell"]["args"], json!(["tool", "--flag"]));
-    assert!(config.get("mcp_servers.connector").is_none());
-    assert_eq!(start["params"]["config"]["mcp_servers.shell.env"]["FOO"], "bar");
+    assert_eq!(config["mcp_servers"]["docs"]["url"], "https://mcp.example.com/docs");
+    assert_eq!(config["mcp_servers"]["docs"]["bearer_token_env_var"], "DOCS_TOKEN");
+    assert_eq!(config["mcp_servers"]["shell"]["command"], "uvx");
+    assert_eq!(config["mcp_servers"]["shell"]["args"], json!(["tool", "--flag"]));
+    assert!(config["mcp_servers"].get("connector").is_none());
+    assert_eq!(start["params"]["config"]["mcp_servers"]["shell"]["env"]["FOO"], "bar");
 }
 
 async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
@@ -1219,18 +1219,18 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.starts_with("mcp_servers.bot-shell.env")));
     let start = messages.iter().find(|message| message["method"] == "thread/start").unwrap();
     let config = &start["params"]["config"];
-    assert_eq!(config["mcp_servers.request-docs"]["url"], "https://mcp.example.com/request-docs");
-    assert_eq!(config["mcp_servers.request-docs"]["bearer_token_env_var"], "REQUEST_DOCS_TOKEN");
-    assert_eq!(config["mcp_servers.request-docs"]["http_headers"]["Authorization"], "Bearer task-token");
-    assert_eq!(config["mcp_servers.bot-shell"]["command"], "uvx");
-    assert_eq!(config["mcp_servers.bot-shell"]["args"], json!(["bot-tool"]));
-    assert!(config.get("mcp_servers.connector").is_none());
-    assert_eq!(start["params"]["config"]["mcp_servers.bot-shell.env"]["BOT_ENV"], "1");
-    assert_eq!(config["mcp_servers.bot-shell"]["default_tools_approval_mode"], "approve");
-    assert_eq!(config["mcp_servers.sensitive-shell"]["command"], "node");
-    assert_eq!(config["mcp_servers.sensitive-shell"]["default_tools_approval_mode"], "prompt");
-    assert_eq!(config["mcp_servers.request-docs"]["default_tools_approval_mode"], "approve");
-    assert_eq!(config["mcp_servers.request-sensitive"]["default_tools_approval_mode"], "prompt");
+    assert_eq!(config["mcp_servers"]["request-docs"]["url"], "https://mcp.example.com/request-docs");
+    assert_eq!(config["mcp_servers"]["request-docs"]["bearer_token_env_var"], "REQUEST_DOCS_TOKEN");
+    assert_eq!(config["mcp_servers"]["request-docs"]["http_headers"]["Authorization"], "Bearer task-token");
+    assert_eq!(config["mcp_servers"]["bot-shell"]["command"], "uvx");
+    assert_eq!(config["mcp_servers"]["bot-shell"]["args"], json!(["bot-tool"]));
+    assert!(config["mcp_servers"].get("connector").is_none());
+    assert_eq!(start["params"]["config"]["mcp_servers"]["bot-shell"]["env"]["BOT_ENV"], "1");
+    assert_eq!(config["mcp_servers"]["bot-shell"]["default_tools_approval_mode"], "approve");
+    assert_eq!(config["mcp_servers"]["sensitive-shell"]["command"], "node");
+    assert_eq!(config["mcp_servers"]["sensitive-shell"]["default_tools_approval_mode"], "prompt");
+    assert_eq!(config["mcp_servers"]["request-docs"]["default_tools_approval_mode"], "approve");
+    assert_eq!(config["mcp_servers"]["request-sensitive"]["default_tools_approval_mode"], "prompt");
 }
 
 async fn codex_app_server_engine_times_out_unresponsive_rpc() {
