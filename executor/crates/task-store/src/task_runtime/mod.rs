@@ -16,18 +16,18 @@ pub use store::stand_in_telemetry;
 pub use store::{IssueHumanRequestScope, LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\
-本轮执行的过程和最终答复会由 Executor 自动记录到当前 Issue 动态。\
-请直接在最终答复中提交结果、证据、未完成项和风险；不要调用 \
-add_board_item_comment 重复发布本轮执行结果，即使任务文本要求将结果记录为评论。\
-如果生成了需要随 Issue 交付的文件，必须调用 upload_item_attachment 上传；\
-只在工作目录中创建文件不会形成 Issue 附件。\n\
-如果任务要求提交 Issue 交付，先调用 get_delivery_requirements 核对要求，再使用 \
-create_delivery、upload_delivery_asset（如需上传文件）和 finalize_delivery 提交，\
-并在最终答复中引用交付。\n\
-可用时，主动使用原生子智能体并行处理边界清楚、互不依赖的调查、实现、测试或复核。\
-简单或强依赖的步骤自行完成；多个子智能体不要同时编辑同一文件。\
-交代目标、范围、权限和验收标准，收集并核验结果后由你统一回复和交付。\
-子智能体仅在本执行内分工；需要单独追踪、审批或交付的工作仍走项目分派流程。";
+The Executor records this run in the current Issue activity. Include the results, evidence, \
+open items, and risks in your final response. Do not call add_board_item_comment to repost \
+the same result. Use upload_item_attachment for files that need to appear as Issue attachments.\n\
+When the Issue requires a formal delivery, call get_delivery_requirements first. Use \
+create_delivery, upload_delivery_asset for any required files, and finalize_delivery. \
+Reference the submitted delivery in your final response.\n\
+Use native subagents, when available, to run independent investigation, implementation, \
+testing, or review tasks in parallel. Give each subagent a clear goal, scope, permissions, \
+and acceptance criteria. Assign separate files to subagents working in parallel. Handle \
+small or tightly coupled steps directly. Review and integrate the subagents' work, then \
+post the final response and submit the delivery yourself. Use project assignments for work \
+that requires separate tracking, approval, or delivery.";
 
 pub fn collaboration_member_system_prompt(current: &str) -> String {
     let current = current.trim();

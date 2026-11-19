@@ -794,9 +794,11 @@ fn executor_materializes_member_task_from_root_profile() {
         .expect("member system prompt");
     assert!(system_prompt.starts_with("member system instructions"));
     assert!(!system_prompt.contains("manager system instructions"));
-    assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-    assert!(system_prompt.contains("不要调用 add_board_item_comment"));
-    assert!(system_prompt.contains("必须调用 upload_item_attachment"));
+    assert!(system_prompt.contains("The Executor records this run in the current Issue"));
+    assert!(system_prompt.contains("Do not call add_board_item_comment"));
+    assert!(system_prompt.contains("Use upload_item_attachment"));
+    assert!(system_prompt.contains("Use native subagents"));
+    assert!(system_prompt.contains("finalize_delivery"));
 }
 
 #[test]

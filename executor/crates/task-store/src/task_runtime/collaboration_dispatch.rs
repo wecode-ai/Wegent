@@ -880,8 +880,8 @@ mod tests {
 
         assert!(system_prompt.starts_with("member system instructions"));
         assert!(!system_prompt.contains("manager system instructions"));
-        assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-        assert!(system_prompt.contains("主动使用原生子智能体"));
+        assert!(system_prompt.contains("The Executor records this run in the current Issue"));
+        assert!(system_prompt.contains("Use native subagents"));
         assert!(system_prompt.contains("finalize_delivery"));
     }
 
