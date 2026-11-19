@@ -296,11 +296,13 @@ async function verifySystemDragPanelLayout(control) {
   await control.command('waitFor', '[data-testid="new-chat-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const popoutReadyCount = control.readyCount
+  const draft = 'System drag Popout Window verification'
   const focusSnapshot = JSON.parse(
     await control.command('completeSystemDragDrop', 'body', {
       value: JSON.stringify({
         action: 'new-chat',
-        text: 'System drag Popout Window verification',
+        text: draft,
         paths: [],
       }),
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -321,6 +323,20 @@ async function verifySystemDragPanelLayout(control) {
       focusSnapshot.popoutExists && focusSnapshot.popoutVisible,
       true,
       'Completing a system drag did not reveal the Popout Window'
+    )
+    if (!control.controlClientsByWindow.has('popout-window')) {
+      const ready = await control.awaitReadyAfter(popoutReadyCount, WORKBENCH_READY_TIMEOUT_MS)
+      assert.equal(ready.windowLabel, 'popout-window')
+    }
+    await control.commandForWindow(
+      'popout-window',
+      'waitFor',
+      '[data-testid="chat-message-input"]',
+      {
+        visible: true,
+        text: draft,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
     )
     if (process.platform === 'darwin') {
       const dataUrl = await control.command('capturePopoutWindow', 'body', {
