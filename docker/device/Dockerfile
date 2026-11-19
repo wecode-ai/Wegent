@@ -342,9 +342,9 @@ if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ] && [ "$WEGENT_EXECUT
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
 fi
-# Verify links left by earlier releases before selecting the mounted home.
+# Links to the legacy home must retain their original mounted volume.
 if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
-    if ! mountpoint -q "$LEGACY_EXECUTOR_HOME" || [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
+    if [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" = "$LEGACY_EXECUTOR_HOME" ] && ! mountpoint -q "$LEGACY_EXECUTOR_HOME"; then
         echo "Unified Executor Home requires its original legacy volume; refusing to reset identity" >&2
         exit 1
     fi

@@ -31,11 +31,16 @@ def _write_realpath_command(path: Path) -> None:
     command = path / "realpath"
     command.write_text(
         """#!/usr/bin/env python3
+import os
 import sys
 from pathlib import Path
 
 arguments = [value for value in sys.argv[1:] if value not in {"-m", "-ms", "--"}]
-print(Path(arguments[-1]).resolve(strict=False))
+print(
+    os.path.abspath(arguments[-1])
+    if "-ms" in sys.argv
+    else Path(arguments[-1]).resolve(strict=False)
+)
 """,
         encoding="utf-8",
     )
@@ -328,10 +333,16 @@ def test_device_entrypoint_rejects_workspace_root_escape(tmp_path):
     assert "LOCAL_WORKSPACE_ROOT must be inside a persisted workspace" in escaped.stderr
 
 
+@pytest.mark.parametrize("linked_home", [False, True])
 def test_device_entrypoint_preserves_home_across_instance_rebuild_and_rejects_rebind(
     tmp_path,
+    linked_home,
 ):
     executor_home = tmp_path / "executor-home"
+    if linked_home:
+        active_home = tmp_path / "data-root" / "homes" / "device-a"
+        active_home.mkdir(parents=True)
+        executor_home.symlink_to(active_home, target_is_directory=True)
 
     first = _run_entrypoint(
         tmp_path=tmp_path,
@@ -369,6 +380,30 @@ def test_device_entrypoint_preserves_home_across_instance_rebuild_and_rejects_re
     )
     assert runtime_sentinel.is_file()
     assert worktree_sentinel.is_dir()
+
+
+@pytest.mark.parametrize("legacy_volume_mounted", [False, True])
+def test_device_entrypoint_requires_original_volume_for_legacy_home_link(
+    tmp_path: Path, legacy_volume_mounted: bool
+) -> None:
+    executor_home = tmp_path / "executor-home"
+    legacy_home = tmp_path / "legacy-home"
+    executor_home.symlink_to(legacy_home, target_is_directory=True)
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        legacy_volume_mounted=legacy_volume_mounted,
+    )
+
+    if legacy_volume_mounted:
+        assert result.returncode == 0, result.stderr
+        assert (legacy_home / ".executor-home-id").read_text() == "device-stable-1"
+    else:
+        assert result.returncode != 0
+        assert "requires its original legacy volume" in result.stderr
+        assert not legacy_home.exists()
 
 
 def test_device_entrypoint_rejects_missing_persistent_mount(tmp_path):
