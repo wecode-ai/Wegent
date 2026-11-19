@@ -8,12 +8,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .font-normal {
-    font-weight: var(--font-weight-ui, 420);
-  }
-}
-
 @layer base {
   /* A transparent native auto outline can mask a focused field's border.
      Disable that outline for pointer input; component/error outlines still win. */
@@ -143,7 +137,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   --font-size-ui: 14px;
   --font-size-code: 12px;
-  --font-weight-ui: 420;
+  --font-weight-ui: 445;
   --text-xs: 12px;
   --text-2xs: 10px;
   --text-sm: 13px;

@@ -383,7 +383,7 @@
   background: transparent;
   font-size: var(--text-base);
   font-weight: var(--font-weight-ui);
-  line-height: 1.5;
+  line-height: 20px;
   text-align: left;
   cursor: pointer;
 }
@@ -528,7 +528,7 @@
   background: transparent;
   font-size: var(--text-base);
   font-weight: var(--font-weight-ui);
-  line-height: 1.5;
+  line-height: 20px;
   text-align: left;
   cursor: pointer;
 }

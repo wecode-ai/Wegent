@@ -13,7 +13,7 @@
 .project-board-toolbar label {
   font-family: inherit;
   font-size: var(--text-sm);
-  font-weight: var(--font-weight-ui, 420);
+  font-weight: var(--font-weight-ui, 445);
   line-height: 1.5;
 }
 

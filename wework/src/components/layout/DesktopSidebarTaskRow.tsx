@@ -450,7 +450,7 @@ export function RuntimeTaskRow({
             slot={WEWORK_DSH_SLOTS.taskStatus}
           />
           <ControlButton
-            variant="ghost"
+            variant="unstyled"
             type="button"
             data-testid={`runtime-local-task-open-${task.taskId}`}
             disabled={disabled}
@@ -458,7 +458,7 @@ export function RuntimeTaskRow({
               event.stopPropagation()
               if (event.detail <= 1) handleOpen()
             }}
-            className="h-full min-h-0 min-w-0 flex-1 justify-start gap-0 rounded-lg bg-transparent p-0 text-left text-base font-normal text-inherit hover:bg-transparent disabled:opacity-100 md:min-h-0"
+            className="flex h-full min-h-0 min-w-0 flex-1 items-center rounded-lg bg-transparent p-0 text-left text-inherit disabled:opacity-100"
           >
             {priorityLayout ? (
               <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">

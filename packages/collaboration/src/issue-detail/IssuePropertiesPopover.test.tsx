@@ -51,7 +51,7 @@ describe('IssuePropertiesPopover', () => {
     expect(popover.style.getPropertyValue('--font-ui')).toBe(defaultThemeAppearance.uiFont)
     expect(popover.style.getPropertyValue('--text-sm')).toBe('15px')
     expect(popover.style.getPropertyValue('--text-base')).toBe('16px')
-    expect(popover.style.getPropertyValue('--font-weight-ui')).toBe('420')
+    expect(popover.style.getPropertyValue('--font-weight-ui')).toBe('445')
     expect(popover.querySelector('h3')?.id).toBe(popover.getAttribute('aria-labelledby'))
     expect(popover.querySelector('h3')?.textContent).toBe('更多信息')
   })
