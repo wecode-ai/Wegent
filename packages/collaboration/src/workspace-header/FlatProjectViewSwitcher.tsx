@@ -44,6 +44,7 @@ export function FlatProjectViewSwitcher<View extends CollaborationProjectView>({
         >
           <SelectTrigger
             data-testid="collaboration-project-view-select"
+            data-available-views={options.map(option => option.id).join(' ')}
             density="compact"
             appearance="plain"
             aria-label={ariaLabel ?? '视图切换'}

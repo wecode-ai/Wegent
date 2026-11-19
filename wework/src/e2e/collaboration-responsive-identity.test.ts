@@ -14,7 +14,7 @@ function render(compact: boolean, name = 'Project') {
     <aside data-testid="collaboration-platform-sidebar"><button data-testid="collaboration-workspace-project-1" aria-current="page">${name}</button></aside>
     ${
       compact
-        ? '<select data-testid="collaboration-project-view-select"><option value="board">Board</option><option value="manage">Manage</option></select>'
+        ? '<button role="combobox" data-testid="collaboration-project-view-select" data-available-views="board manage"><span data-value="board">Board</span></button>'
         : '<button data-testid="collaboration-tab-board" aria-current="page">Board</button><button data-testid="collaboration-tab-manage">Manage</button>'
     }
   </section>`
@@ -31,9 +31,13 @@ test.each([false, true])(
     expect(
       document.querySelector(collaborationProjectViewSelector(ROOT, 'manage', true))
     ).toBeNull()
-    document
-      .querySelector('[data-testid="collaboration-tab-manage"], option[value="manage"]')!
-      .remove()
+    if (compact) {
+      document
+        .querySelector('[data-testid="collaboration-project-view-select"]')!
+        .setAttribute('data-available-views', 'board')
+    } else {
+      document.querySelector('[data-testid="collaboration-tab-manage"]')!.remove()
+    }
     expect(document.querySelector(collaborationProjectViewSelector(ROOT, 'manage'))).toBeNull()
     expect(
       document.querySelector(collaborationProjectViewSelector(ROOT, 'board', true))
