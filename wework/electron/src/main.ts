@@ -3126,10 +3126,11 @@ if (hasSingleInstanceLock) {
           }
         },
         clearRuntimeFiles: () => clearStartupRuntimeFiles(app.getPath('userData')),
-        clearUserFiles: async () => {
+        clearOpenAiCatalog: () => openAiCatalog.clear(),
+        clearUserFiles: () => {
           const environment = startupRuntimeEnvironment ?? process.env
           const home = environment.WEGENT_EXECUTOR_HOME?.trim() || executorHome
-          await clearStartupUserFiles({
+          return clearStartupUserFiles({
             dataDirectory: app.getPath('userData'),
             codexHome: environment.WEGENT_CODEX_HOME?.trim() || join(home, 'codex'),
             claudeHome: environment.WEGENT_CLAUDE_HOME?.trim() || join(home, 'claude'),
@@ -3140,7 +3141,6 @@ if (hasSingleInstanceLock) {
               join(app.getPath('home'), '.claude'),
             ],
           })
-          await openAiCatalog.clear()
         },
         clearCache: () => session.defaultSession.clearCache(),
         clearAppStorage: () =>

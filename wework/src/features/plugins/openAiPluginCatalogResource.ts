@@ -45,7 +45,8 @@ export function createOpenAiPluginCatalogResource(
           // Consume a manual refresh only after the identity and disk checks pass.
           if (force) refreshEpoch = undefined
           cached = snapshot
-          projectOpenAiRemoteCatalog(cacheKey, deviceId, snapshot)
+          if (snapshot) projectOpenAiRemoteCatalog(cacheKey, deviceId, snapshot)
+          else detachOpenAiRemoteCatalog(cacheKey)
         },
       })
       if (isCurrent() && result.deviceId && result.snapshot && result.snapshot !== cached)
@@ -64,7 +65,12 @@ export function createOpenAiPluginCatalogResource(
       const unsubscribe = resource.subscribe(listener, epoch)
       return () => {
         unsubscribe()
-        if (!resource.hasSubscribers()) detachOpenAiRemoteCatalog(cacheKey)
+        if (resource.hasSubscribers()) return
+        // Changing between Official and All replaces the subscription in the same commit.
+        queueMicrotask(() => {
+          if (!resource.hasSubscribers() && epoch === getPluginMarketplaceAccountEpoch())
+            detachOpenAiRemoteCatalog(cacheKey)
+        })
       }
     },
     refresh() {

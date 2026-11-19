@@ -519,7 +519,7 @@ describe('OpenAI official catalog persistence', () => {
       expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toHaveLength(1)
     )
     opened.unmount()
-    expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([])
+    await waitFor(() => expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([]))
     expect(storedCatalog).not.toBeNull()
 
     vi.mocked(getLocalCodexAuthStatus).mockRejectedValueOnce(new Error('auth status unavailable'))
@@ -532,6 +532,71 @@ describe('OpenAI official catalog persistence', () => {
       reopened.unmount()
     }
   })
+
+  test.each(['same identity', 'probe failure', 'different device'])(
+    'revalidates the visible catalog when handing off to All (%s)',
+    async outcome => {
+      const fetchedAt = now - 31 * 60_000
+      seed(fetchedAt)
+      const refresh = Promise.withResolvers<typeof liveResponse>()
+      mocks.request.mockReturnValueOnce(refresh.promise)
+      const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
+      const deviceId = mocks.deviceId
+      const status = await getLocalCodexAuthStatus()
+      const probe = Promise.withResolvers<typeof status>()
+      const probeStarted = Promise.withResolvers<void>()
+      const opened = renderHook(
+        ({ enabled }) =>
+          useOpenAiPluginCatalog({
+            cacheKey,
+            accountScope: cacheKey,
+            deviceId,
+            enabled,
+            restoreForAll: !enabled,
+            readCatalog,
+          }),
+        { initialProps: { enabled: true } }
+      )
+      const expectVisibleCatalog = (timestamp: number) => {
+        expect(getPluginMarketplaceCache(cacheKey)).toMatchObject({
+          openAiCatalogFetchedAt: timestamp,
+          marketplaceItems: [{ id: listing.id }],
+        })
+        expect(mocks.request).toHaveBeenCalledOnce()
+      }
+      try {
+        await waitFor(() => expectVisibleCatalog(fetchedAt))
+        vi.mocked(getLocalCodexAuthStatus).mockImplementationOnce(() => {
+          probeStarted.resolve()
+          return probe.promise
+        })
+        if (outcome === 'different device') mocks.deviceId = 'device-b'
+        await act(async () => opened.rerender({ enabled: false }))
+        await probeStarted.promise
+        expectVisibleCatalog(fetchedAt)
+
+        await act(async () => {
+          if (outcome === 'probe failure') probe.reject(new Error('auth status unavailable'))
+          else probe.resolve(status)
+          refresh.resolve(liveResponse)
+        })
+        if (outcome === 'different device') {
+          await waitFor(() =>
+            expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([])
+          )
+          expect(mocks.request).toHaveBeenCalledOnce()
+          expect(JSON.parse(storedCatalog!).fetchedAt).toBe(fetchedAt)
+          return
+        }
+        await waitFor(() => expect(JSON.parse(storedCatalog!).fetchedAt).toBe(now))
+        await waitFor(() => expectVisibleCatalog(outcome === 'probe failure' ? fetchedAt : now))
+      } finally {
+        probe.resolve(status)
+        refresh.resolve(liveResponse)
+        opened.unmount()
+      }
+    }
+  )
 
   test('keeps manual refresh pending when the tab changes during the identity probe', async () => {
     seed(now - 1000)
