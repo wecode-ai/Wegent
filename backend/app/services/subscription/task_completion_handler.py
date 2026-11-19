@@ -22,19 +22,16 @@ Usage:
 
 import dataclasses
 import logging
-from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Dict, Optional
 
 from sqlalchemy import event as sqlalchemy_event
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.events import TaskCompletedEvent
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
-from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.schemas.subscription import (
@@ -672,27 +669,17 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        owner_tasks = select(TaskResource.id).where(
-            TaskResource.id == task_id, TaskResource.user_id == owner_user_id
+        successful_bindings = {
+            subtask_id: (namespace, name)
+            for subtask_id, (namespace, name) in prepared_bindings.items()
+            if sandbox_deleted or ((namespace or ""), name) in successful_keys
+        }
+        subtask_store.mark_runtime_cleanup_deleted(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+            bindings=successful_bindings,
         )
-        for subtask_id, (namespace, name) in prepared_bindings.items():
-            if sandbox_deleted or ((namespace or ""), name) in successful_keys:
-                db.query(Subtask).filter(
-                    Subtask.id == subtask_id,
-                    Subtask.task_id == task_id,
-                    Subtask.task_id.in_(owner_tasks),
-                    Subtask.executor_namespace == namespace,
-                    Subtask.executor_name == name,
-                    Subtask.executor_deleted_at == False,
-                ).update(
-                    {
-                        Subtask.executor_deleted_at: True,
-                        Subtask.updated_at: datetime.now(timezone.utc).replace(
-                            tzinfo=None
-                        ),
-                    },
-                    synchronize_session=False,
-                )
 
         db.commit()
         logger.info(

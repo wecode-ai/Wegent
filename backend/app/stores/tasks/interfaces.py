@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Literal, Optional, Protocol, Sequence
+from typing import Any, Callable, Literal, Mapping, Optional, Protocol, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -1151,6 +1151,15 @@ class SubtaskStore(Protocol):
 
     def mark_executor_deleted_by_ids(
         self, db: Session, *, subtask_ids: Sequence[int]
+    ) -> int: ...
+
+    def mark_runtime_cleanup_deleted(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int,
+        bindings: Mapping[int, tuple[Optional[str], Optional[str]]],
     ) -> int: ...
 
     def mark_task_subtasks_deleted(
