@@ -145,10 +145,10 @@ impl RuntimeWorkRpcHandler {
             let allowed = same_goal
                 && (current["status"] == "blocked"
                     || (current["status"] == "active"
-                        && matches!(
+                        && (matches!(
                             record["status"].as_str(),
                             Some("preparing" | "pending" | "resuming_goal")
-                        )));
+                        ) || conditions::is_independent_github_merge_wait(&record))));
             let same_session = match session::validate(&record, &link) {
                 Ok(()) => true,
                 Err(error) if error.code == "native_session_changed" => false,
