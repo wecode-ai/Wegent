@@ -425,6 +425,46 @@ async fn keeps_foreign_encrypted_history_sanitized_after_the_switch_request() {
 }
 
 #[tokio::test]
+async fn forwards_native_chatgpt_http_body_and_stream_unchanged() {
+    const BODY: &str = r#"{ "model": "gpt-6.2-sol", "input": [{"type":"message","role":"user","id":"wework_event_native","content":[]}], "tools":[{"type":"custom","name":"exec","description":"native contract"}] }"#;
+    const SSE: &str =
+        "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_native\"}}\n\n";
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/backend-api/codex/responses",
+                post(|body: Bytes| async move {
+                    assert_eq!(body.as_ref(), BODY.as_bytes());
+                    ([(header::CONTENT_TYPE, "text/event-stream")], SSE)
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    let upstream = upstream_from_model_config(&json!({
+        "base_url": format!("http://{address}/backend-api/codex"),
+        "codex_request_mode": "passthrough"
+    }))
+    .unwrap()
+    .unwrap();
+    let token = register("official-native-http-passthrough", upstream);
+    let response = handle(proxy_headers(&token), Bytes::from_static(BODY.as_bytes()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        SSE.as_bytes()
+    );
+    unregister(&token);
+    server.abort();
+}
+
+#[tokio::test]
 async fn restores_foreign_history_boundary_after_route_restart() {
     let captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

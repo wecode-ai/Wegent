@@ -15,6 +15,7 @@ export interface ProjectSpaceSidebarNavItem {
 
 export interface ProjectSpaceSidebarProject {
   actionsAvailable?: boolean
+  archiveDisabled?: boolean
   canManage: boolean
   count?: number
   icon: ReactNode
@@ -254,12 +255,13 @@ export function ProjectSpaceSidebar({
                     <button
                       type="button"
                       data-testid={`cloud-sidebar-archive-project-${project.id}`}
+                      disabled={project.archiveDisabled}
                       onClick={() => {
                         project.onArchive()
                         setOpenProjectId(null)
                       }}
                       role="menuitem"
-                      className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                      className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted disabled:opacity-50"
                     >
                       <span className="w-3.5 text-center" aria-hidden="true">
                         ×
