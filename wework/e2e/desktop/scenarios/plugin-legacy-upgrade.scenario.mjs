@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
+import { findNestedString, requestContainsSkillLocator } from '../modules/desktop-server.mjs'
 import {
   refreshPluginInventory,
   verifyPluginEnabledState,
@@ -522,9 +522,34 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
+        const discovered = requestContainsSkillLocator(body, active.skillPath, active.skillName)
+        if (!discovered) {
+          const catalog =
+            findNestedString(body, text => text.includes('### Available skills')) ?? ''
+          await writeFile(
+            join(resultDir, 'legacy-skill-discovery-failure.json'),
+            JSON.stringify(
+              {
+                sourceVersion: current.release.version,
+                expectedPath: active.skillPath,
+                catalogLines: catalog
+                  .split(/\r?\n/u)
+                  .filter(
+                    line =>
+                      /^- `[^`]+` = `[^`]+`$/u.test(line.trim()) ||
+                      (line.includes('(file:') && line.includes(`:${active.skillName}:`))
+                  ),
+              },
+              null,
+              2
+            )
+          ).catch(error =>
+            console.error('Legacy skill discovery diagnostics failed:', error.message)
+          )
+        }
         assert.ok(
-          requestContainsSkillLocator(body, active.skillPath, active.skillName),
-          'Codex did not discover the historical plugin in its migrated native runtime'
+          discovered,
+          `Codex did not discover the historical plugin in its migrated native runtime: ${active.skillPath}`
         )
         events = shellCommandResponse(body, active.id, active.command, workspacePath)
       } else events = [assistantMessage('Legacy plugin migration fixture ready')]

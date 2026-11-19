@@ -8,6 +8,7 @@ import {
   selectE2EModel,
   fetchJson,
   CLOUD_PUBLIC_MODEL_NAME,
+  MODEL_REQUEST_TIMEOUT_MS,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -38,12 +39,7 @@ const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
 
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
-export function createDesktopScenario({
-  electronUserDataDirectory,
-  workspacePath,
-  resultDir,
-  modelResponseTimeoutMs,
-}) {
+export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
   const requests = []
   let probeRequests = 0
   let nativeProbeRequests = 0
@@ -294,7 +290,7 @@ export function createDesktopScenario({
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: `${DONE} ${round}`, timeoutMs: modelResponseTimeoutMs }
+            { text: `${DONE} ${round}`, timeoutMs: MODEL_REQUEST_TIMEOUT_MS }
           )
           assert.equal(await readFile(artifact, 'utf8'), TOOL_OK)
         }
