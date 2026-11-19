@@ -1286,7 +1286,8 @@ impl RuntimeWorkRpcHandler {
         let queue_if_busy = bool_field(&payload, "queueIfBusy")
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
-        let was_busy = self.is_busy_local_task(&local_task_id);
+        let was_busy = self.is_busy_local_task(&local_task_id)
+            || self.native_task_holds_capacity(&local_task_id);
         // Native completion can precede isolated app-server/process cleanup.
         // Admit one continuation through the existing serial scheduler while
         // retaining the old execution's resources until cleanup finishes.

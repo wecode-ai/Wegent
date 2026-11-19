@@ -108,6 +108,9 @@ function RequestUserInputForm({
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
     [payload, t],
   )
+  const isCommandApproval =
+    (payload.interactionKind ?? payload.interaction_kind) === 'approval' &&
+    (payload.approvalKind ?? payload.approval_kind ?? 'command') === 'command'
   const isImplementationPlanRequest = isImplementationPlanQuestions(questions)
   const optionOnly =
     compact &&
@@ -472,7 +475,7 @@ function RequestUserInputForm({
                   data-testid={`request-user-input-question-${question.id}`}
                   className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary"
                 >
-                  {question.question}
+                  {isCommandApproval ? highlightRm(question.question) : question.question}
                 </div>
                 {question.options.length > 0 ? (
                   <div
@@ -760,6 +763,18 @@ function initialActiveQuestionId(
 }
 
 const CODEX_APPROVAL_QUESTION_ID = '__codex_approval'
+
+function highlightRm(commandText: string) {
+  return commandText.split(/(?<![\w.-])(rm)(?![\w./-])/).map((part, index) =>
+    index % 2 === 1 ? (
+      <strong key={index} className="font-semibold text-destructive">
+        {part}
+      </strong>
+    ) : (
+      part
+    )
+  )
+}
 
 function customDraftQuestionId(
   questions: ReturnType<typeof normalizeQuestions>,

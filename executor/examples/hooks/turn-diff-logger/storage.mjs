@@ -34,7 +34,7 @@ export async function optionalJson(path) {
   }
 }
 
-export async function writeJson(path, value) {
+export async function writeJson(path, value, { modifiedAt } = {}) {
   const bytes = Buffer.from(JSON.stringify(value) + '\n')
   if (bytes.length > MAX_METADATA_BYTES) throw new Error('Metadata exceeds 1 MiB')
   const temporary = path + '.' + randomUUID() + '.tmp'
@@ -42,6 +42,7 @@ export async function writeJson(path, value) {
   try {
     try {
       await file.writeFile(bytes)
+      if (modifiedAt !== undefined) await file.utimes(modifiedAt / 1000, modifiedAt / 1000)
       await file.sync()
     } finally {
       await file.close()

@@ -127,6 +127,7 @@ celery_app = Celery(
         "app.tasks.robot_queue_tasks",
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",
+        "app.tasks.collaboration_tasks",
         "app.tasks.video_tasks",
     ],
 )

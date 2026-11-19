@@ -8,6 +8,7 @@ import {
 import { createSingleRootLocalProject, join, selectE2EModel } from '../modules/shared.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { waitForUnreadBadge } from '../modules/unread-badge.mjs'
 
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -169,40 +170,6 @@ async function selectTask(control, sidebar, task, completion, timeoutMs) {
     `Timed out waiting for notification isolation task ${task.taskId}; ` +
       `active task was ${lastTaskId}, transcript loading was ${transcriptLoading}, ` +
       `task running was ${taskRunning}, last message was ${JSON.stringify(lastMessage)}`
-  )
-}
-
-async function waitForUnreadBadge(control, count, timeoutMs, trayCount = count) {
-  const { platform } = JSON.parse(await control.command('getNativeWindowState', 'body'))
-  const deadline = Date.now() + timeoutMs
-  let latest
-  while (Date.now() < deadline) {
-    latest = JSON.parse(await control.command('getTraySnapshot', 'body'))
-    const unreadHeading = latest.menu.findIndex(item => item.id === 'heading:unread')
-    const unreadItems = []
-    if (unreadHeading >= 0) {
-      for (const item of latest.menu.slice(unreadHeading + 1)) {
-        if (item.type === 'separator') break
-        if (item.id?.startsWith('task:')) unreadItems.push(item)
-      }
-    }
-    const expectedBadge = platform === 'darwin' ? (count > 0 ? String(count) : '') : null
-    if (unreadItems.length === trayCount && latest.dockBadge === expectedBadge) {
-      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-      const hasBellBadge = snapshot.testIds.includes('wework-notifications-unread')
-      if (count === 0 && !hasBellBadge) return
-      if (count > 0 && hasBellBadge) {
-        const bellCount = await control.command(
-          'getText',
-          '[data-testid="wework-notifications-unread"]'
-        )
-        if (bellCount === String(count)) return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  assert.fail(
-    `Expected ${count} unread notifications, ${trayCount} unread tray tasks and matching Dock badge: ${JSON.stringify(latest)}`
   )
 }
 

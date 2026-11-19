@@ -29,7 +29,9 @@ impl GlobalCapabilityStore {
                 .join("plugins")
                 .join(self.marketplace_plugin_name(spec, claude));
             self.ensure_state_path(&link, true)?;
-            if fs::read_link(&link).is_ok_and(|target| target == runtime) {
+            if fs::read_link(&link)
+                .is_ok_and(|target| shared_packages::same_entry(&target, &runtime))
+            {
                 reused.insert(link);
             } else if link.is_dir() && !link.is_symlink() {
                 candidates.insert(link);
