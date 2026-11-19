@@ -86,7 +86,7 @@ export const ComposerContextRow: Story = {
           label={catalog('project')}
           testId="catalog-composer-project"
         />
-        <SelectField
+        <SelectField<'current' | 'worktree'>
           value={executionMode}
           options={[
             { value: 'current', label: t('workbench.execution_mode_current_workspace') },

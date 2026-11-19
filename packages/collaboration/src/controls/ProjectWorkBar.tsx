@@ -827,7 +827,7 @@ export function ProjectWorkBar({
                     aria-expanded={open}
                     aria-label={projectWorkTriggerAriaLabel}
                   >
-                    <span className="max-w-[12rem] truncate">{selectedProjectLabel}</span>
+                    <span className="min-w-0 truncate">{selectedProjectLabel}</span>
                     {pendingWorkspaceSelection ? (
                       <>
                         <span className="text-text-muted">·</span>
@@ -836,6 +836,7 @@ export function ProjectWorkBar({
                         </span>
                       </>
                     ) : null}
+                    <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
                   </ComposerContextButton>
                 )}
               </div>
@@ -850,6 +851,7 @@ export function ProjectWorkBar({
                 >
                   <FolderPlus className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span className="min-w-0 truncate">{projectWorkTriggerLabel}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
                 </ComposerContextButton>
               )
             )}
