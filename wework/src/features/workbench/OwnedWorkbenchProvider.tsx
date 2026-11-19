@@ -444,7 +444,6 @@ export function OwnedWorkbenchProvider({
   const persistNewChatCommandApproval = useCallback(
     (mode: RuntimeCommandApprovalMode) => {
       const selection = latestUserPreferencesRef.current?.wework_new_chat_model_selection
-      if (selection?.options?.[RUNTIME_COMMAND_APPROVAL_OPTION] === mode) return
       persistNewChatModelSelection({
         ...(selection ?? { modelName: '', modelType: null }),
         options: { ...selection?.options, [RUNTIME_COMMAND_APPROVAL_OPTION]: mode },
