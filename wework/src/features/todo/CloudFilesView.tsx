@@ -1,4 +1,5 @@
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { useCallback, useId, useMemo, type ReactNode } from 'react'
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
 import {
   CollaborationFilesView,
   createCollaborationTranslator,
@@ -16,6 +17,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import type { WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { readFileFromAccessUrl, saveBlobToDownloads } from './cloudFileTransfer'
+
+const fileApiIdentities = new WeakMap<object, number>()
+let nextFileApiIdentity = 0
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 type CloudFilesWorkspaceApi = Pick<SharedWorkspaceApi, 'files' | 'attachments'>
@@ -55,12 +59,26 @@ function WeworkFilesView({
   workspaceApi: CloudFilesWorkspaceApi
   project: CloudProject
 }) {
+  const instanceId = useId()
   const { i18n, t } = useTranslation('common')
   const language = i18n.resolvedLanguage ?? i18n.language ?? 'zh-CN'
   const sharedTranslate = useMemo(
     () => createCollaborationTranslator(language.startsWith('en') ? 'en' : 'zh-CN'),
     [language]
   )
+  useMemo(() => {
+    let apiId = fileApiIdentities.get(workspaceApi)
+    if (apiId === undefined) {
+      apiId = ++nextFileApiIdentity
+      fileApiIdentities.set(workspaceApi, apiId)
+    }
+    reportE2EDiagnostic('project-files-scope', {
+      instanceId,
+      apiId,
+      projectId: String(project.id),
+      projectStore: project.project_store,
+    })
+  }, [instanceId, workspaceApi, project.id, project.project_store])
   const filesApi = useMemo(
     () =>
       createSharedWorkspaceFilesViewApi(
