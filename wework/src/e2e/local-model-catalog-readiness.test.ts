@@ -12,7 +12,7 @@ vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: () => ({ runtimeWorkApi: { prepareRuntimeModel } }),
 }))
 vi.mock('@/features/model-settings/localModelSettings', () => ({ listLocalModelConfigs }))
-vi.mock('./automation', () => ({ waitForDesktopE2ERuntimeSeed: () => Promise.resolve() }))
+vi.mock('./automation', () => ({ waitForDesktopE2ELocalModelSeed: () => Promise.resolve() }))
 
 beforeEach(() => {
   vi.resetAllMocks()

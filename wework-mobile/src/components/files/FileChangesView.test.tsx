@@ -144,7 +144,8 @@ describe('FileChangesView', () => {
       target.deviceId,
       target.path,
       selection,
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      target.taskId
     )
     expect(element('files-changes-list')?.props.data).toMatchObject([
       { path: 'src/file.ts', additions: 1, deletions: 1 },
@@ -245,7 +246,8 @@ describe('FileChangesView', () => {
       'new-device',
       target.path,
       { mode: 'unstaged' },
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      target.taskId
     )
   })
 

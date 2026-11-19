@@ -134,7 +134,9 @@ export function FilePreviewProvider({
           if (request.kind === 'workspace' && !request.lineStart) {
             const listing = await api.listWorkspaceDirectory(
               request.target.deviceId,
-              workspaceParentPath(request.path)
+              workspaceParentPath(request.path),
+              request.target.path,
+              request.target.taskId
             )
             if (listing.entries.some(entry => entry.path === request.path && entry.isDirectory))
               location = { kind: 'directory', target: { ...request.target, path: request.path } }
@@ -192,7 +194,8 @@ export function FilePreviewProvider({
         }
       },
       openAttachment: attachment => openFile({ kind: 'attachment', attachment }),
-      openChanges: (summary, path) => openFile({ kind: 'diff', summary, path }),
+      openChanges: (summary, path) =>
+        openFile({ kind: 'diff', summary, path, taskId: target?.taskId }),
     }),
     [api, target, openFile, openLinkWithTarget, showError]
   )
