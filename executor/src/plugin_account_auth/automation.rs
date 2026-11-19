@@ -7,6 +7,7 @@ use super::{
 };
 #[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -359,9 +360,25 @@ impl Reconciler {
             let actions = actions.clone();
             pending.spawn(async move {
                 let mut results = Vec::with_capacity(group.len());
-                for (key, package, foreground) in group {
-                    let scoped = transport.for_plugin(installed_id, foreground);
-                    let result = reconcile_target(scoped, &home, &package, &actions).await;
+                // A connector waiting for its runtime must not delay ready connectors or claim an intent.
+                let mut preparations = group
+                    .into_iter()
+                    .map(|(key, package, foreground)| {
+                        let home = &home;
+                        async move {
+                            let prepared = prepare_package_python(home, &package).await;
+                            (key, package, foreground, prepared)
+                        }
+                    })
+                    .collect::<FuturesUnordered<_>>();
+                while let Some((key, package, foreground, prepared)) = preparations.next().await {
+                    let result = match prepared {
+                        Ok(()) => {
+                            let scoped = transport.for_plugin(installed_id, foreground);
+                            reconcile_prepared_target(scoped, &home, &package, &actions).await
+                        }
+                        Err(error) => Err(error),
+                    };
                     crate::logging::log_executor_event(
                         "plugin auth automatic enrollment finished",
                         &[
@@ -435,14 +452,12 @@ impl Reconciler {
     }
 }
 
-async fn reconcile_target<T: super::PluginAuthTransport>(
+async fn reconcile_prepared_target<T: super::PluginAuthTransport>(
     transport: T,
     home: &Path,
     package: &PreparedPackage,
     actions: &tokio::sync::Semaphore,
 ) -> Result<(), AuthError> {
-    prepare_package_python(home, package).await?;
-    // Waiting for Python must not occupy a provider slot or consume an intent's TTL.
     let _permit = actions
         .acquire()
         .await
