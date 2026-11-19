@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -12,7 +13,11 @@ use tokio::{
     task::{AbortHandle, JoinSet},
 };
 
-#[derive(Deserialize)]
+mod script_state;
+
+use script_state::ScriptState;
+
+#[derive(Deserialize, PartialEq, Eq)]
 pub(crate) struct BridgeRecord {
     pub address: String,
     pub token: String,
@@ -62,6 +67,7 @@ async fn run_with_io(
     input: impl AsyncBufRead + Unpin,
     mut output: impl AsyncWrite + Unpin,
 ) -> Result<(), String> {
+    let script_state = Arc::new(ScriptState::default());
     let mut lines = input.lines();
     let mut pending = JoinSet::new();
     let mut cancellations: HashMap<String, AbortHandle> = HashMap::new();
@@ -140,8 +146,13 @@ async fn run_with_io(
         }
         let client = bridge.clone();
         let request_key = key.clone();
-        let handle =
-            pending.spawn(async move { (request_key, handle_request(&client, &request).await) });
+        let script_state = Arc::clone(&script_state);
+        let handle = pending.spawn(async move {
+            (
+                request_key,
+                handle_request(&client, &script_state, &request).await,
+            )
+        });
         if let Some(key) = key {
             cancellations.insert(key, handle);
         }
@@ -172,7 +183,11 @@ struct BridgeClient {
 }
 
 /// Dispatch an MCP message, omitting replies for notifications.
-async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value> {
+async fn handle_request(
+    client: &BridgeClient,
+    script_state: &ScriptState,
+    request: &Value,
+) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request
         .get("method")
@@ -197,7 +212,7 @@ async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value>
             let id = id?;
             Some(
                 match bridge_request(client, json!({ "action": "listTools" })).await {
-                    Ok(tools) => result_response(id, json!({ "tools": tools })),
+                    Ok(tools) => result_response(id, json!({ "tools": describe_tools(tools) })),
                     Err(error) => error_response(id, -32000, error),
                 },
             )
@@ -215,17 +230,19 @@ async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value>
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            Some(
-                match bridge_request(
+            let result = if name == "run_script" {
+                script_state.run(client, arguments).await
+            } else {
+                bridge_request(
                     client,
                     json!({ "action": "callTool", "name": name, "arguments": arguments }),
                 )
                 .await
-                {
-                    Ok(result) => result_response(id, mcp_tool_result(result)),
-                    Err(error) => error_response(id, -32000, error),
-                },
-            )
+            };
+            Some(match result {
+                Ok(result) => result_response(id, mcp_tool_result(result)),
+                Err(error) => error_response(id, -32000, error),
+            })
         }
         "ping" => id.map(|id| result_response(id, json!({}))),
         _ => id.map(|id| error_response(id, -32601, format!("Unknown method: {method}"))),
@@ -236,8 +253,16 @@ async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value>
 async fn bridge_request(bridge: &BridgeClient, payload: Value) -> Result<Value, String> {
     // Each operation observes enable/disable and token rotation without restarting Codex.
     let record = read_bridge_record(&bridge.runtime_path)?;
-    let client = &bridge.client;
-    let response = client
+    bridge_request_with_record(bridge, &record, payload).await
+}
+
+async fn bridge_request_with_record(
+    bridge: &BridgeClient,
+    record: &BridgeRecord,
+    payload: Value,
+) -> Result<Value, String> {
+    let response = bridge
+        .client
         .post(format!("http://{}/computer", record.address.trim()))
         .bearer_auth(record.token.trim())
         .json(&payload)
@@ -261,10 +286,44 @@ async fn bridge_request(bridge: &BridgeClient, payload: Value) -> Result<Value, 
     Ok(body.get("data").cloned().unwrap_or(Value::Null))
 }
 
+/// Describe the common desktop workflow while keeping the driver catalog
+/// authoritative for tool availability, schemas, and annotations.
+fn describe_tools(mut catalog: Value) -> Value {
+    if let Some(tools) = catalog.as_array_mut() {
+        for tool in tools {
+            let description = match tool.get("name").and_then(Value::as_str) {
+                Some("run_steps") => "Run known desktop actions and checks in order for a named app or window. Steps can locate fresh controls by role/name and use wait_for or expect. Stops at the first failure. Set observe:{} to return one accessibility diff after the batch. Add include_screenshot:true to observe when visual detail is required. Use run_script for branching. See get_guide(topic: batching) for details.",
+                Some("run_script") => {
+                    if let Some(properties) = tool.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut) {
+                        properties.insert("state_mode".into(), json!({
+                            "type": "string",
+                            "enum": ["reuse", "reset"],
+                            "description": "Opt in to a mutable JSON object named state (4 KiB). Reuse the previous successful call's values in this conversation, or reset before running. Omit for a one-off script."
+                        }));
+                    }
+                    "Run bounded JavaScript with only the cua desktop API. Bind an app with await cua.getApp(nameOrBundleId), observe with app.getState or query, and branch or loop over actions. For multiple calls set state_mode:reuse and store reusable JSON values or app references in state. Rebind apps from their saved names or IDs. See get_guide(topic: batching)."
+                },
+                Some("get_window_state") => "Read a window's accessibility tree and screenshot. For text-first reads set include_screenshot:false. Use query to narrow the tree and since:latest for subsequent reads of the same target and query. Prefer current element_token values to coordinates. Tokens expire when a new tree snapshot replaces them. A screenshot-only read preserves current accessibility tokens. Use only pixels from the current screenshot for coordinate actions.",
+                _ => continue,
+            };
+            tool["description"] = json!(description);
+        }
+    }
+    catalog
+}
+
 fn mcp_tool_result(result: Value) -> Value {
+    let structured_content = result
+        .get("structuredJson")
+        .and_then(Value::as_str)
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .filter(|value| !value.is_null());
     let mut content = Vec::new();
     if let Some(text) = result.get("text").and_then(Value::as_str) {
-        if !text.is_empty() {
+        let duplicates_structure = structured_content.as_ref().is_some_and(|structured| {
+            serde_json::from_str::<Value>(text).is_ok_and(|text_json| &text_json == structured)
+        });
+        if !text.is_empty() && !duplicates_structure {
             content.push(json!({ "type": "text", "text": text }));
         }
     }
@@ -278,13 +337,9 @@ fn mcp_tool_result(result: Value) -> Value {
             }
         }
     }
-    if content.is_empty() {
+    if content.is_empty() && structured_content.is_none() {
         content.push(json!({ "type": "text", "text": result.to_string() }));
     }
-    let structured_content = result
-        .get("structuredJson")
-        .and_then(Value::as_str)
-        .and_then(|value| serde_json::from_str::<Value>(value).ok());
     let mut response = json!({
         "content": content,
         "isError": result.get("isError").and_then(Value::as_bool).unwrap_or(false)
@@ -305,7 +360,10 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{bridge_request, read_bridge_record, run_with_io, BridgeClient};
+    use super::{
+        bridge_request, describe_tools, mcp_tool_result, read_bridge_record, run_with_io,
+        BridgeClient,
+    };
     use serde_json::json;
     use std::time::Duration;
     use tokio::{
@@ -315,6 +373,54 @@ mod tests {
         task::JoinHandle,
         time::timeout,
     };
+
+    #[test]
+    fn desktop_result_emits_equal_json_once_and_preserves_other_content() {
+        let report = json!({"ok": false, "error": "window changed"});
+        let result = mcp_tool_result(json!({
+            "text": r#"{ "error": "window changed", "ok": false }"#,
+            "structuredJson": report.to_string(),
+            "isError": true,
+        }));
+        assert_eq!(
+            result,
+            json!({"content": [], "structuredContent": report, "isError": true})
+        );
+
+        let result = mcp_tool_result(json!({
+            "text": "Window changed after the click",
+            "structuredJson": report.to_string(),
+            "images": [{"dataBase64": "aW1hZ2U=", "mimeType": "image/png"}],
+        }));
+        assert_eq!(
+            result,
+            json!({
+                "content": [
+                    {"type": "text", "text": "Window changed after the click"},
+                    {"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}
+                ],
+                "structuredContent": report,
+                "isError": false,
+            })
+        );
+    }
+    #[test]
+    fn desktop_workflow_descriptions_preserve_schemas_annotations_and_other_tools() {
+        let batch = json!({
+            "name":"run_steps",
+            "description":"Driver documentation",
+            "inputSchema":{"type":"object","required":["steps"]},
+            "outputSchema":{"type":"object"},
+            "annotations":{"readOnlyHint":false}
+        });
+        let list_apps = json!({"name":"list_apps","description":"List apps"});
+        let catalog = describe_tools(json!([batch, list_apps]));
+        let mut expected = batch;
+        let description = catalog[0]["description"].as_str().unwrap();
+        assert!(description.contains("observe:{}"));
+        expected["description"] = json!(description);
+        assert_eq!(catalog, json!([expected, list_apps]));
+    }
 
     #[test]
     fn bridge_record_tracks_enable_rotation_and_disable_without_process_environment() {

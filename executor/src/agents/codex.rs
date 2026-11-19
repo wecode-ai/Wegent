@@ -4539,6 +4539,26 @@ fn codex_app_server_command(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    if env::var("WEWORK_PROCESS_TRACE").as_deref() == Ok("1") {
+        let inherited_log = launch_config
+            .env
+            .get("RUST_LOG")
+            .cloned()
+            .or_else(|| env::var("RUST_LOG").ok())
+            .unwrap_or_else(|| "error".to_owned());
+        // These Codex spans and events record process lifecycle metadata.
+        // Keep general request tracing and the production SQLite filter unchanged.
+        command.env(
+            "RUST_LOG",
+            format!(
+                concat!(
+                    "{},codex_core::unified_exec::process_manager=info,",
+                    "codex_exec_server::local_process=info,codex_otel.trace_safe=info"
+                ),
+                inherited_log
+            ),
+        );
+    }
     command.env_remove("WEGENT_CONNECTION_SERVICE_TOKEN");
     // Use the native Codex desktop HTTP identity. Authentication and the actual
     // runtime version remain owned by Codex; never synthesize browser cookies.
@@ -6116,7 +6136,7 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
     environment
 }
 
-fn computer_use_mcp_config_overrides() -> Vec<String> {
+fn computer_use_mcp_config_overrides(task_id: &str) -> Vec<String> {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     if crate::computer_use_mcp::read_bridge_record(&path).is_err() {
         return Vec::new();
@@ -6136,7 +6156,8 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
         format!(
             "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["computer-use-mcp-server", path]))
+            // Separate the native MCP pool by task because the process owns script state.
+            toml_json_value(&json!(["computer-use-mcp-server", path, task_id]))
         ),
         format!(
             "{}=15",
