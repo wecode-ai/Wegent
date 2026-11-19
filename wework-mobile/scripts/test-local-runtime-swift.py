@@ -15,6 +15,7 @@ SUITES = [
     "RuntimeStartupDiagnostics",
     "RuntimeDiagnostics",
     "RuntimeLegacyDiagnostics",
+    "RuntimeImageInstaller",
 ]
 
 

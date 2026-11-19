@@ -507,6 +507,50 @@ describe('creating a conversation on the only computer', () => {
     expect(state.running).toBe(true)
   })
 
+  it.each([false, true])(
+    'repairs a missed terminal event without overriding a newer start (race: %s)',
+    async newerStart => {
+      mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+      await mount()
+      const item = state.conversations[0]!
+      await act(() => state.openConversation(item))
+      const running = {
+        revision: '1',
+        epoch: 'epoch',
+        phase: 'running' as const,
+        turnId: 'turn',
+        latestTurnId: 'turn',
+        outcome: null,
+      }
+      const event = (executionState: typeof running) =>
+        mocks.lifecycleSubscribe.mock.lastCall![0](item.address, {
+          name: 'runtime.task.status',
+          payload: { data: { task: { executionState } } },
+        })
+      await act(() => event(running))
+      expect(state.running).toBe(true)
+      const history = deferred<unknown>()
+      mocks.transcript.mockReturnValueOnce(history.promise)
+      let opened!: Promise<void>
+      await act(() => {
+        opened = state.openConversation(item)
+      })
+      if (newerStart)
+        await act(() => event({ ...running, revision: '3', turnId: 'next', latestTurnId: 'next' }))
+      await act(async () => {
+        history.resolve({
+          taskId: item.address.taskId,
+          running: false,
+          messages: [{ id: 'reply', role: 'assistant', content: 'Complete', status: 'completed' }],
+        })
+        await opened
+      })
+      await act(() => event(running))
+      expect(state.messages.some(message => message.content === 'Complete')).toBe(true)
+      expect(state.running).toBe(newerStart)
+    }
+  )
+
   it('does not preflight an existing conversation or a locally shared computer', async () => {
     mocks.listWork.mockResolvedValue(workFor('app-record-11'))
     await act(() => {
@@ -648,12 +692,20 @@ describe('creating a conversation on the only computer', () => {
     })
     const [scope, listener] = mocks.conversationSubscribe.mock.calls.at(-1)!
     expect(scope.taskId).toBe('canonical')
-    await act(() =>
+    await act(() => {
+      listener({
+        name: 'response.created',
+        payload: { taskId: 'canonical', subtaskId: 'turn', data: {} },
+      })
       listener({
         name: 'response.output_text.delta',
-        payload: { taskId: 'canonical', subtaskId: 'turn', data: { delta: 'Live', offset: 0 } },
+        payload: {
+          taskId: 'canonical',
+          subtaskId: 'turn',
+          data: { itemId: 'answer', delta: 'Live', block_offset: 0 },
+        },
       })
-    )
+    })
     expect(state.messages.map(message => message.content)).toEqual(['你好', 'Live'])
     expect(state.currentAddress?.taskId).toBe('canonical')
   })

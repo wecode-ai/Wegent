@@ -19,11 +19,16 @@ import {
   splitStaticMarkdownChunks,
 } from '../../../packages/collaboration/src/markdown/assistantMarkdownWindowing'
 import { useBufferedStreamingText } from '../../../packages/collaboration/src/markdown/useBufferedStreamingText'
+import { classifyComposerReference } from '../../../packages/collaboration/src/composer/composerReference'
+import { getRecognizedLink } from '../../../packages/collaboration/src/markdown/link-preview'
+import { preprocessCjkEmphasis } from '../../../packages/collaboration/src/markdown/preprocessCjkEmphasis'
+import { stripUnsupportedContentReferenceCitations } from '../../../packages/collaboration/src/markdown/assistantAnnotations'
 
 interface AssistantMarkdownProps {
   children: string
   muted?: boolean
   streaming?: boolean
+  variant?: 'user' | 'assistant'
 }
 
 const ACCESSIBILITY_LABELS: AccessibilityLabels = {
@@ -53,14 +58,24 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   children,
   muted = false,
   streaming = false,
+  variant = 'assistant',
 }: AssistantMarkdownProps) {
   const theme = useTheme()
   const latestContent = useRef(children)
   latestContent.current = children
-  const content = useBufferedStreamingText(
+  const bufferedContent = useBufferedStreamingText(
     children,
     streaming,
     children.length < 4_000 ? 48 : children.length < 32_000 ? 96 : 160
+  )
+  const content = useMemo(
+    () =>
+      preprocessCjkEmphasis(
+        variant === 'user'
+          ? bufferedContent
+          : stripUnsupportedContentReferenceCitations(bufferedContent)
+      ),
+    [bufferedContent, variant]
   )
   const chunks = useMemo(
     () =>
@@ -85,7 +100,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     return [...images.values()]
   }, [content])
   const markdownStyle = useMemo<MarkdownStyle>(() => {
-    const textColor = muted ? theme.colors.onSurfaceVariant : theme.colors.onBackground
+    const textColor =
+      variant === 'user' || muted ? theme.colors.onSurfaceVariant : theme.colors.onBackground
     const subtleSurface = theme.colors.elevation.level2
     return {
       paragraph: {
@@ -93,7 +109,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         fontSize: muted ? 15 : 17,
         lineHeight: muted ? 23 : 27,
         marginTop: 0,
-        marginBottom: muted ? 8 : 12,
+        marginBottom: variant === 'user' ? 6 : muted ? 8 : 12,
       },
       h1: {
         color: textColor,
@@ -231,7 +247,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       },
       image: { maxHeight: 320, resizeMode: 'contain', borderRadius: 10, marginBottom: 14 },
     }
-  }, [muted, theme.colors, theme.dark])
+  }, [muted, theme.colors, theme.dark, variant])
 
   return (
     <>
@@ -243,6 +259,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           streaming={streaming && index === chunks.length - 1}
           trailingMargin={index < chunks.length - 1}
           onCopyMessage={copyMessage}
+          variant={variant}
         />
       ))}
       {imageFileLinks.length ? <ImageFileLinks links={imageFileLinks} /> : null}
@@ -256,14 +273,33 @@ const MarkdownChunk = memo(function MarkdownChunk({
   streaming,
   trailingMargin,
   onCopyMessage,
+  variant,
 }: {
   content: string
   markdownStyle: MarkdownStyle
   streaming: boolean
   trailingMargin: boolean
   onCopyMessage: () => void
+  variant: NonNullable<AssistantMarkdownProps['variant']>
 }) {
   const filePreview = useMobileFilePreview()
+  const theme = useTheme()
+  const nativeStyle = useMemo(() => {
+    const linkVariants: NonNullable<MarkdownStyle['linkVariants']> = {}
+    for (const { href, title } of extractMarkdownLinks(content)) {
+      const target = classifyMarkdownLink(href)
+      const recognized = title !== href && getRecognizedLink(href)
+      const mention = variant === 'user' && classifyComposerReference(title, href)
+      if (!recognized && !mention && target.kind !== 'file') continue
+      const pattern = `^${href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`
+      linkVariants[pattern] = {
+        color: theme.colors.primary,
+        underline: false,
+        ...(recognized && { backgroundColor: theme.colors.primaryContainer }),
+      }
+    }
+    return Object.keys(linkVariants).length ? { ...markdownStyle, linkVariants } : markdownStyle
+  }, [content, markdownStyle, theme.colors.primary, theme.colors.primaryContainer, variant])
   const menuItems = useMemo(
     () => [{ text: '复制整条消息', onPress: onCopyMessage }],
     [onCopyMessage]
@@ -284,16 +320,16 @@ const MarkdownChunk = memo(function MarkdownChunk({
       accessibilityLabels={ACCESSIBILITY_LABELS}
       allowFontScaling
       allowTrailingMargin={trailingMargin}
-      containerStyle={styles.container}
+      containerStyle={variant === 'assistant' ? styles.container : undefined}
       contextMenuItems={menuItems}
       enableTaskListItemToggle={false}
       flavor="github"
       lineBreakStrategyIOS="standard"
       markdown={content}
-      markdownStyle={markdownStyle}
+      markdownStyle={nativeStyle}
       md4cFlags={MARKDOWN_FLAGS}
       onLinkPress={openLink}
-      selectable
+      selectable={variant === 'assistant'}
       selectionMenuConfig={SELECTION_MENU}
       streamingAnimation={streaming}
       streamingConfig={STREAMING_CONFIG}

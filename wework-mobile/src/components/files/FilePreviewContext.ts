@@ -1,3 +1,4 @@
+import type { WorkspaceGitShortStat } from '../../../../packages/chat-core/src/workspace-git'
 import { createContext, useContext } from 'react'
 import type { Attachment, TurnFileChangesSummary } from '../../../../packages/chat-core/src/runtime'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
@@ -8,6 +9,7 @@ export interface MobileFilePreviewActions {
   target: MobileWorkspaceFileTarget | null
   openBrowser: () => void
   openChangesBrowser: (selection?: WorkspaceGitSelection) => void
+  loadChangesSummary: (signal?: AbortSignal) => Promise<WorkspaceGitShortStat>
   loadChanges: (
     selection: WorkspaceGitSelection,
     signal?: AbortSignal

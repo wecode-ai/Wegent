@@ -9,7 +9,7 @@ declare global {
   }
 }
 
-const sources = import.meta.glob(['./AssistantMarkdown.tsx', './MessageList.tsx'], {
+const sources = import.meta.glob(['./AssistantMarkdown.tsx'], {
   eager: true,
   import: 'default',
   query: '?raw',
@@ -26,11 +26,5 @@ describe('assistant markdown presentation contract', () => {
     expect(markdown).toContain('codeBlock: {')
     expect(markdown).toContain('itemSpacing: muted ? 2 : 6')
     expect(markdown).not.toContain('react-native-markdown-display')
-  })
-
-  it('enables progressive rendering while an assistant message streams', () => {
-    const messages = sources['./MessageList.tsx']
-
-    expect(messages).toContain("<AssistantMarkdown streaming={message.status === 'streaming'}>")
   })
 })

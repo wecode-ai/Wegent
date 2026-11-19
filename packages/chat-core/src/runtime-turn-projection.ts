@@ -68,7 +68,7 @@ function projectTurn(
   const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
     const shouldProjectEmptyAssistant =
       isLast &&
-      turn.status !== "done" &&
+      (turn.status !== "done" || Boolean(turn.fileChanges)) &&
       (turn.id !== null || turn.stoppedNotice === true);
     if (assistantItems.length === 0 && !shouldProjectEmptyAssistant) {
       return;

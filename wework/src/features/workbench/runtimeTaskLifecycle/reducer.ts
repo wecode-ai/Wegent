@@ -1,3 +1,4 @@
+import { isNewerRuntimeExecutionState } from '../../../../../packages/chat-core/src/runtime-execution-state'
 import { dequal } from 'dequal'
 import {
   isRuntimeGoalExecutionActive,
@@ -15,7 +16,7 @@ function reduceNativeSnapshot(
 ): RuntimeTaskLifecycleState {
   const execution = event.task.executionState
   const previous = state.task?.executionState
-  if (!execution || (previous && BigInt(execution.revision) <= BigInt(previous.revision))) {
+  if (!execution || !isNewerRuntimeExecutionState(previous, execution)) {
     const task = state.task ? mergeRuntimeTaskSnapshotMetadata(state.task, event.task) : state.task
     return task === state.task ? state : { ...state, task }
   }

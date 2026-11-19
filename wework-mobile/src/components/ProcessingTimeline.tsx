@@ -35,13 +35,14 @@ interface UserInputPresentation extends RequestUserInputHandlers {
 
 export function ProcessingTimeline({
   message,
+  interleaved = false,
   ...userInput
-}: { message: ChatMessage } & UserInputPresentation) {
+}: { message: ChatMessage; interleaved?: boolean } & UserInputPresentation) {
   // Only an exact duplicate of the visible reply changes processing rows.
   // Other reply deltas must not rebuild already completed tool/file groups.
   const reply = message.content.trim()
   const duplicateReply = message.blocks?.find(
-    block => block.type === 'text' && block.content.trim() === reply
+    block => !message.runtimeDisplayItems && block.type === 'text' && block.content.trim() === reply
   )
   const excludedReply = duplicateReply && 'content' in duplicateReply ? duplicateReply.content : ''
   const segments = useMemo(
@@ -52,7 +53,9 @@ export function ProcessingTimeline({
   const images = useMemo(() => generatedImagesFromBlocks(message.blocks), [message.blocks])
   const [expanded, setExpanded] = useState(false)
   const collapsed = useAutomaticCollapse(
-    !rows.some(isRequestUserInputRow) &&
+    !interleaved &&
+      message.runtimeStatus !== 'cancelled' &&
+      !rows.some(isRequestUserInputRow) &&
       shouldCollapseCompletedProcessing(message.blocks, message.content, rows, message.status)
   )
   if (!rows.length && !images.length) return null

@@ -1,3 +1,7 @@
+import {
+  isNewerRuntimeExecutionState,
+  isRuntimeExecutionRunning,
+} from '../../../../../packages/chat-core/src/runtime-execution-state'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import type { RuntimeTaskLifecycleSnapshot } from './types'
@@ -120,7 +124,7 @@ export function shouldReplaceRuntimeTaskProjection(
   if (current.executionState || candidate.executionState) {
     if (!candidate.executionState) return false
     if (!current.executionState) return true
-    return BigInt(candidate.executionState.revision) > BigInt(current.executionState.revision)
+    return isNewerRuntimeExecutionState(current.executionState, candidate.executionState)
   }
   if (current.cachedProjection !== candidate.cachedProjection) {
     return current.cachedProjection === true
@@ -277,8 +281,7 @@ export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean 
 }
 
 export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean {
-  if (task.executionState)
-    return task.executionState.phase !== 'idle' && task.executionState.phase !== 'queued'
+  if (task.executionState) return isRuntimeExecutionRunning(task.executionState)
   const normalizedTask = normalizeRuntimeTaskSummary(task)
   if (normalizedTask.optimistic === true) return false
   if (isRuntimeGoalExecutionActive(normalizedTask)) return true

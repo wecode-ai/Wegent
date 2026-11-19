@@ -76,10 +76,26 @@ pnpm build
 ./scripts/run-mobile.sh android
 ```
 
-Set an optional build-time Backend default with `EXPO_PUBLIC_BACKEND_URL`. When it is omitted,
-the app asks the user for the Backend address before login and remembers a successfully connected
-address on the device. The app reads the Web and Socket.IO origins from `/api/auth/wework/config`;
-users never enter or copy an access token.
+Set an optional build-time Backend default with `EXPO_PUBLIC_BACKEND_URL`, or pass it to a build
+command with `pnpm build:configured`:
+
+```bash
+pnpm build:configured --backend-url https://backend.example.com -- pnpm build:ios
+pnpm build:configured --backend-url https://backend.example.com -- pnpm build:android
+```
+
+The wrapper also accepts native build commands after `--`, including `xcodebuild` and Gradle, so
+the same address reaches the JavaScript bundle inside the native application. It does not modify
+source files or create an environment file. The wrapper preserves the child command's arguments
+and exit status. Values must be HTTP or HTTPS URLs without embedded credentials.
+
+Without an option or environment value, the build has no default address. To override an existing
+environment value with an empty default, use `pnpm build:configured --backend-url '' -- pnpm build`.
+The app asks for an address before Backend login when no default is available. A successfully
+connected address saved on the device takes precedence over the build default; users can change it
+in connection settings. The app reads Web and Socket.IO origins from `/api/auth/wework/config`;
+users never enter or copy an access token. The address is public application configuration, so never
+use this option for tokens or other secrets.
 
 The existing cloud `workspace-attachments` CI checkpoint covers the real file chunk protocol,
 including full-file integrity beyond 512 KiB. It does not validate native mobile UI, and E2E was not

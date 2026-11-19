@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatReducer } from './chatReducer'
+import { chatReducer } from '../../test/chatHarness'
 import { collectMobileSubagents, mobileSubagentActive } from './mobileSubagents'
 
 const rawAgent = {

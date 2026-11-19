@@ -65,7 +65,7 @@ def verify_source(source):
     return digest(patch)
 
 
-def build_libraries(source, output):
+def build_libraries(source, output, *, host=False):
     tools = output / "build-tools"
     if not (tools / "bin/meson").exists():
         run("uv", "venv", "--python", "3.12", tools)
@@ -78,7 +78,7 @@ def build_libraries(source, output):
             "meson==1.12.1",
             "ninja==1.13.2",
         )
-    build = output / "build-ish-ios"
+    build = output / ("build-ish-host" if host else "build-ish-ios")
     toolbin = build / "toolbin"
     toolbin.mkdir(parents=True, exist_ok=True)
     uv = shutil.which("uv")
@@ -93,19 +93,7 @@ def build_libraries(source, output):
         script = toolbin / name
         script.write_text("#!/bin/sh\nexec " + shlex.join(command) + ' "$@"\n')
         script.chmod(0o755)
-    sdk = read("xcrun", "--sdk", "iphoneos", "--show-sdk-path")
-    clang = read("xcrun", "--sdk", "iphoneos", "--find", "clang")
-    cross = build / "ios-cross.txt"
-    cross.write_text(
-        "[binaries]\n"
-        f"c = {repr([clang, '-arch', 'arm64', '-isysroot', sdk, '-miphoneos-version-min=16.4'])}\n"
-        f"ar = {read('xcrun', '--sdk', 'iphoneos', '--find', 'ar')!r}\n"
-        "pkg-config = 'false'\n"
-        "[host_machine]\nsystem = 'darwin'\ncpu_family = 'aarch64'\n"
-        "cpu = 'aarch64'\nendian = 'little'\n"
-        "[built-in options]\n" + f"c_link_args = {['-L' + sdk + '/usr/lib']!r}\n"
-        "[properties]\nneeds_exe_wrapper = true\n"
-    )
+    sdk = read("xcrun", "--sdk", "macosx" if host else "iphoneos", "--show-sdk-path")
     command = [
         "uv",
         "run",
@@ -117,9 +105,22 @@ def build_libraries(source, output):
         build,
         source,
     ]
+    if not host:
+        clang = read("xcrun", "--sdk", "iphoneos", "--find", "clang")
+        cross = build / "ios-cross.txt"
+        cross.write_text(
+            "[binaries]\n"
+            f"c = {repr([clang, '-arch', 'arm64', '-isysroot', sdk, '-miphoneos-version-min=16.4'])}\n"
+            f"ar = {read('xcrun', '--sdk', 'iphoneos', '--find', 'ar')!r}\n"
+            "pkg-config = 'false'\n"
+            "[host_machine]\nsystem = 'darwin'\ncpu_family = 'aarch64'\n"
+            "cpu = 'aarch64'\nendian = 'little'\n"
+            "[built-in options]\n" + f"c_link_args = {['-L' + sdk + '/usr/lib']!r}\n"
+            "[properties]\nneeds_exe_wrapper = true\n"
+        )
     if (build / "build.ninja").exists():
         command.append("--reconfigure")
-    else:
+    elif not host:
         command.extend(["--cross-file", cross])
     command.extend(
         [
@@ -242,7 +243,12 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--rootfs-sha256", required=True)
     parser.add_argument("--link-module", action="store_true")
+    parser.add_argument(
+        "--host", action="store_true", help="Build for the macOS upgrade test"
+    )
     args = parser.parse_args()
+    if args.host and args.link_module:
+        parser.error("macOS artifacts cannot be linked into the iOS module")
     source, output = args.source.resolve(), args.output.resolve()
     if output.is_relative_to(MODULE.parents[2]):
         raise ValueError("Build output must be outside the repository")
@@ -250,7 +256,7 @@ def main():
         raise ValueError("Clean rootfs integrity mismatch")
     patch_hash = verify_source(source)
     output.mkdir(parents=True, exist_ok=True)
-    build, sdk = build_libraries(source, output)
+    build, sdk = build_libraries(source, output, host=args.host)
     vendor = output / "vendor"
     for directory in ["lib", "resources"]:
         (vendor / directory).mkdir(parents=True, exist_ok=True)

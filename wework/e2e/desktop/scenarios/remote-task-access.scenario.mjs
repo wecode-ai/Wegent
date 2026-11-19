@@ -352,6 +352,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
         rpc,
         route,
         models: targetCatalog.models,
+        events,
         timeoutMs: workbenchReadyTimeoutMs,
       })
 

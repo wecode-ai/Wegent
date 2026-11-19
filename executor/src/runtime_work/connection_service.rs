@@ -206,14 +206,11 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
 
-    #[tokio::test]
-    async fn native_wait_preserves_the_parent_pipe_and_starts_node_with_only_reader_authority() {
+    #[test]
+    fn native_wait_preserves_the_parent_pipe_and_starts_node_with_only_reader_authority() {
+        // Capture the launcher's environment without racing environment-mutating tests.
+        let _lock = crate::test_env::lock();
         let root = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new("node")
-            .args(["-p", "process.execPath"])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
         let entry = root.path().join("service.js");
         // A positive checkpoint requires the real child to remain alive while Native awaits it.
         std::fs::write(
@@ -233,17 +230,24 @@ mod tests {
         .unwrap();
         let delivery = Delivery {
             manifest: root.path().join("manifest.json"),
-            node: PathBuf::from(String::from_utf8(output.stdout).unwrap().trim()),
+            // Hosted Node may require its launcher to select Node mode.
+            node: PathBuf::from("node"),
             entry,
             providers: vec![],
         };
         let command = delivery
             .command(root.path(), 7, "synthetic-endpoint", "synthetic-reader")
             .unwrap();
-        let status = tokio::time::timeout(Duration::from_secs(10), wait_service(command))
-            .await
+        let status = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .unwrap()
-            .unwrap();
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(10), wait_service(command))
+                    .await
+                    .unwrap()
+                    .unwrap()
+            });
         assert_eq!(
             status.code(),
             Some(17),

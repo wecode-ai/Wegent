@@ -414,6 +414,16 @@ int ww_runtime_prepare(const char *archive, const char *root) {
     free((void *)error.message);
     return -EIO;
 }
+struct replace_arguments { const char *data; const char *source; };
+static int replace_executor(void *opaque) {
+    struct replace_arguments *args = opaque;
+    int result = select_root(args->data);
+    return result < 0 ? result : ww_runtime_replace_executor_file(args->source);
+}
+int ww_runtime_replace_executor(const char *data, const char *source) {
+    struct replace_arguments args = {data, source};
+    return execute(replace_executor, &args);
+}
 int ww_runtime_start(const char *data, const char *device, struct ww_process **out) {
     struct start_arguments args = {data, device, out};
     return execute(launch, &args);
@@ -472,6 +482,7 @@ struct ww_transport_diagnostics ww_runtime_transport_diagnostics(struct ww_proce
 }
 int ww_runtime_available(void) { return 0; }
 int ww_runtime_prepare(const char *archive, const char *root) { return -ENOTSUP; }
+int ww_runtime_replace_executor(const char *data, const char *source) { return -ENOTSUP; }
 int ww_runtime_start(const char *data, const char *device, struct ww_process **out) { return -ENOTSUP; }
 int ww_runtime_input(struct ww_process *process) { return -1; }
 int ww_runtime_output(struct ww_process *process) { return -1; }

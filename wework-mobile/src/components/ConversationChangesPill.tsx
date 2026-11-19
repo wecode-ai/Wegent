@@ -1,17 +1,20 @@
+import type { WorkspaceGitShortStat } from '../../../packages/chat-core/src/workspace-git'
+import { showErrorAlert } from '@/services/errorAlerts'
 import { useCallback, useState } from 'react'
 import { useFocusEffect } from '@react-navigation/native'
 import { AppState, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
-import type { MobileWorkspaceChanges } from '@/types/workspaceGit'
 import { WorkspaceNotGitRepositoryError } from '@/services/mobileWorkspaceGit'
 import { LiquidGlassButton } from './LiquidGlass'
 import { useMobileFilePreview, type MobileFilePreviewActions } from './files/FilePreviewContext'
 
 type ChangesState = {
   key: string
-  owner: MobileFilePreviewActions['loadChanges']
+  owner: MobileFilePreviewActions['loadChangesSummary']
 } & (
-  { status: 'ready'; changes: MobileWorkspaceChanges } | { status: 'loading' | 'error' | 'not-git' }
+  | { status: 'ready'; changes: WorkspaceGitShortStat }
+  | { status: 'error'; cause: unknown }
+  | { status: 'loading' | 'not-git' }
 )
 
 /** Owns only the active conversation's Git summary; opening the sheet reloads its full state. */
@@ -20,7 +23,7 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
   const theme = useTheme()
   const [state, setState] = useState<ChangesState | null>(null)
   const target = preview?.target
-  const loadChanges = preview?.loadChanges
+  const loadChanges = preview?.loadChangesSummary
   const key = JSON.stringify([
     target?.deviceId,
     target?.path,
@@ -42,7 +45,7 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
             ? previous
             : { key, owner: loadChanges, status: 'loading' }
         )
-        void loadChanges({ mode: 'branch' }, current.signal).then(
+        void loadChanges(current.signal).then(
           changes => {
             if (!current.signal.aborted)
               setState({ key, owner: loadChanges, status: 'ready', changes })
@@ -52,7 +55,9 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
               setState({
                 key,
                 owner: loadChanges,
-                status: cause instanceof WorkspaceNotGitRepositoryError ? 'not-git' : 'error',
+                ...(cause instanceof WorkspaceNotGitRepositoryError
+                  ? { status: 'not-git' as const }
+                  : { status: 'error' as const, cause }),
               })
           }
         )
@@ -91,7 +96,14 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
           borderColor: theme.colors.outlineVariant,
         }}
         hitSlop={{ top: 7, bottom: 7 }}
-        onPress={() => preview.openChangesBrowser()}
+        onPress={() =>
+          current?.status === 'error'
+            ? showErrorAlert(current.cause, {
+                title: '无法读取更改',
+                onRetry: () => preview.openChangesBrowser(),
+              })
+            : preview.openChangesBrowser()
+        }
         style={styles.pill}
         testID="conversation-changes"
       >

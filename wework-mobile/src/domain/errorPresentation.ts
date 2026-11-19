@@ -15,6 +15,7 @@ const copy: Record<ChatErrorType, readonly [string, string]> = {
   model_service_connection_error: ['无法连接模型服务', '请检查网络或 VPN 连接后重试。'],
   network_error: ['连接未完成', '请检查网络连接，稍后重试。'],
   timeout_error: ['请求超时', '服务未及时响应，请稍后重试。'],
+  server_overloaded: ['模型服务繁忙', '请稍后重试，或切换其他模型。'],
   llm_error: ['模型暂时不可用', '请稍后重试，或切换其他模型。'],
   llm_unsupported: ['模型不支持此请求', '请切换支持当前内容或附件类型的模型。'],
   invalid_parameter: ['请求内容有误', '请检查输入内容后重试。'],
@@ -80,10 +81,11 @@ function isUserMessage(value: string): boolean {
 
 export function describeMobileError(
   cause: unknown,
-  contextTitle?: string
+  contextTitle?: string,
+  errorType?: string
 ): MobileErrorPresentation {
   const raw = errorText(cause).trim()
-  const parsed = parseChatError(raw)
+  const parsed = parseChatError(raw, errorType)
   const [title, guidance] = parsed.gitFailure
     ? ['无法访问 Git 仓库', '请检查仓库地址和 Git 账号权限。']
     : copy[parsed.type]

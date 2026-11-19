@@ -8,7 +8,13 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 import { FilePreviewContext, type MobileFilePreviewActions } from './files/FilePreviewContext'
 
 const nativeRender = vi.hoisted(() => vi.fn())
-const appearance = vi.hoisted(() => ({ colors: { elevation: { level1: '#fff', level2: '#eee' } } }))
+const appearance = vi.hoisted(() => ({
+  colors: {
+    primary: '#0278c2',
+    primaryContainer: '#def1ff',
+    elevation: { level1: '#fff', level2: '#eee' },
+  },
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@/services/errorAlerts', () => ({
@@ -64,6 +70,20 @@ describe('AssistantMarkdown preview links', () => {
     expect(openLink.mock.calls).toEqual([['src/main.ts#L10'], ['https://example.test']])
     expect(Linking.openURL).not.toHaveBeenCalled()
     expect(markdown.props.imageRequestHeaders).toBeUndefined()
+  })
+
+  it('styles a labelled GitHub PR and a workspace skill as inline references', async () => {
+    const url = 'https://github.com/wecode-ai/Wegent/pull/4697'
+    const markdown = await render(
+      null,
+      `[#4697](${url})，按 [PR Review 技能](/work/SKILL.md) 回写 Issue。`
+    )
+    const variants = Object.entries(markdown.props.markdownStyle.linkVariants)
+    const variantFor = (link: string) =>
+      variants.find(([pattern]) => new RegExp(pattern).test(link))?.[1]
+    expect(variantFor(url)).toMatchObject({ underline: false, backgroundColor: '#def1ff' })
+    expect(variantFor('/work/SKILL.md')).toMatchObject({ color: '#0278c2', underline: false })
+    expect(variantFor('https://github.com.example/pull/4697')).toBeUndefined()
   })
   it.each([true, false])(
     'provides deduplicated file-image preview entries without network work during streaming (%s)',

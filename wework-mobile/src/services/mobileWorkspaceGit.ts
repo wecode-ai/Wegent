@@ -1,4 +1,7 @@
-import { workspaceGitDiffCommand } from '../../../packages/chat-core/src/workspace-git'
+import {
+  parseWorkspaceGitShortStat,
+  workspaceGitDiffCommand,
+} from '../../../packages/chat-core/src/workspace-git'
 import { mobileWorkspaceChangedFiles } from '@/domain/mobileWorkspaceGit'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import type { MobileWorkspaceChanges, WorkspaceGitSelection } from '@/types/workspaceGit'
@@ -47,11 +50,35 @@ async function readGitSnapshot(
   selection: WorkspaceGitSelection,
   signal?: AbortSignal
 ): Promise<[string, string]> {
-  try {
-    return await Promise.all([
+  return readWorkspaceGit(api, target, signal, () =>
+    Promise.all([
       api.getWorkspaceGitBranch(target.deviceId, target.path, signal),
       api.getWorkspaceGitDiff(target.deviceId, target.path, selection, signal),
     ])
+  )
+}
+
+export async function loadMobileWorkspaceGitSummary(
+  api: WorkspaceGitApi & Pick<RuntimeApi, 'getWorkspaceGitShortStat'>,
+  target: MobileWorkspaceFileTarget,
+  signal?: AbortSignal
+) {
+  throwIfAborted(signal)
+  const value = await readWorkspaceGit(api, target, signal, () =>
+    api.getWorkspaceGitShortStat(target.deviceId, target.path, signal)
+  )
+  throwIfAborted(signal)
+  return parseWorkspaceGitShortStat(value)
+}
+
+async function readWorkspaceGit<T>(
+  api: WorkspaceGitApi,
+  target: MobileWorkspaceFileTarget,
+  signal: AbortSignal | undefined,
+  read: () => Promise<T>
+): Promise<T> {
+  try {
+    return await read()
   } catch (error) {
     throwIfAborted(signal)
     // Match PC environment loading: probe a failed Git read before classifying it as non-Git.

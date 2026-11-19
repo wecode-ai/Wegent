@@ -1,4 +1,14 @@
 import { fileChangesSourceKey, mergeFileChangesSummaries } from './mobileFileChanges'
+import type {
+  ProcessingBlock,
+  WorkbenchMessage,
+} from '../../../packages/chat-core/src/runtime-conversation'
+import {
+  getAssistantRenderProjection,
+  hasRunningProcessingBlocks,
+  isCancelledAssistantMessage,
+} from '../../../packages/collaboration/src/conversation/assistantMessagePresentation'
+import { getAssistantReferences } from '../../../packages/collaboration/src/conversation/codexReferences'
 import {
   getGeneratedImages,
   type GeneratedImageArtifact,
@@ -7,6 +17,7 @@ export type { GeneratedImageArtifact } from '../../../packages/chat-core/src/gen
 import type {
   ChatFileChangeItem,
   ChatFileChangesBlock,
+  ChatFileChangesSummary,
   ChatMessage,
   ChatNarrativeBlock,
   ChatProcessingBlock,
@@ -439,4 +450,55 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+export type AssistantBodyPart =
+  | { id: string; type: 'text'; content: string }
+  | { id: string; type: 'processing'; blocks: ChatProcessingBlock[] }
+
+export function projectMobileAssistantMessage(message: ChatMessage) {
+  const nativeFileChanges = new Map<string, ChatFileChangesSummary>()
+  const source: WorkbenchMessage = {
+    ...message,
+    createdAt: String(message.createdAt),
+    status: message.status === 'completed' ? 'done' : message.status,
+    fileChanges: message.fileChanges?.source,
+    blocks: message.blocks?.flatMap<ProcessingBlock>(block => {
+      if (block.type === 'tool' || block.type === 'subagent') return [block]
+      if (block.type === 'error' || block.type === 'guidance') return []
+      if (block.type !== 'file_changes') return [{ ...block, type: block.type }]
+      if (!block.fileChanges.source) return []
+      nativeFileChanges.set(block.id, block.fileChanges)
+      return [{ ...block, fileChanges: block.fileChanges.source }]
+    }),
+  }
+  const projection = getAssistantRenderProjection(source)
+  const cancelled = isCancelledAssistantMessage(source)
+  const streaming = !cancelled && source.status === 'streaming'
+  const hasFinalArtifacts =
+    cancelled ||
+    source.status === 'done' ||
+    source.status === 'failed' ||
+    (!streaming && !hasRunningProcessingBlocks(projection.blocks))
+  return {
+    content: projection.content,
+    interleaved: projection.interleaved,
+    streaming,
+    references: hasFinalArtifacts
+      ? getAssistantReferences(source.references, projection.content, source.fileChanges)
+      : [],
+    parts: projection.segments.map<AssistantBodyPart>(segment =>
+      segment.kind === 'content'
+        ? { id: segment.id, type: 'text', content: segment.content }
+        : {
+            id: segment.id,
+            type: 'processing',
+            blocks: segment.blocks.map(block =>
+              block.type === 'file_changes'
+                ? { ...block, fileChanges: nativeFileChanges.get(block.id)! }
+                : block
+            ),
+          }
+    ),
+  }
 }

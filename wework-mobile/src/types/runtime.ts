@@ -1,6 +1,10 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
-import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+import type {
+  Attachment,
+  CodexReference,
+  TurnFileChangesSummary,
+} from '../../../packages/chat-core/src/runtime'
 export type { Attachment }
 export type { ModelType, ModelOptions, UnifiedModel }
 export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
@@ -131,6 +135,7 @@ export interface RuntimeWorkListResponse {
 }
 
 export interface RuntimeTranscriptMessage {
+  messageIndex?: number
   id: string
   runtimeItemId?: string
   role: 'user' | 'assistant' | 'system' | 'tool' | string
@@ -166,6 +171,8 @@ export interface RuntimeTranscriptResponse {
   title?: string | null
   running?: boolean
   messages: RuntimeTranscriptMessage[]
+  turns?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeConversationTurn[]
+  supersededTurnIds?: string[]
   hasMoreBefore?: boolean
   beforeCursor?: string | null
 }
@@ -313,7 +320,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   attachments?: Attachment[]
-  textItems?: ChatTextItem[]
+  references?: CodexReference[] | null
   blocks?: ChatProcessingBlock[]
   fileChanges?: ChatFileChangesSummary
   streamingThinkingContent?: string
@@ -322,12 +329,9 @@ export interface ChatMessage {
   completedAt?: number
   error?: string
   errorType?: string
-}
-
-export interface ChatTextItem {
-  id: string
-  content: string
-  streamOffset?: number
+  runtimeStatus?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeWorkbenchMessageStatus
+  stoppedNotice?: boolean
+  runtimeDisplayItems?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeAssistantDisplayItem[]
 }
 
 export type ChatBlockStatus = 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'

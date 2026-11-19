@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from './runtimeUserMessage'
+import {
+  splitRuntimeUserMessage,
+  visibleRuntimeUserMessage,
+} from '../../../packages/chat-core/src/runtime-user-message.js'
 
 describe('runtime user message', () => {
   it('extracts visible input from attachment wrappers', () => {

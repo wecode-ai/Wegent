@@ -1807,7 +1807,7 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
-  test('uses UTF-16 code-unit offsets when replacing streamed text', () => {
+  test('uses executor Unicode scalar offsets when replacing streamed text', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'assistant_chunk',
       subtaskId: 'turn-1',
@@ -1828,7 +1828,7 @@ describe('runtimeConversationTurns', () => {
       expect.objectContaining({
         type: 'assistant_text',
         content: 'A😎B',
-        streamTextOffset: 3,
+        streamTextOffset: 2,
       }),
     ])
   })

@@ -111,3 +111,25 @@ previews and reading positions.
 ## iOS and Android
 
 Supported iOS versions use native Liquid Glass buttons and panels. Enabling the system's Reduce Transparency setting replaces them with opaque surfaces. Android uses native panels, rounded corners, borders, and touch feedback. Both platforms retain the same feature entries and accommodate safe areas and the keyboard.
+
+## Build-time Backend address
+
+The Backend address defaults to empty, and users can enter it before signing in to Wegent. Builds
+can optionally preconfigure the address:
+
+```bash
+cd wework-mobile
+pnpm build:configured --backend-url https://backend.example.com -- pnpm build:ios
+pnpm build:configured --backend-url https://backend.example.com -- pnpm build:android
+```
+
+The command after `--` can also be the actual `xcodebuild` or Gradle build command. The existing
+`EXPO_PUBLIC_BACKEND_URL` injects the address into the application's JavaScript bundle, without
+changing source files or creating an environment file. Omitting the option preserves an explicitly
+configured environment variable; when neither is provided, the default remains empty. Use
+`--backend-url ''` to explicitly clear an inherited value. Addresses must use HTTP or HTTPS without
+embedded usernames or passwords.
+
+A connection address saved on the device takes precedence over the build default and remains
+editable in connection settings. This option is readable application configuration and must not
+contain tokens or keys; it does not preconfigure login credentials.

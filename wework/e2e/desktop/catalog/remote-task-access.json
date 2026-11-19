@@ -14,7 +14,7 @@
     "wework-mobile/src/hooks/useMobileUserInput*",
     "wework-mobile/src/hooks/useMobileTranscript*",
     "wework-mobile/src/domain/requestUserInput*",
-    "wework-mobile/src/domain/chatReducer*",
+    "wework-mobile/src/domain/mobileConversation*",
     "wework-mobile/src/services/runtimeApi*",
     "wework-mobile/src/components/RequestUserInput*",
     "wework/e2e/desktop/modules/mobile-runtime-questions.mjs",

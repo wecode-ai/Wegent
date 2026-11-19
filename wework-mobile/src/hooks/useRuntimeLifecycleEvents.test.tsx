@@ -1,7 +1,7 @@
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { RuntimeTaskLifecycleProjection } from '@/domain/runtimeTaskLifecycle'
+import { RuntimeTaskLifecycleProjection, runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
 import { useRuntimeLifecycleEvents } from './useRuntimeLifecycleEvents'
 import type { RuntimeStream } from '@/services/runtimeStream'
 const errorAlert = vi.hoisted(() => vi.fn())
@@ -12,6 +12,61 @@ let renderer: ReactTestRenderer | undefined
 afterEach(async () => {
   await act(() => renderer?.unmount())
   vi.clearAllMocks()
+})
+
+it('uses native task revisions and repairs settled turns without waiting for another message', async () => {
+  let listener!: Parameters<RuntimeStream['subscribeLifecycle']>[0]
+  const address = { deviceId: 'remote-device', taskId: 'task' }
+  const lifecycle = new RuntimeTaskLifecycleProjection()
+  const reloadTranscript = vi.fn().mockResolvedValue(null)
+  const publishTaskLifecycle = vi.fn()
+  const commitDeviceWork = vi.fn()
+  const stream = {
+    subscribeLifecycle: vi.fn(callback => {
+      listener = callback
+      return () => {}
+    }),
+  } as unknown as RuntimeStream
+  function Harness() {
+    useRuntimeLifecycleEvents({
+      stream,
+      lifecycle,
+      currentAddressRef: { current: address },
+      workByDeviceRef: { current: {} },
+      setCurrentAddress: vi.fn(),
+      commitDeviceWork,
+      publishTaskLifecycle,
+      reloadTranscript,
+    })
+    return null
+  }
+  await act(() => {
+    renderer = create(<Harness />)
+  })
+  const native = (revision: string, phase: string) =>
+    listener(address, {
+      name: 'runtime.task.updated',
+      payload: { data: { task: { executionState: { revision, phase, epoch: 'executor' } } } },
+    })
+  native('12', 'running')
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
+  native('13', 'idle')
+  native('12', 'running')
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
+  expect(publishTaskLifecycle).toHaveBeenCalledTimes(2)
+  listener({ deviceId: address.deviceId }, { name: 'executor.runtime_replaced', payload: {} })
+  listener(address, {
+    name: 'runtime.task.updated',
+    payload: {
+      data: {
+        task: { executionState: { revision: '1', phase: 'running', epoch: 'new-executor' } },
+      },
+    },
+  })
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
+  listener(address, { name: 'runtime.turn.updated', payload: { data: { status: 'settled' } } })
+  expect(reloadTranscript).toHaveBeenCalledExactlyOnceWith(address)
+  expect(commitDeviceWork).not.toHaveBeenCalled()
 })
 it('reports asynchronous archived deletion failure even without an active conversation', async () => {
   let listener!: Parameters<RuntimeStream['subscribeLifecycle']>[0]

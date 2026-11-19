@@ -205,9 +205,10 @@ test('the shared build imports the mobile scenario and executes production paylo
         { id: 'reply', type: 'assistant_text', content: 'Reply' }
       ] }]
     })
-    const partial = builders.chatReducer([], { type: 'replace', messages: transcript.messages.filter(message => message.role === 'assistant') })
-    const merged = builders.chatReducer(partial, { type: 'merge-latest', messages: transcript.messages })
-    assert.deepEqual(merged.map(message => message.content), ['Question', 'Reply'])
+    const viewer = new builders.MobileConversation({ deviceId: 'fixture-device', taskId: 'mobile-fixture-task' })
+    viewer.hydrate({ ...transcript, turns: transcript.turns.map(turn => ({ ...turn, items: turn.items.filter(item => item.type !== 'user_message') })) }, false)
+    viewer.hydrate(transcript, true)
+    assert.deepEqual(viewer.messages.map(message => message.content), ['Question', 'Reply'])
     const branches = await builders.listWorkspaceBranches(async input => {
       assert.deepEqual(input, { deviceId: 'fixture-device', sourcePath: '/workspace/mobile-fixture', includeBranches: true })
       return { success: true, gitRepository: true, currentBranch: 'feature/mobile', branches: ['main', 'feature/mobile'] }

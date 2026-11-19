@@ -1,12 +1,11 @@
 import React, { createRef } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { chatReducer } from '@/domain/chatReducer'
+import { chatReducer } from '../../test/chatHarness'
 import { pendingMobileUserInput, userInputResponse } from '@/domain/requestUserInput'
 import type { ChatMessage, RequestUserInputPayload, RuntimeTaskAddress } from '@/types/runtime'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import { useMobileUserInput } from './useMobileUserInput'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'reply-id' }))
 

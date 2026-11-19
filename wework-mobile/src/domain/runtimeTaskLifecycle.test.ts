@@ -112,3 +112,74 @@ function workWithRunning(running: boolean): RuntimeWorkListResponse {
     chats: [],
   }
 }
+
+it('uses native execution revisions across completion, stale events, and executor replacement', () => {
+  const lifecycle = new RuntimeTaskLifecycleProjection()
+  const address = { deviceId: 'device', taskId: 'task' }
+  const state = {
+    revision: '2',
+    epoch: 'first',
+    phase: 'running' as const,
+    turnId: 'turn',
+    latestTurnId: 'turn',
+    outcome: null,
+  }
+  expect(lifecycle.executionReceived(address, state)).toBe(true)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
+  const read = lifecycle.transcriptRequested(address)
+  expect(
+    lifecycle.executionReceived(address, {
+      ...state,
+      revision: '3',
+      phase: 'idle',
+      turnId: null,
+      outcome: 'succeeded',
+    })
+  ).toBe(true)
+  expect(lifecycle.executionReceived(address, state)).toBe(false)
+  expect(lifecycle.executorStarted(address)).toBe(false)
+  expect(lifecycle.transcriptReceived(read, true)).toBe(false)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
+  lifecycle.executorReplaced(address)
+  expect(lifecycle.executionReceived(address, { ...state, revision: '100' })).toBe(false)
+  expect(
+    lifecycle.executionReceived(address, {
+      ...state,
+      epoch: 'second',
+      revision: '1',
+      phase: 'recovering',
+    })
+  ).toBe(true)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
+  lifecycle.executionReceived(address, {
+    ...state,
+    epoch: 'second',
+    revision: '2',
+    phase: 'queued',
+  })
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
+})
+
+it('retires every cached task of a replaced device without affecting another device', () => {
+  const lifecycle = new RuntimeTaskLifecycleProjection()
+  const active = { deviceId: 'device', taskId: 'active' }
+  const background = { deviceId: 'device', taskId: 'background' }
+  const other = { deviceId: 'other', taskId: 'background' }
+  const old = {
+    revision: '20',
+    epoch: 'old',
+    phase: 'running' as const,
+    turnId: 'turn',
+    latestTurnId: 'turn',
+    outcome: null,
+  }
+  for (const address of [active, background, other]) lifecycle.executionReceived(address, old)
+  lifecycle.executorReplaced({ deviceId: 'device' })
+  const current = { ...old, epoch: 'new', revision: '1', phase: 'idle' as const }
+  expect(lifecycle.executionReceived(active, current)).toBe(true)
+  expect(lifecycle.executionReceived(background, current)).toBe(true)
+  expect(lifecycle.executionReceived(background, { ...old, revision: '100' })).toBe(false)
+  expect(lifecycle.executionReceived(other, current)).toBe(false)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(background))).toBe(false)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(other))).toBe(true)
+})

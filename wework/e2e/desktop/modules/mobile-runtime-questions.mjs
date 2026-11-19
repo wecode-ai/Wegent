@@ -5,6 +5,7 @@ import { DEFAULT_MODEL_ID } from './shared.mjs'
 import { hasUserReplyAfterToolOutput } from './desktop-server.mjs'
 import { setNativeCatalogOverride } from './model-catalog-recovery.mjs'
 import { until } from './plugin-regression-fixture.mjs'
+import { loadMobileLocalPayloadBuilders } from './mobile-local-payload-builders.mjs'
 import { runtimeTranscriptBlocks } from './runtime-transcript-evidence.mjs'
 import {
   assistantMessage,
@@ -90,7 +91,8 @@ export function createMobileRuntimeQuestions() {
       return true
     },
 
-    async verify({ cloud, control, rpc, route, models, timeoutMs }) {
+    async verify({ cloud, control, rpc, route, models, events, timeoutMs }) {
+      const builders = await loadMobileLocalPayloadBuilders()
       const model = models.find(
         item => item.runtime === 'codex' && item.model_id === DEFAULT_MODEL_ID
       )
@@ -171,6 +173,46 @@ export function createMobileRuntimeQuestions() {
           block => kind.startsWith('async-') || block.render_payload.interactionStatus === 'pending'
         ).render_payload
 
+        const viewer = new builders.MobileConversation(address)
+        viewer.hydrate(builders.projectMobileRuntimeTranscript(pending), false)
+        viewer.beginHydration()
+        const heldPage = builders.projectMobileRuntimeTranscript(await transcript(address))
+        const eventOffset = events.length
+        const verifyLiveView = async cancelled => {
+          const received = await until(
+            () => events.slice(eventOffset).filter(event => event.payload?.taskId === taskId),
+            values =>
+              values.some(
+                event => event.event === (cancelled ? 'response.incomplete' : 'response.completed')
+              ),
+            'The mobile reader did not receive its native terminal event',
+            timeoutMs
+          )
+          for (const event of received)
+            viewer.dispatch({
+              type: 'stream',
+              event: { name: event.event, payload: event.payload },
+            })
+          // Deliver the real earlier page after the real live events: no new message or remount repairs it.
+          viewer.hydrate(heldPage, true)
+          viewer.endHydration()
+          assert.ok(
+            viewer.messages.every(message => message.status !== 'failed'),
+            'Mobile revived a failure during native completion'
+          )
+          if (cancelled)
+            assert.ok(
+              viewer.messages.some(
+                message => message.stoppedNotice && message.runtimeStatus === 'cancelled'
+              )
+            )
+          else
+            assert.ok(
+              viewer.messages.some(message => message.content.includes(completion(kind))),
+              'An in-flight history read erased the final mobile answer'
+            )
+        }
+
         if (kind === 'skip') {
           await post('cancel', address)
           await until(
@@ -179,6 +221,7 @@ export function createMobileRuntimeQuestions() {
             'Skipping a mobile question did not stop its native turn',
             timeoutMs
           )
+          await verifyLiveView(true)
           const restored = await transcript(address)
           assert.ok(
             questionBlocks(restored, kind).every(
@@ -240,7 +283,13 @@ export function createMobileRuntimeQuestions() {
           'The mobile question task did not finish',
           timeoutMs
         )
+        await verifyLiveView(false)
         const restored = await transcript(address)
+        viewer.hydrate(builders.projectMobileRuntimeTranscript(restored), true)
+        assert.ok(
+          viewer.messages.some(message => message.content.includes(completion(kind))),
+          'The final native mobile page lost its reply'
+        )
         assert.ok(
           JSON.stringify(restored).includes(completion(kind)),
           'The completed canonical transcript lost the model reply'

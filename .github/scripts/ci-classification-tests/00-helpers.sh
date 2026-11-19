@@ -153,6 +153,7 @@ wework=false
 wegent_cli=false
 platform_e2e=false
 wework_e2e=false
+wework_mobile_native=false
 EOF
 )
 

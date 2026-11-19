@@ -2,6 +2,14 @@
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+native_upgrade_expected="${all_false/wework_mobile_native=false/wework_mobile_native=true}"
+for path in wework-mobile/modules/wework-local-runtime/ios/RuntimeImageInstaller.swift \
+  wework-mobile/modules/wework-local-runtime/tests/RuntimeUpgradeProbe.c \
+  wework-mobile/scripts/build-local-runtime-ios.py \
+  wework-mobile/scripts/test-local-runtime-upgrade-ci.sh; do
+  assert_case "Mobile native changes require image upgrade coverage: $path" "$native_upgrade_expected" "$path"
+done
+
 assert_case "Native Goal archive harness changes run Executor contracts" \
   "${all_false/executor=false/executor=true}" \
   ".github/scripts/verify-native-event-goal.sh"
@@ -54,6 +62,7 @@ wework=true
 wegent_cli=false
 platform_e2e=true
 wework_e2e=true
+wework_mobile_native=false
 EOF
 )
 
@@ -75,6 +84,7 @@ wework=true
 wegent_cli=false
 platform_e2e=false
 wework_e2e=true
+wework_mobile_native=false
 EOF
 )
 assert_case \
@@ -99,6 +109,7 @@ wework=false
 wegent_cli=true
 platform_e2e=true
 wework_e2e=false
+wework_mobile_native=false
 EOF
 )
 assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"

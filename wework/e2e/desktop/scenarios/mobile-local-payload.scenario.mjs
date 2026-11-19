@@ -30,6 +30,7 @@ export function createDesktopScenario(options) {
   const existing = createNativeGuidance(options)
   let active = false
   const requests = []
+  const followUpResponse = Promise.withResolvers()
   return {
     ...existing,
     async handleHttp(request, response, url) {
@@ -76,9 +77,10 @@ export function createDesktopScenario(options) {
       requests.push(followUp ? 'follow-up' : 'initial')
       const id = `mobile-local-${requests.length}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      response.write(createSse([responseCreated(id)]))
+      if (followUp) await followUpResponse.promise
       response.end(
         createSse([
-          responseCreated(id),
           assistantMessage(followUp ? FOLLOW_UP_DONE : INITIAL_DONE),
           responseCompleted(id),
         ])
@@ -196,14 +198,19 @@ export function createDesktopScenario(options) {
       const first = await waitForReply(INITIAL_DONE)
       const mobileTranscript = builders.projectMobileRuntimeTranscript(first.transcript)
       // A viewer can receive the reply before the history read exposes its user message.
-      const replyFirst = builders.chatReducer([], {
-        type: 'replace',
-        messages: mobileTranscript.messages.filter(message => message.role === 'assistant'),
-      })
-      const hydrated = builders.chatReducer(replyFirst, {
-        type: 'merge-latest',
-        messages: mobileTranscript.messages,
-      })
+      const viewer = new builders.MobileConversation(address)
+      viewer.hydrate(
+        {
+          ...mobileTranscript,
+          turns: mobileTranscript.turns.map(turn => ({
+            ...turn,
+            items: turn.items.filter(item => item.type !== 'user_message'),
+          })),
+        },
+        false
+      )
+      viewer.hydrate(mobileTranscript, true)
+      const hydrated = viewer.messages
       const userIndex = hydrated.findIndex(message => message.id === `${taskId}-initial`)
       const replyIndex = hydrated.findIndex(message => message.role === 'assistant')
       assert.ok(
@@ -243,17 +250,37 @@ export function createDesktopScenario(options) {
       )
       assert.deepEqual(builders.reasoningEfforts(restoredModel), ['low', 'high', 'xhigh'])
       assert.equal(builders.resolvedReasoningEffort(restoredModel, undefined), 'high')
-      const sent = await rpc('runtime.tasks.send', {
-        address: conversation.address,
-        taskId,
-        message: FOLLOW_UP,
-        clientUserMessageId: `${taskId}-follow-up`,
-        modelSelection: restoredSelection,
-        executionRequest: executionRequest(FOLLOW_UP, false, `${taskId}-follow-up`),
-      })
-      assert.equal(sent.accepted, true, sent.error)
-      assert.equal(sent.taskId, taskId)
+      const lifecycle = new builders.RuntimeTaskLifecycleProjection()
+      const taskKey = builders.runtimeTaskKey(address)
+      try {
+        const sent = await rpc('runtime.tasks.send', {
+          address: conversation.address,
+          taskId,
+          message: FOLLOW_UP,
+          clientUserMessageId: `${taskId}-follow-up`,
+          modelSelection: restoredSelection,
+          executionRequest: executionRequest(FOLLOW_UP, false, `${taskId}-follow-up`),
+        })
+        assert.equal(sent.accepted, true, sent.error)
+        assert.equal(sent.taskId, taskId)
+        const running = await waitForValue(
+          async () => (await rpc('runtime.tasks.get', { address })).task?.executionState,
+          state => requests.includes('follow-up') && state?.phase === 'running',
+          'The owning runtime did not expose a running follow-up',
+          options.uiTimeoutMs
+        )
+        lifecycle.executionReceived(address, running)
+        assert.equal(lifecycle.snapshot().get(taskKey), true)
+      } finally {
+        followUpResponse.resolve()
+      }
+      // Deliver the latest transcript to Mobile while dropping the native terminal event.
+      const observation = lifecycle.transcriptRequested(address)
       const second = await waitForReply(FOLLOW_UP_DONE)
+      const settled = builders.projectMobileRuntimeTranscript(second.transcript)
+      assert.equal(settled.running, false)
+      lifecycle.transcriptReceived(observation, settled.running)
+      assert.equal(lifecycle.snapshot().get(taskKey), false, 'Mobile remained busy after recovery')
       assert.ok(first.task.threadId, 'The mobile task did not acquire a native thread')
       assert.equal(
         second.task.threadId,

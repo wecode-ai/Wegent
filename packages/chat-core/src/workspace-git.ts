@@ -43,3 +43,17 @@ export function workspaceGitCommandOutput(
     return response.stdout.join('\n').trim()
   throw new Error('Expected text stdout from device command')
 }
+
+export interface WorkspaceGitShortStat {
+  fileCount: number
+  additions: number
+  deletions: number
+}
+
+export function parseWorkspaceGitShortStat(value: string): WorkspaceGitShortStat {
+  return {
+    fileCount: Number(value.match(/(\d+)\s+files?\s+changed/)?.[1] ?? 0),
+    additions: Number(value.match(/(\d+)\s+insertions?\(\+\)/)?.[1] ?? 0),
+    deletions: Number(value.match(/(\d+)\s+deletions?\(-\)/)?.[1] ?? 0),
+  }
+}

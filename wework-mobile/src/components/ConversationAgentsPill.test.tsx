@@ -2,10 +2,9 @@ import { ErrorNotice } from './errors/ErrorNotice'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { chatReducer } from '@/domain/chatReducer'
+import { canonicalTestTranscript, chatReducer } from '../../test/chatHarness'
 import type { ChatMessage, RuntimeTaskAddress } from '@/types/runtime'
 import { ConversationAgentsPill } from './ConversationAgentsPill'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
@@ -83,7 +82,7 @@ describe('conversation subagent entry and isolated child view', () => {
   }
   beforeEach(() => {
     vi.clearAllMocks()
-    api.getSubagentTranscript.mockResolvedValue(response)
+    api.getSubagentTranscript.mockResolvedValue(canonicalTestTranscript(response))
     address = {
       deviceId: 'cloud',
       taskId: 'parent',
@@ -136,9 +135,9 @@ describe('conversation subagent entry and isolated child view', () => {
       'child',
       expect.any(AbortSignal)
     )
-    expect(renderer.root.findByType('Timeline' as never).props.message.content).toBe(
-      'Complete child history'
-    )
+    expect(
+      renderer.root.findAllByType('Markdown' as never).map(node => node.props.children)
+    ).toContain('Complete child history')
     expect(address?.threadId).toBe('parent-thread')
   })
 
@@ -151,9 +150,9 @@ describe('conversation subagent entry and isolated child view', () => {
     expect(renderer.root.findByType(ErrorNotice).props.error).toBe('Permission denied')
     await press('subagent-history-retry')
     expect(api.getSubagentTranscript).toHaveBeenCalledTimes(2)
-    expect(renderer.root.findByType('Timeline' as never).props.message.content).toBe(
-      'Complete child history'
-    )
+    expect(
+      renderer.root.findAllByType('Markdown' as never).map(node => node.props.children)
+    ).toContain('Complete child history')
   })
 
   it('cancels on complete address changes and ignores late results from the previous parent scope', async () => {
@@ -186,9 +185,9 @@ describe('conversation subagent entry and isolated child view', () => {
       'child',
       expect.any(AbortSignal)
     )
-    expect(renderer.root.findByType('Timeline' as never).props.message.content).toBe(
-      'Complete child history'
-    )
+    expect(
+      renderer.root.findAllByType('Markdown' as never).map(node => node.props.children)
+    ).toContain('Complete child history')
     await press('subagent-panel-back')
     expect(find('subagent-overview')).toBeTruthy()
   })

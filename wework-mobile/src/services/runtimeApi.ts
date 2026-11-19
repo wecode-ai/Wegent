@@ -271,6 +271,10 @@ export class RuntimeApi {
     return normalizeWorkspaceTree(response.stdout, normalizedPath)
   }
 
+  getWorkspaceGitShortStat(deviceId: string, path: string, signal?: AbortSignal): Promise<string> {
+    return this.readWorkspaceGitCommand(deviceId, path, 'git_branch_diff_shortstat', { signal })
+  }
+
   getWorkspaceGitBranch(deviceId: string, path: string, signal?: AbortSignal): Promise<string> {
     return this.readWorkspaceGitCommand(deviceId, path, 'git_branch', { signal })
   }
