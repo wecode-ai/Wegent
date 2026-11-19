@@ -315,9 +315,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.rollback" => {
                 boxed_rpc(move || async move { self.rollback_task(payload).await })
             }
-            "runtime.tasks.guidance" => {
-                boxed_rpc(move || async move { self.send_guidance(payload).await })
-            }
+            "runtime.tasks.guidance" => boxed_rpc(move || async move {
+                self.send_guidance_with_context(payload, None, true).await
+            }),
             "runtime.tasks.compact" => {
                 boxed_rpc(move || async move { self.compact_task(payload).await })
             }

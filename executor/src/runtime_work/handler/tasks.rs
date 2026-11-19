@@ -1236,7 +1236,9 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
         }
-        if let Some(response) = request_user_input_response(&payload) {
+        let question_response = request_user_input_response(&payload);
+        let owner_input = owner_input && question_response.is_none();
+        if let Some(response) = question_response {
             if response["delivery"] == "async" {
                 self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
                     .await?;
@@ -2032,13 +2034,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_guidance_with_event(payload, None).await
+        self.send_guidance_with_context(payload, None, false).await
     }
 
-    pub(super) async fn send_guidance_with_event(
+    pub(super) async fn send_guidance_with_context(
         &self,
         payload: Value,
         event_operation: Option<&str>,
+        owner_input: bool,
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -2153,6 +2156,8 @@ impl RuntimeWorkRpcHandler {
             Ok(turn_id) => {
                 if event_operation.is_none() {
                     self.set_interaction_status(&local_task_id, None);
+                }
+                if owner_input {
                     self.resume_goal_after_owner_input(&local_task_id, &thread_id);
                 }
                 log_executor_event(

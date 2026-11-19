@@ -61,15 +61,16 @@ impl RuntimeWorkRpcHandler {
             .runtime_task_is_private_discussion(task)
             .then_some("private_discussion");
         let result = self
-            .send_guidance_with_event(
+            .send_guidance_with_context(
                 json!({
-                        "taskId": task,
+                    "taskId": task,
                     "message": facts,
                         "clientGuidanceId": operation,
                     "conversationContext": conversation_context,
-                "additionalContext": additional_context,
-                    }),
+                    "additionalContext": additional_context,
+                }),
                 Some(&operation),
+                false,
             )
             .await;
         match result {
