@@ -1,5 +1,14 @@
 //! Shared connected-account verification and runtime owner selectors.
 use super::*;
+use sha2::{Digest, Sha256};
+
+fn connection_owner_key(connection: &ConnectionConfig) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(connection.backend_url.as_bytes());
+    hash.update([0]);
+    hash.update(connection.auth_token.as_bytes());
+    hash.finalize().into()
+}
 
 impl RuntimeWorkRpcHandler {
     fn require_runtime_connection(&self) -> Result<ConnectionConfig, AppIpcError> {
@@ -82,6 +91,14 @@ impl RuntimeWorkRpcHandler {
         body: Option<&Value>,
     ) -> Result<Value, AppIpcError> {
         let response = Self::runtime_request_on(connection, method.clone(), path, body).await?;
+        Self::read_runtime_response(method, path, response).await
+    }
+
+    pub(super) async fn read_runtime_response(
+        method: reqwest::Method,
+        path: &str,
+        response: reqwest::Response,
+    ) -> Result<Value, AppIpcError> {
         if !response.status().is_success() {
             let status = response.status();
             let reason = response.json::<Value>().await.ok();
@@ -139,12 +156,36 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn verify_runtime_user(&self, config: &Value) -> Result<(), AppIpcError> {
         let connection = self.require_runtime_connection()?;
+        self.verify_runtime_user_on(&connection, config).await
+    }
+
+    async fn verify_runtime_user_on(
+        &self,
+        connection: &ConnectionConfig,
+        config: &Value,
+    ) -> Result<(), AppIpcError> {
         let path = if connection.auth_token.starts_with("wg-") {
             "/devices/runtime-owner"
         } else {
             "/users/me"
         };
-        let user = Self::runtime_http_on(&connection, reqwest::Method::GET, path, None).await?;
+        let key = connection_owner_key(connection);
+        let response =
+            Self::runtime_request_on(connection, reqwest::Method::GET, path, None).await?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            if let Ok(mut verified) = self.verified_stand_in_owner.lock() {
+                if verified.is_some_and(|(owner_key, _)| owner_key == key) {
+                    *verified = None;
+                }
+            }
+        }
+        let user = Self::read_runtime_response(reqwest::Method::GET, path, response).await?;
+        if let Ok(mut verified) = self.verified_stand_in_owner.lock() {
+            *verified = user["id"].as_i64().map(|owner| (key, owner));
+        }
         if user["id"].as_i64().is_none() || user["id"] != config["userId"] {
             return Err(AppIpcError::new(
                 "permission_denied",
@@ -152,6 +193,31 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(())
+    }
+
+    /// Local background work uses the owner proved for this exact connection.
+    /// Access to cloud resources still requires live authorization.
+    pub(super) async fn verify_local_stand_in_owner(&self, user: i64) -> Result<(), AppIpcError> {
+        let Some(connection) = self.backend_connection_snapshot()? else {
+            return Ok(());
+        };
+        let key = connection_owner_key(&connection);
+        let verified = self
+            .verified_stand_in_owner
+            .lock()
+            .ok()
+            .and_then(|owner| *owner);
+        if let Some((_, owner)) = verified.filter(|(verified_key, _)| *verified_key == key) {
+            if owner == user {
+                return Ok(());
+            }
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "The requested owner must match the connected account",
+            ));
+        }
+        self.verify_runtime_user_on(&connection, &json!({"userId":user}))
+            .await
     }
 }
 

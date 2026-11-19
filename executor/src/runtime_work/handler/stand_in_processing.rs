@@ -54,6 +54,23 @@ fn task_id(user: i64) -> String {
     format!("stand-in-coordinator-{user}")
 }
 
+fn log_intake_failure(event: &Value, error: &AppIpcError) {
+    log_executor_event(
+        "Stand-in event routing deferred",
+        &[
+            (
+                "event_id",
+                event["id"].as_str().unwrap_or_default().to_owned(),
+            ),
+            (
+                "kind",
+                event["kind"].as_str().unwrap_or_default().to_owned(),
+            ),
+            ("code", error.code.clone()),
+        ],
+    );
+}
+
 fn waits_for_user(link: &RuntimeTaskLink) -> bool {
     link.interaction_status
         .as_deref()
@@ -182,7 +199,7 @@ impl RuntimeWorkRpcHandler {
         let identities = stand_in_identities(settings);
         pending.sort_by_key(|event| intake_order(&identities, event, now));
         let mut events = Vec::new();
-        for mut event in pending {
+        'event: for mut event in pending {
             event = self.resolve_connection_event_binding(&event, &identities);
             let mut recipients = Vec::new();
             for role in &identities {
@@ -220,7 +237,10 @@ impl RuntimeWorkRpcHandler {
                     {
                         continue
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        log_intake_failure(&event, &error);
+                        continue 'event;
+                    }
                 }
                 recipients.push(role["id"].clone());
             }
@@ -337,13 +357,6 @@ impl RuntimeWorkRpcHandler {
                 Err(error) => {
                     action["status"] = json!("failed");
                     action["error"] = json!({"code":error.code,"message":error.message});
-                    let mut state = store
-                        .stand_in_processing_state(user)
-                        .map_err(settings_error)?;
-                    state["error"] = action["error"].clone();
-                    store
-                        .save_stand_in_processing_state(user, &state)
-                        .map_err(settings_error)?;
                 }
             }
             store

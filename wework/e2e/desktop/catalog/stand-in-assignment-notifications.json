@@ -5,6 +5,7 @@
   "paths": [
     "wework/e2e/desktop/scenarios/stand-in-issue-delegation.scenario.mjs",
     "wework/e2e/desktop/modules/issue-delegation-model.mjs",
+    "wework/e2e/desktop/modules/stand-in-event-failure-isolation.mjs",
     "wework/e2e/desktop/modules/stand-in-startup-recovery.mjs"
   ],
   "ci": {

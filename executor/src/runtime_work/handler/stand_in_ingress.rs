@@ -20,32 +20,33 @@ impl RuntimeWorkRpcHandler {
         }
         let handler = self.clone();
         let observers = self.clone();
+        let stand_ins = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = stand_ins.poll_connection_stand_ins().await {
+                    log_executor_event(
+                        "Connection stand-in collection failed",
+                        &[("code", error.code), ("error", error.message)],
+                    );
+                }
+            }
+        });
         runtime.spawn(async move {
             let mut next_maintenance = 0;
             loop {
                 let started_at = chrono::Utc::now().timestamp_millis();
                 let maintenance =
                     Self::connection_maintenance_due(&mut next_maintenance, started_at);
-                let (conversation_result, stand_in_result) = tokio::join!(
-                    handler.poll_conversation_connection_events(maintenance),
-                    async {
-                        if maintenance {
-                            handler.poll_connection_stand_ins().await
-                        } else {
-                            Ok(())
-                        }
-                    }
-                );
-                if let Err(error) = conversation_result {
+                if let Err(error) = handler
+                    .poll_conversation_connection_events(maintenance)
+                    .await
+                {
                     log_executor_event(
                         "Conversation event collection failed",
                         &[("code", error.code)],
-                    );
-                }
-                if let Err(error) = stand_in_result {
-                    log_executor_event(
-                        "Connection stand-in collection failed",
-                        &[("code", error.code), ("error", error.message)],
                     );
                 }
                 let source = handler.connection_observation_poll_delay(false, started_at);
@@ -100,7 +101,12 @@ impl RuntimeWorkRpcHandler {
             .map_err(settings_error)?
         {
             let user = settings["userId"].as_i64().unwrap_or_default();
-            self.reconcile_git_disconnects(&store, user).await?;
+            if let Err(error) = self.reconcile_git_disconnects(&store, user).await {
+                log_executor_event(
+                    "Stand-in Git disconnection reconciliation deferred",
+                    &[("code", error.code)],
+                );
+            }
             let identities = stand_in_identities(&settings);
             let receiving: Vec<Value> = identities
                 .iter()
@@ -108,8 +114,14 @@ impl RuntimeWorkRpcHandler {
                 .cloned()
                 .collect();
             let sources = collection_sources(&receiving);
-            if !sources.is_empty() && self.backend_connection_snapshot()?.is_some() {
-                self.verify_runtime_user(&json!({"userId":user})).await?;
+            if !sources.is_empty() {
+                if let Err(error) = self.verify_local_stand_in_owner(user).await {
+                    log_executor_event(
+                        "Stand-in owner verification deferred",
+                        &[("code", error.code)],
+                    );
+                    continue;
+                }
             }
             for (source, roles) in sources.values() {
                 let mut state = store

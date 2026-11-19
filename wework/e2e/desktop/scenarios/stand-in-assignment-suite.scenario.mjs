@@ -3,6 +3,7 @@ import { createDesktopScenario as createRecovery } from './stand-in-assignment-r
 import { createDesktopScenario as createAutomation } from './stand-in-automation-assignment.scenario.mjs'
 import { createDesktopScenario as createConversations } from './stand-in-issue-conversations.scenario.mjs'
 import { createDesktopScenario as createDelegation } from './stand-in-issue-delegation.scenario.mjs'
+import { createEventFailureIsolation } from '../modules/stand-in-event-failure-isolation.mjs'
 
 export function createDesktopScenario(options) {
   const notifications = createNotifications(options)
@@ -10,10 +11,13 @@ export function createDesktopScenario(options) {
   const automation = createAutomation(options)
   const conversations = createConversations(options)
   const delegation = createDelegation(options)
+  const isolation = createEventFailureIsolation(options)
+  let cloudFixture
   let active = conversations
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(cloud) {
+      cloudFixture = cloud
       await notifications.prepareCloud(cloud)
       await recovery.prepareCloud(cloud)
       await automation.prepareCloud(cloud)
@@ -49,6 +53,8 @@ export function createDesktopScenario(options) {
       }
       active = automation
       await automation.verify(control)
+      active = isolation
+      await isolation.verify(control, cloudFixture, delegation.diagnostics())
     },
     diagnostics() {
       return {

@@ -607,6 +607,7 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    verified_stand_in_owner: Arc<Mutex<Option<([u8; 32], i64)>>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     cloud_connection_observations: Arc<AtomicBool>,
     connection_scheduler_started: Arc<AtomicBool>,
@@ -1006,6 +1007,7 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection,
+            verified_stand_in_owner: Arc::new(Mutex::new(None)),
             backend_device_route,
             cloud_connection_observations: Arc::new(AtomicBool::new(false)),
             connection_scheduler_started: Arc::new(AtomicBool::new(false)),

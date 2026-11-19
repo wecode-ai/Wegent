@@ -202,6 +202,8 @@ Direct handling does not require responsibilities or preferences to be filled in
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
 
+Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
+
 Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible and existing connections can be removed when switching the stand-in execution device. New local project connections can only be added when executing on the current device.
 
 Remote execution devices can still use the all-project scope. It uses the selected Executor's own project catalog; unconnected local projects on the editing computer are not shown as remote connections.

@@ -25,6 +25,121 @@ pub(super) fn connection_event() -> Value {
 }
 
 #[tokio::test]
+async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
+    use axum::{extract::Path, http::StatusCode, routing::get, Json, Router};
+
+    let root = tempfile::tempdir().unwrap();
+    let (mut handler, store, mut settings) = fixture(root.path());
+    let identity_available = Arc::new(AtomicBool::new(true));
+    let owner = identity_available.clone();
+    let router = Router::new()
+        .route(
+            "/api/users/me",
+            get(move || {
+                let available = owner.load(Ordering::Relaxed);
+                async move {
+                    if available {
+                        (StatusCode::OK, Json(json!({"id":7})))
+                    } else {
+                        (StatusCode::SERVICE_UNAVAILABLE, Json(json!({})))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/loop-items/{id}",
+            get(|Path(id): Path<String>| async move {
+                if id == "missing" {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url,
+        auth_token: "test-session".into(),
+        ..Default::default()
+    })));
+    handler.verify_local_stand_in_owner(7).await.unwrap();
+    settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":"project","store":"cloud"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}});
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+
+    let mut issue_events = Vec::new();
+    for issue in ["missing", "unavailable"] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: issue.into(),
+            status: "done".into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","userId":7,"standInId":"default","cloudProjectId":"project","projectStore":"cloud","loopItemId":issue}}),
+            ..Default::default()
+        });
+        issue_events.push(
+            store
+                .enqueue_stand_in_event(
+                    7,
+                    json!(issue),
+                    json!({"kind":"work_state","taskId":issue,"roleIds":["default"]}),
+                )
+                .unwrap(),
+        );
+    }
+    for (round, owner_online) in [(1, true), (2, false)] {
+        identity_available.store(owner_online, Ordering::Relaxed);
+        let mut incoming = connection_event();
+        incoming["message"]["id"] = json!(format!("connection-{round}"));
+        let healthy = store
+            .enqueue_stand_in_event(7, json!(round), incoming)
+            .unwrap();
+        let snapshot = handler
+            .coordination_snapshot_for_test(&store, 7)
+            .await
+            .unwrap();
+        assert!(snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["id"] == healthy["id"]));
+        assert!(snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["kind"] == "connection"));
+        assert_eq!(
+            store.stand_in_processing_state(7).unwrap()["error"],
+            Value::Null
+        );
+    }
+    for (event, status) in issue_events.iter().zip(["cancelled", "pending"]) {
+        assert_eq!(
+            store
+                .stand_in_event(7, event["id"].as_str().unwrap())
+                .unwrap()["status"],
+            status
+        );
+    }
+    assert_eq!(
+        handler
+            .verify_local_stand_in_owner(8)
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    handler
+        .backend_connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .auth_token = "other-session".into();
+    assert!(handler.verify_local_stand_in_owner(7).await.is_err());
+    server.abort();
+}
+
+#[tokio::test]
 async fn conversation_turns_do_not_depend_on_automatic_followup_policy_or_assignment() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
