@@ -247,12 +247,14 @@ export async function verifyRecordedMemberTranscript({
   assert.equal(transcript.taskId, address.taskId)
 }
 
-export async function assertManagerContinuedOnOriginalTask(runtimeLogPath, roundId) {
-  const records = (await readFile(runtimeLogPath, 'utf8')).split('\n')
-  const resumed = records.find(line =>
-    line.includes('cloud collaboration manager continuation accepted round_id=' + roundId + ' ')
+export async function assertManagerContinuedOnOriginalTask(runtimeLogPaths, roundId) {
+  const receipts = await Promise.all(
+    runtimeLogPaths.map(async path => (await readFile(path, 'utf8')).split('\n'))
   )
-  assert.ok(resumed, '没有原生负责人续跑回执')
+  const event = 'cloud collaboration manager continuation accepted round_id=' + roundId + ' '
+  const records = receipts.find(lines => lines.some(line => line.includes(event)))
+  assert.ok(records, '没有原生负责人续跑回执')
+  const resumed = records.find(line => line.includes(event))
   const task = resumed.match(/ manager_task_id=(\S+)/)?.[1]
   assert.ok(task?.endsWith('-manager-initial'), '负责人续跑创建了替代会话')
   const turns = records.filter(line =>

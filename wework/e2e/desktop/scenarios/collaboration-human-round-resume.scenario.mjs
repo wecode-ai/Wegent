@@ -1,5 +1,6 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { assertManagerContinuedOnOriginalTask } from '../modules/collaboration-cloud-story-checks.mjs'
@@ -378,6 +379,7 @@ async function authorizeRemoteEnvironment(control, remoteDevice, timeoutMs) {
 
 export function createDesktopScenario({
   captureScreenshot,
+  resultDir,
   modelResponseTimeoutMs,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
@@ -945,7 +947,7 @@ export function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       await assertManagerContinuedOnOriginalTask(
-        cloudEnvironment.remoteDockerExecutorRuntimeLogPath,
+        [cloudEnvironment.remoteDockerExecutorRuntimeLogPath, join(resultDir, 'executor.log')],
         ROUND_ID
       )
       await captureScreenshot(control, 'human-round-04-manager-resumed.png', CONTENT)
