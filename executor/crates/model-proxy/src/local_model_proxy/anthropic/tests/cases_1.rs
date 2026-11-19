@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn sends_codex_subagent_input_as_anthropic_system_context() {
+    let message = "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\nInspect the workspace";
+    let input = json!({
+        "model": "compatible-messages-provider",
+        "instructions": "Original instructions",
+        "input": [
+            {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "User prompt"}]},
+            {"id": "amsg_task", "type": "agent_message", "author": "/root",
+             "recipient": "/root/worker", "content": [{"type": "input_text", "text": message}]}
+        ]
+    });
+    let body = serde_json::to_vec(&input).unwrap();
+    let (prepared, _, _) =
+        crate::local_model_proxy::prepare_request("anthropic-messages", true, None, &body).unwrap();
+    let request: Value = serde_json::from_slice(&prepared).unwrap();
+    assert_eq!(
+        request["system"],
+        format!("Original instructions\n\n{message}")
+    );
+    assert_eq!(
+        request["messages"],
+        json!([{"role":"user","content":[{"type":"text","text":"User prompt"}]}])
+    );
+}
+
+#[test]
 fn converts_history_tools_and_results() {
     let input = json!({
         "model": "kimi-for-coding",

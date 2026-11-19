@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -38,15 +39,17 @@ export function DesktopEmptyTaskLauncher({
   const launcherRef = useRef<HTMLElement>(null)
   const composerInputSelector = `[data-testid="${composerInputTestId}"]`
 
-  useEffect(() => {
-    const focusComposer = () => {
-      focusComposerAtEnd(launcherRef.current?.querySelector<HTMLElement>(composerInputSelector))
-    }
-
-    focusComposer()
-    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
-    return () => window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
+  const focusComposer = useCallback(() => {
+    focusComposerAtEnd(launcherRef.current?.querySelector<HTMLElement>(composerInputSelector))
   }, [composerInputSelector])
+  const attachLauncher = useCallback(
+    (node: HTMLElement | null) => {
+      launcherRef.current = node
+      if (node) focusComposer()
+    },
+    [focusComposer]
+  )
+  useDOMEvent('window', WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
 
   const selectSuggestion = (prompt: string) => {
     onSelectSuggestion(prompt)
@@ -82,7 +85,7 @@ export function DesktopEmptyTaskLauncher({
 
   return (
     <section
-      ref={launcherRef}
+      ref={attachLauncher}
       data-testid="desktop-empty-composer-frame"
       className={
         compact

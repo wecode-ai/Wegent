@@ -229,3 +229,21 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 工作台的记忆化回调分别定义在独立 Hook 的词法作用域中，不能重新合并进 Provider 的大型渲染作用域。否则依赖交替变化的回调会通过共享闭包串联保留历史任务、生命周期和工作列表快照。`workbenchCallbackLifetime.test.tsx` 使用 Inspector 触发真实 GC，并通过弱引用验证旧快照能够回收，同时约束 Provider 不再直接定义 `useCallback`。
 
 CPU Trace 的采样时间、HTML 解析时间与进程内存应分别解释。堆快照中的对象大小不等于活动监视器中的进程占用；单份堆快照能证明对象保留路径，不能独立证明内存增长速率。分析文件保持本地，不提交用户 Trace 或堆快照。
+
+## 按 PR 功能进行 Bombadil 探索
+
+使用固定版本 Bombadil 0.7.10（macOS ARM64 或 Linux），通过 BOMBADIL_BIN 指定可执行文件。先用 --plan true 检查选择结果，再显式运行；普通 ai:verify start 不开放调试端口。
+
+```bash
+pnpm --filter wework ai:verify bombadil --base origin/main --plan true
+BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --base origin/main --seconds 30
+BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --suite appearance --seconds 30
+```
+
+--base 使用 merge-base 到 HEAD 的已提交差异，包括删除和重命名涉及的路径；未提交改动不在差异计划内。需要本地未提交验证时显式选择 --suite。路径映射位于 scripts/ai-verify-bombadil.mjs：外观选择 appearance，工作台、聊天和标签页选择 workbench，共享 UI 和桌面宿主选择两者。未映射的 Wework/packages 改动会报告覆盖缺口并阻止将自动选择结果视为通过；新增功能应补充规格和映射。映射只表达候选覆盖，不能证明行为正确。
+
+每个规格使用独立的真实 Electron 与 Executor，自动获取临时 loopback 调试端口，拒绝已有 Executor Home 和多页面目标。执行前处理隔离实例的首次隐私弹窗，再建立规格前置条件。每个规格预算 1—600 秒；多个规格串行执行，结束或失败均清理实例。默认不执行模型请求或云端授权。
+
+结果保存在 wework/test-results/bombadil/<时间>/，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
+
+GitHub Actions 的 Wework Bombadil exploration 工作流仅支持手动触发：选择 PR 分支，填写 base（默认 origin/main）和每个规格的秒数。普通 PR 不增加自动探索。工作流下载固定版本并校验 SHA-256，只把 summary.json 写入步骤摘要，不上传原始轨迹或认证目录。

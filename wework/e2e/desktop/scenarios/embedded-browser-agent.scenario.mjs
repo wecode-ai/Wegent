@@ -647,7 +647,13 @@ function parseToolJson(text) {
   return JSON.parse(text)
 }
 
-export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  executorHome,
+  resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let cacheResourceRequests = 0
 
   return {
@@ -796,7 +802,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FRESH_CHAT_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       const backgroundTaskId = await waitForDifferentRuntimeTaskId(control, taskId, uiTimeoutMs)
       const backgroundBrowserLabel = await readBrowserPanelLabel(

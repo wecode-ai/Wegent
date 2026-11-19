@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { WeworkInbox } from '@/api/notifications'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
@@ -47,75 +52,87 @@ export function useStandInAssignmentTasks(
     () => ({ accountKey, userId, api, identity, assignments, devices }),
     [accountKey, userId, api, identity, assignments, devices]
   )
-  const [loaded, setLoaded] = useState<{
-    scope: typeof scope
-    items: RuntimeTaskReminderItem[]
-    error?: { cause: unknown; deviceId?: string }
-  } | null>(null)
-  const available = enabled && api && identity && userId != null && assignments !== '[]'
-
-  useEffect(() => {
-    if (!available) return
-    let active = true
-    void (async () => {
-      const local = await identity()
-      if (!local) throw new Error('Executor identity is unavailable')
-      const online: Array<{ id: string; aliases: string[] }> = JSON.parse(devices)
-      // Other app devices cannot serve this RPC over the cloud relay.
-      const targets = [
-        ...new Set([
-          local.deviceId,
-          ...online
-            .filter(device => !device.aliases.includes(local.deviceId))
-            .map(device => device.id),
-        ]),
-      ]
-      const results = await Promise.allSettled(
-        targets.map(async deviceId => {
-          try {
-            const response = await api.assignmentTasks(userId, deviceId, JSON.parse(assignments))
-            return response.items.map(task => ({
-              key: `${deviceId}\0${task.taskId}`,
-              address: { deviceId, taskId: task.taskId },
-              task,
-              workspace: {
-                deviceId,
-                available: true,
-                workspacePath: task.workspacePath,
-                tasks: [task],
-              },
-              projectName: '',
-            }))
-          } catch (cause) {
-            reportStandInError('lookup_assignment_tasks', cause, deviceId)
-            throw cause
+  const available = Boolean(enabled && api && identity && userId != null && assignments !== '[]')
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        scope.accountKey,
+        async signal => {
+          const { api, identity, userId, devices, assignments } = scope
+          if (!api || !identity || userId == null)
+            throw new Error('Executor identity is unavailable')
+          const local = await identity()
+          signal.throwIfAborted()
+          if (!local) throw new Error('Executor identity is unavailable')
+          const online: Array<{ id: string; aliases: string[] }> = JSON.parse(devices)
+          // Other app devices cannot serve this RPC over the cloud relay.
+          const targets = [
+            ...new Set([
+              local.deviceId,
+              ...online
+                .filter(device => !device.aliases.includes(local.deviceId))
+                .map(device => device.id),
+            ]),
+          ]
+          const results = await Promise.allSettled(
+            targets.map(async deviceId => {
+              try {
+                const response = await api.assignmentTasks(
+                  userId,
+                  deviceId,
+                  JSON.parse(assignments)
+                )
+                return response.items.map(task => ({
+                  key: `${deviceId}\0${task.taskId}`,
+                  address: { deviceId, taskId: task.taskId },
+                  task,
+                  workspace: {
+                    deviceId,
+                    available: true,
+                    workspacePath: task.workspacePath,
+                    tasks: [task],
+                  },
+                  projectName: '',
+                }))
+              } catch (cause) {
+                reportStandInError('lookup_assignment_tasks', cause, deviceId)
+                throw cause
+              }
+            })
+          )
+          const failureIndex = results.findIndex(result => result.status === 'rejected')
+          const failure = results[failureIndex]
+          return {
+            items: results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])),
+            error:
+              failure?.status === 'rejected'
+                ? { cause: failure.reason, deviceId: targets[failureIndex] }
+                : undefined,
           }
-        })
-      )
-      if (!active) return
-      const failureIndex = results.findIndex(result => result.status === 'rejected')
-      const failure = results[failureIndex]
-      setLoaded({
-        scope,
-        items: results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])),
-        error:
-          failure?.status === 'rejected'
-            ? { cause: failure.reason, deviceId: targets[failureIndex] }
-            : undefined,
-      })
-    })().catch(cause => {
-      if (active) setLoaded({ scope, items: [], error: { cause } })
-    })
-    return () => {
-      active = false
-    }
-  }, [available, api, identity, userId, assignments, devices, scope, inbox, visibleKeys])
-
-  const current = available && loaded?.scope === scope ? loaded : null
-  const failure = current?.error
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [scope]
+  )
+  const version = useMemo(() => ({ inbox, visibleKeys }), [inbox, visibleKeys])
+  const subscribe = useCallback(
+    (notify: () => void) => resource.subscribe(notify, version),
+    [resource, version]
+  )
+  const query = useSyncExternalStore(
+    available ? subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const current = available ? query.data : undefined
+  const failure: { cause: unknown; deviceId?: string } | undefined = available
+    ? query.status === 'error'
+      ? { cause: query.error }
+      : current?.error
+    : undefined
   return {
     items: current?.items ?? EMPTY_ITEMS,
-    pending: Boolean(available && !current),
+    pending: available && !current && (query.status === 'idle' || query.status === 'loading'),
     error: failure
       ? failure.deviceId
         ? t('standIn.errors.assignment_lookup_failed', {

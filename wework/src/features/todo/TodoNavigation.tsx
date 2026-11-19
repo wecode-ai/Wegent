@@ -19,7 +19,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
-import type { TodoDetailItem } from './TodoDetailPanel'
+import type { TodoDetailItem } from './todoViewTypes'
 import { projectColor } from './todoProject'
 
 export type TodoProjectView = 'overview' | 'work-items'

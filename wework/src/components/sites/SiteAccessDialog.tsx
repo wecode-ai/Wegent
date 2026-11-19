@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
+import { useSiteDialogScope } from './useSiteDialogScope'
 import { AlertCircle, Loader2, X } from 'lucide-react'
 import type { Site, SiteAccessAudience, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -28,84 +31,65 @@ function parseSubjects(value: string): string[] | null {
   return [...subjects].sort()
 }
 
-export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) {
+export function SiteAccessDialog(props: SiteAccessDialogProps) {
+  const scope = useSiteDialogScope(props.api, props.site.siteid)
+  return <SiteAccessDialogContent key={scope.key} {...props} restoreFocus={scope.restoreFocus} />
+}
+
+function SiteAccessDialogContent({
+  api,
+  site,
+  onClose,
+  restoreFocus,
+}: SiteAccessDialogProps & { restoreFocus: () => HTMLElement | null }) {
   const { t } = useTranslation('sites')
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const [audience, setAudience] = useState<SiteAccessAudience>('all')
-  const [subjectsText, setSubjectsText] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [loadFailed, setLoadFailed] = useState(false)
+  const [resource] = useState(() =>
+    createAsyncResource(site.siteid, () => api.getSiteAccess(site.siteid))
+  )
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const [draft, setDraft] = useState<{ audience: SiteAccessAudience; subjectsText: string } | null>(
+    null
+  )
+  const audience = draft?.audience ?? snapshot.data?.audience ?? 'all'
+  const subjectsText = draft?.subjectsText ?? snapshot.data?.subjects.join(', ') ?? ''
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const loadFailed = snapshot.status === 'error'
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [actionError, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-
-  const load = useCallback(async () => {
-    try {
-      const policy = await api.getSiteAccess(site.siteid)
-      setAudience(policy.audience)
-      setSubjectsText(policy.subjects.join(', '))
-    } catch (reason) {
-      setLoadFailed(true)
-      setError(
-        reason instanceof Error ? reason.message : t('access_load_failed', '访问权限加载失败')
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [api, site.siteid, t])
-
+  const operation = useRef(false)
+  const close = () => {
+    if (!operation.current) onClose()
+  }
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    close,
+    true,
+    '[data-testid="site-access-close"]',
+    true,
+    restoreFocus
+  )
+  const error =
+    actionError ??
+    (loadFailed
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message || t('access_load_failed', '访问权限加载失败')
+        : t('access_load_failed', '访问权限加载失败')
+      : null)
   const retryLoad = () => {
-    setLoading(true)
-    setLoadFailed(false)
     setError(null)
     setSaved(false)
-    void load()
+    void resource.reload()
   }
 
-  useEffect(() => {
-    let active = true
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    closeRef.current?.focus()
-    void api
-      .getSiteAccess(site.siteid)
-      .then(policy => {
-        if (!active) return
-        setAudience(policy.audience)
-        setSubjectsText(policy.subjects.join(', '))
-      })
-      .catch(reason => {
-        if (!active) return
-        setLoadFailed(true)
-        setError(
-          reason instanceof Error ? reason.message : t('access_load_failed', '访问权限加载失败')
-        )
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-      previouslyFocused?.focus()
-    }
-  }, [api, site.siteid, t])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose, saving])
-
   const save = async () => {
-    if (saving || loading || loadFailed) return
+    if (operation.current || loading || loadFailed) return
     const subjects = audience === 'custom' ? parseSubjects(subjectsText) : []
     if (audience === 'custom' && !subjects) {
       setSaved(false)
       setError(t('access_subjects_invalid', '请输入不重复的用户名，多个用户名使用逗号或换行分隔'))
       return
     }
+    operation.current = true
     setSaving(true)
     setSaved(false)
     setError(null)
@@ -115,14 +99,15 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
         { audience, subjects: subjects ?? [] },
         createRequestId('site-access')
       )
-      setAudience(policy.audience)
-      setSubjectsText(policy.subjects.join(', '))
+      resource.update(() => policy)
+      setDraft(null)
       setSaved(true)
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : t('access_save_failed', '访问权限保存失败')
       )
     } finally {
+      operation.current = false
       setSaving(false)
     }
   }
@@ -157,6 +142,8 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4">
       <section
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="site-access-title"
@@ -171,12 +158,11 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
             <p className="mt-1 truncate text-sm text-text-secondary">{site.name}</p>
           </div>
           <button
-            ref={closeRef}
             type="button"
             data-testid="site-access-close"
             aria-label={t('close', '关闭')}
             disabled={saving}
-            onClick={onClose}
+            onClick={close}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -208,7 +194,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
                     data-testid={`site-access-audience-${option.value}`}
                     className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
                     onChange={() => {
-                      setAudience(option.value)
+                      setDraft({ audience: option.value, subjectsText })
                       setSaved(false)
                       setError(null)
                     }}
@@ -239,7 +225,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
                   placeholder={t('access_custom_subjects_placeholder', '例如 alice, bob')}
                   className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:opacity-60"
                   onChange={event => {
-                    setSubjectsText(event.target.value)
+                    setDraft({ audience, subjectsText: event.target.value })
                     setSaved(false)
                     setError(null)
                   }}
@@ -283,7 +269,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
             type="button"
             data-testid="site-access-cancel"
             disabled={saving}
-            onClick={onClose}
+            onClick={close}
             className="h-10 rounded-lg px-4 text-sm text-text-primary hover:bg-surface disabled:opacity-50"
           >
             {t('cancel', '取消')}

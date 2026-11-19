@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Check, ChevronDown, Loader2 } from 'lucide-react'
 import {
   DEFAULT_CODEX_PERSONALITY,
@@ -12,47 +14,41 @@ const PERSONALITIES: CodexPersonality[] = ['friendly', 'pragmatic']
 
 export function CodexPersonalitySettings() {
   const { t } = useTranslation('common')
-  const [personality, setPersonality] = useState<CodexPersonality>(DEFAULT_CODEX_PERSONALITY)
-  const [loading, setLoading] = useState(true)
+  const [resource] = useState(() =>
+    createAsyncResource('codex/personality', getLocalCodexPersonality, {
+      failure: error => console.error('[Wework] Failed to read Codex personality', error),
+    })
+  )
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const [selection, setSelection] = useState<CodexPersonality | null>(null)
+  const personality = selection ?? snapshot.data ?? DEFAULT_CODEX_PERSONALITY
+  const loading = !snapshot.settled
   const [saving, setSaving] = useState(false)
+  const pending = useRef(false)
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void getLocalCodexPersonality()
-      .then(value => {
-        if (!cancelled) setPersonality(value)
-      })
-      .catch(error => console.error('[Wework] Failed to read Codex personality', error))
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!open) return
-    const closeMenu = (event: MouseEvent) => {
+  useDocumentEvent(
+    'mousedown',
+    event => {
       if (!menuRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', closeMenu)
-    return () => document.removeEventListener('mousedown', closeMenu)
-  }, [open])
+    },
+    { enabled: open }
+  )
 
   const selectPersonality = async (nextPersonality: CodexPersonality) => {
-    const previousPersonality = personality
-    setPersonality(nextPersonality)
+    if (pending.current) return
+    pending.current = true
+    setSelection(nextPersonality)
     setOpen(false)
     setSaving(true)
     try {
-      setPersonality(await saveLocalCodexPersonality(nextPersonality))
+      const receipt = await saveLocalCodexPersonality(nextPersonality)
+      resource.update(() => receipt)
     } catch (error) {
-      setPersonality(previousPersonality)
       console.error('[Wework] Failed to write Codex personality', error)
     } finally {
+      pending.current = false
+      setSelection(null)
       setSaving(false)
     }
   }

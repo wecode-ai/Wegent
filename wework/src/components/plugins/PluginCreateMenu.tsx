@@ -1,5 +1,6 @@
 import { ChevronDown, Circle, Plug, Plus, Upload } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
@@ -25,24 +26,21 @@ export function PluginCreateMenu({
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       if (containerRef.current?.contains(event.target as Node)) return
       onToggle()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: isOpen }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') onToggle()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isOpen, onToggle])
+    },
+    { enabled: isOpen }
+  )
 
   return (
     <div ref={containerRef} className="relative">

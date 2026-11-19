@@ -12,7 +12,8 @@ async function fixture() {
   const refs = []
   let hookIndex = 0
   let locale = 'en'
-  let setupOpen = false
+  const windowListeners = new Map()
+  const subscriptions = new Set()
   const ctx = {
     effect(factory) {
       cleanups.push(factory())
@@ -42,6 +43,14 @@ async function fixture() {
   }
   vm.runInNewContext(await readFile(new URL('./client.js', import.meta.url), 'utf8'), {
     window: {
+      addEventListener(type, listener) {
+        const current = windowListeners.get(type) ?? new Set()
+        current.add(listener)
+        windowListeners.set(type, current)
+      },
+      removeEventListener(type, listener) {
+        windowListeners.get(type)?.delete(listener)
+      },
       __ModuleLoader__: {
         load: value => {
           registration = value
@@ -55,13 +64,13 @@ async function fixture() {
       : {
           createElement: (component, props, ...children) => ({ component, props, children }),
           useMemo: fn => fn(),
-          useState: value => [
-            setupOpen || value,
-            next => {
-              setupOpen = next
-            },
-          ],
-          useEffect: () => {},
+          useSyncExternalStore(subscribe, getSnapshot) {
+            if (!subscriptions.has(subscribe)) {
+              subscriptions.add(subscribe)
+              cleanups.push(subscribe(() => {}))
+            }
+            return getSnapshot()
+          },
           useRef: value => (refs[hookIndex++] ??= { current: value }),
         }
   )
@@ -83,7 +92,8 @@ async function fixture() {
     publish,
     renderComposer,
     showSetup: () => {
-      setupOpen = true
+      entries.get('wework.shell.overlay')[0].component({})
+      for (const listener of windowListeners.get('wework:voice-input:settings') ?? []) listener()
     },
     setLocale: value => {
       locale = value

@@ -139,6 +139,7 @@ select_plugin_sync_checkpoints() {
 }
 
 select_rendering_checkpoints() {
+  select_target "core:streaming-conversation-switching"
   select_target "core:core-task-flow"
   select_target "core:streaming-content"
   select_target "core:transcript-sync"

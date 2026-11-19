@@ -1,23 +1,21 @@
-import { useEffect, useState } from "react";
-import type {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-} from "react";
-import { Copy, Download, ListChecks, Maximize2 } from "lucide-react";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { activityClassNames as cn } from "../issue-detail/activityClassNames";
-import { AssistantMarkdown } from "../markdown/AssistantMarkdown";
+import { useDeadlineExpired } from '../clock'
+import { useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
+import { Copy, Download, ListChecks, Maximize2 } from 'lucide-react'
+import { useConversationTranslation } from './ConversationTranslation'
+import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { AssistantMarkdown } from '../markdown/AssistantMarkdown'
 
 interface AssistantPlanCardProps {
-  content: string;
-  onOpenPlan?: () => void;
-  isStreaming?: boolean;
+  content: string
+  onOpenPlan?: () => void
+  isStreaming?: boolean
 }
 
 export interface AssistantPlanOpenRequest {
-  blockId: string;
-  subtaskId: string;
-  content: string;
+  blockId: string
+  subtaskId: string
+  content: string
 }
 
 export function AssistantPlanCard({
@@ -25,50 +23,46 @@ export function AssistantPlanCard({
   onOpenPlan,
   isStreaming = false,
 }: AssistantPlanCardProps) {
-  const { t } = useConversationTranslation();
+  const { t } = useConversationTranslation()
 
   const handleDownload = async () => {
-    downloadTextFile(content, "plan.md");
-  };
+    downloadTextFile(content, 'plan.md')
+  }
 
   const openPlan = () => {
-    onOpenPlan?.();
-  };
+    onOpenPlan?.()
+  }
 
   const handleCardClick = (event: ReactMouseEvent<HTMLElement>) => {
-    if (isNestedInteractiveElement(event.target, event.currentTarget)) return;
-    openPlan();
-  };
+    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
+    openPlan()
+  }
 
   const handleCardKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    if (isNestedInteractiveElement(event.target, event.currentTarget)) return;
-    event.preventDefault();
-    openPlan();
-  };
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
+    event.preventDefault()
+    openPlan()
+  }
 
   return (
     <section
       data-testid="assistant-plan-card"
-      role={onOpenPlan ? "button" : undefined}
+      role={onOpenPlan ? 'button' : undefined}
       tabIndex={onOpenPlan ? 0 : undefined}
-      aria-label={onOpenPlan ? t("plan_card.expand") : undefined}
+      aria-label={onOpenPlan ? t('plan_card.expand') : undefined}
       onClick={onOpenPlan ? handleCardClick : undefined}
       onKeyDown={onOpenPlan ? handleCardKeyDown : undefined}
       className={cn(
-        "my-2 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]",
+        'my-2 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
         onOpenPlan &&
-          "cursor-pointer keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-offset-2 keyboard:focus-visible:outline-primary/70",
+          'cursor-pointer keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-offset-2 keyboard:focus-visible:outline-primary/70'
       )}
     >
       <div className="flex min-h-9 items-center justify-between gap-3 px-4 py-1.5 text-text-muted">
         <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
-          <ListChecks
-            className="h-4 w-4 shrink-0"
-            strokeWidth={1.8}
-            aria-hidden="true"
-          />
-          <span>{t("plan_card.title")}</span>
+          <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+          <span>{t('plan_card.title')}</span>
           {isStreaming ? (
             <span
               data-testid="assistant-plan-streaming-indicator"
@@ -78,7 +72,7 @@ export function AssistantPlanCard({
                 className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary"
                 aria-hidden="true"
               />
-              <span>{t("plan_card.generating")}</span>
+              <span>{t('plan_card.generating')}</span>
             </span>
           ) : null}
         </div>
@@ -101,7 +95,7 @@ export function AssistantPlanCard({
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
       </div>
     </section>
-  );
+  )
 }
 
 function PlanCardActions({
@@ -109,49 +103,49 @@ function PlanCardActions({
   onDownload,
   onExpand,
 }: {
-  content: string;
-  onDownload: () => void | Promise<void>;
-  onExpand?: () => void;
+  content: string
+  onDownload: () => void | Promise<void>
+  onExpand?: () => void
 }) {
-  const { t } = useConversationTranslation();
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1400);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-
+  const { t } = useConversationTranslation()
+  const [copiedUntil, setCopiedUntil] = useState<number>()
+  const expired = useDeadlineExpired(copiedUntil)
+  const copied = copiedUntil !== undefined && !expired
   const handleCopy = () => {
-    void copyText(content).then(() => setCopied(true));
-  };
+    void copyText(content).then(() =>
+      setCopiedUntil(previous =>
+        previous !== undefined && previous > Date.now() ? previous : Date.now() + 1400
+      )
+    )
+  }
 
   const actions = [
     {
-      key: "download",
-      label: t("plan_card.download"),
+      key: 'download',
+      label: t('plan_card.download'),
       icon: <Download className="h-4 w-4" aria-hidden="true" />,
       onClick: onDownload,
-      testId: "assistant-plan-download-button",
+      testId: 'assistant-plan-download-button',
     },
     {
-      key: "copy",
-      label: t("plan_card.copy"),
+      key: 'copy',
+      label: t('plan_card.copy'),
       icon: <Copy className="h-4 w-4" aria-hidden="true" />,
       onClick: handleCopy,
-      testId: "assistant-plan-copy-button",
+      testId: 'assistant-plan-copy-button',
     },
     ...(onExpand
       ? [
           {
-            key: "expand",
-            label: t("plan_card.expand"),
+            key: 'expand',
+            label: t('plan_card.expand'),
             icon: <Maximize2 className="h-4 w-4" aria-hidden="true" />,
             onClick: onExpand,
-            testId: "assistant-plan-expand-button",
+            testId: 'assistant-plan-expand-button',
           },
         ]
       : []),
-  ];
+  ]
 
   return (
     <div className="flex shrink-0 items-center gap-2">
@@ -160,19 +154,19 @@ function PlanCardActions({
           data-testid="assistant-plan-copy-success"
           className="text-xs font-medium text-text-secondary"
         >
-          {t("plan_card.copy_success")}
+          {t('plan_card.copy_success')}
         </span>
       ) : null}
-      {actions.map((action) => (
+      {actions.map(action => (
         <button
           key={action.key}
           type="button"
           data-testid={action.testId}
           aria-label={action.label}
           title={action.label}
-          onClick={(event) => {
-            event.stopPropagation();
-            void action.onClick();
+          onClick={event => {
+            event.stopPropagation()
+            void action.onClick()
           }}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
         >
@@ -180,42 +174,39 @@ function PlanCardActions({
         </button>
       ))}
     </div>
-  );
+  )
 }
 
 function downloadTextFile(content: string, filename: string) {
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function isNestedInteractiveElement(
-  target: EventTarget | null,
-  currentTarget: HTMLElement,
-) {
-  if (!(target instanceof HTMLElement)) return false;
-  const interactiveTarget = target.closest("button,a,input,textarea,select");
-  return Boolean(interactiveTarget && interactiveTarget !== currentTarget);
+function isNestedInteractiveElement(target: EventTarget | null, currentTarget: HTMLElement) {
+  if (!(target instanceof HTMLElement)) return false
+  const interactiveTarget = target.closest('button,a,input,textarea,select')
+  return Boolean(interactiveTarget && interactiveTarget !== currentTarget)
 }
 
 async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    await navigator.clipboard.writeText(text)
+    return
   }
 
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
 }

@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { DialogForm } from '../controls/DialogForm'
 import { TemplateCreateSection } from '../templates/TemplateCreateSection'
+import type { TemplatePageNavigation } from '../templates/templatePageNavigation'
 import { TemplateEnvironmentSelection } from '../templates/TemplateEnvironmentSelection'
 import { ProjectCollaboratorPicker } from './ProjectCollaboratorPicker'
 import { ChoiceButton, CollaboratorToken } from './ProjectCreatePrimitives'
@@ -58,11 +59,10 @@ interface ProjectCreateFormViewProps {
   resourceSetup: ProjectCreateResourceSetup | undefined
   people: CollaborationWorkspaceMember[]
   configurationTarget: HTMLElement | null
-  setTemplateConfiguration: Dispatch<SetStateAction<{ title: string; onBack: () => void } | null>>
+  templateNavigation: TemplatePageNavigation
   collaboratorsLocked: boolean
   selectedAgents: CollaborationOwnedAgent[]
-  groupGenerationRevealedAgentIdsRef: RefObject<Set<string>>
-  setRevealedGenerationAgentIds: Dispatch<SetStateAction<string[]>>
+  revealGenerationAgents(ids: string[]): void
   setGroupGenerationError: Dispatch<SetStateAction<string | null>>
   setGroupModelPickerOpen: Dispatch<SetStateAction<boolean>>
   groupedParticipants: CollaborationGroupMember[]
@@ -116,11 +116,10 @@ export function ProjectCreateFormView({
   resourceSetup,
   people,
   configurationTarget,
-  setTemplateConfiguration,
+  templateNavigation,
   collaboratorsLocked,
   selectedAgents,
-  groupGenerationRevealedAgentIdsRef,
-  setRevealedGenerationAgentIds,
+  revealGenerationAgents,
   setGroupGenerationError,
   setGroupModelPickerOpen,
   groupedParticipants,
@@ -318,8 +317,7 @@ export function ProjectCreateFormView({
             initialTemplate={props.initialTemplate}
             configurationHost={{
               target: configurationTarget,
-              navigate: (title, onBack) =>
-                setTemplateConfiguration(onBack ? { title, onBack } : null),
+              navigation: templateNavigation,
             }}
             disabled={state.saving || Boolean(state.createdProject)}
             onSelect={document => {
@@ -362,8 +360,7 @@ export function ProjectCreateFormView({
                     data-testid="collaboration-project-create-edit-group"
                     onClick={() => {
                       const agentIds = selectedAgents.map(agent => agent.id)
-                      groupGenerationRevealedAgentIdsRef.current = new Set(agentIds)
-                      setRevealedGenerationAgentIds(agentIds)
+                      revealGenerationAgents(agentIds)
                       setGroupGenerationError(null)
                       setGroupEditorDraft(state.collaborationGroupDraft)
                       setGroupModelPickerOpen(true)
