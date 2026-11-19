@@ -11,6 +11,9 @@ import {
 
 export const WORKFLOW_CONFLICT_TOPIC = 'https://github.com/org/repo/actions/runs/44231414768'
 
+export const PREEXISTING_CHECKS_TOPIC = 'https://github.com/org/repo/pull/17'
+export const PREEXISTING_CHECKS_HEAD = 'b'.repeat(40)
+
 export function findEventFact(value, predicate) {
   if (typeof value === 'string') {
     try {
@@ -40,7 +43,10 @@ export function createConversationEventModel({
   function events(body, phase) {
     const marker = `${MARKER}_${phase}`
     const workflowConflict = phase === 'workflow_conflict'
-    const usesGoal = !['ordinary', 'workflow', 'workflow_conflict'].includes(phase)
+    const preexistingChecks = phase === 'preexisting_checks'
+    const usesGoal = !['ordinary', 'workflow', 'workflow_conflict', 'preexisting_checks'].includes(
+      phase
+    )
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
       if (phase === 'human') onEvent()
       const input = body.input.findLast(
@@ -63,9 +69,20 @@ export function createConversationEventModel({
       )
       assert.equal(
         data.events[0].topicId,
-        workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
+        preexistingChecks
+          ? PREEXISTING_CHECKS_TOPIC
+          : workflowConflict
+            ? WORKFLOW_CONFLICT_TOPIC
+            : 'release-document',
         'Only the selected topic may wake the model'
       )
+      if (preexistingChecks) {
+        const { external } = data.events[0]
+        assert.equal(external.eventType, 'tracked.status')
+        assert.equal(external.payload.headRefOid, PREEXISTING_CHECKS_HEAD)
+        assert.equal(external.payload.statusCheckRollup.state, 'FAILURE')
+        assert.ok(Date.parse(external.payload.failedAt) < Date.parse(data.sources[0].enabledAfter))
+      }
       if (phase === 'workflow') {
         assert.equal(data.events[0].external.payload.id, 44231414768)
         assert.equal(data.events[0].external.payload.head_sha, 'a'.repeat(40))
@@ -113,34 +130,42 @@ export function createConversationEventModel({
         {
           subscription_key: marker,
           source: sources[phase],
-          match: {
-            '/eventType': workflowConflict ? 'git.event' : 'message.received',
-            '/topicId': workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
-            ...(phase === 'workflow'
-              ? {
-                  '/external/eventType': 'tracked.workflow_run',
-                  '/external/payload/id': 44231414768,
-                  '/external/payload/head_sha': 'a'.repeat(40),
-                  '/external/payload/status': 'completed',
-                  $any: [
-                    { '/external/payload/conclusion': 'success' },
-                    { '/external/payload/conclusion': 'failure' },
-                  ],
-                }
-              : workflowConflict
-                ? {
-                    '/external/payload/id': 44231414768,
-                    '/external/payload/head_sha': 'a'.repeat(40),
-                    $any: [
-                      {
-                        '/external/eventType': 'tracked.workflow_run',
-                        '/external/payload/status': 'completed',
-                      },
-                      { '/external/eventType': 'tracked.workflow_run_pr_conflict' },
-                    ],
-                  }
-                : {}),
-          },
+          match: preexistingChecks
+            ? {
+                '/eventType': 'git.event',
+                '/topicId': PREEXISTING_CHECKS_TOPIC,
+                '/external/eventType': 'tracked.status',
+                '/external/payload/headRefOid': PREEXISTING_CHECKS_HEAD,
+                '/external/payload/statusCheckRollup/state': 'FAILURE',
+              }
+            : {
+                '/eventType': workflowConflict ? 'git.event' : 'message.received',
+                '/topicId': workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
+                ...(phase === 'workflow'
+                  ? {
+                      '/external/eventType': 'tracked.workflow_run',
+                      '/external/payload/id': 44231414768,
+                      '/external/payload/head_sha': 'a'.repeat(40),
+                      '/external/payload/status': 'completed',
+                      $any: [
+                        { '/external/payload/conclusion': 'success' },
+                        { '/external/payload/conclusion': 'failure' },
+                      ],
+                    }
+                  : workflowConflict
+                    ? {
+                        '/external/payload/id': 44231414768,
+                        '/external/payload/head_sha': 'a'.repeat(40),
+                        $any: [
+                          {
+                            '/external/eventType': 'tracked.workflow_run',
+                            '/external/payload/status': 'completed',
+                          },
+                          { '/external/eventType': 'tracked.workflow_run_pr_conflict' },
+                        ],
+                      }
+                    : {}),
+              },
           continuation: `${marker} 文档有变化，请继续原任务。`,
           wait_for_event: usesGoal,
         },
@@ -174,7 +199,13 @@ export function createConversationEventModel({
           value.items?.some(item => item.providerId === PROVIDER)
         ).items
         sources[phase] = resources.find(
-          item => item.id === (phase === 'human' ? 'long-archive-record' : 'archive-record')
+          item =>
+            item.id ===
+            (preexistingChecks
+              ? 'preexisting-checks-record'
+              : phase === 'human'
+                ? 'long-archive-record'
+                : 'archive-record')
         )
         assert.ok(sources[phase])
       }

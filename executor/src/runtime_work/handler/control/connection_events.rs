@@ -189,10 +189,16 @@ impl RuntimeWorkRpcHandler {
         }
         let filter = conditions::resolve(&args)?;
         validate_filter(&filter)?;
-        let intent = json!({"source":args["source"],"match":filter,
+        let mut intent = json!({"source":args["source"],"match":filter,
             "continuation":args["continuation"],"wait_for_event":args["wait_for_event"].as_bool().unwrap_or(false)});
+        let previous_intent = intent.clone();
+        if matches!(args["git_wait"].as_str(), Some("checks" | "merge")) {
+            intent["source"]["observeCurrentStatus"] = json!(true);
+        } else if intent["source"].get("observeCurrentStatus").is_some() {
+            return Err(invalid("Current Git status observation requires git_wait"));
+        }
         if let Some(record) = records.get(&id) {
-            if record["intent"] != intent {
+            if record["intent"] != intent && record["intent"] != previous_intent {
                 return Err(invalid(
                     "subscription_key already belongs to different subscription arguments",
                 ));
@@ -204,7 +210,7 @@ impl RuntimeWorkRpcHandler {
             return Err(invalid("Continuation exceeds 16384 bytes"));
         }
         let session = session::binding(&link)?;
-        let mut source = args["source"].clone();
+        let mut source = intent["source"].clone();
         for field in ["providerId", "profile", "kind", "id", "name"] {
             if source[field].as_str().map_or(true, |v| v.trim().is_empty()) {
                 return Err(invalid(
