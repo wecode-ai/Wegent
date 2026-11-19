@@ -13,7 +13,7 @@ import {
 } from '../modules/response-protocol.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, resultDir }) {
-  let cloud, environment, project, user, other, otherToken
+  let cloud, environment, workspace, project, user, other, otherToken
   const evidence = []
 
   async function request(path, body, token = cloud.authToken) {
@@ -62,13 +62,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
       cloud = value
       await request('/admin/setup-complete', {})
       user = await request('/users/me')
-      const workspace = await request('/v1/workspaces', {
+      workspace = await request('/v1/workspaces', {
         name: 'Rust assignment index regression',
-      })
-      project = await request('/v1/cloud-projects', {
-        workspace_id: workspace.id,
-        name: 'Rust assignment index regression',
-        task_provider: 'local',
       })
       other = await request('/admin/users', {
         user_name: `automation-assignment-${process.pid}`,
@@ -82,11 +77,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
           password: 'automation-assignment-e2e-only',
         })
       ).access_token
-      for (const path of [
-        `/v1/workspaces/${workspace.id}/members`,
-        `/v1/cloud-projects/${project.id}/members`,
-      ])
-        await request(path, { user_id: other.id, role: 'Developer' })
+      await request(`/v1/workspaces/${workspace.id}/members`, {
+        user_id: other.id,
+        role: 'Developer',
+      })
     },
     setCloudEnvironment(value) {
       environment = value
@@ -112,6 +106,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
       const failures = []
       for (const automatic of [false, true]) {
         try {
+          // The automatic replay must not consume a pending assignment from the manual case.
+          project = await request('/v1/cloud-projects', {
+            workspace_id: workspace.id,
+            name: `Rust assignment index regression (${automatic ? 'automatic' : 'manual'})`,
+            task_provider: 'local',
+          })
+          await request(`/v1/cloud-projects/${project.id}/members`, {
+            user_id: other.id,
+            role: 'Developer',
+          })
           const personal = await rpc('runtime.stand_in.personal.get', { userId: user.id })
           const role = personal.roles[0]
           let settings = await rpc('runtime.stand_in.personal.save', {
@@ -213,7 +217,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
           if (!automatic) {
             assert.deepEqual(await request(`/v1/loop-items/${issue.id}/tasks`), [])
             const start = `[data-testid="notification-stand-in-start-${notice.id}"]`
-            await control.command('clickWhenEnabled', start)
+            try {
+              await control.command('clickWhenEnabled', start)
+            } catch (cause) {
+              const row = `[data-testid="notification-processing-${notice.id}"]`
+              const processingText = await control
+                .command('getText', row)
+                .catch(error => error.message)
+              await record('manual-button-unavailable', issue, processingText)
+              throw cause
+            }
             await until(
               async () =>
                 Number(await control.command('getElementCount', `${start}:not([disabled])`)) +
