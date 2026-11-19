@@ -173,6 +173,10 @@ limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoi
 uses real Electron, Codex, and executor processes to verify tool-history retention,
 automatic continuation, no duplicate user messages, and cancellation.
 
+### Codex external context conversion
+
+When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
+
 ### Anthropic Empty-Output Recovery
 
 Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
