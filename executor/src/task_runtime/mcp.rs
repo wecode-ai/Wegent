@@ -2310,8 +2310,10 @@ async fn call_backend_tool(
             let mut body = json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
                 "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([])),
-                "reply_to_comment_id": arguments.get("reply_to_comment_id"),
             });
+            if let Some(target) = arguments.get("reply_to_comment_id") {
+                body["reply_to_comment_id"] = target.clone();
+            }
             let issue_grant = grant.filter(|grant| grant.item_id.as_deref() == Some(item));
             if let Some(dispatch_id) = issue_grant
                 .and_then(|grant| grant.dispatch_id.as_deref())

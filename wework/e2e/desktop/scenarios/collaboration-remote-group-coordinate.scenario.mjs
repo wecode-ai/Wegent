@@ -26,6 +26,10 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 import { createGuidedReplies } from '../modules/collaboration-guided-replies.mjs'
 import {
   assertManagerComment,
+  assignStoryGroup,
+  issueExecution,
+  runtimeDeviceId,
+  terminalExecution,
   requestJson,
   waitForValue,
   waitForIssueStatus,
@@ -292,32 +296,8 @@ async function createIssue(control, request, projectId, timeoutMs) {
   )
 }
 
-async function assignGroup(control, groupId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
-  await control.command(
-    'click',
-    `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
-    text: GROUP,
-    timeoutMs,
-  })
-}
-
-function issueExecution(execution, issueId) {
-  return String(execution.loopItemId ?? execution.loop_item_id) === String(issueId)
-}
-
-function runtimeDeviceId(execution) {
-  return execution.runtimeDeviceId ?? execution.runtime_device_id
-}
-
 function collaborationGroupAgentId(agent) {
   return agent.wegentTeamId ?? agent.wegent_team_id ?? agent.teamId ?? agent.team_id ?? agent.id
-}
-
-function terminalExecution(execution) {
-  return ['completed', 'succeeded'].includes(execution.status)
 }
 
 async function waitForActivityText(control, text, timeoutMs) {
@@ -621,7 +601,7 @@ export async function createDesktopScenario({
       reviewerAgentId = group.reviewerId
       const creationStartedAt = Date.now()
       rootIssue = await createIssue(control, request, project.id, uiTimeoutMs)
-      await assignGroup(control, group.id, uiTimeoutMs)
+      await assignStoryGroup(control, scoped, group.id, GROUP, uiTimeoutMs)
 
       if (verifyManagerPlanning) {
         await waitForPromise(

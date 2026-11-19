@@ -162,3 +162,27 @@ export function firstRoundPlan({
     },
   }
 }
+
+export async function assignStoryGroup(control, scoped, groupId, groupName, timeoutMs) {
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+  await control.command(
+    'click',
+    `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
+  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
+    text: groupName,
+    timeoutMs,
+  })
+}
+
+export function issueExecution(execution, issueId) {
+  return String(execution.loopItemId ?? execution.loop_item_id) === String(issueId)
+}
+
+export function runtimeDeviceId(execution) {
+  return execution.runtimeDeviceId ?? execution.runtime_device_id
+}
+
+export function terminalExecution(execution) {
+  return ['completed', 'succeeded'].includes(execution.status)
+}
