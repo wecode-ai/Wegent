@@ -26,7 +26,7 @@ const MARKER = 'WEWORK_GOAL_RESUME_ROUTE'
 const RECOVERED = `${MARKER}_RECOVERED`
 
 export function createDesktopScenario(options) {
-  const existing = options.checkpoint === 'goal-resume-route' ? null : createStoppedGoal(options)
+  const existing = createStoppedGoal(options)
   let active = false
   let requests = 0
   let restartDesktopApp

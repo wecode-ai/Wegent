@@ -470,25 +470,61 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMessages(address)[0]?.content).toBe('updated projection')
   })
 
-  test('evicts an unobserved terminal conversation after the idle ttl', () => {
-    vi.useFakeTimers()
-    applyRuntimeConversationAction(address, {
-      type: 'assistant_started',
-      taskId: address.taskId,
-      subtaskId: 'turn-1',
-    })
-    applyRuntimeConversationAction(address, {
-      type: 'assistant_done',
-      subtaskId: 'turn-1',
-    })
+  test.each([
+    { name: 'production default', config: undefined, ttlMs: 300_000 },
+    {
+      name: 'active E2E cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: 10_000 },
+      ttlMs: 10_000,
+    },
+    {
+      name: 'disabled E2E',
+      config: {
+        controlUrl: 'http://127.0.0.1:43111',
+        disabled: true,
+        conversationCacheIdleTtlMs: 10_000,
+      },
+      ttlMs: 300_000,
+    },
+    { name: 'no E2E controller', config: { conversationCacheIdleTtlMs: 10_000 }, ttlMs: 300_000 },
+    {
+      name: 'nonpositive cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: 0 },
+      ttlMs: 300_000,
+    },
+    {
+      name: 'fractional cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: 0.5 },
+      ttlMs: 300_000,
+    },
+    {
+      name: 'nonfinite cadence',
+      config: { controlUrl: 'http://127.0.0.1:43111', conversationCacheIdleTtlMs: Infinity },
+      ttlMs: 300_000,
+    },
+  ])(
+    'evicts an unobserved terminal conversation after the idle ttl: $name',
+    ({ config, ttlMs }) => {
+      vi.useFakeTimers()
+      vi.stubGlobal('__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__', config)
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: 'turn-1',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+      })
 
-    vi.advanceTimersByTime(5 * 60 * 1000 - 1)
-    expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
+      vi.advanceTimersByTime(ttlMs - 1)
+      expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
 
-    vi.advanceTimersByTime(1)
-    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
-    vi.useRealTimers()
-  })
+      vi.advanceTimersByTime(1)
+      expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+      vi.useRealTimers()
+    }
+  )
 
   test('keeps a terminal conversation while a view is subscribed', () => {
     vi.useFakeTimers()

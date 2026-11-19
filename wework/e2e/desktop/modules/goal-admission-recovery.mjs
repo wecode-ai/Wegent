@@ -94,7 +94,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // Start cold; route preparation loads the native session before activation.
+        // A cold session needs one native-owned continuation before notifications.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -112,7 +112,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(
           set.resumed,
           false,
-          'The prepared native Goal must not queue duplicate recovery'
+          'Preparing a cold session must leave continuation owned by the native Goal'
         )
         await waitForValue(
           task,
@@ -120,6 +120,10 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
           'The active Goal waited for its own resume instead of reaching the model',
           uiTimeoutMs
         )
+        const repeated = await rpc('runtime.tasks.goal.set', { address, status: 'active' })
+        assert.equal(repeated.accepted, true, repeated.error)
+        assert.equal(repeated.resumed, false, 'The active Goal must not admit duplicate recovery')
+        assert.equal(requests, 2, 'Repeated activation submitted another model turn')
         const protectedProcess = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
         assert.equal(
           protectedProcess.restarted,

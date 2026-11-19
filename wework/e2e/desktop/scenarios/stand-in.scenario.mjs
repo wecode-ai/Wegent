@@ -1,3 +1,4 @@
+import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   openStandInActivity,
   openStandInSettings,
@@ -559,8 +560,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(requests, 2, 'Polling or editing duplicated a completed assignment')
       for (const excluded of [old, other, unassigned]) {
         assert.equal(
@@ -600,8 +601,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(
         (
           await requestExecutor(
@@ -676,8 +677,8 @@ export async function createDesktopScenario({
         ])
       // Automatic intake selects one matching role in configured order.
       await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review'])
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(requests, 5, 'Each assignment must execute once through its selected assistant')
       assert.equal(agentRequests, 0, 'Independent roles must not inherit agent prompts')
       assert.deepEqual(
@@ -803,8 +804,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.deepEqual(
         { requests, ...tagRequests },
         beforeReorder,
