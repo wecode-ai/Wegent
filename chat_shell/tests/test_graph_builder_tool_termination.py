@@ -13,7 +13,7 @@ from chat_shell.agents.graph_builder import (
     _has_unexecuted_tool_calls,
 )
 from chat_shell.tools.base import ToolRegistry
-from chat_shell.tools.builtin.load_skill import LoadSkillTool
+from chat_shell.tools.builtin.load_skill import LazySkillProviderTool, LoadSkillTool
 from chat_shell.tools.mcp.client import wrap_tool_with_protection
 
 
@@ -69,9 +69,9 @@ class _DirectMcpModel(BaseChatModel):
                         "id": f"call-{self.calls}",
                         "name": "direct" if self.calls == 1 else "healthy",
                         "args": (
-                            {}
-                            if self.invalid_arguments or self.calls == 2
-                            else {"value": "probe"}
+                            {"private_input": "private-invalid-tool-input"}
+                            if self.invalid_arguments and self.calls == 1
+                            else {} if self.calls == 2 else {"value": "probe"}
                         ),
                     }
                 ],
@@ -83,9 +83,9 @@ class _DirectMcpModel(BaseChatModel):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [None, "connection", "validation"])
-@pytest.mark.parametrize("deferred", [False, True])
+@pytest.mark.parametrize("loading", ["eager", "deferred", "proxy"])
 async def test_direct_mcp_failures_continue_the_real_agent_graph(
-    failure: str | None, deferred: bool, caplog: pytest.LogCaptureFixture
+    failure: str | None, loading: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     def direct(value: str) -> str:
         """Run a direct-return MCP operation."""
@@ -106,12 +106,24 @@ async def test_direct_mcp_failures_continue_the_real_agent_graph(
         skill_names=["direct_skill"],
         skill_metadata={"direct_skill": {"prompt": "Use the direct MCP tool."}},
     )
-    if deferred:
+    if loading != "eager":
 
         async def load_direct_tools() -> list:
             return [direct_tool]
 
         load_skill_tool.register_skill_tool_loader("direct_skill", load_direct_tools)
+        if loading == "proxy":
+            load_skill_tool.register_skill_tools(
+                "direct_skill",
+                [
+                    LazySkillProviderTool(
+                        skill_name="direct_skill",
+                        tool_name=direct_tool.name,
+                        description="Deferred MCP operation",
+                        load_skill_tool=load_skill_tool,
+                    )
+                ],
+            )
         registry.register(load_skill_tool)
     else:
         registry.register(direct_tool)
@@ -119,7 +131,7 @@ async def test_direct_mcp_failures_continue_the_real_agent_graph(
     model = _DirectMcpModel(invalid_arguments=failure == "validation")
     builder = LangGraphAgentBuilder(model, tool_registry=registry)
     graph = builder._build_agent()
-    if deferred:
+    if loading != "eager":
         # Deferred MCP metadata becomes available only after graph construction.
         await load_skill_tool.ensure_skill_tools_loaded("direct_skill")
         load_skill_tool._run("direct_skill")
@@ -144,4 +156,6 @@ async def test_direct_mcp_failures_continue_the_real_agent_graph(
         assert results[1].content == "healthy-result"
         assert direct_tool._wegent_mcp_unavailable.is_set()
         assert "private-credential-and-response" not in str(state)
+        assert "private-invalid-tool-input" not in str(results)
     assert "private-credential-and-response" not in caplog.text
+    assert "private-invalid-tool-input" not in caplog.text

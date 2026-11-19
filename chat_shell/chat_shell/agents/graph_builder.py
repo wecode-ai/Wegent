@@ -49,6 +49,7 @@ from ..llm_logging import log_llm_request_event as _log_llm_request_event
 from ..llm_logging import log_llm_response_event as _log_llm_response_event
 from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
+from ..tools.builtin.load_skill import LazySkillProviderTool
 from ..tools.builtin.silent_exit import SilentExitException
 from ..tools.deferred_input import DeferredUserInputExit
 from .turn_context import TurnExecutionContext
@@ -1274,7 +1275,10 @@ class LangGraphAgentBuilder:
                         runtime=tool_request.runtime,
                     )
             result = await execute(tool_request)
-            unavailable = getattr(tool_request.tool, "_wegent_mcp_unavailable", None)
+            active_tool = tool_request.tool
+            if isinstance(active_tool, LazySkillProviderTool) and finder:
+                active_tool = finder(tool_request.tool_call["name"])
+            unavailable = getattr(active_tool, "_wegent_mcp_unavailable", None)
             if isinstance(result, ToolMessage) and unavailable is not None:
                 if result.status == "error" or unavailable.is_set():
                     unavailable.set()
