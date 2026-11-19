@@ -27,6 +27,7 @@ import {
 import { programmaticInput } from '../modules/model-tool-catalog.mjs'
 import { writeSseRegressionResponse } from '../modules/sse-regression-response.mjs'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const CASES = [
   { id: 'responses-bridge', protocol: 'responses', api: 'openai-responses' },
@@ -198,7 +199,6 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           (await readFile(join(workspacePath, call.artifact), 'utf8')).trim(),
           call.marker
         )
-        completed.add(model.id)
         succeeded = true
         const previous = pendingStreams.get(model.id)
         if (previous && !previous.destroyed) previous.end()
@@ -246,6 +246,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         model.protocol,
         { endStream }
       )
+      if (succeeded) completed.add(model.id)
       return true
     },
     async verify(control) {
@@ -259,6 +260,12 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         await control.command(
           'clickWhenEnabled',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+        )
+        await waitForValue(
+          () => completed.has(model.id),
+          Boolean,
+          `The ${model.id} tool round trip did not finish its SSE response`,
+          30_000
         )
         await control.command(
           'waitFor',
