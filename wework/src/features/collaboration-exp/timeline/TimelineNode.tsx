@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { isPublishedTimelineConclusion } from '../model/messageLayer'
 import type {
   ExperienceAttachmentReference,
   ExperiencePrivateConversation,
@@ -57,8 +58,16 @@ export function TimelineNode({
       }).format(new Date(node.at))
     : t('timeline.unknownTime')
   const userName = node.author
-    ? (node.author.name ?? t('tasks.unnamedUser', { id: node.author.id }))
-    : t('timeline.system')
+    ? node.author.name || t('timeline.unknownMember')
+    : t(node.kind === 'system' ? 'timeline.system' : 'timeline.unknownMember')
+  const sourceLabel =
+    node.generationSource === 'ai'
+      ? !isPublishedTimelineConclusion(node)
+        ? 'aiPending'
+        : node.publicationSource === 'human'
+          ? 'aiHumanPublished'
+          : 'aiPublished'
+      : 'humanPublished'
   const execution = node.kind === 'execution'
   const completed = execution && node.status === 'completed'
   const running = execution && node.status === 'streaming'
@@ -85,7 +94,8 @@ export function TimelineNode({
         <Icon />
       </span>
       <header>
-        <strong>{userName}</strong>
+        <strong>{node.kind === 'system' ? userName : `【${userName}】`}</strong>
+        {node.kind === 'comment' ? <span>{t(`timeline.provenance.${sourceLabel}`)}</span> : null}
         <span className="experience-timeline-node-state">
           {execution ? status : t(hasDiscussion ? 'timeline.sent' : 'timeline.recorded')}
         </span>
@@ -121,7 +131,13 @@ export function TimelineNode({
             action: t(
               `timeline.handoffActions.${['assign', 'reassign', 'unassign'].includes(node.handoff.action) ? node.handoff.action : 'unknown'}`
             ),
-            target: node.handoff.targetName ?? node.handoff.targetId ?? t('timeline.unknownSource'),
+            target:
+              node.handoff.targetName ??
+              t(
+                node.handoff.targetType === 'user'
+                  ? 'timeline.unknownMember'
+                  : 'timeline.unknownSource'
+              ),
           })}
         </p>
       ) : null}
@@ -151,7 +167,13 @@ export function TimelineNode({
           ) : (
             <>
               <span>{taskTitle}</span>
-              <span>{t('timeline.unknownSource')}</span>
+              <span>
+                {t(
+                  node.traceState === 'restricted'
+                    ? 'timeline.traceRestricted'
+                    : 'timeline.unknownSource'
+                )}
+              </span>
             </>
           )}
         </div>

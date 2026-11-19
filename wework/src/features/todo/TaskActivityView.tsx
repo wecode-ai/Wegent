@@ -1514,7 +1514,10 @@ export function TaskActivityView({
                           className="inline-flex items-center gap-1 text-xs text-text-muted"
                           aria-live="polite"
                         >
-                          <IssueAssignmentReceiptStatus {...currentReceipts} />
+                          <IssueAssignmentReceiptStatus
+                            {...currentReceipts}
+                            currentUserId={activeUserId ?? undefined}
+                          />
                         </span>
                       ) : null
                     }

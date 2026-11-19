@@ -18,7 +18,7 @@ use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
 use chrono::Utc;
 use serde_json::{Value, json};
 
-pub(super) struct Issue {
+pub(crate) struct Issue {
     pub id: String,
     pub title: String,
 }
@@ -44,16 +44,81 @@ pub(super) async fn create(
     let issue=state.mysql.with_transaction(async |tx| {
         let project=store::locked(tx,"project",&project.id).await?.expect("authorized project");
         let sequence=project.next_item_number;
-        let id=format!("{}-{sequence}",project.project_key);
-        let status=project.metadata.0["board_config"]["statuses"].as_array().map(|statuses|statuses.first().and_then(|v|v["id"].as_str()).unwrap_or("")).unwrap_or("inbox");
-        let mut metadata=metadata.clone();
-        if !status.is_empty(){metadata["status_history"]=json!([{"from_status":"","to_status":status,"from_status_name":"","to_status_name":status_name(&project,status),"trigger":"create","by_user_id":owner,"at":iso(Utc::now().naive_utc())}]);}
-        super::assignments::attribute_history(&mut metadata, "status_history", &super::assignments::automation_actor(context));
-        store::insert(tx,"task",json!({"id":id,"cloud_project_id":project.id,"sequence_number":sequence,"created_by_user_id":owner,"title":title,"description":description,"priority":"medium","status":status,"metadata":metadata})).await?;
+        let issue = insert_issue_on(
+            tx,
+            &project,
+            owner,
+            &title,
+            description,
+            context,
+            sequence,
+            metadata,
+        )
+        .await?;
         tx.execute("UPDATE loop_items SET next_item_number=next_item_number+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(project.id.as_str(),)).await?;
-        Ok(Issue{id,title:title.clone()})
+        Ok(issue)
     }).await?;
     Ok(issue)
+}
+
+/// Insert one local Issue after the caller has locked the project and allocated
+/// its next sequence number. Batch creators own the sequence increment.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_issue_on(
+    tx: &mut impl MysqlTransaction,
+    project: &Node,
+    owner: i64,
+    title: &str,
+    description: &str,
+    context: &Value,
+    sequence: i64,
+    mut metadata: Value,
+) -> brz_mysql::MysqlResult<Issue> {
+    let title: String = title.chars().take(255).collect();
+    let id = format!("{}-{sequence}", project.project_key);
+    let status = project.metadata.0["board_config"]["statuses"]
+        .as_array()
+        .map(|statuses| {
+            statuses
+                .first()
+                .and_then(|value| value["id"].as_str())
+                .unwrap_or("")
+        })
+        .unwrap_or("inbox");
+    if !status.is_empty() {
+        metadata["status_history"] = json!([{
+            "from_status":"","to_status":status,"from_status_name":"",
+            "to_status_name":status_name(project,status),"trigger":"create",
+            "by_user_id":owner,"at":iso(Utc::now().naive_utc())
+        }]);
+    }
+    super::assignments::attribute_history(
+        &mut metadata,
+        "status_history",
+        &super::assignments::automation_actor(context),
+    );
+    store::insert(
+        tx,
+        "task",
+        json!({
+            "id":id,"cloud_project_id":project.id,"sequence_number":sequence,
+        "created_by_user_id":owner,"title":title,"description":description,
+            "priority":"medium","status":status,"metadata":metadata
+        }),
+    )
+    .await?;
+    Ok(Issue { id, title })
+}
+
+pub(crate) fn issue_metadata(
+    project: &Node,
+    owner: i64,
+    title: &str,
+    description: &str,
+    tags: &[&str],
+    context: &Value,
+) -> Value {
+    initial_metadata(project, owner, title, description, tags, context)
 }
 
 fn initial_metadata(

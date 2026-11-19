@@ -270,6 +270,11 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or(&dispatch["executionId"])
                 .clone();
         }
+        if config["projectStore"] == "cloud" {
+            if let Ok(Some(connection)) = self.backend_connection_snapshot() {
+                origin["backendUrl"] = json!(connection.backend_url);
+            }
+        }
         origin
     }
 
@@ -384,6 +389,14 @@ impl RuntimeWorkRpcHandler {
                 .await
         }
         .await;
+        if result.is_err() {
+            if let Err(error) = self.record_assignment_start_failure(config, issue, binding) {
+                log_executor_event(
+                    "Assignment failure receipt persistence failed",
+                    &[("code", error.code)],
+                );
+            }
+        }
         let reason = if result.is_ok() {
             "dispatch_completed"
         } else {

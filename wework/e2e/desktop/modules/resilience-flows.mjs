@@ -409,7 +409,13 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
     MODEL_REQUEST_TIMEOUT_MS
   )
   const messageId = failedSnapshot.pane.messageSummary.lastMessage.id
-  const messageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id=${JSON.stringify(messageId)}]`
+  const turnId = failedSnapshot.workbench.activeLifecycle.turn.latestId
+  assert.ok(turnId, 'The failed model request did not identify its Runtime turn')
+  const messagePrefix = `runtime-view:${turnId}:`
+  assert.ok(messageId.startsWith(messagePrefix), 'The failed message belongs to another turn')
+  // Canonical history can replace an optimistic user boundary after failure.
+  // Keep the error assertions scoped to the same turn across that projection change.
+  const messageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id^=${JSON.stringify(messagePrefix)}]`
   const titleSelector = `${messageSelector} [data-testid="assistant-error-title"]`
   const descriptionSelector = `${messageSelector} [data-testid="assistant-error-description"]`
   await control.command('waitFor', titleSelector, {

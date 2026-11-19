@@ -748,6 +748,10 @@ export function createDesktopScenario({
           uiTimeoutMs
         )
         assert.equal(published.length, beforePublish.length + 1)
+        const conclusion = published.find(row => row.content === PUBLIC)
+        assert.equal(conclusion.generation_source, 'ai')
+        assert.equal(conclusion.publication_source, 'human')
+        assert.equal(conclusion.confirmation_state, 'authorized')
         const shared = JSON.stringify(published)
         for (const secret of [DRAFT, UNRELATED, `${PROMPT}_COMPLETE`, ORDINARY, PRIVATE_MESSAGE])
           assert.ok(!shared.includes(secret), 'Publication must contain only the edited conclusion')

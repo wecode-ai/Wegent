@@ -128,6 +128,7 @@ mod archives;
 mod assignment_receipts;
 mod assistant_request_inputs;
 mod async_assistant_requests;
+mod assignment_runtime_states;
 mod async_questions;
 mod automatic_turns;
 mod automation_rpc;

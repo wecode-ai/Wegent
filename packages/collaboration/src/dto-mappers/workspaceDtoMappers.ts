@@ -502,6 +502,50 @@ export function mapWorkspaceGitBranchDto(
   };
 }
 
+function dispatchReceipt(input: unknown): DirectHumanAssignmentReceipt | null {
+  if (!input || typeof input !== "object") return null;
+  const row = asRecord(input);
+  const states: DirectHumanAssignmentReceipt["state"][] = [
+    "queued",
+    "waiting_device",
+    "blocked_policy",
+    "running",
+    "waiting_user",
+    "completed",
+    "failed",
+    "cancelling",
+    "cancelled",
+    "superseded",
+  ];
+  const state = states.find((state) => state === row.state);
+  if (
+    !state ||
+    typeof row.projectId !== "string" ||
+    typeof row.issueId !== "string" ||
+    typeof row.humanAssignmentId !== "string" ||
+    typeof row.ownerUserId !== "number" ||
+    typeof row.updatedAt !== "string"
+  )
+    return null;
+  return {
+    projectId: row.projectId,
+    issueId: row.issueId,
+    humanAssignmentId: row.humanAssignmentId,
+    dispatchId: nullableString(row.dispatchId),
+    ownerUserId: row.ownerUserId,
+    state,
+    reasonCode: nullableString(row.reasonCode),
+    runtimeTaskId: nullableString(row.runtimeTaskId),
+    deliveryId: nullableString(row.deliveryId),
+    executionId: nullableString(row.executionId),
+    assignmentId: row.assignmentId == null ? undefined : String(row.assignmentId),
+    assignmentVersion: nullableNumber(row.assignmentVersion) ?? undefined,
+    createdAt: row.createdAt == null ? undefined : String(row.createdAt),
+    publicMessageId: nullableString(row.publicMessageId),
+    updatedAt: row.updatedAt,
+  };
+}
+
 export function mapCollaborationAssignmentDto(
   input: WorkspaceDto,
 ): CollaborationAssignment {
@@ -509,6 +553,9 @@ export function mapCollaborationAssignmentDto(
   const rawType = row.target_type ?? row.targetType;
   const createdAt = String(row.created_at ?? row.createdAt ?? "");
   return {
+    ...(row.dispatch_receipt !== undefined
+      ? { dispatch_receipt: dispatchReceipt(row.dispatch_receipt) }
+      : {}),
     id: String(row.id),
     issue_id: String(row.issue_id ?? row.issueId ?? row.loop_item_id ?? ""),
     target_type: rawType === "agent" ? "agent" : "human",
