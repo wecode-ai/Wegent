@@ -3,6 +3,7 @@
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -163,9 +164,15 @@ async def test_commands_reach_the_owned_runtime_socket_without_model_configurati
     payload = {"consumerKey": "window", "generation": "activation"}
     result = await execute("connection_observer_start", [json.dumps(payload)])
     resolve.assert_awaited_once_with(user_id=7, submitted_device_id="owned-device")
+    request_id = socket_call.await_args.args[1]["request_id"]
+    assert UUID(request_id).hex == request_id
     socket_call.assert_awaited_once_with(
         "runtime:rpc",
-        {"method": "runtime.connections.observers.start", "payload": payload},
+        {
+            "method": "runtime.connections.observers.start",
+            "payload": payload,
+            "request_id": request_id,
+        },
         to="owned-socket",
         namespace="/local-executor",
         timeout=65,

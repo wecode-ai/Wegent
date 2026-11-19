@@ -35,6 +35,15 @@ async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN
   throw new Error(`Timed out waiting for plugin sync: ${managedKey} in ${manifestPath}`)
 }
 
+async function waitForManagedPluginRemoval(readCapabilities, managedKey) {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if ((await readCapabilities()).plugins[managedKey] === undefined) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Timed out waiting for local plugin removal: ${managedKey}`)
+}
+
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
   const device = await env.waitForConnectedAppDevice()
   const deviceId = device.execution_target_id
@@ -268,7 +277,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     false,
     'Uninstall left the cloud install active'
   )
-  assert.equal((await readCapabilities()).plugins[managedKey], undefined)
+  await waitForManagedPluginRemoval(readCapabilities, managedKey)
   // Immutable packages remain available to running agents; Codex owns its cache.
   await access(removedEntry.store_path)
   setPhase('plugin-refresh-cleans-cloud-uninstall-residue')
