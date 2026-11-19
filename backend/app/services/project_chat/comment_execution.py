@@ -58,17 +58,19 @@ def _thread_agent(
     )
     if root is None:
         raise HTTPException(409, "The comment thread is unavailable")
-    addressed_agent = (
-        _messages(db, request)
-        .filter_by(message_id=trigger.reply_to_message_id, sender_type="agent")
-        .first()
+    agent_messages = _messages(db, request).filter(
+        ProjectChatMessage.sender_type == "agent",
+        ProjectChatMessage.metadata_json["collaboration_guidance"]
+        .as_boolean()
+        .is_not(True),
     )
+    addressed_agent = agent_messages.filter_by(
+        message_id=trigger.reply_to_message_id
+    ).first()
     if addressed_agent is not None:
         return addressed_agent
     return (
-        _messages(db, request)
-        .filter(
-            ProjectChatMessage.sender_type == "agent",
+        agent_messages.filter(
             or_(
                 ProjectChatMessage.message_id == root_id,
                 ProjectChatMessage.thread_root_message_id == root_id,

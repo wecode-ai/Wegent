@@ -88,9 +88,11 @@ pub(super) async fn enqueue_root(
             if thread.is_none() {
                 return Ok(Err(execution_failed()));
             }
+            // Guidance receipts acknowledge a steer. Only the originating activity binds a session.
             let bound: Option<MessageRow> = tx.fetch_optional(
                 format!("SELECT {} FROM project_chat_messages WHERE project_id=? AND task_id=? AND sender_type='agent'
                  AND (message_id=? OR thread_root_message_id=?)
+                 AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.collaboration_guidance')), 'false') <> 'true'
                  AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
                  ORDER BY (message_id=?) DESC, id DESC LIMIT 1 FOR UPDATE", messages::MESSAGE_COLUMNS),
                 (trigger.project_id.as_str(), trigger.task_id.as_str(), root.as_str(), root.as_str(),

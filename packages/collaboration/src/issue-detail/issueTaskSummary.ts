@@ -11,7 +11,7 @@ export function issueTaskSummaryForMessage<
 >(
   message: ProjectChatMessage,
   bindings: Binding[],
-  _issueTitle: string,
+  issueTitle: string,
   onOpen?: (binding: Binding) => void,
   onOpenProjectExecution?: (address: RuntimeTaskAddress) => void,
 ): ExecutionTaskSummary | undefined {
@@ -33,8 +33,6 @@ export function issueTaskSummaryForMessage<
             candidate.task_id === address.taskId,
         )
       : undefined;
-  const taskTitle = workflowTaskTitle || binding?.task_title?.trim();
-  if (!taskTitle) return;
   const activityType = message.metadata.activity_type;
   const issueId = message.taskId;
   const openProjectExecution =
@@ -53,6 +51,13 @@ export function issueTaskSummaryForMessage<
             },
           })
       : undefined;
+  const taskTitle =
+    workflowTaskTitle ||
+    binding?.task_title?.trim() ||
+    (openProjectExecution && activityType === "manager_execution"
+      ? issueTitle.trim()
+      : "");
+  if (!taskTitle) return;
   return {
     title: taskTitle,
     stageName: null,

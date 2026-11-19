@@ -220,6 +220,20 @@ def publish_collaboration_reply(
         reply_to_message_id=identity.trigger_comment_id or reply_to_comment_id,
     )
     existing = existing_public_reply(db, sender_id=agent_id, key=key, body=body)
+    status_reply_key = ProjectChatMessage.metadata_json[
+        "collaboration_public_reply_key"
+    ].as_string()
+    if existing is None and not member_activity:
+        existing = (
+            db.query(ProjectChatMessage)
+            .filter_by(project_id=project_id, task_id=item_id, agent_id=agent_id)
+            .filter(status_reply_key == key)
+            .first()
+        )
+        if existing is not None and existing.content != body.strip():
+            raise HTTPException(
+                409, "The public message identity already has different content"
+            )
     if existing is not None:
         if existing.reply_to_message_id != (reply.reply_to_message_id or ""):
             raise HTTPException(
@@ -238,6 +252,7 @@ def publish_collaboration_reply(
             )
             .filter(
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                status_reply_key.is_(None),
                 ProjectChatMessage.metadata_json["activity_type"].as_string()
                 == "manager_status_comment",
                 ProjectChatMessage.metadata_json["dispatch_id"].as_string()
@@ -250,6 +265,12 @@ def publish_collaboration_reply(
             )
         status_comment = status_comments.order_by(ProjectChatMessage.id.desc()).first()
         if status_comment is not None:
+            # Keep the status command's own client message identity intact.
+            status_comment.metadata_json = {
+                **status_comment.metadata_json,
+                "collaboration_public_reply_key": key,
+            }
+            project_chat_service._commit(db)
             return public_reply_view(db, status_comment)
     message_id = str(uuid.uuid4())
     row = ProjectChatMessage(

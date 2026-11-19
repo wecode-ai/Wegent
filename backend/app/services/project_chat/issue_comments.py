@@ -9,6 +9,9 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.models.delivery import loop_datetime_is_unset
+from app.models.project_chat_message import ProjectChatMessage
+from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import (
     AssistantPublicationSource,
     CollaborationPublicReply,
@@ -58,10 +61,6 @@ def list_issue_comments(
     message_id: str | None = None,
 ) -> list[dict[str, Any]]:
     if message_id is not None:
-        from app.models.delivery import loop_datetime_is_unset
-        from app.models.project_chat_message import ProjectChatMessage
-        from app.schemas.base_role import BaseRole
-
         project_chat_service._require_scope(
             db,
             user_id=user_id,
@@ -79,42 +78,60 @@ def list_issue_comments(
             )
             .first()
         )
-        return (
-            [
-                _comment_view(
-                    project_chat_service.to_shared_view(
-                        row, db=db, viewer_user_id=user_id
-                    )
-                )
-            ]
-            if row
+        messages = (
+            [project_chat_service.to_shared_view(row, db=db, viewer_user_id=user_id)]
+            if row is not None
             else []
         )
-    messages = project_chat_service.subscribe(
-        db,
-        user_id=user_id,
-        request=ProjectChatSubscribe(
-            project_id=project_id,
-            task_id=item_id,
-            after_sequence=after_sequence,
-            limit=limit,
-        ),
-    )
-    published = {
-        (message.metadata.get("collaboration_execution_activity_id"), message.content)
+    else:
+        messages = project_chat_service.subscribe(
+            db,
+            user_id=user_id,
+            request=ProjectChatSubscribe(
+                project_id=project_id,
+                task_id=item_id,
+                after_sequence=after_sequence,
+                limit=limit,
+            ),
+        )
+    activity_ids = {
+        message.message_id
         for message in messages
-        if message.metadata.get("collaboration_public_reply") is True
+        if message.sender["type"] == "agent"
+        and message.content
+        and message.metadata.get("execution_dispatch") != "comment_only"
     }
+    published = _published_activity_content(db, project_id, item_id, activity_ids)
     comments = []
     for message in messages:
         comment = _comment_view(message)
-        if (
-            message.metadata.get("execution_dispatch") != "comment_only"
-            and (message.message_id, message.content) in published
-        ):
+        if (message.message_id, message.content) in published:
             comment["body"] = ""
         comments.append(comment)
     return comments
+
+
+def _published_activity_content(
+    db: Session, project_id: str, item_id: str, activity_ids: set[str]
+) -> set[tuple[str, str]]:
+    if not activity_ids:
+        return set()
+    source = ProjectChatMessage.metadata_json[
+        "collaboration_execution_activity_id"
+    ].as_string()
+    return {
+        (activity_id, content)
+        for activity_id, content in db.query(source, ProjectChatMessage.content).filter(
+            ProjectChatMessage.project_id == project_id,
+            ProjectChatMessage.task_id == item_id,
+            ProjectChatMessage.sender_type == "agent",
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            ProjectChatMessage.metadata_json["collaboration_public_reply"]
+            .as_boolean()
+            .is_(True),
+            source.in_(activity_ids),
+        )
+    }
 
 
 def add_issue_comment(

@@ -57,6 +57,28 @@ describe("issueTaskSummaryForMessage", () => {
     ).toBeUndefined();
   });
 
+  it("opens a manager execution from the Issue without a task title or binding", () => {
+    const open = vi.fn();
+    const runtimeAddress = {
+      deviceId: "shared-executor",
+      taskId: "manager-task",
+    };
+    const summary = issueTaskSummaryForMessage(
+      { ...message({ activity_type: "manager_execution" }), runtimeAddress },
+      [],
+      "Issue title",
+      undefined,
+      open,
+    );
+
+    expect(summary?.title).toBe("Issue title");
+    summary?.onOpen?.();
+    expect(open).toHaveBeenCalledExactlyOnceWith({
+      ...runtimeAddress,
+      projectSession: { projectId: "project", issueId: "issue" },
+    });
+  });
+
   it("uses the persisted workflow task title before a runtime binding is visible", () => {
     expect(
       issueTaskSummaryForMessage(

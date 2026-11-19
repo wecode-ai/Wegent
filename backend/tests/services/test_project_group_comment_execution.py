@@ -317,6 +317,14 @@ def test_manager_public_reply_hides_the_dispatch_envelopes_copy(group_scenario):
         published.message_id
     ]
     assert next(row for row in comments if row["id"] == s.root.message_id)["body"] == ""
+    assert (
+        list_issue_comments(s.db, **scope, message_id=s.root.message_id)[0]["body"]
+        == ""
+    )
+    assert [
+        row["id"]
+        for row in list_issue_comments(s.db, **scope, limit=1, after_sequence=s.root.id)
+    ] == [published.message_id]
 
 
 def test_manager_public_reply_reuses_an_identical_published_status_comment(
@@ -326,20 +334,26 @@ def test_manager_public_reply_reuses_an_identical_published_status_comment(
     s.root.runtime_task_id = f"{s.execution.runtime_task_id}-manager-initial"
     s.root.content = "Ready for review"
     s.db.commit()
-    reply = publish_collaboration_reply(
-        s.db,
-        user_id=s.owner.id,
-        project_id=str(s.project.id),
-        item_id=s.issue.id,
-        body=s.root.content,
-        identity=CollaborationPublicReply(
-            dispatch_id="group-dispatch-1",
-            device_id=s.execution.runtime_device_id,
-            task_id=s.root.runtime_task_id,
-            message_id="manager-status-echo",
-        ),
+    scope = dict(user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id)
+    identity = CollaborationPublicReply(
+        dispatch_id="group-dispatch-1",
+        device_id=s.execution.runtime_device_id,
+        task_id=s.root.runtime_task_id,
+        message_id="manager-status-echo",
     )
+    body = s.root.content
+    reply = publish_collaboration_reply(s.db, **scope, body=body, identity=identity)
     assert reply.message_id == s.root.message_id
+
+    next_round = activity(s, "next-manager-round", activity_type="manager_execution")
+    next_round.runtime_task_id = s.root.runtime_task_id
+    s.db.commit()
+    replay = publish_collaboration_reply(s.db, **scope, body=body, identity=identity)
+
+    assert replay.message_id == reply.message_id
+    assert [
+        row["id"] for row in list_issue_comments(s.db, **scope) if row["body"] == body
+    ] == [reply.message_id]
 
 
 @pytest.mark.asyncio
@@ -375,6 +389,21 @@ async def test_two_public_threads_guide_one_active_session_and_keep_their_replie
         assert call["method"] == "runtime.tasks.guidance"
         assert call["payload"]["taskId"] == member_run.runtime_task_id
         assert call["payload"]["issueCommentId"] == request.trigger_message_id
+        if label == "A":
+            s.root = (
+                s.db.query(ProjectChatMessage)
+                .filter_by(message_id=request.trigger_message_id)
+                .one()
+            )
+            clarification = comment(s, text="An additional detail for A")
+            (continued,) = await execute_comment(
+                s.db, user_id=s.member.id, request=clarification
+            )
+            assert continued.metadata["collaboration_guidance"] is True
+            assert continued.root_message_id == root.message_id
+            await_call = s.rpc.call_args.kwargs["payload"]
+            assert await_call["taskId"] == member_run.runtime_task_id
+            assert await_call["issueCommentId"] == clarification.trigger_message_id
         answer = publish_collaboration_reply(
             s.db,
             **scope,
@@ -391,7 +420,7 @@ async def test_two_public_threads_guide_one_active_session_and_keep_their_replie
             .status
             == "completed"
         )
-    assert s.rpc.await_count == 2
+    assert s.rpc.await_count == 3
 
 
 def test_historical_manager_decision_resolves_its_recorded_rounds(group_scenario):
