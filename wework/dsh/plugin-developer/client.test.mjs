@@ -98,10 +98,14 @@ test('registers translated plugin development actions through the Wework service
   const createAction = contributions.find(item => item.slot === 'wework.plugins.action')
   assert.ok(createAction)
   assert.equal(createAction.descriptor.labelKey, 'workbench.plugin_development_create')
+  const createButtonClassName = 'host-primary-button'
   const rendered = createAction.component({
+    createButtonClassName,
     onCreate: async () => {},
     t: (_key, fallback) => fallback,
   })
+  assert.equal(rendered.props.children[0].type, 'button')
+  assert.equal(rendered.props.children[0].props.className, createButtonClassName)
   assert.match(JSON.stringify(rendered), /wework-plugin-developer-create-button/)
   assert.match(JSON.stringify(rendered), /Create plugin/)
   const debugTab = contributions.find(item => item.slot === 'wework.workspace.sidebar.tab')

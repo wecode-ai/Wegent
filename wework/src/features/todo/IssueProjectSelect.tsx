@@ -14,7 +14,7 @@ export function IssueProjectSelect({
   projects: CloudProject[]
   value: string
   disabled?: boolean
-  className: string
+  className?: string
   placeholder?: string
   onChange(value: string): void
 }) {
@@ -26,7 +26,8 @@ export function IssueProjectSelect({
       modal
       testId="independent-issue-project"
       accessibleLabel={t('issue_creation.project_label')}
-      className={`${className} flex items-center gap-2 text-left`}
+      density="compact"
+      className={className}
       disabled={disabled}
       value={value}
       searchPlaceholder={t('todo.search_projects')}

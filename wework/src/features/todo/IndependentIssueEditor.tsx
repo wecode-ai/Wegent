@@ -41,8 +41,6 @@ export interface IssueCreationInput extends IndependentIssueInput {
   project_id?: string
   project_status?: string
 }
-const control =
-  'wework-native-select min-h-11 min-w-0 w-full rounded-md border-0 bg-muted/40 px-2 py-1 text-sm text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8'
 
 export function IndependentIssueEditor({
   api,
@@ -215,7 +213,7 @@ export function IndependentIssueEditor({
               placeholder={t('issue_creation.title_placeholder')}
               value={draft.title}
               onChange={event => set('title', event.target.value)}
-              className="w-full text-base font-medium keyboard:focus-visible:ring-ring placeholder:text-text-secondary"
+              className="w-full text-base font-medium"
             />
           </label>
           <label className="grid gap-1">
@@ -229,7 +227,7 @@ export function IndependentIssueEditor({
               value={draft.description}
               onChange={event => set('description', event.target.value)}
               rows={3}
-              className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
+              className="resize-y text-base leading-6"
             />
           </label>
           <div className="grid min-w-0 gap-3 border-t border-border pt-3">
@@ -242,7 +240,7 @@ export function IndependentIssueEditor({
                   </span>
                   <IssueProjectSelect
                     projects={projects}
-                    className={`${control} flex-1`}
+                    className="flex-1"
                     disabled={loadingProjects}
                     value={projectId}
                     onChange={value => {
@@ -303,10 +301,9 @@ export function IndependentIssueEditor({
                 >
                   <SelectTrigger
                     density="compact"
-                    appearance="plain"
                     aria-label={t('independentIssues.status')}
                     data-testid="independent-issue-project-status"
-                    className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                    className="w-full"
                   />
                   <SelectContent>
                     {statuses.map(status => (
@@ -326,10 +323,9 @@ export function IndependentIssueEditor({
                 >
                   <SelectTrigger
                     density="compact"
-                    appearance="plain"
                     aria-label={t('independentIssues.status')}
                     data-testid="independent-issue-status"
-                    className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                    className="w-full"
                   />
                   <SelectContent>
                     {(['pending', 'in_progress', 'completed'] as const).map(status => (
@@ -352,10 +348,9 @@ export function IndependentIssueEditor({
               >
                 <SelectTrigger
                   density="compact"
-                  appearance="plain"
                   aria-label={t('independentIssues.priority')}
                   data-testid="independent-issue-priority"
-                  className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                  className="w-full"
                 />
                 <SelectContent>
                   {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
@@ -372,7 +367,8 @@ export function IndependentIssueEditor({
                 modal
                 testId="independent-issue-assignee"
                 accessibleLabel={t('independentIssues.assignee')}
-                className={`${control} flex items-center gap-2 text-left`}
+                density="compact"
+                className="w-full"
                 value={assignee}
                 options={assigneeOptions}
                 searchPlaceholder={t('todo.search_assignee')}
@@ -398,10 +394,9 @@ export function IndependentIssueEditor({
               t('independentIssues.due'),
               <ControlInput
                 density="compact"
-                appearance="plain"
                 type="date"
                 data-testid="independent-issue-due"
-                className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                className="w-full"
                 value={draft.due_at ?? ''}
                 onChange={event => set('due_at', event.target.value || null)}
               />

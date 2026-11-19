@@ -21,6 +21,7 @@ export function BranchPicker({
   busy = false,
   closeSignal = 0,
   mobileSheet = false,
+  composer = false,
 }: {
   value: string
   label: string
@@ -36,6 +37,7 @@ export function BranchPicker({
   busy?: boolean
   closeSignal?: number
   mobileSheet?: boolean
+  composer?: boolean
 }) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -126,6 +128,7 @@ export function BranchPicker({
           <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
         </>
       }
+      appearance={composer ? 'composer' : 'outline'}
       className="w-full"
       open={open}
       onOpenChange={changeOpen}

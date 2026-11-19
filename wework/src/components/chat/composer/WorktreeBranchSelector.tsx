@@ -23,6 +23,7 @@ export function WorktreeBranchSelector({
     <div className="min-w-0 max-w-72 shrink">
       <BranchPicker
         mobileSheet
+        composer
         value={selected}
         label={
           loading

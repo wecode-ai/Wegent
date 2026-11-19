@@ -289,12 +289,12 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
             </ControlButton>
           ) : null}
           <ControlButton
-            variant="unstyled"
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="site-access-cancel"
             disabled={saving}
             onClick={onClose}
-            className="h-10 rounded-lg px-4 text-sm text-text-primary hover:bg-surface disabled:opacity-50"
           >
             {t('cancel', '取消')}
           </ControlButton>
@@ -305,7 +305,6 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
             data-testid="site-access-save"
             disabled={loading || saving || loadFailed}
             onClick={() => void save()}
-            className="flex h-10 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             {saving ? t('access_saving', '保存中…') : t('save', '保存')}

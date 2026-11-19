@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
       return body.result
     }
 
-    function CreatePluginAction({ onCreate, t }) {
+    function CreatePluginAction({ createButtonClassName, onCreate, t }) {
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
       return createElement(
@@ -27,10 +27,9 @@ window.__ModuleLoader__.load({
           'button',
           {
             type: 'button',
+            className: createButtonClassName,
             disabled: busy || !onCreate,
             'data-testid': 'wework-plugin-developer-create-button',
-            className:
-              'inline-flex min-h-9 items-center justify-center rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50',
             onClick: async () => {
               if (!onCreate || busy) return
               setBusy(true)

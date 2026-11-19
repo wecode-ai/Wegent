@@ -328,12 +328,12 @@ export function EnvironmentVariablesDialog({
           </span>
           <div className="flex gap-2">
             <ControlButton
-              variant="unstyled"
+              variant="ghost"
+              size="sm"
               type="button"
               data-testid="environment-close-button"
               onClick={onClose}
               disabled={saving}
-              className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-50"
             >
               {t('close', '关闭')}
             </ControlButton>
@@ -343,7 +343,6 @@ export function EnvironmentVariablesDialog({
               type="submit"
               data-testid="environment-save-button"
               disabled={!canSave}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {saving ? t('saving', '保存中') : t('save', '保存')}

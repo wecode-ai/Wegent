@@ -13,12 +13,10 @@ import type { ComponentProps, ReactNode } from 'react'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { useCollaborationPortalTheme } from '../theme'
 import {
-  controlFieldAppearance,
-  controlFieldDensity,
   controlOption,
   controlPopup,
-  controlTrigger,
-  type ControlAppearance,
+  selectionTriggerClasses,
+  type SelectionTriggerAppearance,
   type ControlDensity,
 } from './recipes'
 export { SelectGroup } from '@ui-sdk/react/select'
@@ -33,7 +31,7 @@ type TriggerProps = Omit<ComponentProps<typeof UiSelectTrigger>, 'className' | '
   className?: string
   children?: ReactNode
   density?: ControlDensity
-  appearance?: ControlAppearance
+  appearance?: SelectionTriggerAppearance
 }
 export function SelectTrigger({
   className,
@@ -45,12 +43,7 @@ export function SelectTrigger({
   return (
     <UiSelectTrigger
       {...props}
-      className={cn(
-        controlTrigger,
-        controlFieldDensity[density],
-        controlFieldAppearance[appearance],
-        className
-      )}
+      className={cn(selectionTriggerClasses(appearance, density), className)}
     >
       {children ?? <SelectValue className="min-w-0 flex-1 truncate" />}
       <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />

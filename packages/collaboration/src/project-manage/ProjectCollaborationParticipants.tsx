@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Tabs, TabsList, TabsPanel, TabsTab } from '@ui-sdk/react/tabs'
+import { TabsRoot, TabsList, TabsPanel, TabsTab } from '../controls/Tabs'
 import { useState, type ReactNode } from 'react'
 
 export type ParticipantTab = 'members' | 'agents' | 'groups'
@@ -52,10 +52,14 @@ export function CollaborationParticipantsTabs({
     },
   ]
   const tabs = tabOrder.flatMap(id => availableTabs.filter(tab => tab.id === id))
-  const content = { members: membersContent, agents: agentsContent, groups: groupsContent }
+  const content = {
+    members: membersContent,
+    agents: agentsContent,
+    groups: groupsContent,
+  }
   const value = tabs.some(tab => tab.id === selectedTab) ? selectedTab : tabs[0]?.id
   return (
-    <Tabs
+    <TabsRoot
       value={value}
       onValueChange={next => {
         if (next !== null) {
@@ -64,14 +68,14 @@ export function CollaborationParticipantsTabs({
         }
       }}
     >
-      <TabsList aria-label={ariaLabel} className="mb-6 flex gap-1 border-b border-border">
+      <TabsList aria-label={ariaLabel} className="mb-6">
         {tabs.map(tab => (
           <TabsTab
             key={tab.id}
             value={tab.id}
             id={`${testIdPrefix}-tab-${tab.id}`}
             data-testid={`${testIdPrefix}-tab-${tab.id}`}
-            className="-mb-px min-h-11 border-b-2 border-transparent px-3 text-sm text-text-secondary outline-none hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 data-[active]:border-text-primary data-[active]:font-medium data-[active]:text-text-primary md:min-h-9"
+            className="-mb-px"
           >
             {tab.label}
           </TabsTab>
@@ -87,6 +91,6 @@ export function CollaborationParticipantsTabs({
           {content[tab.id]}
         </TabsPanel>
       ))}
-    </Tabs>
+    </TabsRoot>
   )
 }

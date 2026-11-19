@@ -592,6 +592,7 @@ export function IssueComposer({
             creationMode === 'issue' ? (
               <SelectField
                 testId="workspace-issue-project-compact"
+                appearance="composer"
                 accessibleLabel={t('todo.issue_project_label', '项目空间')}
                 value={boardKey}
                 options={projectOptions}

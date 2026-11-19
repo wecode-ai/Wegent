@@ -151,7 +151,6 @@ export function ExistingLocalProjectImportDialog({
           <ControlButton
             variant="outline"
             size="sm"
-            className="h-9 rounded-lg border border-border px-4 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
             disabled={submitting}
             onClick={onClose}
             type="button"
@@ -161,7 +160,6 @@ export function ExistingLocalProjectImportDialog({
           <ControlButton
             variant="primary"
             size="sm"
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
             data-testid="confirm-existing-local-project-import"
             disabled={!selectedProject || submitting}
             type="submit"

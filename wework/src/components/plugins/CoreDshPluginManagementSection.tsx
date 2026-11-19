@@ -4,6 +4,7 @@ import {
   CollapsiblePanel,
 } from '@wegent/collaboration/controls/Collapsible'
 import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   type CoreDshPlugin,
@@ -22,7 +23,7 @@ import {
 } from '@/features/workbench-mode/workbenchMode'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Button as ControlButton, buttonVariants } from '@wegent/collaboration/markdown/Button'
 import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 
@@ -110,7 +111,11 @@ export function CoreDshPluginManagementSection({
             <DshSlotSurface
               className="shrink-0"
               entryId="wework-plugin-developer.create"
-              props={{ onCreate: onCreatePlugin, t }}
+              props={{
+                createButtonClassName: buttonVariants({ variant: 'primary' }),
+                onCreate: onCreatePlugin,
+                t,
+              }}
               slot={WEWORK_DSH_SLOTS.pluginsAction}
               testId="core-dsh-plugin-page-actions"
             />
@@ -134,21 +139,20 @@ export function CoreDshPluginManagementSection({
                 'workbench.core_dsh_plugins_install_placeholder',
                 'package@version / github:owner/plugin / file:/absolute/path'
               )}
-              className="min-h-10 min-w-0 flex-1"
+              className="flex-1"
               data-testid="core-dsh-plugin-spec-input"
               disabled={operation !== null}
             />
             <ControlButton
-              variant="unstyled"
+              variant="primary"
               type="submit"
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
               data-testid="core-dsh-plugin-install-button"
               disabled={!spec.trim() || operation !== null}
             >
               {operation === 'install' ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
+                <LoaderCircle aria-hidden="true" className="animate-spin" />
               ) : (
-                <PackagePlus className="h-4 w-4" />
+                <PackagePlus aria-hidden="true" />
               )}
               {t('workbench.core_dsh_plugins_install', '安装')}
             </ControlButton>
@@ -167,14 +171,16 @@ export function CoreDshPluginManagementSection({
               )}
             </span>
             <ControlButton
-              variant="unstyled"
+              variant="outline"
               type="button"
-              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-warning/50 px-3 text-sm"
               data-testid="core-dsh-plugin-restart-button"
               disabled={operation !== null}
               onClick={() => void run('restart', restartCoreDsh)}
             >
-              <RefreshCw className={`h-4 w-4 ${operation === 'restart' ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                aria-hidden="true"
+                className={operation === 'restart' ? 'animate-spin' : undefined}
+              />
               {t('workbench.core_dsh_plugins_restart', '重启插件运行时')}
             </ControlButton>
           </div>
@@ -321,11 +327,8 @@ function PluginRow({
       </div>
       {!plugin.immutable && !modeManaged ? (
         <div className="flex items-center gap-2">
-          <ControlButton
-            variant="outline"
-            size="sm"
+          <IconButton
             type="button"
-            className="flex h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-50 md:h-8 md:w-8"
             aria-label={t('workbench.core_dsh_plugins_update_named', '更新 {{name}}', {
               name: plugin.displayName,
             })}
@@ -333,13 +336,12 @@ function PluginRow({
             disabled={operation !== null || !plugin.canUpdate}
             onClick={onUpdate}
           >
-            <RotateCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
-          </ControlButton>
+            <RotateCw aria-hidden="true" className={busy ? 'animate-spin' : undefined} />
+          </IconButton>
           <ControlButton
             variant="outline"
             size="sm"
             type="button"
-            className="min-h-11 min-w-11 rounded-md border border-border px-3 text-xs disabled:opacity-50 md:min-h-8 md:min-w-0"
             data-testid={`core-dsh-plugin-toggle-${plugin.name}`}
             disabled={operation !== null || !plugin.canToggle}
             onClick={onToggle}

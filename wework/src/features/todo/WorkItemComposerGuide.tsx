@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { ComposerContextButton } from '@wegent/collaboration/composer'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
 import { useCallback, useEffect, useId, useState } from 'react'
@@ -343,23 +344,18 @@ function WorkItemComposerGuideContent({
   }
 
   const projectContextClassName = [
-    'flex w-full min-w-[44px] items-center overflow-hidden text-sm font-normal leading-[18px] text-text-secondary',
-    toolbar ? 'h-8 gap-1.5 rounded-lg px-2' : 'h-9 gap-2 px-2',
-    !toolbar ? 'max-w-[48rem] rounded-xl' : '',
+    'flex h-9 w-full min-w-[44px] max-w-[48rem] items-center gap-2 overflow-hidden rounded-xl px-2 text-sm font-normal leading-[18px] text-text-secondary',
     canChangeProject
       ? 'group transition-[background-color,color] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30'
       : '',
-    canChangeProject && toolbar ? 'hover:bg-background/70' : '',
-    canChangeProject && integrated && !toolbar ? 'hover:bg-background/55' : '',
-    canChangeProject && !integrated && !toolbar
+    canChangeProject && integrated ? 'hover:bg-background/55' : '',
+    canChangeProject && !integrated
       ? 'hover:bg-background/70 hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
       : '',
     open
-      ? integrated && !toolbar
+      ? integrated
         ? 'bg-background/55 text-text-primary'
-        : toolbar
-          ? 'bg-background/70 text-text-primary'
-          : 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
+        : 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
       : '',
   ].join(' ')
 
@@ -381,19 +377,34 @@ function WorkItemComposerGuideContent({
     </>
   )
 
+  const projectTriggerProps = {
+    ref: setTrigger,
+    'data-testid': 'project-space-context-pill',
+    onClick: () => setOpen(current => !current),
+    'aria-expanded': open,
+    'aria-haspopup': 'dialog' as const,
+    title,
+  }
+
+  if (toolbar && canChangeProject) {
+    return (
+      <div className="relative min-w-0 max-w-[12rem] shrink">
+        <ComposerContextButton {...projectTriggerProps}>
+          {projectContextContent}
+        </ComposerContextButton>
+        {projectMenu}
+      </div>
+    )
+  }
+
   return (
     <div className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}>
       {canChangeProject ? (
         <ControlButton
           variant="unstyled"
-          ref={setTrigger}
           type="button"
-          data-testid="project-space-context-pill"
-          onClick={() => setOpen(current => !current)}
+          {...projectTriggerProps}
           className={projectContextClassName}
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          title={title}
         >
           {projectContextContent}
         </ControlButton>

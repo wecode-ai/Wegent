@@ -1,5 +1,8 @@
-export const controlTrigger =
-  'inline-flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-left text-sm text-text-primary outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 disabled:cursor-not-allowed disabled:opacity-40 md:min-h-9'
+const controlOutline = 'border border-border bg-background'
+const controlFieldState =
+  'outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 disabled:cursor-not-allowed disabled:opacity-40'
+
+export const controlTrigger = `inline-flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-lg ${controlOutline} px-3 text-left text-sm text-text-primary ${controlFieldState} md:min-h-9`
 export const controlPopupLayout =
   'max-h-[min(360px,var(--available-height))] max-w-[calc(100vw-1rem)] overflow-y-auto p-1'
 export const controlPopupSurface =
@@ -9,8 +12,7 @@ export const controlMenuOption =
   'min-h-11 rounded-lg text-sm font-normal outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/40 hover:bg-muted data-[highlighted]:bg-muted data-[selected]:font-medium data-[checked]:font-medium data-[destructive]:text-destructive data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40 md:min-h-8'
 export const controlOption =
   'flex min-h-11 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-text-primary outline-none hover:bg-muted data-[highlighted]:bg-muted data-[selected]:font-medium data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40 md:min-h-8'
-export const controlInput =
-  'min-h-11 min-w-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 disabled:cursor-not-allowed disabled:opacity-40 md:min-h-9'
+export const controlInput = `min-h-11 min-w-0 rounded-lg ${controlOutline} px-3 text-sm text-text-primary placeholder:text-text-secondary ${controlFieldState} md:min-h-9`
 
 export type ControlDensity = 'default' | 'compact' | 'dense'
 export type ControlAppearance = 'outline' | 'plain'
@@ -22,7 +24,7 @@ export const controlFieldDensity: Record<ControlDensity, string> = {
 }
 
 export const controlFieldAppearance: Record<ControlAppearance, string> = {
-  outline: 'border border-border bg-background',
+  outline: controlOutline,
   plain: 'border-0 bg-transparent px-0 shadow-none',
 }
 
@@ -43,3 +45,16 @@ export const controlMenuTriggerDensity: Record<ControlDensity, string> = {
 }
 export const composerActionDensity = controlActionDensity.dense
 export const composerIconActionDensity = controlIconActionDensity.dense
+
+export const composerContextAction = `${composerActionDensity} inline-flex min-w-0 items-center gap-1.5 rounded-full border-0 bg-transparent px-2.5 text-sm font-normal leading-[18px] text-text-primary outline-none transition-colors enabled:hover:bg-text-primary/[0.06] aria-expanded:bg-text-primary/[0.08] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 [&_svg]:shrink-0 [&_svg]:text-text-secondary`
+
+export type SelectionTriggerAppearance = ControlAppearance | 'composer'
+
+export function selectionTriggerClasses(
+  appearance: SelectionTriggerAppearance,
+  density: ControlDensity
+) {
+  return appearance === 'composer'
+    ? composerContextAction + ' justify-start disabled:cursor-not-allowed disabled:opacity-40'
+    : [controlTrigger, controlFieldDensity[density], controlFieldAppearance[appearance]].join(' ')
+}

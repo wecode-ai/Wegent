@@ -145,6 +145,7 @@ export function BranchSelector({
       <BranchPicker
         closeSignal={revision}
         mobileSheet={mobileSheet}
+        composer={variant === 'workbar'}
         value={currentBranch ?? ''}
         label={
           loading

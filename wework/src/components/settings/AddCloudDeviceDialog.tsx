@@ -85,12 +85,12 @@ export function AddCloudDeviceDialog(props: AddCloudDeviceDialogProps) {
         </div>
         <div className="flex justify-end px-5 pb-5 pt-4">
           <ControlButton
-            variant="unstyled"
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="add-cloud-device-cancel"
             onClick={onClose}
             disabled={busy}
-            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             {t('common.cancel')}
           </ControlButton>

@@ -60,7 +60,7 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
           <div
             data-testid="execution-mode-button"
             role="status"
-            className="flex h-9 items-center gap-2 px-2 text-sm text-text-secondary"
+            className="flex min-h-11 items-center gap-1.5 px-2.5 text-sm text-text-primary md:min-h-7"
           >
             {worktreeSelected ? <Workflow className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
             <span>{modeLabel}</span>
@@ -69,6 +69,17 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
           <SelectField
             testId="execution-mode-button"
             menuTestId="project-execution-mode-menu"
+            appearance="composer"
+            triggerContent={
+              <>
+                {worktreeSelected ? (
+                  <Workflow aria-hidden="true" className="h-4 w-4 shrink-0" />
+                ) : (
+                  <Folder aria-hidden="true" className="h-4 w-4 shrink-0" />
+                )}
+                <span className="min-w-0 truncate">{modeLabel}</span>
+              </>
+            }
             accessibleLabel={t('workbench.execution_mode_label', '执行方式')}
             value={worktreeSelected ? 'git_worktree' : 'current_workspace'}
             onChange={mode => {

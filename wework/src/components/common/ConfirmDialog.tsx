@@ -80,21 +80,16 @@ export function ConfirmDialog({
             data-testid={cancelTestId ?? `${confirmTestId}-cancel-button`}
             disabled={pending}
             onClick={onClose}
-            className="min-h-11 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8"
           >
             {cancelLabel}
           </ControlButton>
           <ControlButton
-            variant="unstyled"
+            variant={destructive ? 'destructive' : 'primary'}
+            size="sm"
             type="button"
             data-testid={confirmTestId}
             disabled={pending || confirmDisabled}
             onClick={onConfirm}
-            className={
-              destructive
-                ? 'min-h-11 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8 wework:bg-red-600 wework:text-white wework:hover:bg-red-700'
-                : 'min-h-11 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
-            }
           >
             <span className="inline-flex items-center gap-1.5">
               {pending ? (

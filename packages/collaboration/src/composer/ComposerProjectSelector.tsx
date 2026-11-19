@@ -31,11 +31,10 @@ export function ComposerProjectSelector({
       accessibleLabel={label}
       testId={testId}
       menuTestId={menuTestId}
-      density="dense"
-      appearance="plain"
+      appearance="composer"
       className="max-w-full"
       triggerContent={
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
           {icon}
           <span data-testid={labelTestId} className="max-w-48 truncate">
             {options.find(option => option.value === value)?.label ?? label}

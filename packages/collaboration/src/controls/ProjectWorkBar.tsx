@@ -30,6 +30,7 @@ import {
   type ReactNode,
   type ReactElement,
 } from 'react'
+import { ComposerContextButton } from '../composer/ComposerContextButton'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { Button as ControlButton } from '../markdown/Button'
@@ -409,7 +410,12 @@ export function ProjectWorkBar({
           closeMenu
         )}
       <div className={cn('flex min-h-0 flex-1 flex-col', isMobile && 'px-5 pb-5')}>
-        <label className={cn('relative mb-1.5 flex shrink-0 items-center')}>
+        <label
+          className={cn(
+            'relative mb-1.5 flex shrink-0 items-center',
+            !isMobile && 'border-b border-border'
+          )}
+        >
           <Search
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary"
             aria-hidden="true"
@@ -422,6 +428,7 @@ export function ProjectWorkBar({
             value={projectQuery}
             onChange={event => setProjectQuery(event.target.value)}
             placeholder={menuLabels?.search ?? t('workbench.search_projects', '搜索项目')}
+            appearance={isMobile ? 'outline' : 'plain'}
             className="w-full pl-9"
           />
         </label>
@@ -744,6 +751,7 @@ export function ProjectWorkBar({
                 aria-label={selectorLabel ?? t('workbench.project_sheet_title', '选择项目')}
                 anchor={externalMenuAnchorElement ?? containerElement}
                 align={externalMenuAnchorElement ? 'center' : 'start'}
+                side="top"
                 sideOffset={8}
                 collisionPadding={16}
                 initialFocus={() => searchInputRef.current}
@@ -788,41 +796,34 @@ export function ProjectWorkBar({
                 </ControlButton>
               )
             ) : currentProject ? (
-              <div className="flex h-11 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary md:h-8">
+              <div className="flex h-11 w-full min-w-0 items-center rounded-full md:h-7">
                 {showClearButton ? (
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
+                  <ComposerContextButton
                     data-testid="clear-project-button"
                     onClick={handleClearProject}
                     title={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
                     aria-label={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
-                    className="group flex h-8 max-md:min-h-11 w-8 max-md:min-w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
+                    className="group w-11 shrink-0 justify-center px-0 md:w-7"
                   >
                     <ProjectFolderIcon
                       project={currentProject}
-                      className="h-4 w-4 group-hover:hidden"
+                      className="h-4 w-4 group-hover:hidden group-focus-visible:hidden"
                     />
-                    <X className="hidden h-4 w-4 group-hover:block" />
-                  </ControlButton>
+                    <X className="hidden h-4 w-4 group-hover:block group-focus-visible:block" />
+                  </ComposerContextButton>
                 ) : (
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center md:h-8 md:w-8">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center text-text-secondary md:h-7 md:w-7">
                     <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
                   </span>
                 )}
                 {renderTrigger(
-                  <ControlButton
-                    variant="unstyled"
+                  <ComposerContextButton
                     ref={setTriggerElement}
                     type="button"
                     data-testid="project-work-button"
                     onClick={isMobile ? handleToggleMenu : undefined}
                     title={t('workbench.change_project', '更改项目')}
-                    className={cn(
-                      'flex h-11 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8',
-                      open && 'bg-background/70 text-text-primary',
-                      buttonClassName
-                    )}
+                    className="w-full px-1.5"
                     aria-expanded={open}
                     aria-label={projectWorkTriggerAriaLabel}
                   >
@@ -835,28 +836,21 @@ export function ProjectWorkBar({
                         </span>
                       </>
                     ) : null}
-                  </ControlButton>
+                  </ComposerContextButton>
                 )}
               </div>
             ) : (
               renderTrigger(
-                <ControlButton
-                  variant="unstyled"
+                <ComposerContextButton
                   ref={setTriggerElement}
-                  type="button"
                   data-testid="project-work-button"
-                  onClick={isMobile ? handleToggleMenu : undefined}
-                  className={cn(
-                    'flex h-11 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8',
-                    open && 'bg-background/70 text-text-primary',
-                    buttonClassName
-                  )}
+                  className="w-full"
                   aria-expanded={open}
                   aria-label={projectWorkTriggerAriaLabel}
                 >
-                  <FolderPlus className="h-4 w-4" />
+                  <FolderPlus className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span className="min-w-0 truncate">{projectWorkTriggerLabel}</span>
-                </ControlButton>
+                </ComposerContextButton>
               )
             )}
           </div>

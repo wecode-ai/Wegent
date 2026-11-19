@@ -122,21 +122,18 @@ export function InstallPluginDialog({
         </div>
         <div className="plugin-dialog-divider flex justify-end gap-2 border-t px-6 py-4">
           <ControlButton
-            variant="unstyled"
+            variant="ghost"
             type="button"
             data-testid="install-plugin-dialog-cancel"
-            className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"
             onClick={onCancel}
           >
             {t('workbench.cancel', '取消')}
           </ControlButton>
           <ControlButton
             variant="primary"
-            size="sm"
             type="button"
             data-testid="install-plugin-dialog-confirm"
             disabled={confirmDisabled}
-            className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={onConfirm}
           >
             {requiredConnectionNames.length > 0

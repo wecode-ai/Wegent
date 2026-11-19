@@ -16,11 +16,10 @@ import { useCollaborationPortalTheme } from '../theme'
 import {
   controlOption,
   controlPopup,
-  controlTrigger,
-  controlFieldDensity,
-  controlFieldAppearance,
+  selectionTriggerClasses,
+  controlInput,
   type ControlDensity,
-  type ControlAppearance,
+  type SelectionTriggerAppearance,
 } from './recipes'
 
 export interface SearchableSelectOption<T extends string = string> {
@@ -54,7 +53,7 @@ interface SearchableSelectCommonProps<T extends string> {
   accessibleLabel: string
   className?: string
   density?: ControlDensity
-  appearance?: ControlAppearance
+  appearance?: SelectionTriggerAppearance
   disabled?: boolean
   searchPlaceholder: string
   emptyLabel: string
@@ -277,12 +276,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
               ? [selected.group, selected.label, selected.description].filter(Boolean).join(' · ')
               : values.join(', ')
           }
-          className={cn(
-            controlTrigger,
-            controlFieldDensity[density],
-            controlFieldAppearance[appearance],
-            className
-          )}
+          className={cn(selectionTriggerClasses(appearance, density), className)}
         >
           {triggerContent ?? (
             <>
@@ -312,7 +306,13 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
         )}
       >
         {header}
-        <div className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-secondary md:min-h-9">
+        <div
+          className={cn(
+            controlInput,
+            'flex shrink-0 items-center gap-2 px-2.5 text-text-secondary',
+            'keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/40'
+          )}
+        >
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <ComboboxInput
             autoFocus
@@ -322,7 +322,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
             aria-describedby={searchDescriptionId}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:min-h-9"
+            className="min-w-0 flex-1 self-stretch bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary"
           />
           {clearSearch && query && (
             <IconButton

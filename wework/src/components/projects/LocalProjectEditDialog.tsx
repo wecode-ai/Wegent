@@ -907,24 +907,23 @@ function LocalProjectEditDialogContent({
         )}
         <div className="mt-5 flex items-center gap-3">
           <ControlButton
-            variant="destructive"
+            variant="destructive-ghost"
             size="sm"
             type="button"
             data-testid="delete-local-project-button"
             disabled={submitting}
             onClick={onDelete}
-            className="h-9 rounded-lg bg-destructive/10 px-3 text-sm font-medium text-destructive hover:bg-destructive/15 disabled:opacity-50 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15"
           >
             {t('workbench.delete_project', '删除项目')}
           </ControlButton>
           <div className="flex-1" />
           <ControlButton
-            variant="unstyled"
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="cancel-local-project-edit-button"
             disabled={submitting}
             onClick={onClose}
-            className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
           </ControlButton>
@@ -941,7 +940,6 @@ function LocalProjectEditDialogContent({
               !deviceId ||
               !projectKey
             }
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.save', '保存')}

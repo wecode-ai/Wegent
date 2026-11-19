@@ -81,7 +81,6 @@ export function IndependentIssueProjectPicker({
                 : ''
             )
           }}
-          className="min-h-11 min-w-0 rounded-md border border-border bg-background px-3 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8"
         />
       </label>
       {selected ? (

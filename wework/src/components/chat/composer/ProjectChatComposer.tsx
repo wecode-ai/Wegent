@@ -349,7 +349,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
                 className={PROJECT_CHAT_WORK_BAR_CLASS}
-                buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
               />
             ))
           }

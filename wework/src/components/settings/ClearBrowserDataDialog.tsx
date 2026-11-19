@@ -60,12 +60,12 @@ export function ClearBrowserDataDialog({
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <ControlButton
-            variant="unstyled"
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="browser-clear-data-cancel"
             disabled={loading}
             onClick={onCancel}
-            className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover disabled:opacity-50"
           >
             {t('common.cancel', '取消')}
           </ControlButton>

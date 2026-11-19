@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
-import type { ControlAppearance, ControlDensity } from './recipes'
+import type { ControlDensity, SelectionTriggerAppearance } from './recipes'
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from './SelectParts'
 
 export interface SelectFieldOption<T extends string> {
@@ -24,7 +24,7 @@ export interface SelectFieldProps<T extends string> {
   invalid?: boolean
   className?: string
   density?: ControlDensity
-  appearance?: ControlAppearance
+  appearance?: SelectionTriggerAppearance
   triggerContent?: ReactNode
   footer?: ReactNode
 }

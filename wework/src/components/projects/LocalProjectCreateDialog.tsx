@@ -216,12 +216,12 @@ function LocalProjectCreateDialogContent({
         {error && <p className="mt-3 text-sm text-destructive wework:text-red-500">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
           <ControlButton
-            variant="unstyled"
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="cancel-local-project-create-button"
             disabled={submitting}
             onClick={onClose}
-            className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
           </ControlButton>
@@ -231,7 +231,6 @@ function LocalProjectCreateDialogContent({
             type="submit"
             data-testid="confirm-local-project-create-button"
             disabled={submitting || !name.trim() || roots.length === 0}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.create_project', '创建项目')}
