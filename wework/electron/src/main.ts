@@ -74,7 +74,6 @@ import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/s
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.mjs'
 import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
-import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -83,6 +82,7 @@ import { DesktopAppearanceController } from './host/appearance-theme.js'
 import { normalizeAppearanceThemeSnapshot } from './host/appearance-theme-contract.js'
 import {
   DesktopPreferencesController,
+  resolveAppshotsShortcut,
   resolvePopoutShortcut,
 } from './host/desktop-preferences-controller.js'
 import { PerformanceRecorder } from './host/performance-recorder.js'
@@ -106,6 +106,7 @@ import {
   dshBrowserRequestHeaders,
 } from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { AppshotsService } from './host/appshots-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
@@ -175,6 +176,7 @@ import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
+  bundledComponentDirectory,
   type DesktopComponentUpdateController,
   type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
@@ -409,6 +411,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
+let appshots: AppshotsService | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -705,8 +708,8 @@ const appUpdates = new AppUpdateService({
   },
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
-  dataSchema: packageMetadata.weworkDataSchema ?? 1,
-  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1],
+  dataSchema: packageMetadata.weworkDataSchema ?? 2,
+  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1, 2],
   isPackaged: packagedApplication,
   log: event => appUpdateLogger.info(event),
   shutdown: async () => {
@@ -1089,25 +1092,16 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
     startupProgress.report('renderer')
-    const disposeFault =
-      process.env.VITE_WEWORK_E2E === 'true' &&
-      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
-        ? installStartupNetworkFault(contents.session, targetUrl.origin)
-        : undefined
-    try {
-      await rendererStartupLoader.load({
-        webContentsId: contents.id,
-        url: targetUrl.toString(),
-        load: () =>
-          contents.loadURL(targetUrl.toString(), {
-            extraHeaders: 'X-Wework-Window-Label: main',
-          }),
-        onRecovery: () =>
-          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
-      })
-    } finally {
-      disposeFault?.()
-    }
+    await rendererStartupLoader.load({
+      webContentsId: contents.id,
+      url: targetUrl.toString(),
+      load: () =>
+        contents.loadURL(targetUrl.toString(), {
+          extraHeaders: 'X-Wework-Window-Label: main',
+        }),
+      onRecovery: () =>
+        console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+    })
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
@@ -2294,6 +2288,8 @@ async function shutdown(): Promise<void> {
   popoutWindowMode = 'composer'
   popoutShortcut?.dispose()
   popoutShortcut = null
+  const appshotsService = appshots
+  appshots = null
   embeddedBrowser?.stop()
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
@@ -2308,6 +2304,7 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
     traceShutdownStep('control-bridge', () => controlBridge?.stop()),
     traceShutdownStep('computer-use', () => computerUseService?.stop()),
+    traceShutdownStep('appshots', () => appshotsService?.stop()),
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
@@ -2377,6 +2374,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
@@ -2608,6 +2606,7 @@ async function configureDesktopRuntime(): Promise<void> {
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
           processExplorer: processExplorerService,
+          appshots: appshots ?? undefined,
           coreDshPlugins: () => desktopRuntime,
           pluginDevelopment: () =>
             pluginDevelopment
@@ -3023,12 +3022,38 @@ if (hasSingleInstanceLock) {
         dockVisible = false
       }
       preferences = new PreferencesStore(app.getPath('userData'))
+      const preferenceStore = preferences
       mainWindowState = new MainWindowStateController(preferences, error =>
         console.error('[window-state] Failed to save main window geometry', error)
       )
+      appshots = new AppshotsService({
+        captureRoot: join(
+          process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+          'workspace',
+          'attachments',
+          'draft',
+          'appshots'
+        ),
+        events: desktopHostEvents,
+        showMain: reactivateMainWindow,
+        playSound: async () => {
+          const preferences = await requiredPreferences().read()
+          if (preferences.appshotsPlaySound !== false) shell.beep()
+        },
+      })
+      try {
+        const storedPreferences = await preferenceStore.read().catch(() => ({}))
+        appshots.configure(resolveAppshotsShortcut(storedPreferences))
+      } catch (error) {
+        console.warn('[appshots] Global shortcut is unavailable', error)
+      }
       desktopPreferences = new DesktopPreferencesController(preferences, {
         isShuttingDown: () => quitting,
         configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
+        configureAppshotsShortcut: shortcut => {
+          if (!appshots) throw new Error('Appshots are unavailable')
+          appshots.configure(shortcut)
+        },
         setPerformanceRecordingEnabled: async enabled => {
           if (quitting && enabled) throw new Error('The application is shutting down')
           if (!performanceRecorder) throw new Error('Performance recorder is unavailable')
@@ -3189,6 +3214,7 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
   desktopComponentsPromise ??= prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       validateExecutor: path =>
         assertExecutorWorkbenchCompatibility({
           ...process.env,

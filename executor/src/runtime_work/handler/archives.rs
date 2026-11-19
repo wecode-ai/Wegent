@@ -406,7 +406,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_action_failure(&link, error.message));
         }
         let mut params = Map::new();
-        params.insert("threadId".to_owned(), Value::String(thread_id));
+        params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
             params.insert("objective".to_owned(), objective);
         }
@@ -426,6 +426,26 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                log_executor_event(
+                    "runtime Goal mutation result",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        (
+                            "thread_id",
+                            result["goal"]["threadId"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                        (
+                            "goal_status",
+                            result["goal"]["status"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                    ],
+                );
                 let goal = result
                     .get("goal")
                     .cloned()
@@ -436,7 +456,7 @@ impl RuntimeWorkRpcHandler {
                     string_field(&goal, "status"),
                 );
                 self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
-                let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
+                if string_field(&goal, "status").as_deref() == Some("active") {
                     self.journal_active_goal_turn(
                         &link.local_task_id,
                         self.active_codex_turn(&link.local_task_id).as_ref(),
@@ -444,13 +464,11 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    self.resume_active_goal(&link.local_task_id).await?
-                } else {
-                    false
-                };
+                    // Route preparation loaded the session before activation; native Goal owns continuation.
+                }
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
-                response["resumed"] = Value::Bool(resumed);
+                response["resumed"] = Value::Bool(false);
                 Ok(response)
             }
             // A timed-out mutation can still activate the native Goal. Only an

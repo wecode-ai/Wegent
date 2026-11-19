@@ -15,27 +15,25 @@ impl RuntimeWorkRpcHandler {
         &self,
         task: &str,
     ) -> Result<serde_json::Map<String, Value>, AppIpcError> {
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            Ok(state["operations"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .filter(|(_, record)| waiting(record, task))
-                .map(|(id, record)| (id.clone(), record.clone()))
-                .collect())
-        })
+        event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Waiting(task),
+            |state| {
+                Ok(state["operations"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .filter(|(_, record)| waiting(record, task))
+                    .map(|(id, record)| (id.clone(), record.clone()))
+                    .collect())
+            },
+        )
     }
 
     pub(in crate::runtime_work::handler) fn schedule_connection_goal_reconciliation(
         &self,
         task: &str,
     ) {
-        if !self
-            .connection_goal_records(task)
-            .is_ok_and(|records| !records.is_empty())
-        {
-            return;
-        }
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };

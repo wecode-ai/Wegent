@@ -13,6 +13,7 @@ import {
   isSettledRequestUserInputBlock,
 } from '@wegent/chat-core/runtime-user-input'
 import { ToolBlockItem } from './ToolBlockItem'
+import { runtimeRetryStatus } from './runtimeRetryStatus'
 import type { FileEditDurationsByBlock } from './ToolFileChanges'
 import {
   RequestUserInputCard,
@@ -111,8 +112,16 @@ export function ToolBlocksDisplay({
   const { t } = useConversationTranslation()
   const renderUserInput =
     useToolInteractionServices().renderRequestUserInput ?? renderDefaultUserInput
-  const rateLimitWaiting = blocks.some(isRuntimeRateLimitWaitBlock)
-  const retryWaiting = blocks.some(isRuntimeRetryWaitBlock)
+  const retryBlock =
+    blocks.find(isRuntimeRateLimitWaitBlock) ??
+    blocks.find(
+      block =>
+        isRuntimeRetryWaitBlock(block) &&
+        block.type === 'tool' &&
+        block.toolInput?.retry_reason === 'overload'
+    ) ??
+    blocks.find(isRuntimeRetryWaitBlock)
+  const retryWaiting = Boolean(retryBlock)
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const isRunning =
     (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
@@ -295,10 +304,9 @@ export function ToolBlocksDisplay({
     activityStats.search === 0 &&
     activityStats.other === 0
   const toolCallCount = countProcessingToolCalls(activityStats)
-  const summaryTitle = rateLimitWaiting
-    ? t('tool_activity.rate_limit_wait')
-    : retryWaiting
-      ? t('tool_activity.retrying')
+  const summaryTitle =
+    retryBlock?.type === 'tool'
+      ? runtimeRetryStatus(retryBlock, t)
       : hasToolActivity
         ? hasOnlyEditActivity
           ? t('tool_activity.edit_summary', { count: activityStats.edit })

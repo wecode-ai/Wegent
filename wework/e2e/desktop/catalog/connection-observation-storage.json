@@ -1,0 +1,11 @@
+{
+  "order": 146250,
+  "scenario": "./scenarios/connection-observation-storage.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 107250, "shard": 3, "position": 16250 } },
+  "paths": [
+    "executor/src/runtime_work/handler/control/connection_events/**",
+    "executor/src/runtime_work/handler/control/connection_events.rs",
+    "wework/e2e/desktop/scenarios/connection-observation-storage.scenario.mjs"
+  ]
+}

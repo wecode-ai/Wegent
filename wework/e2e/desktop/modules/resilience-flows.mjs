@@ -10,6 +10,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_REQUEST_TIMEOUT_MS,
   MODEL_SERVICE_CONNECTION_ENDPOINT,
+  MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
   MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
@@ -52,24 +53,15 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   )
 
   control.disconnectReconnectResponse()
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 5_000))
-  const briefDisconnectSnapshot = JSON.parse(
-    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-  )
-  assert.equal(
-    briefDisconnectSnapshot.testIds.includes('runtime-reconnecting-status'),
-    false,
-    'A brief model stream interruption showed the reconnecting status before ten seconds'
-  )
   await control.command(
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`,
-    { text: '正在自动重试…', timeoutMs: 1_000 }
+    { text: '正在重新连接…', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command(
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
-    { timeoutMs: 15_000 }
+    { text: '正在重新连接…', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await captureVerificationScreenshot(
     control,
@@ -393,6 +385,8 @@ async function verifyRateLimitRecovery({ composerSelector, control }) {
 }
 
 async function verifyModelServiceConnectionError({ composerSelector, control }) {
+  const previousSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const previousMessageId = previousSnapshot.pane?.messageSummary?.lastMessage?.id
   control.setScenario('model_service_connection_error')
   await sendPromptUntilScenarioRequest(
     control,
@@ -400,15 +394,35 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
     MODEL_SERVICE_CONNECTION_PROMPT,
     'model_service_connection_error'
   )
-  const titleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-title"]`
-  const descriptionSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-description"]`
   // Codex exhausts native stream reconnects before publishing the terminal model error.
+  const failedSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const message = snapshot.pane?.messageSummary?.lastMessage
+      return (
+        message?.id !== previousMessageId &&
+        message?.role === 'assistant' &&
+        message?.status === 'failed'
+      )
+    },
+    'The model-service connection request did not produce a new failed assistant message',
+    MODEL_REQUEST_TIMEOUT_MS
+  )
+  const messageId = failedSnapshot.pane.messageSummary.lastMessage.id
+  const turnId = failedSnapshot.workbench?.activeLifecycle?.turn?.latestId
+  assert.equal(typeof turnId, 'string', 'The failed assistant lost its native turn identity')
+  const messagePrefix = `runtime-view:${turnId}:`
+  assert.ok(messageId.startsWith(messagePrefix), 'The error belongs to a different model turn')
+  // Transcript hydration replaces the optimistic row id while preserving the native turn.
+  const messageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id^=${JSON.stringify(messagePrefix)}]`
+  const titleSelector = `${messageSelector} [data-testid="assistant-error-title"]`
+  const descriptionSelector = `${messageSelector} [data-testid="assistant-error-description"]`
   await control.command('waitFor', titleSelector, {
     text: '无法连接模型服务',
-    timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', descriptionSelector, {
-    text: MODEL_SERVICE_CONNECTION_ENDPOINT,
+    text: '连接错误',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const description = await control.command('getText', descriptionSelector)
@@ -421,14 +435,30 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
     'The model-service failure did not provide an actionable network or VPN recovery step'
   )
   assert.equal(
-    await control.command(
-      'getAttribute',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details-toggle"]`,
-      { value: 'aria-expanded' }
-    ),
-    'false',
-    'The model-service endpoint was only visible after expanding error details'
+    description.includes(MODEL_SERVICE_CONNECTION_ENDPOINT),
+    false,
+    'The model-service endpoint leaked into the connection recovery guidance'
   )
+  const detailsToggleSelector = `${messageSelector} [data-testid="assistant-error-details-toggle"]`
+  const detailsSelector = `${messageSelector} [data-testid="assistant-error-details"]`
+  assert.equal(
+    await control.command('getAttribute', detailsToggleSelector, { value: 'aria-expanded' }),
+    'false',
+    'The model-service error details were expanded by default'
+  )
+  const collapsedSnapshot = JSON.parse(await control.command('snapshot', messageSelector))
+  assert.equal(collapsedSnapshot.testIds.includes('assistant-error-details'), false)
+  await control.command('click', detailsToggleSelector)
+  await control.command('waitFor', detailsSelector, {
+    text: MODEL_SERVICE_CONNECTION_ERROR,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', detailsToggleSelector)
+  await control.command('waitFor', `${detailsToggleSelector}[aria-expanded="false"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const recollapsedSnapshot = JSON.parse(await control.command('snapshot', messageSelector))
+  assert.equal(recollapsedSnapshot.testIds.includes('assistant-error-details'), false)
 }
 
 async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control }) {

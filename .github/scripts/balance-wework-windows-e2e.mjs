@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { coreRunnerSlots } from './core-runner-slots.mjs'
 
 import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
 
@@ -8,7 +9,7 @@ const measurements = JSON.parse(
 )
 
 const preparationGroups = {
-  'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
+  'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'startup-fault-isolation'],
   'object-storage': ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
   'dingtalk-protocol-fixture': ['stand-in-identities', 'stand-in-connections', 'stand-in-cli'],
 }
@@ -87,8 +88,8 @@ function balanceMeasuredWork(shards, ordinary, unmeasured, checkpoints) {
   }
 }
 
-export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
-  // Preserve the two exclusive benchmark shards and the existing runner budget.
+export function balanceWindowsMatrix(matrix, seconds = measurements.seconds, runnerScale = 1) {
+  // Preserve the two exclusive benchmark shards when adding runner capacity.
   const fixed = new Set(['core-9', 'core-10'])
   const unmeasured = new Set()
   const preparationSegments = new Set(Object.values(preparationGroups).flat())
@@ -101,7 +102,12 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
     if (unknown.some(segment => preparationSegments.has(segment))) fixed.add(entry.id)
     else unmeasured.add(entry.id)
   }
-  const shards = matrix.include.map(entry => ({
+  const taskCount = matrix.include.reduce(
+    (count, entry) => count + (fixed.has(entry.id) ? 1 : entry.segments.split(',').length),
+    0
+  )
+  const entries = [...matrix.include, ...coreRunnerSlots(matrix.include, taskCount, runnerScale)]
+  const shards = entries.map(entry => ({
     ...entry,
     segments: [],
     seconds: 0,
@@ -139,6 +145,10 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const matrix = balanceWindowsMatrix(JSON.parse(process.env.CORE_MATRIX))
+  const matrix = balanceWindowsMatrix(
+    JSON.parse(process.env.CORE_MATRIX),
+    measurements.seconds,
+    Number(process.env.CORE_RUNNER_SCALE ?? 1)
+  )
   console.log(`matrix=${JSON.stringify(matrix)}`)
 }

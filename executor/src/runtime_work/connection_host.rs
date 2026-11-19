@@ -363,7 +363,15 @@ mod tests {
             "connection_dependency_in_use"
         );
         assert!(assert_host_dependency_unused(&host, "mail@other").is_ok());
-        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        host["dependencyReferences"][0]["pluginId"] = json!("mail@wework-personal");
+        assert_eq!(
+            assert_host_dependency_unused(&host, "mail@wework-personal")
+                .unwrap_err()
+                .code,
+            "connection_dependency_in_use"
+        );
         assert!(assert_host_dependency_unused(&host, "mail@company").is_ok());
+        host["registeredAt"] = json!(chrono::Utc::now().timestamp() - 30);
+        assert!(assert_host_dependency_unused(&host, "mail@wework-personal").is_ok());
     }
 }

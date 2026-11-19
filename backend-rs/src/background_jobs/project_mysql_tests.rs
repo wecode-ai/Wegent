@@ -41,6 +41,8 @@ async fn verify(mysql: &MysqlService, redis: &brz_redis::RedisService) -> Result
     for statement in DDL {
         ddl(mysql, statement).await?;
     }
+    verify_managed_recovery(mysql, redis).await?;
+    super::super::robot::verify_managed_activity(mysql).await?;
     let tables = crate::task_store::TableTemplates {
         tasks: "tasks",
         subtasks: "subtasks",
@@ -137,6 +139,83 @@ async fn verify(mysql: &MysqlService, redis: &brz_redis::RedisService) -> Result
     Ok(())
 }
 
+async fn verify_managed_recovery(
+    mysql: &MysqlService,
+    redis: &brz_redis::RedisService,
+) -> Result<()> {
+    use super::managed::{Execute, claim, claim_polling_handoff};
+    use crate::internal_callback::completion::with_owned_lease;
+    use brz_redis::Redis;
+    seed(mysql, 104, "managed-recovery", "managed-recovery-message").await?;
+    let input = Execute {
+        task_id: 104,
+        assistant_subtask_id: 1040,
+        user_subtask_id: 1039,
+        team_id: 1,
+        user_id: 7,
+        prompt: "Read the bound Issue".into(),
+        developer_instruction: String::new(),
+    };
+    let tables = crate::task_store::TableTemplates {
+        tasks: "tasks",
+        subtasks: "subtasks",
+    };
+    let key = format!("project-test-managed-recovery:{}", notifications::uuid());
+    // A worker disappears after committing RUNNING, before any dispatch.
+    assert!(claim(mysql, tables, &input).await?);
+    let mut foreign = input.clone();
+    foreign.user_id = 8;
+    assert!(!claim(mysql, tables, &foreign).await?);
+    let resumed = with_owned_lease(
+        redis,
+        &key,
+        || anyhow::anyhow!("busy"),
+        None,
+        |_| async {
+            assert!(claim(mysql, tables, &input).await?);
+            // A redelivery cannot execute while this turn's owner is live.
+            let duplicate: Result<()> = with_owned_lease(
+                redis,
+                &key,
+                || anyhow::anyhow!("busy"),
+                None,
+                |_| async { anyhow::bail!("a live execution must never be dispatched twice") },
+            )
+            .await;
+            assert_eq!(duplicate.unwrap_err().to_string(), "busy");
+            assert!(!claim_polling_handoff(mysql, tables, 104, 1040, 8).await?);
+            assert!(claim_polling_handoff(mysql, tables, 104, 1040, 7).await?);
+            // An interrupted provider call has no safe automatic replay.
+            let error = claim_polling_handoff(mysql, tables, 104, 1040, 7)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("acceptance is unknown"));
+            mysql.execute(
+                "UPDATE subtasks SET result=JSON_SET(result,'$.video_job',JSON_OBJECT('job_id','accepted-provider-job')) WHERE id=1040",
+                (),
+            ).await?;
+            // A persisted video identity belongs to the existing poll recovery;
+            // replay must not submit another provider creation request.
+            assert!(!claim_polling_handoff(mysql, tables, 104, 1040, 7).await?);
+            mysql.execute(
+                "UPDATE subtasks SET result=JSON_REMOVE(result,'$.managed_polling_dispatch_started') WHERE id=1040",
+                (),
+            ).await?;
+            assert!(!claim_polling_handoff(mysql, tables, 104, 1040, 7).await?);
+            mysql
+                .execute("UPDATE subtasks SET status='COMPLETED' WHERE id=1040", ())
+                .await?;
+            Ok::<_, anyhow::Error>(())
+        },
+    )
+    .await;
+    redis.del(&key).await?;
+    resumed?;
+    assert!(!claim(mysql, tables, &input).await?);
+    assert!(!claim_polling_handoff(mysql, tables, 104, 1040, 7).await?);
+    Ok(())
+}
+
 async fn ddl(mysql: &MysqlService, statement: impl Into<String>) -> Result<()> {
     let statement = statement.into();
     mysql
@@ -183,6 +262,6 @@ async fn projection(mysql: &MysqlService, run: &str, message: &str) -> Result<Pr
 const DDL: [&str; 4] = [
     "CREATE TABLE loop_items(id VARCHAR(64) PRIMARY KEY,resource_type VARCHAR(32) NOT NULL,public_id VARCHAR(64) NULL UNIQUE,project_key VARCHAR(64) NULL UNIQUE,storage_prefix VARCHAR(64) NULL UNIQUE,cloud_project_id VARCHAR(64),created_by_user_id BIGINT,backend_task_id BIGINT,status VARCHAR(32),title VARCHAR(255) NOT NULL DEFAULT '',description TEXT NOT NULL,metadata JSON NOT NULL,completed_at DATETIME(6) NOT NULL,version BIGINT NOT NULL DEFAULT 1,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
     "CREATE TABLE tasks(id BIGINT PRIMARY KEY,user_id BIGINT NOT NULL,kind VARCHAR(32) NOT NULL,name VARCHAR(255) NOT NULL DEFAULT '',namespace VARCHAR(255) NOT NULL DEFAULT 'default',json JSON NOT NULL,is_active INT NOT NULL DEFAULT 1,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),project_id BIGINT NULL,client_origin VARCHAR(64) NOT NULL DEFAULT '',is_group_chat TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB",
-    "CREATE TABLE subtasks(id BIGINT PRIMARY KEY,task_id BIGINT NOT NULL,user_id BIGINT NOT NULL,role VARCHAR(32) NOT NULL,result JSON,error_message TEXT) ENGINE=InnoDB",
-    "CREATE TABLE project_chat_messages(id BIGINT AUTO_INCREMENT PRIMARY KEY,message_id VARCHAR(64) NOT NULL UNIQUE,client_message_id VARCHAR(64) NOT NULL DEFAULT '',project_id VARCHAR(64) NOT NULL,task_id VARCHAR(64) NOT NULL,sender_type VARCHAR(32) NOT NULL DEFAULT 'agent',sender_id VARCHAR(64) NOT NULL DEFAULT '',sender_name VARCHAR(64) NOT NULL DEFAULT '',message_type VARCHAR(32) NOT NULL DEFAULT 'run',content TEXT NOT NULL,metadata JSON NOT NULL,trigger_message_id VARCHAR(64) NOT NULL DEFAULT '',reply_to_message_id VARCHAR(64) NOT NULL DEFAULT '',thread_root_message_id VARCHAR(64) NOT NULL DEFAULT '',agent_id VARCHAR(64) NOT NULL DEFAULT '',runtime_device_id VARCHAR(64) NOT NULL DEFAULT '',runtime_task_id VARCHAR(64) NOT NULL DEFAULT '',status VARCHAR(32) NOT NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
+    "CREATE TABLE subtasks(id BIGINT PRIMARY KEY,task_id BIGINT NOT NULL,user_id BIGINT NOT NULL,role VARCHAR(32) NOT NULL,status VARCHAR(32) NOT NULL DEFAULT 'PENDING',message_id BIGINT NOT NULL DEFAULT 1,executor_name VARCHAR(255) NOT NULL DEFAULT '',executor_namespace VARCHAR(255) NOT NULL DEFAULT 'default',result JSON,error_message TEXT,updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
+    "CREATE TABLE project_chat_messages(id BIGINT AUTO_INCREMENT PRIMARY KEY,message_id VARCHAR(64) NOT NULL UNIQUE,client_message_id VARCHAR(64) NOT NULL DEFAULT '',project_id VARCHAR(64) NOT NULL,task_id VARCHAR(64) NOT NULL,sender_type VARCHAR(32) NOT NULL DEFAULT 'agent',sender_id VARCHAR(64) NOT NULL DEFAULT '',sender_name VARCHAR(64) NOT NULL DEFAULT '',message_type VARCHAR(32) NOT NULL DEFAULT 'run',content TEXT NOT NULL,metadata JSON NOT NULL,trigger_message_id VARCHAR(64) NOT NULL DEFAULT '',reply_to_message_id VARCHAR(64) NOT NULL DEFAULT '',thread_root_message_id VARCHAR(64) NOT NULL DEFAULT '',agent_id VARCHAR(64) NOT NULL DEFAULT '',runtime_device_id VARCHAR(64) NOT NULL DEFAULT '',runtime_task_id VARCHAR(64) NOT NULL DEFAULT '',runtime_activity_key VARCHAR(64) NULL UNIQUE,deleted_at DATETIME(6) NOT NULL DEFAULT '1970-01-01 00:00:00',status VARCHAR(32) NOT NULL,created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB",
 ];

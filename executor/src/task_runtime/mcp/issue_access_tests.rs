@@ -70,16 +70,16 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let projects = result_value(
         call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
     );
-    let backend_project = projects["items"]
+    let backend_projects = projects["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|project| {
-            project["space"]["project_store"] == "backend" && project["space"]["space_id"] == "12"
-        })
-        .expect("Explicit discovery must include the authorized Backend project");
-    assert_eq!(backend_project["id"], "12");
-    assert_eq!(backend_project["name"], "Authorized project");
+        .filter(|project| project["space"]["project_store"] == "backend")
+        .collect::<Vec<_>>();
+    assert_eq!(backend_projects.len(), 1);
+    assert_eq!(backend_projects[0]["id"], "12");
+    assert_eq!(backend_projects[0]["space"]["space_id"], "12");
+    assert_eq!(backend_projects[0]["name"], "Authorized project");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     server.abort();
 }

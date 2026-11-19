@@ -908,6 +908,8 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    // Fixtures enqueue recovery directly to verify admission and durable failure handling.
+    #[cfg(test)]
     pub(super) async fn resume_active_goal(
         &self,
         local_task_id: &str,
@@ -1066,9 +1068,14 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(&turn.local_task_id, |link| {
-            link.running = true;
-            link.status = "active".to_owned();
-            link.thread_status = "active".to_owned();
+            if turn.request.extra.contains_key(quota_recovery::MARKER) {
+                // Checking quota does not start the deferred native turn.
+                crate::runtime_work::lifecycle::queue_native_execution(link, 0, false);
+            } else {
+                link.running = true;
+                link.status = "active".to_owned();
+                link.thread_status = "active".to_owned();
+            }
             link.updated_at = now_ms();
         });
         self.preparing_turns
@@ -1318,12 +1325,13 @@ impl RuntimeWorkRpcHandler {
         let (Some(turn), Some(cwd)) = (active_turn, request.cwd()) else {
             return;
         };
+        let (model, _) = super::hooks::hook_model_identity(request);
         let context = CodexHookContext {
             user: hook_user(request),
             session_id: turn.thread_id,
             turn_id: turn.turn_id,
             cwd: PathBuf::from(cwd),
-            model: string_field(&request.model_config, "model_id"),
+            model,
             permission_mode: "workspace-write".into(),
         };
         match post_tool_use_from_notification(&context, &message) {
@@ -1635,13 +1643,16 @@ impl RuntimeWorkRpcHandler {
             let mapper_handler = handler.clone();
             let mapper_local_task_id = turn_local_task_id.clone();
             let mapper_execution_id = execution_id;
-            let mapper_request = request.clone();
+            let hook_request = Arc::new(Mutex::new(Arc::new(request.clone())));
+            let mapper_hook_request = Arc::clone(&hook_request);
             let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
             let mapper_hook_turn = Arc::clone(&hook_turn);
             let lifecycle = Arc::new(Mutex::new(None::<crate::hooks::lifecycle::LifecycleHooks>));
             let mapper_lifecycle = Arc::clone(&lifecycle);
             let mapper_handle = tokio::spawn(async move {
                 while let Some(message) = notification_rx.recv().await {
+                    let mapper_request =
+                        Arc::clone(&mapper_hook_request.lock().expect("hook request lock"));
                     let active_turn = mapper_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
@@ -1668,20 +1679,61 @@ impl RuntimeWorkRpcHandler {
             let route_local_task_id = turn_local_task_id.clone();
             let route_request = request.clone();
             let is_new_thread = resume_thread_id.is_none() && direct_thread_id.is_none();
-            let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
-                route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
-                route_handler.record_active_goal_thread(&route_local_task_id, &thread_id);
-                route_handler.register_codex_thread_workspace_root(
-                    &thread_id,
-                    &route_request,
-                    is_new_thread,
-                );
-            });
+            let route_hook_request = Arc::clone(&hook_request);
+            let thread_started: CodexThreadStartedCallback =
+                Box::new(move |thread_id, model, provider| {
+                    let native_model = model.clone();
+                    let native_provider = provider.clone();
+                    let resolved = Arc::new(super::hooks::resolved_codex_hook_request(
+                        &route_request,
+                        model,
+                        provider,
+                    ));
+                    let (hook_model, hook_provider) = super::hooks::hook_model_identity(&resolved);
+                    log_executor_event(
+                        "runtime lifecycle hook model resolved",
+                        &[
+                            ("local_task_id", route_local_task_id.clone()),
+                            ("thread_id", thread_id.clone()),
+                            (
+                                "model_kind",
+                                route_request.model_config["wework_model_kind"]
+                                    .as_str()
+                                    .unwrap_or("unspecified")
+                                    .to_owned(),
+                            ),
+                            (
+                                "request_model",
+                                super::string_field(&route_request.model_config, "model_id")
+                                    .unwrap_or_default(),
+                            ),
+                            ("native_model", native_model.unwrap_or_default()),
+                            ("native_provider", native_provider.unwrap_or_default()),
+                            ("hook_model", hook_model.unwrap_or_default()),
+                            ("hook_provider", hook_provider.unwrap_or_default()),
+                            (
+                                "compat_proxy",
+                                (route_request.model_config["codex_responses_compat_proxy"]
+                                    == true)
+                                    .to_string(),
+                            ),
+                        ],
+                    );
+                    *route_hook_request.lock().expect("hook request lock") = Arc::clone(&resolved);
+                    route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
+                    route_handler.record_active_goal_thread(&route_local_task_id, &thread_id);
+                    route_handler.register_codex_thread_workspace_root(
+                        &thread_id,
+                        &resolved,
+                        is_new_thread,
+                    );
+                });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
             let active_turn_execution_id = execution_id;
             let pending_turn_presentation =
                 Arc::new(Mutex::new(initial_turn_presentation(&request)));
+            let active_hook_request = Arc::clone(&hook_request);
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let callback_lifecycle = Arc::clone(&lifecycle);
@@ -1717,8 +1769,10 @@ impl RuntimeWorkRpcHandler {
                     {
                         let mut lifecycle = callback_lifecycle.lock().expect("lifecycle lock");
                         if lifecycle.is_none() {
+                            let hook_request =
+                                Arc::clone(&active_hook_request.lock().expect("hook request lock"));
                             *lifecycle = active_turn_handler.begin_lifecycle_hooks(
-                                &active_turn_request,
+                                &hook_request,
                                 &active_turn_local_task_id,
                                 "Codex",
                             );
@@ -2061,6 +2115,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn is_busy_local_task(&self, local_task_id: &str) -> bool {
         self.is_active_local_task(local_task_id)
+            || self.native_task_holds_capacity(local_task_id)
             || self.is_queued_local_task(local_task_id)
             || self
                 .preparing_turns
@@ -2403,6 +2458,7 @@ impl RuntimeWorkRpcHandler {
                             &event_request,
                             json!({
                                 "error": {"message": message},
+                                "type": turn.error_type,
                                 "startedAt": turn.started_at_ms,
                                 "completedAt": turn.completed_at_ms,
                                 "durationMs": turn.duration_ms,
@@ -2532,7 +2588,7 @@ impl RuntimeWorkRpcHandler {
             thread_id,
             hook_user(request),
             PathBuf::from(workspace_path),
-            string_field(&request.model_config, "model_id"),
+            super::hooks::hook_model_identity(request).0,
         ) {
             log_executor_event(
                 "runtime work codex rollout thread registration failed",

@@ -1,6 +1,6 @@
 import { openStandInActivity } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
-import { access } from 'node:fs/promises'
+import { access, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -30,6 +30,7 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   const file = join(workspacePath, 'stand-in-approved.txt')
+  const cleanupFile = join(workspacePath, 'stand-in-firm.tmp')
   let requested = false
   let failedShellRequest = null
   return {
@@ -48,7 +49,7 @@ export function createDesktopScenario({
           events = shellCommandResponse(
             body,
             'stand-in-file-write',
-            `touch '${file.replaceAll("'", "'\\''")}'`,
+            `touch '${file.replaceAll("'", "'\\''")}' && rm '${cleanupFile.replaceAll("'", "'\\''")}'`,
             workspacePath,
             {
               sandbox_permissions: 'require_escalated',
@@ -88,6 +89,7 @@ export function createDesktopScenario({
         deviceId: settings.executionDeviceId,
         askBeforeAct: true,
       }
+      await writeFile(cleanupFile, '')
       await requestExecutor(
         control,
         'runtime.tasks.create',
@@ -146,6 +148,7 @@ export function createDesktopScenario({
         'Internal execution instructions must stay hidden'
       )
       assert.equal(requested, true)
+      await access(cleanupFile)
       await assert.rejects(access(file), { code: 'ENOENT' })
       assert.equal(
         Number(
@@ -161,6 +164,14 @@ export function createDesktopScenario({
         '[data-testid="request-user-input-card"]'
       )
       assert.ok(!approvalText.includes('允许此命令规则') && !approvalText.includes('以后不再询问'))
+      const question = '[data-testid="request-user-input-question-__codex_approval"]'
+      const removal = `${question} strong.text-destructive`
+      assert.equal(await control.command('getText', removal), 'rm')
+      assert.equal(Number(await control.command('getElementCount', removal)), 1)
+      assert.notEqual(
+        await control.command('getComputedStyleValue', removal, { value: 'color' }),
+        await control.command('getComputedStyleValue', question, { value: 'color' })
+      )
       await captureScreenshot(control, '02-action-awaiting-confirmation.png')
       await control.command('click', '[data-testid="request-user-input-option-__codex_approval-0"]')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -168,6 +179,7 @@ export function createDesktopScenario({
         timeoutMs: modelResponseTimeoutMs,
       })
       await access(file)
+      await assert.rejects(access(cleanupFile), { code: 'ENOENT' })
       await captureScreenshot(control, '03-confirmed-operation-completed.png')
     },
     diagnostics() {

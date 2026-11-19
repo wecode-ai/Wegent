@@ -291,6 +291,16 @@ jobs:
           cargo test --locked --lib running_transition_commits_before_dispatch_when_replica_has_no_subtask -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/running-transition-mysql.log
 
+      - name: Verify managed execution recovery with MySQL and Redis
+        working-directory: backend-rs
+        env:
+          PROJECT_TEST_MYSQL_URL: mysql://root@127.0.0.1:3306/mysql
+          PROJECT_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib background_jobs::project::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-execution-recovery.log
+
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
         env:
@@ -315,6 +325,15 @@ jobs:
           set -o pipefail
           cargo test --locked --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
+
+      - name: Verify plugin batch reads with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-installed-list-mysql.log
+          cargo test --locked --lib batch_mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-batch-reads-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
@@ -347,6 +366,16 @@ jobs:
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
           cargo test --locked --lib cloud_projects::agent_deletion_mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
+          cargo test --locked --lib cloud_projects::collaboration_metrics::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/collaboration-metrics-mysql.log
+          cargo test --locked --lib loop_tasks::assistant_participation::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assistant-participation-mysql.log
+          cargo test --locked --lib milestones::tests::mutation_response_reads_the_uncommitted_writer_row -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/milestone-mysql.log
+          cargo test --locked --lib loop_tasks::assignment_receipts::tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-receipt-mysql.log
+          cargo test --locked --lib socketio::device_pull_claim::tests::device_queue_never_consumes_managed_teams -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-device-queue-mysql.log
           cargo test --locked --lib device_records::retention::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-retention-mysql.log
 
@@ -450,7 +479,7 @@ jobs:
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
-        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_plugin_batch_reads_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
 
       - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
         working-directory: backend
@@ -524,6 +553,9 @@ jobs:
       - name: Run executor Rust format check
         working-directory: ./executor
         run: cargo fmt --all --check
+
+      - name: Run asynchronous lifecycle Hook script tests
+        run: node --test executor/examples/hooks/turn-diff-logger/logger.test.mjs
 
       - name: Run executor Rust tests
         working-directory: ./executor
@@ -659,6 +691,8 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
           cargo test --all-features --lib local::plugin_import::hash_tests
+          cargo test -p wegent-executor --all-features --lib \
+            local::backend::connection_controller::local_sync::recovery::tests::dropping_an_owner
           cargo test --all-features --lib runtime_rpc_dispatch_fits_a_bounded_worker_stack
           cargo test --all-features --lib agents::codex::tests::stopping_
           cargo test --all-features --lib codex_app_server_starts_beyond_windows_max_path
@@ -869,7 +903,7 @@ jobs:
           sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
+          dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1

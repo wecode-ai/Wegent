@@ -77,10 +77,11 @@ impl RuntimeWorkRpcHandler {
         ui: bool,
         started_at: i64,
     ) -> Duration {
-        let result =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(delay(state, ui, started_at, now_ms()))
-            });
+        let result = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Active,
+            |state| Ok(delay(state, ui, started_at, now_ms())),
+        );
         match result {
             Ok(delay) => delay,
             Err(error) => {

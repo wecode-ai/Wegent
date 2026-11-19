@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  RESOURCE_EXCLUSIVE_CHECKPOINTS,
+  isResourceExclusiveCheckpoint,
   linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
@@ -135,7 +135,31 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
     checkpoints: ['independent-a', checkpoint, 'independent-b'],
     workerCount: 4,
     resourceFor: () => null,
-    exclusiveFor: id => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(id),
+    exclusiveFor: isResourceExclusiveCheckpoint,
+    run: async id => {
+      started.push(id)
+      active.add(id)
+      if (active.has(checkpoint) && active.size > 1) overlaps.push([...active])
+      await new Promise(resolve => setImmediate(resolve))
+      active.delete(id)
+    },
+  })
+
+  assert.equal(started[0], checkpoint)
+  assert.deepEqual(overlaps, [])
+})
+
+test('keeps the strict runtime load budget isolated from other Electron workloads', async () => {
+  const checkpoint = 'runtime-load-performance'
+  const started = []
+  const active = new Set()
+  const overlaps = []
+
+  await runWithCheckpointResources({
+    checkpoints: ['independent-a', checkpoint, 'independent-b'],
+    workerCount: 4,
+    resourceFor: () => null,
+    exclusiveFor: isResourceExclusiveCheckpoint,
     run: async id => {
       started.push(id)
       active.add(id)
@@ -154,10 +178,9 @@ for (const checkpoint of ['python-runtime', 'plugin-development']) {
     const cloudCheckpoints = [
       'collaboration-shared-core',
       'collaboration-templates',
-      'collaboration-template-agents',
       'collaboration-template-app-device-routing',
     ]
-    const independent = 'stand-in-memory-timer'
+    const independent = 'tray-lifecycle'
     const active = new Set()
     let independentRanWithPython = false
     let cloudFixturesRanTogether = false
