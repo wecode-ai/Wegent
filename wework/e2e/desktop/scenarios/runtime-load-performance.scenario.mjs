@@ -26,6 +26,11 @@ const SIDEBAR = '[data-testid="sidebar-worklists-scroll"]'
 
 export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs }) {
   return {
+    // Default capture omits cookies, authentication headers and socket bytes.
+    electronLaunchArguments: [
+      `--log-net-log=${join(resultDir, 'runtime-load-network.json')}`,
+      '--net-log-capture-mode=Default',
+    ],
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false

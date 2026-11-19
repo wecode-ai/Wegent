@@ -16,6 +16,8 @@ In an isolated macOS arm64 Electron package, the account menu opened Settings an
 
 A second isolated package opened the task, Record Issue, and Create task composers using a local project. The project selectors in the last two modes measured 28 CSS pixels and showed the same project name. Captures showed the project in the bottom toolbar in Record Issue and above the editor in Create task. Record Issue now uses the same position above the editor. The final position and real model submission still need packaged verification.
 
+After adopting the shared ScrollArea, the new content wrapper no longer filled the task home viewport. The fixed composer is horizontally centered with an 8 CSS pixel bottom gap in isolated Electron at 1440×900, 1024×768, and 768×680.
+
 ## Scope and status
 
 The static entry inventory scanned 3311 production source files and identified 234 source owners: 80 popup owners, 45 Pages, 76 dialogs/drawers, 25 panels and 8 registered surfaces. A source owner is a file-level ownership entry, not an independently accepted page. The list below covers only the 45 Page files, retaining shells, re-exports and delegated wrappers as source records. The initial12 entry gaps have been classified in the following audit.

@@ -169,8 +169,13 @@ export async function createDesktopScenario({
     // be materialized into this baseline's native cache.
     for (const [role, original] of Object.entries(delivered.packages)) {
       const fixture = await publish(original)
-      await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
-      fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
+      let installed = await accountPlugin(cloud, fixture.slug)
+      if (!installed) {
+        await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
+        installed = await accountPlugin(cloud, fixture.slug)
+      }
+      assert.ok(installed, 'The historical plugin installation is missing')
+      fixture.installedId = Number(installed.metadata.labels.id)
       await update(fixture, null, { releaseId: fixture.releaseId })
       fixture.installState = {
         updatePolicy: 'manual',

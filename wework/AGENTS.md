@@ -92,8 +92,8 @@ it dispatches (`src/desktop/applicationMenu.ts` and
 - The host owns item ids, labels, and menu structure. Actions and capabilities
   are declared in both `src/desktop/applicationMenuModel.ts` (renderer) and
   `electron/src/host/application-menu.ts` (host); a contract test fails when
-  those two declarations drift, and the `application-menu` E2E checkpoint fails
-  when an item id disappears.
+  those two declarations drift. Keep declaration and native dispatch coverage
+  in the existing menu contract tests.
 - Declaring a capability is a promise that some code reports it. Only declare a
   capability when the renderer actually reports it for the focused window, and
   cover the item becoming _visible_ in the E2E checkpoint. An item whose
@@ -103,9 +103,10 @@ it dispatches (`src/desktop/applicationMenu.ts` and
   `visible: false` item whose accelerator is pressed. Never rely on the hidden
   state to block an action — the renderer handler must guard itself against the
   state where the action is not available.
-- Cover a new item in the `application-menu` desktop E2E checkpoint: assert it
-  exists, that its visibility matches the capability matrix, and that activating
-  it performs its action.
+- Extend the existing menu contracts when declarations or dispatch change. For
+  a new cross-boundary action, extend its feature's retained desktop checkpoint
+  and assert capability-driven visibility and the actual native effect. Follow
+  the repository policy for local E2E execution.
 
 This is a recommendation, not a requirement: a feature that only makes sense
 inside its own surface can stay without a menu entry.

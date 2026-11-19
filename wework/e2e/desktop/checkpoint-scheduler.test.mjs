@@ -178,10 +178,9 @@ for (const checkpoint of ['python-runtime', 'plugin-development']) {
     const cloudCheckpoints = [
       'collaboration-shared-core',
       'collaboration-templates',
-      'collaboration-template-agents',
       'collaboration-template-app-device-routing',
     ]
-    const independent = 'stand-in-memory-timer'
+    const independent = 'tray-lifecycle'
     const active = new Set()
     let independentRanWithPython = false
     let cloudFixturesRanTogether = false

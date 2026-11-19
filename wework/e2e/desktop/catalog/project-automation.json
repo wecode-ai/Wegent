@@ -12,5 +12,15 @@
       "shard": 5,
       "position": 3000
     }
-  }
+  },
+  "paths": [
+    "shared/assets/calendars/**",
+    "wework/src/features/automations/**",
+    "wework/src/types/automation.ts",
+    "wework/src/api/projectAutomations.ts",
+    "packages/collaboration/src/project-manage/automaticProcessing.ts",
+    "packages/collaboration/src/project-manage/AutomaticProcessingTriggerFields.tsx",
+    "packages/collaboration/src/project-manage/ProjectAutomaticProcessing.tsx",
+    "packages/collaboration/src/project-manage/WorkdayOnlyField.tsx"
+  ]
 }
