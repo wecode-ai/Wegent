@@ -111,17 +111,7 @@ export function mergeBlocksForDone(
   }
 
   if (replaceDraftText) {
-    const incomingIds = new Set(normalizedIncomingBlocks.map(block => block.id))
-    const streamOnlyBlocks = existingBlocks.filter(
-      block =>
-        block.type !== 'text' &&
-        !incomingIds.has(block.id) &&
-        !hasDuplicateBlockContent(normalizedIncomingBlocks, block)
-    )
-    return nestMessageBlocks([
-      ...streamOnlyBlocks,
-      ...mergeDoneBlocksWithBackendOrder(existingBlocks, normalizedIncomingBlocks),
-    ])
+    return nestMessageBlocks(mergeDoneBlocksWithSavedText(existingBlocks, normalizedIncomingBlocks))
   }
 
   if (existingBlocks.some(block => block.type === 'thinking')) {
@@ -260,6 +250,33 @@ function mergeDoneBlocksWithBackendOrder(
     const existingBlock = existingToolBlocksMap.get(incomingBlock.id)
     return existingBlock ? mergeMessageBlock(existingBlock, incomingBlock) : incomingBlock
   })
+}
+
+function mergeDoneBlocksWithSavedText(
+  existingBlocks: MessageBlock[],
+  incomingBlocks: MessageBlock[]
+): MessageBlock[] {
+  const streamOnlyAtStart: MessageBlock[] = []
+  const streamOnlyAfterId = new Map<string, MessageBlock[]>(
+    incomingBlocks.map(block => [block.id, []])
+  )
+  let streamOnlyBlocks = streamOnlyAtStart
+
+  // Keep streamed tools and thoughts after the last retained block seen in the stream.
+  for (const block of existingBlocks) {
+    const afterBlock = streamOnlyAfterId.get(block.id)
+    if (afterBlock) {
+      streamOnlyBlocks = afterBlock
+    } else if (block.type !== 'text' && !hasDuplicateBlockContent(incomingBlocks, block)) {
+      streamOnlyBlocks.push(block)
+    }
+  }
+
+  const savedBlocks = mergeDoneBlocksWithBackendOrder(existingBlocks, incomingBlocks)
+  return [
+    ...streamOnlyAtStart,
+    ...savedBlocks.flatMap(block => [block, ...(streamOnlyAfterId.get(block.id) ?? [])]),
+  ]
 }
 
 function hasDuplicateBlockContent(

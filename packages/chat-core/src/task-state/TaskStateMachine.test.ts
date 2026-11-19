@@ -514,6 +514,13 @@ describe('TaskStateMachine', () => {
 
     machine.handleChatStart(42, 'Chat', 7)
     machine.handleChatChunk(42, '', { reasoning_chunk: 'Thought.' })
+    machine.handleChatChunk(42, 'Draft intro. ', undefined, undefined, 'saved-intro')
+    machine.handleChatBlockUpdated(42, {
+      id: 'tool-after-intro',
+      type: 'tool',
+      tool_name: 'Read',
+      status: 'done',
+    })
     machine.handleChatChunk(42, draft, undefined, undefined, 'draft-text')
     machine.handleChatBlockUpdated(42, {
       id: 'search',
@@ -529,6 +536,7 @@ describe('TaskStateMachine', () => {
       tool_name: 'Read',
       status: 'done',
     })
+    machine.handleChatChunk(42, '', { reasoning_chunk: 'Follow-up thought.' })
 
     machine.handleChatDone(
       42,
@@ -565,9 +573,11 @@ describe('TaskStateMachine', () => {
         value: saved,
         blocks: [
           { type: 'thinking', content: 'Thought.', status: 'done' },
-          { id: 'stream-only-tool', type: 'tool' },
           { id: 'saved-intro', type: 'text', content: 'Intro.' },
+          { id: 'tool-after-intro', type: 'tool' },
           { id: 'search', type: 'tool', tool_output: 'Result' },
+          { id: 'stream-only-tool', type: 'tool' },
+          { type: 'thinking', content: 'Follow-up thought.', status: 'done' },
           { id: 'saved-text', type: 'text', content: 'Answer.[[evidence-unavailable]]' },
         ],
       },
