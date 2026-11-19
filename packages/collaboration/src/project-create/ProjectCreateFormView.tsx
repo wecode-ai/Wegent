@@ -50,7 +50,7 @@ interface ProjectCreateFormViewProps {
   testIds: { name?: string; description?: string; confirm?: string } | undefined
   props: ProjectCreateDialogProps
   groupGenerating: boolean
-  setAddedPeople: Dispatch<SetStateAction<CollaborationWorkspaceMember[]>>
+  setSelectedPeople: Dispatch<SetStateAction<CollaborationWorkspaceMember[]>>
   setCollaboratorPickerOpen: Dispatch<SetStateAction<boolean>>
   setGroupEditorDraft: Dispatch<SetStateAction<ProjectCreateCollaborationGroupDraft | null>>
   targets: ProjectCreateTarget[]
@@ -71,6 +71,7 @@ interface ProjectCreateFormViewProps {
   directMembers: CollaborationWorkspaceMember[]
   removeMember: (userId: number) => void
   directAgents: CollaborationOwnedAgent[]
+  unavailableAgentIds: string[]
   removeAgent: (resourceId: string) => void
   collaboratorPickerOpen: boolean
   availableAgents: CollaborationOwnedAgent[]
@@ -108,7 +109,7 @@ export function ProjectCreateFormView({
   testIds,
   props,
   groupGenerating,
-  setAddedPeople,
+  setSelectedPeople,
   setCollaboratorPickerOpen,
   setGroupEditorDraft,
   targets,
@@ -129,6 +130,7 @@ export function ProjectCreateFormView({
   directMembers,
   removeMember,
   directAgents,
+  unavailableAgentIds,
   removeAgent,
   collaboratorPickerOpen,
   availableAgents,
@@ -149,6 +151,7 @@ export function ProjectCreateFormView({
   const repositoryLabelId = useId()
   const repositoryHintId = useId()
   const repositoryErrorId = useId()
+  const setupErrorSummaryId = useId()
   return (
     <DialogForm
       hidden={groupModelPickerOpen || Boolean(templateConfiguration) || Boolean(discardTarget)}
@@ -162,530 +165,600 @@ export function ProjectCreateFormView({
       }}
     >
       <div className="collaboration-project-create-body">
-        <label className="collaboration-project-create-field">
-          <span id={nameLabelId}>{labels.name}</span>
-          <input
-            ref={nameInput}
-            required
-            aria-labelledby={nameLabelId}
-            aria-invalid={state.nameError ? true : undefined}
-            aria-describedby={state.nameError ? nameErrorId : undefined}
-            data-testid={testIds?.name ?? 'cloud-project-name'}
-            value={state.name}
-            onChange={event => {
-              commands.setName(event.target.value)
-              commands.clearError()
-            }}
-            placeholder={labels.namePlaceholder}
-          />
-          {state.nameError && (
-            <p id={nameErrorId} className="collaboration-project-create-error" role="alert">
-              {state.nameError}
-            </p>
-          )}
-        </label>
-
-        {props.workspaceSelection && (
+        <fieldset disabled={collaboratorsLocked} style={{ display: 'contents' }}>
           <label className="collaboration-project-create-field">
-            <span>{props.workspaceSelection.label}</span>
-            <select
-              data-testid="collaboration-project-workspace-select"
-              value={props.workspaceSelection.value}
-              disabled={state.saving || Boolean(state.createdProject) || groupGenerating}
+            <span id={nameLabelId}>{labels.name}</span>
+            <input
+              ref={nameInput}
+              required
+              aria-labelledby={nameLabelId}
+              aria-invalid={state.nameError ? true : undefined}
+              aria-describedby={state.nameError ? nameErrorId : undefined}
+              data-testid={testIds?.name ?? 'cloud-project-name'}
+              value={state.name}
               onChange={event => {
-                setAddedPeople([])
-                commands.setMemberUserIds([])
-                commands.setAgentResourceIds([])
-                commands.setExecutionEnvironmentDeviceIds(null)
-                commands.setTemplateGroupDrafts([])
-                commands.setCollaborationGroupDraft(null)
-                commands.setTemplateDocument(null)
-                commands.setTemplatePending(false)
+                commands.setName(event.target.value)
                 commands.clearError()
-                setCollaboratorPickerOpen(false)
-                setGroupEditorDraft(null)
-                props.workspaceSelection?.onChange(event.target.value)
               }}
-            >
-              {props.workspaceSelection.options.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {targets.length > 1 ? (
-          <section>
-            <header className="collaboration-project-create-section-header">
-              <h3>{labels.location}</h3>
-              <small>{labels.locationImmutable}</small>
-            </header>
-            <div
-              className={`collaboration-project-create-grid collaboration-project-create-locations columns-${targets.length}`}
-            >
-              {targets.map(target => {
-                const isLocal = target.location === 'local'
-                return (
-                  <ChoiceButton
-                    key={target.location}
-                    testId={`cloud-project-location-${target.location}`}
-                    selected={state.location === target.location}
-                    icon={isLocal ? <HardDrive aria-hidden="true" /> : <Cloud aria-hidden="true" />}
-                    label={isLocal ? labels.localLocation : labels.cloudLocation}
-                    description={
-                      isLocal ? labels.localLocationDescription : cloudLocationDescription
-                    }
-                    onClick={() => {
-                      commands.setLocation(target.location)
-                      commands.clearError()
-                    }}
-                  />
-                )
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        {state.location === 'cloud' && (
-          <section>
-            <h3>{labels.visibility}</h3>
-            <div className="collaboration-project-create-grid columns-2">
-              <ChoiceButton
-                testId="cloud-project-visibility-private"
-                compact
-                selected={state.visibility === 'private'}
-                icon={<LockKeyhole aria-hidden="true" />}
-                label={labels.privateVisibility}
-                description={labels.privateVisibilityDescription}
-                onClick={() => commands.setVisibility('private')}
-              />
-              <ChoiceButton
-                testId="cloud-project-visibility-public"
-                compact
-                selected={state.visibility === 'public'}
-                icon={<Cloud aria-hidden="true" />}
-                label={labels.publicVisibility}
-                description={labels.publicVisibilityDescription}
-                onClick={() => commands.setVisibility('public')}
-              />
-            </div>
-            {state.visibility === 'public' && (
-              <p className="collaboration-project-create-hint">{labels.publicVisibilityNotice}</p>
-            )}
-            {state.visibility === 'public' && (
-              <p
-                className="collaboration-project-create-hint"
-                data-testid="cloud-project-public-access-viewer"
-              >
-                {labels.publicReadOnlyDescription}
+              placeholder={labels.namePlaceholder}
+            />
+            {state.nameError && (
+              <p id={nameErrorId} className="collaboration-project-create-error" role="alert">
+                {state.nameError}
               </p>
             )}
-            {!state.isAITableProvider && (
-              <div>
-                <h3>{labels.defaultIssueSecurity}</h3>
-                <div className="collaboration-project-create-grid columns-2">
-                  <ChoiceButton
-                    testId="cloud-project-default-issue-security-open"
-                    compact
-                    selected={state.defaultIssueSecurity === 'open'}
-                    icon={<Cloud aria-hidden="true" />}
-                    label={labels.openIssueSecurity}
-                    description={labels.openIssueSecurityDescription}
-                    onClick={() => commands.setDefaultIssueSecurity('open')}
-                  />
-                  <ChoiceButton
-                    testId="cloud-project-default-issue-security-related"
-                    compact
-                    selected={state.defaultIssueSecurity === 'related'}
-                    icon={<LockKeyhole aria-hidden="true" />}
-                    label={labels.relatedIssueSecurity}
-                    description={labels.relatedIssueSecurityDescription}
-                    onClick={() => commands.setDefaultIssueSecurity('related')}
-                  />
-                </div>
-              </div>
-            )}
-          </section>
-        )}
+          </label>
 
-        {resourceSetup && (
-          <TemplateCreateSection
-            key={props.workspaceSelection?.value}
-            setup={{ ...resourceSetup, members: people }}
-            locale={labels.locale}
-            initialTemplate={props.initialTemplate}
-            configurationHost={{
-              target: configurationTarget,
-              navigate: (title, onBack) =>
-                setTemplateConfiguration(onBack ? { title, onBack } : null),
-            }}
-            disabled={state.saving || Boolean(state.createdProject)}
-            onSelect={document => {
-              commands.clearError()
-              commands.setTemplateDocument(document)
-              if (document) {
-                if (!state.name.trim())
-                  commands.setName(document.spec.resources.collaboration.project.name)
-                if (!state.description.trim())
-                  commands.setDescription(document.spec.resources.collaboration.project.description)
-              }
-            }}
-            onChange={(drafts, selected, document) => {
-              if (document) commands.setTemplateDocument(document)
-              commands.setTemplatePending(selected && drafts === null)
-              commands.setTemplateGroupDrafts(drafts ?? [])
-            }}
-          />
-        )}
-
-        {resourceSetup ? (
-          <fieldset
-            className="collaboration-project-create-collaborators min-w-0 border-0 p-0"
-            aria-label={labels.collaborators}
-            disabled={collaboratorsLocked}
-          >
-            <h3>{labels.collaborators}</h3>
-            {state.collaborationGroupDraft ? (
-              <div
-                className="collaboration-project-create-group-summary"
-                data-testid="collaboration-project-create-group-summary"
+          {props.workspaceSelection && (
+            <label className="collaboration-project-create-field">
+              <span>{props.workspaceSelection.label}</span>
+              <select
+                data-testid="collaboration-project-workspace-select"
+                value={props.workspaceSelection.value}
+                disabled={state.saving || Boolean(state.createdProject) || groupGenerating}
+                onChange={event => {
+                  setSelectedPeople([])
+                  commands.setMemberUserIds([])
+                  commands.setAgentResourceIds([])
+                  commands.setExecutionEnvironmentDeviceIds(null)
+                  commands.setTemplateGroupDrafts([])
+                  commands.setCollaborationGroupDraft(null)
+                  commands.setTemplateDocument(null)
+                  commands.setTemplatePending(false)
+                  commands.clearError()
+                  setCollaboratorPickerOpen(false)
+                  setGroupEditorDraft(null)
+                  props.workspaceSelection?.onChange(event.target.value)
+                }}
               >
-                <div className="collaboration-project-create-group-summary-header">
-                  <span>
-                    <UsersRound aria-hidden="true" />
-                    <strong>{state.collaborationGroupDraft.name}</strong>
-                  </span>
-                  <button
-                    type="button"
-                    data-testid="collaboration-project-create-edit-group"
-                    onClick={() => {
-                      const agentIds = selectedAgents.map(agent => agent.id)
-                      groupGenerationRevealedAgentIdsRef.current = new Set(agentIds)
-                      setRevealedGenerationAgentIds(agentIds)
-                      setGroupGenerationError(null)
-                      setGroupEditorDraft(state.collaborationGroupDraft)
-                      setGroupModelPickerOpen(true)
-                    }}
-                  >
-                    <Pencil aria-hidden="true" />
-                    {labels.editResponsibilities}
-                  </button>
-                </div>
-                <div className="collaboration-project-create-group-members">
-                  {groupedParticipants.map(participant => {
-                    const isLeader =
-                      participant.kind === state.collaborationGroupDraft?.leader.kind &&
-                      participant.id === state.collaborationGroupDraft?.leader.id
-                    return (
-                      <span
-                        key={`${participant.kind}:${participant.id}`}
-                        className={isLeader ? 'is-leader' : undefined}
-                      >
-                        {participant.kind === 'agent' ? (
-                          <Bot aria-hidden="true" />
-                        ) : (
-                          <UserRound aria-hidden="true" />
-                        )}
-                        <span>
-                          <strong>{participantName(participant.kind, participant.id)}</strong>
-                          <small>
-                            {isLeader
-                              ? labels.leaderWorks
-                              : participant.responsibility || labels.specialistWorks}
-                          </small>
-                        </span>
-                      </span>
-                    )
-                  })}
-                </div>
-                {state.collaborationGroupDraft.instructions ? (
-                  <div className="collaboration-project-create-group-principles">
-                    <small>{labels.allocationPrinciples}</small>
-                    <p>{state.collaborationGroupDraft.instructions}</p>
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  className="collaboration-project-create-group-remove"
-                  onClick={() => commands.setCollaborationGroupDraft(null)}
-                >
-                  {labels.removeGroup}
-                </button>
+                {props.workspaceSelection.options.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {targets.length > 1 ? (
+            <section>
+              <header className="collaboration-project-create-section-header">
+                <h3>{labels.location}</h3>
+                <small>{labels.locationImmutable}</small>
+              </header>
+              <div
+                className={`collaboration-project-create-grid collaboration-project-create-locations columns-${targets.length}`}
+              >
+                {targets.map(target => {
+                  const isLocal = target.location === 'local'
+                  return (
+                    <ChoiceButton
+                      key={target.location}
+                      testId={`cloud-project-location-${target.location}`}
+                      selected={state.location === target.location}
+                      icon={
+                        isLocal ? <HardDrive aria-hidden="true" /> : <Cloud aria-hidden="true" />
+                      }
+                      label={isLocal ? labels.localLocation : labels.cloudLocation}
+                      description={
+                        isLocal ? labels.localLocationDescription : cloudLocationDescription
+                      }
+                      onClick={() => {
+                        commands.setLocation(target.location)
+                        commands.clearError()
+                      }}
+                    />
+                  )
+                })}
               </div>
-            ) : null}
-            <div className="collaboration-project-create-collaborator-tokens">
-              {!inGroup('human', String(resourceSetup.currentUser.id)) && (
-                <CollaboratorToken
-                  icon={<UserRound aria-hidden="true" />}
-                  label={labels.currentUser}
+            </section>
+          ) : null}
+
+          {state.location === 'cloud' && (
+            <section>
+              <h3>{labels.visibility}</h3>
+              <div className="collaboration-project-create-grid columns-2">
+                <ChoiceButton
+                  testId="cloud-project-visibility-private"
+                  compact
+                  selected={state.visibility === 'private'}
+                  icon={<LockKeyhole aria-hidden="true" />}
+                  label={labels.privateVisibility}
+                  description={labels.privateVisibilityDescription}
+                  onClick={() => commands.setVisibility('private')}
                 />
+                <ChoiceButton
+                  testId="cloud-project-visibility-public"
+                  compact
+                  selected={state.visibility === 'public'}
+                  icon={<Cloud aria-hidden="true" />}
+                  label={labels.publicVisibility}
+                  description={labels.publicVisibilityDescription}
+                  onClick={() => commands.setVisibility('public')}
+                />
+              </div>
+              {state.visibility === 'public' && (
+                <p className="collaboration-project-create-hint">{labels.publicVisibilityNotice}</p>
               )}
-              {directMembers.map(member => (
-                <CollaboratorToken
-                  key={`member:${member.user_id}`}
-                  icon={<UserRound aria-hidden="true" />}
-                  label={member.user_name}
-                  removeLabel={`${labels.cancel} ${member.user_name}`}
-                  onRemove={() => removeMember(member.user_id)}
-                />
-              ))}
-              {directAgents.map(agent => (
-                <CollaboratorToken
-                  key={`agent:${agent.id}`}
-                  icon={<Bot aria-hidden="true" />}
-                  label={agent.name}
-                  removeLabel={`${labels.cancel} ${agent.name}`}
-                  onRemove={() => removeAgent(agent.id)}
-                />
-              ))}
-            </div>
-            <ProjectCollaboratorPicker
-              labels={labels}
-              open={collaboratorPickerOpen && !collaboratorsLocked}
-              onOpenChange={setCollaboratorPickerOpen}
-              people={people.map(member => ({
-                id: member.user_id,
-                user_name: member.user_name,
-                email: member.email,
-              }))}
-              excludedIds={[resourceSetup.currentUser.id, ...state.memberUserIds]}
-              searchUsers={resourceSetup.searchUsers}
-              agents={availableAgents}
-              groups={resourceSetup.groups}
-              onSelectPerson={user => {
-                if (collaboratorsLocked) return
-                setAddedPeople(current => [
-                  ...current.filter(member => member.user_id !== user.id),
-                  {
-                    id: user.id,
-                    user_id: user.id,
-                    user_name: user.user_name,
-                    email: user.email,
-                    role: 'Developer',
-                  },
-                ])
-                commands.setMemberUserIds([...state.memberUserIds, user.id])
-                setCollaboratorPickerOpen(false)
-              }}
-              onSelectAgent={addAgent}
-              onSelectGroup={importGroup}
-              groupAction={
-                selectedAgents.length > 0 && resourceSetup.generateCollaborationGroupDraft ? (
-                  <button
-                    type="button"
-                    data-testid="collaboration-project-create-new-group"
-                    disabled={groupGenerating || generationModelsLoading}
-                    onClick={openGroupModelPicker}
-                  >
-                    {groupGenerating ? (
-                      <LoaderCircle aria-hidden="true" className="collaboration-spin" />
-                    ) : (
-                      <Sparkles aria-hidden="true" />
-                    )}
-                    <span>
-                      <strong>{labels.createCollaborationGroup}</strong>
-                      <small>
-                        {groupGenerating
-                          ? labels.generatingGroup
-                          : labels.groupRecommendationDescription}
-                      </small>
-                    </span>
-                  </button>
-                ) : null
-              }
-            />
-            {!state.collaborationGroupDraft &&
-            selectedAgents.length >= 2 &&
-            resourceSetup.generateCollaborationGroupDraft &&
-            !groupRecommendationDismissed ? (
-              <div
-                className="collaboration-project-create-group-recommendation"
-                data-testid="collaboration-project-create-group-recommendation"
-              >
-                <Sparkles aria-hidden="true" />
+              {state.visibility === 'public' && (
+                <p
+                  className="collaboration-project-create-hint"
+                  data-testid="cloud-project-public-access-viewer"
+                >
+                  {labels.publicReadOnlyDescription}
+                </p>
+              )}
+              {!state.isAITableProvider && (
                 <div>
-                  <strong>{labels.groupRecommendationTitle}</strong>
-                  <p>{labels.groupRecommendationDescription}</p>
-                  <span>
-                    <button type="button" onClick={() => setGroupRecommendationDismissed(true)}>
-                      {labels.keepDirectCollaboration}
-                    </button>
+                  <h3>{labels.defaultIssueSecurity}</h3>
+                  <div className="collaboration-project-create-grid columns-2">
+                    <ChoiceButton
+                      testId="cloud-project-default-issue-security-open"
+                      compact
+                      selected={state.defaultIssueSecurity === 'open'}
+                      icon={<Cloud aria-hidden="true" />}
+                      label={labels.openIssueSecurity}
+                      description={labels.openIssueSecurityDescription}
+                      onClick={() => commands.setDefaultIssueSecurity('open')}
+                    />
+                    <ChoiceButton
+                      testId="cloud-project-default-issue-security-related"
+                      compact
+                      selected={state.defaultIssueSecurity === 'related'}
+                      icon={<LockKeyhole aria-hidden="true" />}
+                      label={labels.relatedIssueSecurity}
+                      description={labels.relatedIssueSecurityDescription}
+                      onClick={() => commands.setDefaultIssueSecurity('related')}
+                    />
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {resourceSetup && (
+            <TemplateCreateSection
+              key={props.workspaceSelection?.value}
+              setup={resourceSetup}
+              locale={labels.locale}
+              initialTemplate={props.initialTemplate}
+              configurationHost={{
+                target: configurationTarget,
+                navigate: (title, onBack) =>
+                  setTemplateConfiguration(onBack ? { title, onBack } : null),
+              }}
+              disabled={state.saving || Boolean(state.createdProject)}
+              onSelect={document => {
+                commands.clearError()
+                commands.setTemplateDocument(document)
+                if (document) {
+                  if (!state.name.trim())
+                    commands.setName(document.spec.resources.collaboration.project.name)
+                  if (!state.description.trim())
+                    commands.setDescription(
+                      document.spec.resources.collaboration.project.description
+                    )
+                }
+              }}
+              onChange={(drafts, selected, document) => {
+                if (document) commands.setTemplateDocument(document)
+                commands.setTemplatePending(selected && drafts === null)
+                commands.setTemplateGroupDrafts(drafts ?? [])
+              }}
+            />
+          )}
+
+          {resourceSetup ? (
+            <fieldset
+              className="collaboration-project-create-collaborators min-w-0 border-0 p-0"
+              aria-label={labels.collaborators}
+              disabled={collaboratorsLocked}
+            >
+              <h3>{labels.collaborators}</h3>
+              {state.collaborationGroupDraft ? (
+                <div
+                  className="collaboration-project-create-group-summary"
+                  data-testid="collaboration-project-create-group-summary"
+                >
+                  <div className="collaboration-project-create-group-summary-header">
+                    <span>
+                      <UsersRound aria-hidden="true" />
+                      <strong>{state.collaborationGroupDraft.name}</strong>
+                    </span>
                     <button
                       type="button"
-                      className="collaboration-primary-button"
-                      data-testid="collaboration-project-create-organize-group"
-                      disabled={groupGenerating}
+                      data-testid="collaboration-project-create-edit-group"
+                      onClick={() => {
+                        const agentIds = selectedAgents.map(agent => agent.id)
+                        groupGenerationRevealedAgentIdsRef.current = new Set(agentIds)
+                        setRevealedGenerationAgentIds(agentIds)
+                        setGroupGenerationError(null)
+                        setGroupEditorDraft(state.collaborationGroupDraft)
+                        setGroupModelPickerOpen(true)
+                      }}
+                    >
+                      <Pencil aria-hidden="true" />
+                      {labels.editResponsibilities}
+                    </button>
+                  </div>
+                  <div className="collaboration-project-create-group-members">
+                    {groupedParticipants.map(participant => {
+                      const isLeader =
+                        participant.kind === state.collaborationGroupDraft?.leader.kind &&
+                        participant.id === state.collaborationGroupDraft?.leader.id
+                      return (
+                        <span
+                          key={`${participant.kind}:${participant.id}`}
+                          className={isLeader ? 'is-leader' : undefined}
+                        >
+                          {participant.kind === 'agent' ? (
+                            <Bot aria-hidden="true" />
+                          ) : (
+                            <UserRound aria-hidden="true" />
+                          )}
+                          <span>
+                            <strong>{participantName(participant.kind, participant.id)}</strong>
+                            <small>
+                              {isLeader
+                                ? labels.leaderWorks
+                                : participant.responsibility || labels.specialistWorks}
+                            </small>
+                          </span>
+                        </span>
+                      )
+                    })}
+                  </div>
+                  {state.collaborationGroupDraft.instructions ? (
+                    <div className="collaboration-project-create-group-principles">
+                      <small>{labels.allocationPrinciples}</small>
+                      <p>{state.collaborationGroupDraft.instructions}</p>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="collaboration-project-create-group-remove"
+                    onClick={() => commands.setCollaborationGroupDraft(null)}
+                  >
+                    {labels.removeGroup}
+                  </button>
+                </div>
+              ) : null}
+              <div className="collaboration-project-create-collaborator-tokens">
+                {!inGroup('human', String(resourceSetup.currentUser.id)) && (
+                  <CollaboratorToken
+                    icon={<UserRound aria-hidden="true" />}
+                    label={labels.currentUser}
+                  />
+                )}
+                {directMembers.map(member => (
+                  <CollaboratorToken
+                    key={`member:${member.user_id}`}
+                    icon={<UserRound aria-hidden="true" />}
+                    label={member.user_name}
+                    testId={`collaboration-project-create-selected-member-${member.user_id}`}
+                    removeLabel={`${labels.cancel} ${member.user_name}`}
+                    onRemove={() => removeMember(member.user_id)}
+                  />
+                ))}
+                {directAgents.map(agent => (
+                  <CollaboratorToken
+                    key={`agent:${agent.id}`}
+                    icon={<Bot aria-hidden="true" />}
+                    label={agent.name}
+                    removeLabel={`${labels.cancel} ${agent.name}`}
+                    onRemove={() => removeAgent(agent.id)}
+                  />
+                ))}
+                {unavailableAgentIds.map(id => (
+                  <CollaboratorToken
+                    key={`unavailable-agent:${id}`}
+                    icon={<Bot aria-hidden="true" />}
+                    label={labels.unavailableSelectedAgent}
+                    testId={`collaboration-project-create-unavailable-agent-${id}`}
+                    removeLabel={`${labels.cancel} ${labels.unavailableSelectedAgent}`}
+                    onRemove={() => removeAgent(id)}
+                  />
+                ))}
+              </div>
+              <ProjectCollaboratorPicker
+                labels={labels}
+                open={collaboratorPickerOpen && !collaboratorsLocked}
+                onOpenChange={setCollaboratorPickerOpen}
+                people={resourceSetup.members.map(member => ({
+                  id: member.user_id,
+                  user_name: member.user_name,
+                  email: member.email,
+                }))}
+                excludedIds={[resourceSetup.currentUser.id, ...state.memberUserIds]}
+                searchUsers={resourceSetup.searchUsers}
+                directoryLoading={resourceSetup.membersLoading}
+                directoryError={resourceSetup.membersError}
+                onRetryDirectory={resourceSetup.reloadMembers}
+                agents={availableAgents}
+                agentsError={resourceSetup.agentsError}
+                groups={resourceSetup.groups}
+                groupsError={resourceSetup.groupsError}
+                onSelectPerson={user => {
+                  if (collaboratorsLocked) return
+                  setSelectedPeople(current => [
+                    ...current.filter(member => member.user_id !== user.id),
+                    {
+                      id: user.id,
+                      user_id: user.id,
+                      user_name: user.user_name,
+                      email: user.email,
+                      role: 'Developer',
+                    },
+                  ])
+                  commands.setMemberUserIds([...state.memberUserIds, user.id])
+                  setCollaboratorPickerOpen(false)
+                }}
+                onSelectAgent={addAgent}
+                onSelectGroup={importGroup}
+                groupAction={
+                  selectedAgents.length > 0 && resourceSetup.generateCollaborationGroupDraft ? (
+                    <button
+                      type="button"
+                      data-testid="collaboration-project-create-new-group"
+                      disabled={groupGenerating || generationModelsLoading}
                       onClick={openGroupModelPicker}
                     >
-                      {groupGenerating ? labels.generatingGroup : labels.organizeAsGroup}
+                      {groupGenerating ? (
+                        <LoaderCircle aria-hidden="true" className="collaboration-spin" />
+                      ) : (
+                        <Sparkles aria-hidden="true" />
+                      )}
+                      <span>
+                        <strong>{labels.createCollaborationGroup}</strong>
+                        <small>
+                          {groupGenerating
+                            ? labels.generatingGroup
+                            : labels.groupRecommendationDescription}
+                        </small>
+                      </span>
                     </button>
-                  </span>
+                  ) : null
+                }
+              />
+              {!state.collaborationGroupDraft &&
+              selectedAgents.length >= 2 &&
+              resourceSetup.generateCollaborationGroupDraft &&
+              !groupRecommendationDismissed ? (
+                <div
+                  className="collaboration-project-create-group-recommendation"
+                  data-testid="collaboration-project-create-group-recommendation"
+                >
+                  <Sparkles aria-hidden="true" />
+                  <div>
+                    <strong>{labels.groupRecommendationTitle}</strong>
+                    <p>{labels.groupRecommendationDescription}</p>
+                    <span>
+                      <button type="button" onClick={() => setGroupRecommendationDismissed(true)}>
+                        {labels.keepDirectCollaboration}
+                      </button>
+                      <button
+                        type="button"
+                        className="collaboration-primary-button"
+                        data-testid="collaboration-project-create-organize-group"
+                        disabled={groupGenerating}
+                        onClick={openGroupModelPicker}
+                      >
+                        {groupGenerating ? labels.generatingGroup : labels.organizeAsGroup}
+                      </button>
+                    </span>
+                  </div>
                 </div>
+              ) : null}
+              {groupGenerationError ? (
+                <p className="collaboration-project-create-inline-error" role="alert">
+                  {groupGenerationError}
+                </p>
+              ) : null}
+            </fieldset>
+          ) : null}
+
+          {resourceSetup && (
+            <TemplateEnvironmentSelection
+              environments={resourceSetup.executionEnvironments ?? []}
+              selected={state.executionEnvironmentDeviceIds}
+              locale={labels.locale}
+              disabled={state.saving || Boolean(state.createdProject)}
+              onChange={commands.setExecutionEnvironmentDeviceIds}
+              loading={resourceSetup.executionEnvironmentLoading}
+              error={resourceSetup.executionEnvironmentError}
+              onRetry={resourceSetup.retryExecutionEnvironments}
+            />
+          )}
+
+          {state.location === 'local' &&
+          (!resourceSetup ||
+            (!resourceSetup.searchUsers &&
+              !resourceSetup.members.some(
+                member => member.user_id !== resourceSetup.currentUser.id
+              ))) ? (
+            <p
+              className="collaboration-project-create-hint"
+              data-testid="collaboration-project-create-members-unavailable"
+            >
+              {labels.membersUnavailable}
+            </p>
+          ) : null}
+
+          <section className="collaboration-project-create-advanced">
+            <button
+              type="button"
+              className="collaboration-project-create-advanced-trigger"
+              aria-expanded={advancedSettingsOpen}
+              data-testid="collaboration-project-create-advanced"
+              onClick={() => setAdvancedSettingsOpen(current => !current)}
+            >
+              <span>{labels.advancedSettings}</span>
+              {!advancedSettingsOpen && (
+                <small className="collaboration-project-create-advanced-summary">
+                  {providerSummary}
+                </small>
+              )}
+              <ChevronDown aria-hidden="true" />
+            </button>
+            {advancedSettingsOpen ? (
+              <div className="collaboration-project-create-advanced-content">
+                <label className="collaboration-project-create-field">
+                  <span>
+                    {labels.description} <small>{labels.optional}</small>
+                  </span>
+                  <textarea
+                    data-testid={testIds?.description ?? 'cloud-project-description'}
+                    value={state.description}
+                    onChange={event => commands.setDescription(event.target.value)}
+                    placeholder={labels.descriptionPlaceholder}
+                  />
+                </label>
+                <section>
+                  <h3>{labels.taskProvider}</h3>
+                  <div className="collaboration-project-create-grid collaboration-project-create-providers">
+                    {providers.map(provider => (
+                      <ChoiceButton
+                        key={provider.id}
+                        testId={`cloud-project-task-provider-${provider.id}`}
+                        selected={state.taskProvider === provider.id}
+                        icon={provider.icon}
+                        label={provider.label}
+                        description={provider.description}
+                        onClick={() => {
+                          commands.setTaskProvider(provider.id)
+                          commands.clearError()
+                        }}
+                      />
+                    ))}
+                  </div>
+                </section>
+
+                {state.repositoryProvider ? (
+                  <section className="collaboration-project-create-provider-config">
+                    <label className="collaboration-project-create-field">
+                      <span id={repositoryLabelId}>{labels.repository}</span>
+                      <input
+                        ref={repositoryInput}
+                        required
+                        aria-labelledby={repositoryLabelId}
+                        aria-invalid={state.repositoryError ? true : undefined}
+                        aria-describedby={
+                          state.repositoryError
+                            ? `${repositoryHintId} ${repositoryErrorId}`
+                            : repositoryHintId
+                        }
+                        data-testid="cloud-project-provider-repository"
+                        value={state.repositoryAddress}
+                        onChange={event => {
+                          commands.setRepositoryAddress(event.target.value)
+                          commands.clearError()
+                        }}
+                        placeholder={
+                          state.taskProvider === 'github'
+                            ? 'https://github.com/owner/repository'
+                            : 'https://gitlab.com/group/project'
+                        }
+                      />
+                      <small id={repositoryHintId}>{labels.repositoryHint}</small>
+                      {state.repositoryError && (
+                        <p
+                          id={repositoryErrorId}
+                          className="collaboration-project-create-error"
+                          role="alert"
+                        >
+                          {state.repositoryError}
+                        </p>
+                      )}
+                    </label>
+                    <label className="collaboration-project-create-field">
+                      <span>
+                        {labels.token} <small>{labels.optional}</small>
+                      </span>
+                      <div className="collaboration-project-create-token">
+                        <LockKeyhole aria-hidden="true" />
+                        <input
+                          data-testid="cloud-project-provider-token"
+                          type="password"
+                          autoComplete="new-password"
+                          value={state.token}
+                          onChange={event => commands.setToken(event.target.value)}
+                          placeholder={labels.privateRepositoryToken}
+                        />
+                      </div>
+                      <small>
+                        {state.location === 'cloud' ? labels.cloudTokenHint : labels.localTokenHint}
+                      </small>
+                    </label>
+                  </section>
+                ) : null}
+
+                {state.isAITableProvider ? (
+                  <section className="collaboration-project-create-provider-config">
+                    <label className="collaboration-project-create-field">
+                      <span>{labels.aitableUrl}</span>
+                      <input
+                        data-testid="cloud-project-aitable-url"
+                        value={state.aitableUrl}
+                        onChange={event => {
+                          commands.setAitableUrl(event.target.value)
+                          commands.clearError()
+                        }}
+                        placeholder={labels.aitablePlaceholder}
+                      />
+                      <small className={state.aitableUrl && !state.aitableLink ? 'is-error' : ''}>
+                        {state.aitableUrl && !state.aitableLink
+                          ? labels.aitableInvalid
+                          : labels.aitableHint}
+                      </small>
+                    </label>
+                    <p className="collaboration-project-create-hint">{labels.aitableRuntimeHint}</p>
+                  </section>
+                ) : null}
               </div>
             ) : null}
-            {groupGenerationError ? (
-              <p className="collaboration-project-create-inline-error" role="alert">
-                {groupGenerationError}
-              </p>
-            ) : null}
-          </fieldset>
-        ) : null}
-
-        {resourceSetup && (
-          <TemplateEnvironmentSelection
-            environments={resourceSetup.executionEnvironments ?? []}
-            selected={state.executionEnvironmentDeviceIds}
-            locale={labels.locale}
-            disabled={state.saving || Boolean(state.createdProject)}
-            onChange={commands.setExecutionEnvironmentDeviceIds}
-            loading={resourceSetup.executionEnvironmentLoading}
-            error={resourceSetup.executionEnvironmentError}
-            onRetry={resourceSetup.retryExecutionEnvironments}
-          />
-        )}
-
-        <section className="collaboration-project-create-advanced">
-          <button
-            type="button"
-            className="collaboration-project-create-advanced-trigger"
-            aria-expanded={advancedSettingsOpen}
-            data-testid="collaboration-project-create-advanced"
-            onClick={() => setAdvancedSettingsOpen(current => !current)}
-          >
-            <span>{labels.advancedSettings}</span>
-            {!advancedSettingsOpen && (
-              <small className="collaboration-project-create-advanced-summary">
-                {providerSummary}
-              </small>
-            )}
-            <ChevronDown aria-hidden="true" />
-          </button>
-          {advancedSettingsOpen ? (
-            <div className="collaboration-project-create-advanced-content">
-              <label className="collaboration-project-create-field">
-                <span>
-                  {labels.description} <small>{labels.optional}</small>
-                </span>
-                <textarea
-                  data-testid={testIds?.description ?? 'cloud-project-description'}
-                  value={state.description}
-                  onChange={event => commands.setDescription(event.target.value)}
-                  placeholder={labels.descriptionPlaceholder}
-                />
-              </label>
-              <section>
-                <h3>{labels.taskProvider}</h3>
-                <div className="collaboration-project-create-grid collaboration-project-create-providers">
-                  {providers.map(provider => (
-                    <ChoiceButton
-                      key={provider.id}
-                      testId={`cloud-project-task-provider-${provider.id}`}
-                      selected={state.taskProvider === provider.id}
-                      icon={provider.icon}
-                      label={provider.label}
-                      description={provider.description}
-                      onClick={() => {
-                        commands.setTaskProvider(provider.id)
-                        commands.clearError()
-                      }}
-                    />
+          </section>
+        </fieldset>
+        {state.error && (state.memberFailures.length || state.confirmedMembers.length) ? (
+          <div className="collaboration-project-create-error">
+            {state.memberFailures.length ? (
+              <div role="alert" aria-labelledby={setupErrorSummaryId}>
+                <ul data-testid="collaboration-project-create-member-failures">
+                  {state.memberFailures.map(failure => (
+                    <li key={failure.userId}>
+                      {people.find(member => member.user_id === failure.userId)?.user_name ??
+                        failure.userName}
+                      : {failure.reason}
+                    </li>
                   ))}
-                </div>
-              </section>
-
-              {state.repositoryProvider ? (
-                <section className="collaboration-project-create-provider-config">
-                  <label className="collaboration-project-create-field">
-                    <span id={repositoryLabelId}>{labels.repository}</span>
-                    <input
-                      ref={repositoryInput}
-                      required
-                      aria-labelledby={repositoryLabelId}
-                      aria-invalid={state.repositoryError ? true : undefined}
-                      aria-describedby={
-                        state.repositoryError
-                          ? `${repositoryHintId} ${repositoryErrorId}`
-                          : repositoryHintId
-                      }
-                      data-testid="cloud-project-provider-repository"
-                      value={state.repositoryAddress}
-                      onChange={event => {
-                        commands.setRepositoryAddress(event.target.value)
-                        commands.clearError()
-                      }}
-                      placeholder={
-                        state.taskProvider === 'github'
-                          ? 'https://github.com/owner/repository'
-                          : 'https://gitlab.com/group/project'
-                      }
-                    />
-                    <small id={repositoryHintId}>{labels.repositoryHint}</small>
-                    {state.repositoryError && (
-                      <p
-                        id={repositoryErrorId}
-                        className="collaboration-project-create-error"
-                        role="alert"
-                      >
-                        {state.repositoryError}
-                      </p>
-                    )}
-                  </label>
-                  <label className="collaboration-project-create-field">
-                    <span>
-                      {labels.token} <small>{labels.optional}</small>
-                    </span>
-                    <div className="collaboration-project-create-token">
-                      <LockKeyhole aria-hidden="true" />
-                      <input
-                        data-testid="cloud-project-provider-token"
-                        type="password"
-                        autoComplete="new-password"
-                        value={state.token}
-                        onChange={event => commands.setToken(event.target.value)}
-                        placeholder={labels.privateRepositoryToken}
-                      />
-                    </div>
-                    <small>
-                      {state.location === 'cloud' ? labels.cloudTokenHint : labels.localTokenHint}
-                    </small>
-                  </label>
-                </section>
-              ) : null}
-
-              {state.isAITableProvider ? (
-                <section className="collaboration-project-create-provider-config">
-                  <label className="collaboration-project-create-field">
-                    <span>{labels.aitableUrl}</span>
-                    <input
-                      data-testid="cloud-project-aitable-url"
-                      value={state.aitableUrl}
-                      onChange={event => {
-                        commands.setAitableUrl(event.target.value)
-                        commands.clearError()
-                      }}
-                      placeholder={labels.aitablePlaceholder}
-                    />
-                    <small className={state.aitableUrl && !state.aitableLink ? 'is-error' : ''}>
-                      {state.aitableUrl && !state.aitableLink
-                        ? labels.aitableInvalid
-                        : labels.aitableHint}
-                    </small>
-                  </label>
-                  <p className="collaboration-project-create-hint">{labels.aitableRuntimeHint}</p>
-                </section>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
+                </ul>
+              </div>
+            ) : null}
+            {state.confirmedMembers.length ? (
+              <div data-testid="collaboration-project-create-confirmed-members">
+                <strong>{labels.confirmedMembers}</strong>
+                <ul>
+                  {state.confirmedMembers.map(member => (
+                    <li key={member.user_id}>{member.user_name}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {!groupEditorDraft && !groupModelPickerOpen ? (
         <footer className="collaboration-project-create-footer">
           {state.error && (
-            <p className="collaboration-project-create-error" role="alert">
-              {state.error}
-            </p>
+            <div
+              className="collaboration-project-create-error"
+              role={state.memberFailures.length ? undefined : 'alert'}
+            >
+              <p id={setupErrorSummaryId}>
+                {state.memberSetupFailed && state.memberFailures.length
+                  ? labels.projectCreatedSetupPending
+                  : state.error}
+              </p>
+            </div>
           )}
           <div className="collaboration-project-create-footer-actions">
             <button
@@ -704,9 +777,11 @@ export function ProjectCreateFormView({
             >
               {state.saving
                 ? labels.creating
-                : state.createdProject
-                  ? labels.openCreated
-                  : labels.create}
+                : state.memberSetupFailed
+                  ? labels.retrySetup
+                  : state.createdProject
+                    ? labels.openCreated
+                    : labels.create}
             </button>
           </div>
         </footer>

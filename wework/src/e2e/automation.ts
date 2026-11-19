@@ -13,7 +13,7 @@ import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnos
 import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
-import { createElementFrameSampler } from './element-frame-metrics'
+import { createElementFrameSampler, readDrawerTrackState } from './element-frame-metrics'
 import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
@@ -1815,6 +1815,9 @@ async function waitForDesktopControlElement(
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),
+      drawer: element.matches('.issue-conversation-drawers-backdrop')
+        ? createElementFrameSampler(element, '.issue-conversation-drawers')()
+        : undefined,
     })
   )
   throw new Error(
@@ -3446,7 +3449,32 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         { commandId: command.id, selector: command.selector },
         'debug'
       )
+      const closingDrawer =
+        element.dataset.testid === 'cloud-todo-detail-close'
+          ? element.closest<HTMLElement>('.issue-conversation-drawers-backdrop')
+          : null
+      const sampleDrawer = closingDrawer
+        ? createElementFrameSampler(closingDrawer, '.issue-conversation-drawers')
+        : null
+      const beforeClose = readDrawerTrackState(
+        closingDrawer?.querySelector('.issue-conversation-drawers') ?? null
+      )
       element.click()
+      if (closingDrawer && sampleDrawer) {
+        queueMicrotask(() =>
+          logRuntimeTaskCreateStage(
+            'desktop-control-issue-close-state',
+            {
+              commandId: command.id,
+              closeTargetConnected: element.isConnected,
+              drawerConnected: closingDrawer.isConnected,
+              before: beforeClose,
+              after: sampleDrawer(),
+            },
+            'debug'
+          )
+        )
+      }
       logRuntimeTaskCreateStage(
         'desktop-control-click-dispatched',
         { commandId: command.id, elapsedMs: Date.now() - startedAt },

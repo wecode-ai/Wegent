@@ -1570,6 +1570,7 @@ impl RuntimeWorkRpcHandler {
         }
         log_executor_event("runtime work turn spawning", &fields);
 
+        let stage = turn_diagnostics::TurnStage::start(&local_task_id, "local_execution_admission");
         let (request_user_input_tx, request_user_input_rx): (
             mpsc::Sender<Value>,
             CodexRequestUserInputReceiver,
@@ -1623,9 +1624,16 @@ impl RuntimeWorkRpcHandler {
                 },
             );
         }
+        drop(stage);
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
+        let dispatched_at = Instant::now();
         let turn_handle = tokio::spawn(async move {
+            drop(turn_diagnostics::TurnStage::since(
+                &turn_local_task_id,
+                "turn_worker_dispatch",
+                dispatched_at,
+            ));
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let mut scheduled_turn_guard = ScheduledTurnGuard::new(
                 handler.clone(),
@@ -1637,7 +1645,11 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
-            handler.ensure_notification_router().await;
+            {
+                let _stage =
+                    turn_diagnostics::TurnStage::start(&turn_local_task_id, "notification_router");
+                handler.ensure_notification_router().await;
+            }
             let (notification_tx, mut notification_rx) =
                 mpsc::unbounded_channel::<CodexNotification>();
             let mapper_handler = handler.clone();
@@ -1859,11 +1871,27 @@ impl RuntimeWorkRpcHandler {
             let mut result = async {
                 execution_context?;
                 let mut request = request.clone();
-                handler.recall_stand_in_context(&mut request).await;
-                handler
-                    .validate_project_coordinator_request(&request)
-                    .await?;
-                crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
+                {
+                    let _stage =
+                        turn_diagnostics::TurnStage::start(&turn_local_task_id, "stand_in_recall");
+                    handler.recall_stand_in_context(&mut request).await;
+                }
+                {
+                    let _stage = turn_diagnostics::TurnStage::start(
+                        &turn_local_task_id,
+                        "coordinator_validation",
+                    );
+                    handler
+                        .validate_project_coordinator_request(&request)
+                        .await?;
+                }
+                {
+                    let _stage = turn_diagnostics::TurnStage::start(
+                        &turn_local_task_id,
+                        "capability_preparation",
+                    );
+                    crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
+                }
                 let event_goal = handler
                     .event_goal_admission(&turn_local_task_id, &request)
                     .await?;
@@ -1902,7 +1930,13 @@ impl RuntimeWorkRpcHandler {
             }
             .await;
             handler.log_turn_cleanup_stage(&turn_local_task_id, execution_id, "result_received");
-            let mapper_result = mapper_handle.await;
+            let mapper_result = {
+                let _stage = turn_diagnostics::TurnStage::start(
+                    &turn_local_task_id,
+                    "notification_observer_drain",
+                );
+                mapper_handle.await
+            };
             handler.log_turn_cleanup_stage(
                 &turn_local_task_id,
                 execution_id,
@@ -2079,13 +2113,19 @@ impl RuntimeWorkRpcHandler {
                 transcript_status,
                 active_turn.as_ref().map(|turn| turn.turn_id.as_str()),
             );
-            handler.handle_turn_result(
-                &turn_local_task_id,
-                execution_id,
-                &request,
-                active_turn.as_ref(),
-                result,
-            );
+            {
+                let _stage = turn_diagnostics::TurnStage::start(
+                    &turn_local_task_id,
+                    "local_result_settlement",
+                );
+                handler.handle_turn_result(
+                    &turn_local_task_id,
+                    execution_id,
+                    &request,
+                    active_turn.as_ref(),
+                    result,
+                );
+            }
             handler.log_turn_cleanup_stage(
                 &turn_local_task_id,
                 execution_id,
@@ -2164,7 +2204,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn finish_scheduled_turn(&self, local_task_id: &str) {
+        let stage = turn_diagnostics::TurnStage::start(local_task_id, "queue_release_lock");
         let operation = self.turn_queue_operation.clone().lock_owned().await;
+        drop(stage);
         self.finish_scheduled_turn_locked(local_task_id, operation)
             .await;
     }
@@ -2174,6 +2216,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         _operation: tokio::sync::OwnedMutexGuard<()>,
     ) {
+        let _stage = turn_diagnostics::TurnStage::start(local_task_id, "queue_release");
         // A native Goal can outlive the local request that admitted it. Its
         // task keeps the reservation until native execution actually settles.
         if self.native_task_holds_capacity(local_task_id) {

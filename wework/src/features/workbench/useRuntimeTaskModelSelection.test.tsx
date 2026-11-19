@@ -26,6 +26,7 @@ function modelStore(models: UnifiedModel[]) {
     selectedModelOptionsByScope: {},
     hasSelectionForScope: vi.fn().mockReturnValue(false),
     getSelectedModelForScope: vi.fn().mockReturnValue(null),
+    getSelectedModelAvailabilityForScope: vi.fn().mockReturnValue(null),
     getSelectedModelOptionsForScope: vi.fn().mockReturnValue({}),
     setSelectionForScope: vi.fn(),
     setSelectedModelForScope: vi.fn(),
@@ -116,6 +117,30 @@ describe('bound remote task model selection', () => {
 
     expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
       selectionReady: false,
+    })
+  })
+
+  it('keeps an invalid scoped choice blocked when the provider still validates the saved model', () => {
+    const pickedModel: UnifiedModel = { name: 'picked-local-model', type: 'runtime' }
+    const store = modelStore([])
+    store.hasSelectionForScope.mockReturnValue(true)
+    store.getSelectedModelForScope.mockReturnValue(pickedModel)
+    store.getSelectedModelAvailabilityForScope.mockReturnValue(false)
+    store.getSelectedModelOptionsForScope.mockReturnValue({ permissionMode: 'read-only' })
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: () => ({ modelSelection: selection }) as RuntimeTaskSummary,
+        modelStore: store,
+        resolveActiveTaskSelectionReady: () => true,
+      })
+    )
+
+    expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: pickedModel,
+      selectedModelOptions: { permissionMode: 'read-only' },
     })
   })
 

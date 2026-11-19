@@ -5,6 +5,7 @@
 import { useMemo, useRef, useState, type SetStateAction } from "react";
 
 import type { CollaborationExecutionEnvironment } from "../types";
+import { ProjectCreateMembersError } from "./configureProjectMembers";
 
 import {
   RepositoryProviderError,
@@ -17,6 +18,8 @@ import type {
   ProjectCreateProvider,
   ProjectCreateHostAdapter,
   ProjectCreateLabels,
+  ProjectCreateResourceSelection,
+  ProjectCreateResourceSetup,
 } from "./types";
 
 type ProjectVisibility = NonNullable<
@@ -164,6 +167,21 @@ export function useProjectCreateController({
     import("../types").CollaborationProject | null
   >(null);
   const createdProjectLocation = useRef(location);
+  const pendingMemberSetup = useRef<{
+    project: import("../types").CollaborationProject;
+    location: ProjectCreateLocation;
+    selection: ProjectCreateResourceSelection;
+    setup: ProjectCreateResourceSetup;
+  } | null>(null);
+  const submissionInFlight = useRef(false);
+  const submissionComplete = useRef(false);
+  const [memberFailures, setMemberFailures] = useState<
+    ProjectCreateMembersError["failures"]
+  >([]);
+  const [confirmedMembers, setConfirmedMembers] = useState<
+    ProjectCreateMembersError["members"]
+  >([]);
+  const [memberSetupFailed, setMemberSetupFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
@@ -244,20 +262,29 @@ export function useProjectCreateController({
     ) && !saving;
 
   async function submit() {
-    if (!canSubmit) return;
-    if (createdProject) {
+    if (!canSubmit || submissionInFlight.current || submissionComplete.current)
+      return;
+    if (createdProject && !pendingMemberSetup.current) {
+      submissionComplete.current = true;
       onCreated(createdProject, createdProjectLocation.current);
       return;
     }
+    submissionInFlight.current = true;
     setSaving(true);
     setError(null);
+    setMemberFailures([]);
     setRepositoryError(null);
     setServerNameError(null);
     try {
+      const pending = pendingMemberSetup.current;
+      const setup =
+        pending?.setup ??
+        (resourceSetup?.location === location ? resourceSetup : undefined);
+      const projectLocation = pending?.location ?? location;
       const target = targets.find(
-        (candidate) => candidate.location === location,
+        (candidate) => candidate.location === projectLocation,
       );
-      if (!target) throw new Error(labels.unavailableLocation);
+      if (!target && !pending) throw new Error(labels.unavailableLocation);
       const providerConfig = isAITableProvider
         ? {
             base_id: aitableLink!.baseId,
@@ -275,7 +302,7 @@ export function useProjectCreateController({
         group.leader,
         ...group.members,
       ]);
-      const selection = {
+      const selection: ProjectCreateResourceSelection = pending?.selection ?? {
         memberUserIds: [
           ...new Set([
             ...memberUserIds,
@@ -283,11 +310,11 @@ export function useProjectCreateController({
               .filter(
                 (member) =>
                   member.kind === "human" &&
-                  member.id !== String(resourceSetup?.currentUser.id),
+                  member.id !== String(setup?.currentUser.id),
               )
               .map((member) => Number(member.id)),
           ]),
-        ],
+        ].filter((userId) => userId !== setup?.currentUser.id),
         agentResourceIds: [
           ...new Set([
             ...agentResourceIds,
@@ -300,59 +327,74 @@ export function useProjectCreateController({
         collaborationGroupDrafts,
         ...(templateDocument ? { template: templateDocument } : {}),
       };
-      await resourceSetup?.validate?.(selection);
-      let project = await target.create({
-        name: name.trim(),
-        description: description.trim(),
-        taskProvider,
-        providerConfig,
-        ...(location === "cloud"
-          ? {
-              visibility,
-              ...(visibility === "public"
-                ? { publicAccess: { role: "Viewer" } }
-                : {}),
-              ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
-            }
-          : {}),
-        ...(location === "local" && resourceSetup
-          ? {
-              includeDefaultAgent: defaultAgentResourceIds.some((id) =>
-                selection.agentResourceIds.includes(id),
-              ),
-            }
-          : {}),
-      });
-      if (resourceSetup) {
+      if (!pending) await setup?.validate?.(selection);
+      let project =
+        pending?.project ??
+        (await target!.create({
+          name: name.trim(),
+          description: description.trim(),
+          taskProvider,
+          providerConfig,
+          ...(location === "cloud"
+            ? {
+                visibility,
+                ...(visibility === "public"
+                  ? { publicAccess: { role: "Viewer" } }
+                  : {}),
+                ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
+              }
+            : {}),
+          ...(location === "local" && setup
+            ? {
+                includeDefaultAgent: defaultAgentResourceIds.some((id) =>
+                  selection.agentResourceIds.includes(id),
+                ),
+              }
+            : {}),
+        }));
+      if (setup) {
         try {
-          const configuredProject = await resourceSetup.configure(
-            project,
-            selection,
-          );
+          const configuredProject = await setup.configure(project, selection);
           if (configuredProject) project = configuredProject;
         } catch (cause) {
           console.warn("[collaboration] Project configuration failed", {
             projectId: project.id,
             executionEnvironmentDeviceIds,
-            environmentLoading: resourceSetup.executionEnvironmentLoading,
-            environmentLoadFailed: Boolean(
-              resourceSetup.executionEnvironmentError,
-            ),
-            currentDeviceIds: resourceSetup.executionEnvironments
+            environmentLoading: setup.executionEnvironmentLoading,
+            environmentLoadFailed: Boolean(setup.executionEnvironmentError),
+            currentDeviceIds: setup.executionEnvironments
               ?.filter((environment) => environment.is_current_device)
               .map((environment) => environment.device_id),
           });
-          createdProjectLocation.current = location;
+          createdProjectLocation.current = projectLocation;
           setCreatedProject(project);
+          if (cause instanceof ProjectCreateMembersError) {
+            pendingMemberSetup.current = {
+              project,
+              location: projectLocation,
+              selection,
+              setup,
+            };
+            setMemberSetupFailed(true);
+            setMemberFailures(cause.failures);
+            setConfirmedMembers(cause.members);
+          } else {
+            pendingMemberSetup.current = null;
+            setMemberSetupFailed(false);
+          }
           throw new Error(
-            labels.partialConfiguration +
+            (cause instanceof ProjectCreateMembersError
+              ? labels.projectCreatedSetupPending + " "
+              : labels.partialConfiguration) +
               projectCreateErrorMessage(cause, labels, host),
             { cause },
           );
         }
       }
+      pendingMemberSetup.current = null;
+      submissionComplete.current = true;
       host?.track?.("created");
-      onCreated(project, location);
+      onCreated(project, projectLocation);
     } catch (cause) {
       host?.track?.("failed");
       const fieldError = projectCreateNameErrorMessage(
@@ -374,6 +416,7 @@ export function useProjectCreateController({
         setError(projectCreateErrorMessage(cause, labels, host));
       }
     } finally {
+      submissionInFlight.current = false;
       setSaving(false);
     }
   }
@@ -400,6 +443,9 @@ export function useProjectCreateController({
       isAITableProvider,
       saving,
       createdProject,
+      memberSetupFailed,
+      memberFailures,
+      confirmedMembers,
       error,
       canSubmit,
       memberUserIds,
@@ -407,6 +453,7 @@ export function useProjectCreateController({
       executionEnvironmentDeviceIds,
       collaborationGroupDraft,
       collaborationGroupDrafts,
+      templateDocument,
     },
     commands: {
       setTemplateDocument,

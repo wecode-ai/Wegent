@@ -36,10 +36,18 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
       }),
     })
     expect(refresh.status).toBe(200)
-    expect(await refresh.json()).toEqual({
+    const refreshed = await refresh.json()
+    expect(refreshed).toMatchObject({
       access_token: 'synthetic-cloud-config-recovery-access',
       refresh_token: 'synthetic-cloud-config-recovery-refresh',
     })
+    expect(typeof refreshed.id_token).toBe('string')
+    const claims = JSON.parse(
+      Buffer.from(refreshed.id_token.split('.')[1], 'base64url').toString('utf8')
+    )
+    expect(claims['https://api.openai.com/auth'].chatgpt_account_id).toBe(
+      'cloud-config-recovery-enterprise'
+    )
     expect(service.diagnostics().tokenRefreshes).toBe(1)
     expect((await fetch(bundleUrl)).status).toBe(503)
     expect(service.diagnostics().bundleFailures).toBe(2)

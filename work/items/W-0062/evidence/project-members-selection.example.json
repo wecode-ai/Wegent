@@ -1,0 +1,32 @@
+{
+  "synthetic": true,
+  "evidenceType": "unit-test-fixture",
+  "project": {
+    "id": "12",
+    "location": "cloud"
+  },
+  "beforeCreate": {
+    "currentUserId": 1,
+    "selectedMemberUserIds": [2, 3],
+    "sharedComponent": "ProjectCreateDialog",
+    "sharedInput": "ProjectCreateResourceSetup"
+  },
+  "afterCreate": {
+    "projectCreateCalls": 1,
+    "memberRole": "Developer",
+    "serverMemberListReadAfterAdds": true,
+    "projectSnapshotRefreshed": true,
+    "confirmedMemberNamesShown": ["alice", "bob"]
+  },
+  "partialFailureRecovery": {
+    "firstAttempt": {
+      "addedUserId": 2,
+      "failedUserId": 3,
+      "reason": "Permission denied"
+    },
+    "memberAddUserIdsAcrossAttempts": [2, 3, 3],
+    "projectCreateCallsAcrossAttempts": 1,
+    "draftAndSelectionPreserved": true
+  },
+  "liveServerVerificationPerformed": false
+}

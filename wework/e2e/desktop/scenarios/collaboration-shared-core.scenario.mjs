@@ -7,6 +7,7 @@ import {
   openCollaborationIssueCreation,
 } from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
+import { waitForProjectIdentity } from '../modules/collaboration-project-navigation.mjs'
 import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -15,7 +16,13 @@ import { createProjectOnlyNavigationRegression } from '../modules/project-only-n
 import { createProjectSpacePickerRegression } from '../modules/project-space-picker.mjs'
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
-import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
+import {
+  assertCreatedMembers,
+  createOrdinaryTaskProject,
+  createOrdinaryTaskProjectWithMemberFailure,
+  selectProjectCreateMembers,
+  verifyCollaborationMemberSettings,
+} from '../modules/collaboration-member-settings.mjs'
 import { verifyCollaborationSettingsUx } from '../modules/collaboration-settings-ux.mjs'
 import {
   handleProjectCreateGroupModel,
@@ -23,6 +30,7 @@ import {
   verifyProjectCreateDialogUi,
 } from '../modules/project-create-dialog-regression.mjs'
 import {
+  openProjectBoard,
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
 } from '../modules/collaboration-board-personal-view.mjs'
@@ -212,8 +220,12 @@ export function createDesktopScenario({
   let backendUrl = ''
   let authToken = ''
   let owner = null
+  const selectedMembers = []
   let workspace = null
+  let personalWorkspace = null
   let project = null
+  let ordinaryTaskProject = null
+  let memberFailureProject = null
   let issue = null
   let agent = null
   let cloudEnvironment = null
@@ -263,6 +275,22 @@ export function createDesktopScenario({
           })
         }
       }
+      if (memberFailureProject) {
+        const latest = await request(`/api/v1/cloud-projects/${memberFailureProject.id}`)
+        if (latest.status !== 'archived') {
+          await request(`/api/v1/cloud-projects/${latest.id}?version=${latest.version}`, {
+            method: 'DELETE',
+          })
+        }
+      }
+      if (ordinaryTaskProject) {
+        const latest = await request(`/api/v1/cloud-projects/${ordinaryTaskProject.id}`)
+        if (latest.status !== 'archived') {
+          await request(`/api/v1/cloud-projects/${latest.id}?version=${latest.version}`, {
+            method: 'DELETE',
+          })
+        }
+      }
     } finally {
       fixtureArchived = true
     }
@@ -283,6 +311,19 @@ export function createDesktopScenario({
       authToken = cloud.authToken
       owner = await request('/api/users/me')
       await request('/api/admin/setup-complete', { method: 'POST' })
+      for (const index of [1, 2]) {
+        selectedMembers.push(
+          await request('/api/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({
+              user_name: `project-create-member-${index}-${process.pid}`,
+              password: `project-create-member-${index}-e2e`,
+              role: 'user',
+              auth_source: 'password',
+            }),
+          })
+        )
+      }
       await projectOnlyNavigation.prepare(cloud, owner)
       await projectSpacePicker.prepare()
     },
@@ -306,6 +347,41 @@ export function createDesktopScenario({
 
       try {
         await ensureExperimentalFeaturesEnabled(control)
+        ordinaryTaskProject = await createOrdinaryTaskProject(control, {
+          name: `普通任务项目成员验收-${process.pid}`,
+          owner,
+          request,
+          members: selectedMembers,
+        })
+        await waitForProjectIdentity(control, ACTIVE_WORKBENCH_SELECTOR, ordinaryTaskProject.name)
+        await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-project-settings-members"]'),
+          { visible: true }
+        )
+        await assertCreatedMembers(control, {
+          scoped,
+          owner,
+          request,
+          project: ordinaryTaskProject,
+          members: selectedMembers,
+        })
+        await capture(control, 'collaboration-shared-core-ordinary-task-members-created.png')
+        memberFailureProject = await createOrdinaryTaskProjectWithMemberFailure(control, {
+          name: `普通任务项目成员失败恢复-${process.pid}`,
+          owner,
+          request,
+          members: selectedMembers,
+          database: cloudEnvironment,
+          timeoutMs: uiTimeoutMs,
+          onProjectCreated: project => {
+            memberFailureProject = project
+          },
+          captureFailure: () =>
+            capture(control, 'collaboration-shared-core-ordinary-task-member-failure.png'),
+        })
+        await capture(control, 'collaboration-shared-core-ordinary-task-member-retried.png')
         await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
           timeoutMs: workbenchReadyTimeoutMs,
         })
@@ -468,6 +544,9 @@ export function createDesktopScenario({
         workspace = await waitForApiValue(
           async () => {
             const response = await request('/api/v1/workspaces')
+            personalWorkspace = response.items?.find(
+              candidate => candidate.is_system_default && candidate.access_role === 'Owner'
+            )
             return response.items?.find(candidate => candidate.name === workspaceName) ?? null
           },
           value => Boolean(value),
@@ -493,6 +572,7 @@ export function createDesktopScenario({
           value: projectName,
         })
         await verifyProjectCreateDialogUi(control, scoped)
+        await selectProjectCreateMembers(control, { members: selectedMembers, owner })
         await control.command(
           'click',
           scoped('[data-testid="collaboration-project-create-advanced"]')
@@ -537,7 +617,30 @@ export function createDesktopScenario({
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
         await verifyPrivateProjectCreation({ control, scoped, request, workspace, project })
-        await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
+        await verifyCollaborationMemberSettings(control, {
+          scoped,
+          owner,
+          request,
+          project,
+          members: selectedMembers,
+        })
+        // Reuse the existing member-settings reload for both creation entry points.
+        await openProjectBoard(control, scoped, ordinaryTaskProject)
+        await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-project-settings-members"]'),
+          { visible: true }
+        )
+        await assertCreatedMembers(control, {
+          scoped,
+          owner,
+          request,
+          project: ordinaryTaskProject,
+          members: selectedMembers,
+        })
+        await capture(control, 'collaboration-shared-core-ordinary-task-members-reloaded.png')
+        await openProjectBoard(control, scoped, project)
         await verifyCollaborationSettingsUx(control, { scoped, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
@@ -1050,6 +1153,7 @@ export function createDesktopScenario({
         await verifyCollaborationLocalProjectImport(control, {
           cloudProjectId: project.id,
           cloudWorkspaceId: workspace.id,
+          personalWorkspaceId: personalWorkspace?.id,
           executorHome,
           scoped,
           workbenchReadyTimeoutMs,
@@ -1091,6 +1195,8 @@ export function createDesktopScenario({
         fixtureArchived,
         issueId: issue?.id ?? null,
         projectId: project?.id ?? null,
+        ordinaryTaskProjectId: ordinaryTaskProject?.id ?? null,
+        selectedMemberIds: selectedMembers.map(member => member.id),
         workspaceId: workspace?.id ?? null,
       }
     },

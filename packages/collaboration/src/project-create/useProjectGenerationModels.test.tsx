@@ -37,11 +37,13 @@ afterEach(async () => {
 function Harness({
   active,
   loader,
+  scope,
 }: {
   active: boolean
   loader(): Promise<ProjectCreateGenerationModelCatalog>
+  scope?: string
 }) {
-  current = useProjectGenerationModels(active, loader, undefined, 'Failed')
+  current = useProjectGenerationModels(active, loader, undefined, 'Failed', scope)
   return <input defaultValue="Project draft" aria-label="Project name" />
 }
 
@@ -151,4 +153,40 @@ it('rejects selections outside the current catalog without changing the current 
   })
   expect(current.key).toBe(initialKey)
   expect(current.options).toEqual(initialOptions)
+})
+
+it('loads the active location catalog after a scope switch and clears the previous selection', async () => {
+  const localLoader = vi.fn(async () => catalog)
+  const cloudCatalog = { models: [second], defaultSelection: second }
+  const cloudLoader = vi.fn(async () => cloudCatalog)
+  await act(async () => root.render(<Harness active loader={localLoader} scope="local:1" />))
+  expect(current.key).toBe(generationModelKey(first))
+  await act(async () =>
+    root.render(<Harness active={false} loader={cloudLoader} scope="cloud:1" />)
+  )
+  expect(cloudLoader).not.toHaveBeenCalled()
+  expect(current.models).toEqual([])
+  expect(current.key).toBe('')
+  await act(async () => root.render(<Harness active loader={cloudLoader} scope="cloud:1" />))
+  expect(cloudLoader).toHaveBeenCalledOnce()
+  expect(current.models).toEqual(cloudCatalog.models)
+  expect(current.key).toBe(generationModelKey(second))
+})
+
+it('ignores a pending catalog response from the previous scope', async () => {
+  let resolveLocal!: (value: ProjectCreateGenerationModelCatalog) => void
+  const localLoader = vi.fn(
+    () =>
+      new Promise<ProjectCreateGenerationModelCatalog>(resolve => {
+        resolveLocal = resolve
+      })
+  )
+  const cloudCatalog = { models: [second], defaultSelection: second }
+  const cloudLoader = vi.fn(async () => cloudCatalog)
+  await act(async () => root.render(<Harness active loader={localLoader} scope="local:1" />))
+  await act(async () => root.render(<Harness active loader={cloudLoader} scope="cloud:1" />))
+  expect(cloudLoader).toHaveBeenCalledOnce()
+  await act(async () => resolveLocal(catalog))
+  expect(current.models).toEqual(cloudCatalog.models)
+  expect(current.key).toBe(generationModelKey(second))
 })

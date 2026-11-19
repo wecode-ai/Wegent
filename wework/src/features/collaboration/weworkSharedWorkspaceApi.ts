@@ -677,8 +677,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
       async searchUsers(query) {
         return (await deliveryApi.searchCloudProjectUsers(query)).users.map(toUser)
       },
-      async add(projectId, userId, role) {
-        return toMember(await deliveryApi.addCloudProjectMember(projectId, userId, role))
+      async add(projectId, userId, role, options) {
+        return toMember(await deliveryApi.addCloudProjectMember(projectId, userId, role, options))
       },
       async update(projectId, userId, input) {
         return toMember(

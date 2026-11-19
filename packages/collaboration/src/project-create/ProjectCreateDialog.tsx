@@ -13,6 +13,7 @@ import { ProjectCreateDiscardView } from "./ProjectCreateDiscardView";
 
 import { type ComposerInputHandle } from "../composer";
 import { createCollaborationTranslator } from "../i18n";
+import { templateAgentId } from "../templates/agents";
 import type { CollaborationWorkspaceMember } from "../types";
 import {
   appendCollaborationGroupResponsibility,
@@ -37,13 +38,17 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     targets,
     allowDingTalkAITable,
     labels,
-    resourceSetup,
+    resourceSetup: suppliedResourceSetup,
     testIds,
     host,
     onClose,
     workspaceContext,
   } = props;
   const { state, commands } = useProjectCreateController(props);
+  const resourceSetup =
+    suppliedResourceSetup?.location === state.location
+      ? suppliedResourceSetup
+      : undefined;
   const nameInput = useRef<HTMLInputElement>(null);
   const repositoryInput = useRef<HTMLInputElement>(null);
   const nameLabelId = useId();
@@ -57,9 +62,24 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const translate = createCollaborationTranslator(labels.locale);
   const generationComposerRef = useRef<ComposerInputHandle>(null);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
-  const [addedPeople, setAddedPeople] = useState<
+  const [selectedPeople, setSelectedPeople] = useState<
     CollaborationWorkspaceMember[]
   >([]);
+  useEffect(() => {
+    const directory = resourceSetup?.members ?? [];
+    setSelectedPeople((current) => {
+      const next = [...directory, ...current].filter(
+        (member, index, all) =>
+          state.memberUserIds.includes(member.user_id) &&
+          all.findIndex((candidate) => candidate.user_id === member.user_id) ===
+            index,
+      );
+      return next.length === current.length &&
+        next.every((member, index) => member === current[index])
+        ? current
+        : next;
+    });
+  }, [resourceSetup?.members, state.memberUserIds]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   useEffect(() => {
     if (state.submitErrorField === "repository") setAdvancedSettingsOpen(true);
@@ -126,6 +146,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     resourceSetup?.loadCollaborationGroupGenerationModels,
     host?.formatError,
     labels.createFailed,
+    resourceSetup
+      ? `${resourceSetup.location}:${resourceSetup.currentUser.id}:${props.workspaceSelection?.value ?? ""}`
+      : null,
   );
   useEffect(() => {
     if (!groupGenerating) return;
@@ -149,7 +172,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     [],
   );
   const collaboratorsLocked = state.saving || Boolean(state.createdProject);
-  const people = [...(resourceSetup?.members ?? []), ...addedPeople].filter(
+  const people = [...(resourceSetup?.members ?? []), ...selectedPeople].filter(
     (member, index, all) =>
       all.findIndex((candidate) => candidate.user_id === member.user_id) ===
       index,
@@ -594,6 +617,17 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const directAgents = selectedAgents.filter(
     (agent) => !inGroup("agent", agent.id),
   );
+  const templateAgentIds = new Set(
+    (state.templateDocument?.spec.resources.collaboration.agents ?? []).map(
+      (agent) => templateAgentId(agent.key),
+    ),
+  );
+  const unavailableAgentIds = state.agentResourceIds.filter(
+    (id) =>
+      !resourceSetup?.agents.some((agent) => agent.id === id) &&
+      !templateAgentIds.has(id) &&
+      !inGroup("agent", id),
+  );
   const assignedAgentIds = new Set(revealedGenerationAgentIds);
   const draftParticipants = groupEditorDraft
     ? [groupEditorDraft.leader, ...groupEditorDraft.members]
@@ -808,7 +842,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           testIds={testIds}
           props={props}
           groupGenerating={groupGenerating}
-          setAddedPeople={setAddedPeople}
+          setSelectedPeople={setSelectedPeople}
           setCollaboratorPickerOpen={setCollaboratorPickerOpen}
           setGroupEditorDraft={setGroupEditorDraft}
           targets={targets}
@@ -831,6 +865,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           directMembers={directMembers}
           removeMember={removeMember}
           directAgents={directAgents}
+          unavailableAgentIds={unavailableAgentIds}
           removeAgent={removeAgent}
           collaboratorPickerOpen={collaboratorPickerOpen}
           availableAgents={availableAgents}

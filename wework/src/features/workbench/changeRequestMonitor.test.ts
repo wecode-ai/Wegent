@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { linkedChangeRequestTarget } from '@/api/changeRequests'
-import type { DeviceCommandApi } from '@/api/environment'
+import { outputAsRecord, type DeviceCommandApi } from '@/api/environment'
 import type { DeviceCommandResponse, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, it, vi } from 'vitest'
 import { ChangeRequestMonitor } from './changeRequestMonitor'
@@ -25,6 +25,46 @@ function deferred<T>() {
 }
 
 describe('ChangeRequestMonitor', () => {
+  it('collects fresh state when a manual refresh arrives during observer activation', async () => {
+    const activation = deferred<DeviceCommandResponse>()
+    const executeCommand = vi
+      .fn<DeviceCommandApi['executeCommand']>()
+      .mockImplementation(async (_device, request) => {
+        if (request.command_key === 'connection_observer_start') return activation.promise
+        const reply = connectionObserverReply(request)
+        if (request.command_key === 'connection_observer_refresh') {
+          const observation = outputAsRecord(outputAsRecord(reply.stdout)?.observation)!
+          observation.resourceStates[0].data.state = 'MERGED'
+          observation.refreshPending = false
+        }
+        return reply
+      })
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, devices)
+    const target = linkedChangeRequestTarget('local-device', 'https://github.com/org/repo/pull/1')!
+    const stop = monitor.register(target)
+    try {
+      const starting = monitor.refresh()
+      const refreshed = monitor.refresh({ shareInflight: false })
+      expect(executeCommand.mock.calls.map(([, request]) => request.command_key)).toEqual([
+        'connection_observer_start',
+      ])
+      activation.resolve(connectionObserverReply(executeCommand.mock.calls[0][1]))
+      await starting
+      await refreshed
+      expect(executeCommand.mock.calls.map(([, request]) => request.command_key)).toEqual([
+        'connection_observer_start',
+        'connection_observer_refresh',
+      ])
+      expect(monitor.getSnapshot(target)).toMatchObject({
+        changeRequest: { number: 1, state: 'merged' },
+        observation: { state: 'observing', stale: false },
+      })
+    } finally {
+      stop()
+    }
+  })
+
   it('loads a task registered while another task is refreshing', async () => {
     const pending = deferred<DeviceCommandResponse>()
     const reply = {

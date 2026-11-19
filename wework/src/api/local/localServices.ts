@@ -337,6 +337,16 @@ function localRuntimeModels(
   ]
 }
 
+function localModelCatalogReadiness(): Record<string, number> {
+  const models = listLocalModelConfigs()
+  return {
+    configuredModelCount: models.length,
+    enabledModelCount: models.filter(model => model.enabled).length,
+    readyModelCount: models.filter(model => model.catalogReady).length,
+    pendingModelCount: models.filter(model => model.catalogEntry && !model.catalogReady).length,
+  }
+}
+
 type LocalExecutorRequest = <T>(
   method: string,
   params?: Record<string, unknown>,
@@ -409,12 +419,20 @@ function getRuntimeChatStream(
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
+interface LocalCatalogRestartResult {
+  restarted?: boolean
+  activeTaskCount?: number
+  backgroundTerminalCount?: number
+  pendingRequestCount?: number
+}
+
 async function reconcilePendingLocalModelCatalog(
   request: LocalExecutorRequest,
   runtimeInstanceId?: string
 ): Promise<void> {
   const tracker = catalogReconciliationTracker
   if (tracker.inFlight) {
+    logModelLoading(createModelLoadingTrace(), 'catalog.reconciliation.joined')
     try {
       await tracker.inFlight
     } catch {
@@ -434,19 +452,42 @@ async function reconcilePendingLocalModelCatalog(
   const now = Date.now()
   const shouldReconcile =
     reconciliationKey && (reconciliationKey !== tracker.key || now - tracker.attemptedAt >= 30_000)
-  if (!shouldReconcile) return
+  if (!shouldReconcile) {
+    if (pendingCatalogModels.length > 0) {
+      logModelLoading(createModelLoadingTrace(), 'catalog.reconciliation.skipped', {
+        pendingModelCount: pendingCatalogModels.length,
+        retryBackoff: true,
+      })
+    }
+    return
+  }
 
+  const traceId = createModelLoadingTrace()
+  logModelLoading(traceId, 'catalog.reconciliation.started', {
+    catalogModelCount: catalogModels.length,
+    pendingModelCount: pendingCatalogModels.length,
+    hasRuntimeIdentity: Boolean(runtimeInstanceId),
+  })
+  const restartAppServer = async () => {
+    const restart = await request<LocalCatalogRestartResult>('runtime.codex.app_server.restart', {
+      ifIdle: true,
+    })
+    logModelLoading(traceId, 'catalog.reconciliation.restart', {
+      restarted: Boolean(restart.restarted),
+      // Older native responses may omit a counter; distinguish unknown from zero.
+      activeTaskCount: restart.activeTaskCount ?? -1,
+      backgroundTerminalCount: restart.backgroundTerminalCount ?? -1,
+      pendingRequestCount: restart.pendingRequestCount ?? -1,
+    })
+    return restart
+  }
   tracker.key = reconciliationKey
   tracker.attemptedAt = now
   const reconciliation = (async () => {
     await request('runtime.codex.catalog.custom.write', {
       models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
     })
-    let restart = await request<{
-      restarted?: boolean
-      activeTaskCount?: number
-      pendingRequestCount?: number
-    }>('runtime.codex.app_server.restart', { ifIdle: true })
+    let restart = await restartAppServer()
     if (restart.restarted) {
       markLocalModelCatalogReady(pendingCatalogModels)
       return
@@ -465,6 +506,12 @@ async function reconcilePendingLocalModelCatalog(
           (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
         return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
       })
+      logModelLoading(traceId, 'catalog.reconciliation.loaded', {
+        attempt: attempt + 1,
+        loadedModelCount: loadedModelIds.size,
+        matchedPendingCount: loadedPendingModels.length,
+        pendingModelCount: pendingCatalogModels.length,
+      })
       if (loadedPendingModels.length > 0) {
         markLocalModelCatalogReady(loadedPendingModels)
       }
@@ -477,7 +524,7 @@ async function reconcilePendingLocalModelCatalog(
       }
 
       await new Promise(resolve => setTimeout(resolve, CATALOG_IDLE_RESTART_RETRY_DELAY_MS))
-      restart = await request('runtime.codex.app_server.restart', { ifIdle: true })
+      restart = await restartAppServer()
       if (restart.restarted) {
         markLocalModelCatalogReady(pendingCatalogModels)
         return
@@ -491,10 +538,12 @@ async function reconcilePendingLocalModelCatalog(
     // Recheck on the next owner request, including catalogs loaded by another restart.
     tracker.key = ''
   } catch (error) {
+    logModelLoading(traceId, 'catalog.reconciliation.failed')
     // A transport interruption must not suppress synchronization after recovery.
     if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''
     console.error('Local model catalog reconciliation failed', error)
   } finally {
+    logModelLoading(traceId, 'catalog.reconciliation.finished', localModelCatalogReadiness())
     if (tracker.inFlight === reconciliation) tracker.inFlight = null
   }
 }
@@ -4054,7 +4103,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     listModels: async () => {
       const traceId = createModelLoadingTrace()
       const started = performance.now()
-      logModelLoading(traceId, 'catalog.started')
+      logModelLoading(traceId, 'catalog.started', localModelCatalogReadiness())
       // The picker merges this catalog with the cloud one, so a broken local
       // environment (unreadable preferences, an executor that refuses to start)
       // must degrade to "custom local models only" instead of rejecting the
@@ -4067,8 +4116,13 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         localCodexSubscriptionEnabled = (await getAppPreferences()).localCodexSubscriptionEnabled
       } catch (error) {
         console.warn('[Wework] Failed to read the local model environment', error)
+        logModelLoading(traceId, 'catalog.readiness', {
+          ...localModelCatalogReadiness(),
+          environmentFailed: true,
+        })
         return { data: localRuntimeModels([], null, false) }
       }
+      logModelLoading(traceId, 'catalog.readiness', localModelCatalogReadiness())
       if (!localCodexSubscriptionEnabled) {
         return { data: localRuntimeModels([], null, false) }
       }

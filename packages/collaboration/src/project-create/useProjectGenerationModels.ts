@@ -22,7 +22,8 @@ export function useProjectGenerationModels(
   active: boolean,
   loader: (() => Promise<ProjectCreateGenerationModelCatalog>) | undefined,
   formatError: ((cause: unknown) => string) | undefined,
-  failedLabel: string
+  failedLabel: string,
+  scope: string | null = null
 ) {
   const inputs = useRef({ loader, formatError, failedLabel })
   const requested = useRef(false)
@@ -37,6 +38,11 @@ export function useProjectGenerationModels(
   useEffect(() => {
     inputs.current = { loader, formatError, failedLabel }
   }, [loader, formatError, failedLabel])
+  useEffect(() => {
+    version.current += 1
+    requested.current = false
+    setState({ models: [], key: '', options: {}, loading: false, error: null })
+  }, [scope])
   useEffect(
     () => () => {
       version.current += 1
@@ -85,7 +91,7 @@ export function useProjectGenerationModels(
   }, [])
   useEffect(() => {
     if (active && loader && !requested.current) void reload()
-  }, [active, loader, reload])
+  }, [active, loader, reload, scope])
   const selectModel = (
     selection: ProjectCreateGenerationModelSelection,
     options?: Record<string, string>

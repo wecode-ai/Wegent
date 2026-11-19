@@ -9,6 +9,8 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.cloud_project import CloudProjectMemberCreate, CloudProjectMemberUpdate
 from app.services.cloud_project_visibility import (
+    VALID_CLOUD_PROJECT_MEMBER_ROLES,
+    collaboration_role,
     effective_project_role,
     project_membership_rows,
     project_participant_ids,
@@ -115,8 +117,19 @@ class CloudProjectMemberService:
         target = db.get(User, values.user_id)
         if not target or not target.is_active:
             raise HTTPException(404, "User not found")
-        self._set_direct_role(db, cloud_project_id, target.id, values.role)
-        self._set_member_capability(project, target.id, values.capability_description)
+        self._set_direct_role(
+            db,
+            cloud_project_id,
+            target.id,
+            values.role,
+            minimum=values.role_mode == "at_least",
+        )
+        if values.role_mode == "exact" or (
+            "capability_description" in values.model_fields_set
+        ):
+            self._set_member_capability(
+                project, target.id, values.capability_description
+            )
         from app.services.collaboration_revocation import (
             revoke_unauthorized_project_work,
         )
@@ -194,9 +207,24 @@ class CloudProjectMemberService:
 
     @staticmethod
     def _set_direct_role(
-        db: Session, project_id: int, user_id: int, role: BaseRole
+        db: Session,
+        project_id: int,
+        user_id: int,
+        role: BaseRole,
+        *,
+        minimum: bool = False,
     ) -> None:
-        grant = CloudProjectMemberService._direct_member(db, project_id, user_id)
+        grant = CloudProjectMemberService._direct_member(
+            db, project_id, user_id, lock=minimum
+        )
+        if (
+            minimum
+            and grant is not None
+            and grant.status == "approved"
+            and grant.role in VALID_CLOUD_PROJECT_MEMBER_ROLES
+            and has_permission(collaboration_role(grant.role), role)
+        ):
+            return
         if grant is None:
             db.add(
                 ResourceMember.create(
@@ -211,14 +239,16 @@ class CloudProjectMemberService:
             grant.role, grant.status = role.value, "approved"
 
     @staticmethod
-    def _direct_member(db: Session, project_id: int, user_id: int):
-        return (
-            db.query(ResourceMember)
-            .filter_by(
-                resource_type="CloudProject",
-                resource_id=project_id,
-                entity_type="user",
-                entity_id=str(user_id),
-            )
-            .first()
+    def _direct_member(
+        db: Session, project_id: int, user_id: int, *, lock: bool = False
+    ):
+        query = db.query(ResourceMember).filter_by(
+            resource_type="CloudProject",
+            resource_id=project_id,
+            entity_type="user",
+            entity_id=str(user_id),
         )
+        if lock:
+            # A locking read sees committed promotions after a prior RR snapshot.
+            query = query.populate_existing().with_for_update()
+        return query.first()

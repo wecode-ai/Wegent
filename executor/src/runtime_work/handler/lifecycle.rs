@@ -290,7 +290,11 @@ impl RuntimeWorkRpcHandler {
         {
             return;
         }
-        let result = self.persist_completed_codex_turn_from_notification(task_id, message);
+        let result = {
+            let _stage =
+                turn_diagnostics::TurnStage::start(task_id, "native_transcript_persistence");
+            self.persist_completed_codex_turn_from_notification(task_id, message)
+        };
         let Some(turn_id) = codex_notification_turn_id(message) else {
             return;
         };
@@ -329,6 +333,7 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         let mut changed = false;
+        let stage = turn_diagnostics::TurnStage::start(task_id, "native_state_update");
         let updated = self.store.update_task(task_id, |link| {
             if thread_id.is_some() && thread_id != link.thread_id {
                 return;
@@ -422,11 +427,15 @@ impl RuntimeWorkRpcHandler {
             project_native_execution(link, &state);
             changed = true;
         });
+        drop(stage);
         let Some(link) = updated.filter(|_| changed) else {
             return;
         };
         let terminal_snapshot = owned_turn.then(|| link.clone());
-        self.publish_native_execution(task_id, request, link);
+        {
+            let _stage = turn_diagnostics::TurnStage::start(task_id, "native_state_publication");
+            self.publish_native_execution(task_id, request, link);
+        }
         if let (Some(result), Some(snapshot)) = (result, terminal_snapshot) {
             let event_request = self.request_for_codex_event(task_id, request, Some(&turn_id));
             self.publish_native_turn_result(task_id, &event_request, &turn_id, snapshot, result);

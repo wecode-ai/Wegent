@@ -21,7 +21,15 @@ it('keeps creation retryable without persisting a project when resource prefligh
     allowDingTalkAITable: false,
     labels: projectCreateLabels['zh-CN'],
     onCreated,
-    resourceSetup: { validate, configure },
+    resourceSetup: {
+      location: 'local',
+      currentUser: { id: 1, name: 'Owner' },
+      members: [],
+      agents: [],
+      groups: [],
+      validate,
+      configure,
+    },
     onClose: vi.fn(),
   } as unknown as ProjectCreateDialogProps
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -64,7 +72,14 @@ it('opens the persisted project after setup fails instead of creating another pr
     allowDingTalkAITable: false,
     labels: projectCreateLabels['zh-CN'],
     onCreated,
-    resourceSetup: { configure },
+    resourceSetup: {
+      location: 'local',
+      currentUser: { id: 1, name: 'Owner' },
+      members: [],
+      agents: [],
+      groups: [],
+      configure,
+    },
     onClose: vi.fn(),
   } as unknown as ProjectCreateDialogProps
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -108,7 +123,14 @@ it('opens the configured project so template board defaults are visible immediat
     allowDingTalkAITable: false,
     labels: projectCreateLabels['zh-CN'],
     onCreated,
-    resourceSetup: { configure: async () => configured },
+    resourceSetup: {
+      location: 'local',
+      currentUser: { id: 1, name: 'Owner' },
+      members: [],
+      agents: [],
+      groups: [],
+      configure: async () => configured,
+    },
     onClose: vi.fn(),
   } as unknown as ProjectCreateDialogProps
   globalThis.IS_REACT_ACT_ENVIRONMENT = true

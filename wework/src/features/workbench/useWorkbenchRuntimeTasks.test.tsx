@@ -37,6 +37,7 @@ function setup(readTask = vi.fn().mockResolvedValue({ success: true, task })) {
     selectedModelOptionsByScope: {},
     hasSelectionForScope: () => false,
     getSelectedModelForScope: () => null,
+    getSelectedModelAvailabilityForScope: () => null,
     getSelectedModelOptionsForScope: () => ({}),
     setSelectionForScope: vi.fn(),
     setSelectedModelForScope: vi.fn(),

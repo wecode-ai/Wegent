@@ -7,6 +7,7 @@ import { isDeepStrictEqual, promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 import { selectE2EModel, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { openSynchronizedChangeRequestSummary } from '../modules/change-request-observation.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -624,8 +625,7 @@ export async function createDesktopScenario({
         1,
         'An equivalent runtime task refresh restarted the shared PR/MR observer'
       )
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+      await openSynchronizedChangeRequestSummary(control)
 
       await writeFile(statePath, 'failure\n')
       await refreshEnvironment(control)
@@ -648,8 +648,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'change-request-status-03-repair-user-message.png')
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+      await openSynchronizedChangeRequestSummary(control)
 
       await writeFile(statePath, 'success\n')
       await refreshEnvironment(control)

@@ -165,6 +165,9 @@ export function useWorkbenchModels({
   const [selectedModelOptionsByScope, setSelectedModelOptionsByScope] = useState<
     Record<string, ModelOptions>
   >({})
+  const [unavailableModelByScope, setUnavailableModelByScope] = useState<Record<string, boolean>>(
+    {}
+  )
   // Panes resolve their own scope through refs, so publish a revision on every
   // scoped selection or option change to force their consuming context to
   // re-render even when the focused scope did not change.
@@ -173,8 +176,10 @@ export function useWorkbenchModels({
   const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? EMPTY_MODEL_OPTIONS
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
+  const unavailableModelByScopeRef = useRef<Record<string, boolean>>({})
   const modelLoadRevisionRef = useRef(0)
   const selectionRevisionByScopeRef = useRef<Record<string, number>>({})
+  const modelChoiceRevisionByScopeRef = useRef<Record<string, number>>({})
   const validatedSelectionRef = useRef<{
     scopeKey: string
     selectionKey: string
@@ -228,8 +233,10 @@ export function useWorkbenchModels({
   )
   const selectedModelAvailable = Boolean(
     selectedModel &&
+    !unavailableModelByScope[scopeKey] &&
     (models.some(model => isSameModelSelection(model, selectedModel)) ||
-      persistedCloudModelSelected)
+      persistedCloudModelSelected ||
+      locallySelectedReplacementByScope[scopeKey])
   )
   const hasLocallySelectedReplacement = Boolean(
     !persistSelection &&
@@ -254,16 +261,19 @@ export function useWorkbenchModels({
       selectionReady &&
       hasCompletedModelLoad &&
       !configuredModelUnavailable &&
+      (!locallySelectedReplacementByScope[scopeKey] || selectedModelAvailable) &&
       (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig),
     [
       configuredModelUnavailable,
       enabled,
       hasCompletedModelLoad,
+      locallySelectedReplacementByScope,
       restoredSelectionKeyByScope,
       scopeKey,
       selectionMatchesConfig,
       selectionKey,
       selectionReady,
+      selectedModelAvailable,
     ]
   )
   const configuredModelFingerprint =
@@ -306,6 +316,22 @@ export function useWorkbenchModels({
   const invalidateSelectionQueries = useCallback((targetScopeKey: string) => {
     selectionRevisionByScopeRef.current[targetScopeKey] =
       (selectionRevisionByScopeRef.current[targetScopeKey] ?? 0) + 1
+  }, [])
+
+  // Render state and immediate event-time readers share one immutable snapshot.
+  const updateUnavailableModels = useCallback((patch: Record<string, boolean>): boolean => {
+    if (
+      Object.entries(patch).every(
+        ([targetScopeKey, unavailable]) =>
+          Boolean(unavailableModelByScopeRef.current[targetScopeKey]) === unavailable
+      )
+    ) {
+      return false
+    }
+    const next = { ...unavailableModelByScopeRef.current, ...patch }
+    unavailableModelByScopeRef.current = next
+    setUnavailableModelByScope(next)
+    return true
   }, [])
 
   const restoreSelection = useCallback(
@@ -414,6 +440,7 @@ export function useWorkbenchModels({
             ?.fingerprint ?? 0,
       })
       selectedModelRef.current[scopeKey] = model
+      updateUnavailableModels({ [scopeKey]: false })
       selectedModelOptionsRef.current[scopeKey] = nextOptions
       setSelectedModelByScope(current => {
         if (current[scopeKey] === model) return current
@@ -429,55 +456,85 @@ export function useWorkbenchModels({
       setSelectionRevision(revision => revision + 1)
       return true
     },
-    [api, configuredModelFingerprint, fallbackWhenConfiguredModelUnavailable, scopeKey, traceId]
+    [
+      api,
+      configuredModelFingerprint,
+      fallbackWhenConfiguredModelUnavailable,
+      scopeKey,
+      traceId,
+      updateUnavailableModels,
+    ]
   )
 
-  const reconcileSelectedModels = useCallback((nextModels: UnifiedModel[]) => {
-    const selectedModelPatch: Record<string, UnifiedModel> = {}
-    const selectedOptionsPatch: Record<string, ModelOptions> = {}
+  const reconcileSelectedModels = useCallback(
+    (nextModels: UnifiedModel[], modelChoicesBeforeLoad: Record<string, number>) => {
+      const selectedModelPatch: Record<string, UnifiedModel | null> = {}
+      const selectedOptionsPatch: Record<string, ModelOptions> = {}
+      const unavailableModelPatch: Record<string, boolean> = {}
 
-    for (const [selectedScopeKey, currentModel] of Object.entries(selectedModelRef.current)) {
-      if (!currentModel) continue
-      const refreshedModel = nextModels.find(model => isSameModelSelection(model, currentModel))
-      if (!refreshedModel) continue
+      for (const [selectedScopeKey, currentModel] of Object.entries(selectedModelRef.current)) {
+        if (!currentModel) continue
+        const refreshedModel = nextModels.find(model => isSameModelSelection(model, currentModel))
+        if (!refreshedModel) {
+          // Local discovery is authoritative. Cloud models may be hidden from
+          // discovery and are validated separately through their saved identity.
+          // Only an explicit model choice after this request started can
+          // supersede its list; restoring a task or editing options cannot.
+          if (
+            currentModel.type === 'runtime' &&
+            (modelChoiceRevisionByScopeRef.current[selectedScopeKey] ?? 0) ===
+              (modelChoicesBeforeLoad[selectedScopeKey] ?? 0)
+          ) {
+            // Preserve selection intent independently from availability. Losing
+            // a selected model must not restore the task's previously sent one.
+            unavailableModelPatch[selectedScopeKey] = true
+          }
+          continue
+        }
 
-      if (refreshedModel !== currentModel) {
-        selectedModelPatch[selectedScopeKey] = refreshedModel
+        unavailableModelPatch[selectedScopeKey] = false
+        if (refreshedModel !== currentModel) {
+          selectedModelPatch[selectedScopeKey] = refreshedModel
+        }
+
+        const currentOptions = selectedModelOptionsRef.current[selectedScopeKey] ?? {}
+        const normalizedOptions = normalizeModelOptions(refreshedModel, currentOptions)
+        if (!areModelOptionsEqual(currentOptions, normalizedOptions)) {
+          selectedOptionsPatch[selectedScopeKey] = normalizedOptions
+        }
       }
 
-      const currentOptions = selectedModelOptionsRef.current[selectedScopeKey] ?? {}
-      const normalizedOptions = normalizeModelOptions(refreshedModel, currentOptions)
-      if (!areModelOptionsEqual(currentOptions, normalizedOptions)) {
-        selectedOptionsPatch[selectedScopeKey] = normalizedOptions
+      if (Object.keys(selectedModelPatch).length > 0) {
+        selectedModelRef.current = {
+          ...selectedModelRef.current,
+          ...selectedModelPatch,
+        }
+        setSelectedModelByScope(current => ({ ...current, ...selectedModelPatch }))
       }
-    }
 
-    if (Object.keys(selectedModelPatch).length > 0) {
-      selectedModelRef.current = {
-        ...selectedModelRef.current,
-        ...selectedModelPatch,
+      if (Object.keys(selectedOptionsPatch).length > 0) {
+        selectedModelOptionsRef.current = {
+          ...selectedModelOptionsRef.current,
+          ...selectedOptionsPatch,
+        }
+        setSelectedModelOptionsByScope(current => ({ ...current, ...selectedOptionsPatch }))
       }
-      setSelectedModelByScope(current => ({ ...current, ...selectedModelPatch }))
-    }
-
-    if (Object.keys(selectedOptionsPatch).length > 0) {
-      selectedModelOptionsRef.current = {
-        ...selectedModelOptionsRef.current,
-        ...selectedOptionsPatch,
+      const availabilityChanged = updateUnavailableModels(unavailableModelPatch)
+      if (
+        availabilityChanged ||
+        Object.keys(selectedModelPatch).length > 0 ||
+        Object.keys(selectedOptionsPatch).length > 0
+      ) {
+        setSelectionRevision(revision => revision + 1)
       }
-      setSelectedModelOptionsByScope(current => ({ ...current, ...selectedOptionsPatch }))
-    }
-    if (
-      Object.keys(selectedModelPatch).length > 0 ||
-      Object.keys(selectedOptionsPatch).length > 0
-    ) {
-      setSelectionRevision(revision => revision + 1)
-    }
-  }, [])
+    },
+    [updateUnavailableModels]
+  )
 
   const loadModels = useCallback(async () => {
     if (!enabled) return
     const revision = ++modelLoadRevisionRef.current
+    const modelChoicesBeforeLoad = { ...modelChoiceRevisionByScopeRef.current }
     const loadTraceId = `${traceId}-${revision}`
     setIsLoading(true)
     setError(null)
@@ -491,7 +548,10 @@ export function useWorkbenchModels({
       })
       if (revision === modelLoadRevisionRef.current) {
         const filtered = response.data.filter(isSupportedModelFamily)
-        reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
+        reconcileSelectedModels(
+          filterModel ? filtered.filter(filterModel) : filtered,
+          modelChoicesBeforeLoad
+        )
         setAvailableModels(filtered)
       }
     } catch (nextError) {
@@ -558,9 +618,7 @@ export function useWorkbenchModels({
         )
         const currentSelection = selectedModelRef.current[scopeKey] ?? null
         const manualSelectionActive = Boolean(
-          locallySelectedReplacementByScope[scopeKey] &&
-          currentSelection &&
-          models.some(model => isSameModelSelection(model, currentSelection))
+          locallySelectedReplacementByScope[scopeKey] && currentSelection
         )
         const persistedSelectionNeedsValidation = Boolean(
           currentSelection &&
@@ -657,7 +715,10 @@ export function useWorkbenchModels({
       // A manual choice must win over any restore lookup that is still in
       // flight; its late result or a 404 must not overwrite this selection.
       invalidateSelectionQueries(targetScopeKey)
+      modelChoiceRevisionByScopeRef.current[targetScopeKey] =
+        (modelChoiceRevisionByScopeRef.current[targetScopeKey] ?? 0) + 1
       selectedModelRef.current[targetScopeKey] = model
+      updateUnavailableModels({ [targetScopeKey]: false })
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
@@ -670,7 +731,14 @@ export function useWorkbenchModels({
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
     },
-    [invalidateSelectionQueries, locked, onSelectionBlocked, onSelectionChange, traceId]
+    [
+      invalidateSelectionQueries,
+      locked,
+      onSelectionBlocked,
+      onSelectionChange,
+      traceId,
+      updateUnavailableModels,
+    ]
   )
 
   const setSelectedModelForScope = useCallback(
@@ -772,6 +840,7 @@ export function useWorkbenchModels({
       })
       invalidateSelectionQueries(targetScopeKey)
       selectedModelRef.current[targetScopeKey] = model
+      updateUnavailableModels({ [targetScopeKey]: false })
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
@@ -790,7 +859,7 @@ export function useWorkbenchModels({
         onSelectionChange?.(persistedSelection)
       }
     },
-    [invalidateSelectionQueries, onSelectionChange, selectionKey, traceId]
+    [invalidateSelectionQueries, onSelectionChange, selectionKey, traceId, updateUnavailableModels]
   )
 
   const getSelectedModel = useCallback(() => selectedModelRef.current[scopeKey] ?? null, [scopeKey])
@@ -808,6 +877,13 @@ export function useWorkbenchModels({
   // change must observe that change.
   const getSelectedModelForScope = useCallback(
     (targetScopeKey: string) => selectedModelRef.current[targetScopeKey] ?? null,
+    []
+  )
+  const getSelectedModelAvailabilityForScope = useCallback(
+    (targetScopeKey: string): boolean | null =>
+      selectedModelRef.current[targetScopeKey]
+        ? !unavailableModelByScopeRef.current[targetScopeKey]
+        : null,
     []
   )
   const getSelectedModelOptionsForScope = useCallback(
@@ -837,6 +913,7 @@ export function useWorkbenchModels({
     getSelectedModelOptions,
     hasSelectionForScope,
     getSelectedModelForScope,
+    getSelectedModelAvailabilityForScope,
     getSelectedModelOptionsForScope,
     selectedModelByScope,
     selectedModelOptionsByScope,

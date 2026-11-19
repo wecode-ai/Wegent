@@ -18,7 +18,12 @@ export function ProjectCollaboratorPicker({
   excludedIds,
   agents,
   groups,
+  agentsError,
+  groupsError,
   searchUsers,
+  directoryLoading = false,
+  directoryError,
+  onRetryDirectory,
   onSelectPerson,
   onSelectAgent,
   onSelectGroup,
@@ -31,7 +36,12 @@ export function ProjectCollaboratorPicker({
   excludedIds: number[]
   agents: ProjectCreateResourceSetup['agents']
   groups: ProjectCreateResourceSetup['groups']
+  agentsError?: string | null
+  groupsError?: string | null
   searchUsers?: ProjectCreateResourceSetup['searchUsers']
+  directoryLoading?: boolean
+  directoryError?: string | null
+  onRetryDirectory?(): void
   onSelectPerson(user: CollaborationUser): void
   onSelectAgent(id: string): void
   onSelectGroup(id: string): void
@@ -44,11 +54,16 @@ export function ProjectCollaboratorPicker({
     query: string
     searchUsers: typeof searchUsers
     users: CollaborationUser[]
-    failed: boolean
+    error?: string
+    attempt: number
   } | null>(null)
-  const current = response?.query === query && response.searchUsers === searchUsers
+  const [attempt, setAttempt] = useState(0)
+  const current =
+    response?.query === query &&
+    response.searchUsers === searchUsers &&
+    response.attempt === attempt
   const loading = Boolean(query.trim() && searchUsers && !current)
-  const failed = current && response.failed
+  const error = directoryError || (current ? response.error : undefined)
   useEffect(() => {
     if (!open) {
       setQuery('')
@@ -65,15 +80,25 @@ export function ProjectCollaboratorPicker({
         search: async value => ({ users: await searchUsers(value) }),
         userId: user => user.id,
         isActive: () => active,
-        onResults: users => setResponse({ query, searchUsers, users, failed: false }),
-        onError: () => setResponse({ query, searchUsers, users: [], failed: true }),
+        onResults: users => setResponse({ query, searchUsers, users, attempt }),
+        onError: cause =>
+          setResponse({
+            query,
+            searchUsers,
+            users: [],
+            attempt,
+            error:
+              cause instanceof Error && cause.message
+                ? `${labels.peopleSearchFailed} ${cause.message}`
+                : labels.peopleSearchFailed,
+          }),
       })
     }, 180)
     return () => {
       active = false
       window.clearTimeout(timer)
     }
-  }, [open, activeTab, query, searchUsers])
+  }, [open, activeTab, query, searchUsers, attempt, labels.peopleSearchFailed])
   const matches = (...values: (string | null | undefined)[]) =>
     values.some(value => value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const users = [
@@ -87,13 +112,15 @@ export function ProjectCollaboratorPicker({
   const availableAgents = agents.filter(agent => matches(agent.name))
   const availableGroups = groups.filter(group => matches(group.name, group.description))
   const peopleSearchStatus =
-    !open || activeTab !== 'members' || !query.trim() || failed
+    !open || activeTab !== 'members' || error
       ? ''
-      : loading
+      : loading || directoryLoading
         ? labels.searchingPeople
-        : users.length
-          ? `${labels.availablePeople}: ${users.length}`
-          : labels.noMatchingCollaborators
+        : !query.trim()
+          ? ''
+          : users.length
+            ? `${labels.availablePeople}: ${users.length}`
+            : labels.noMatchingCollaborators
   const empty = (message: string) => (
     <div className="collaboration-project-create-collaborator-empty">
       <p>{query.trim() ? labels.noMatchingCollaborators : message}</p>
@@ -168,8 +195,25 @@ export function ProjectCollaboratorPicker({
               groupsLabel={labels.availableGroups}
               membersContent={
                 <>
-                  {loading && <p aria-hidden="true">{labels.searchingPeople}</p>}
-                  {failed && <p role="alert">{labels.peopleSearchFailed}</p>}
+                  {(loading || directoryLoading) && (
+                    <p aria-hidden="true">{labels.searchingPeople}</p>
+                  )}
+                  {error && <p role="alert">{directoryError || labels.peopleSearchFailed}</p>}
+                  {!directoryError && error && error !== labels.peopleSearchFailed && (
+                    <p>{error}</p>
+                  )}
+                  {error && (directoryError ? onRetryDirectory : searchUsers) ? (
+                    <button
+                      type="button"
+                      data-testid="collaboration-project-create-member-search-retry"
+                      onClick={() => {
+                        if (directoryError) onRetryDirectory?.()
+                        else setAttempt(value => value + 1)
+                      }}
+                    >
+                      {labels.retry}
+                    </button>
+                  ) : null}
                   {users.map(user => (
                     <button
                       key={user.id}
@@ -184,11 +228,25 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!users.length && !loading && !failed && empty(labels.noAvailablePeople)}
+                  {!users.length &&
+                    !loading &&
+                    !directoryLoading &&
+                    !error &&
+                    empty(labels.noAvailablePeople)}
                 </>
               }
               agentsContent={
                 <>
+                  {agentsError && <p role="alert">{agentsError}</p>}
+                  {agentsError && onRetryDirectory && (
+                    <button
+                      type="button"
+                      data-testid="collaboration-project-create-agents-retry"
+                      onClick={onRetryDirectory}
+                    >
+                      {labels.retry}
+                    </button>
+                  )}
                   {availableAgents.map(agent => (
                     <button
                       key={agent.id}
@@ -202,11 +260,21 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableAgents.length && empty(labels.noAvailableAgents)}
+                  {!availableAgents.length && !agentsError && empty(labels.noAvailableAgents)}
                 </>
               }
               groupsContent={
                 <>
+                  {groupsError && <p role="alert">{groupsError}</p>}
+                  {groupsError && onRetryDirectory && (
+                    <button
+                      type="button"
+                      data-testid="collaboration-project-create-groups-retry"
+                      onClick={onRetryDirectory}
+                    >
+                      {labels.retry}
+                    </button>
+                  )}
                   {availableGroups.map(group => (
                     <button
                       key={group.id}
@@ -221,7 +289,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableGroups.length && empty(labels.noAvailableGroups)}
+                  {!availableGroups.length && !groupsError && empty(labels.noAvailableGroups)}
                   {groupAction}
                 </>
               }

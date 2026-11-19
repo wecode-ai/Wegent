@@ -101,6 +101,7 @@ import {
 } from '@/features/workspace-tabs/settingsReturnPath'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
+import { TaskBoardProjectCreateAction } from '@/features/todo/TaskBoardProjectCreateAction'
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
 
@@ -1011,6 +1012,13 @@ export function DesktopWorkbenchLayout({
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
                 onCreateTask={startNewChatOutsideHarness}
+                toolbarAction={
+                  <TaskBoardProjectCreateAction
+                    services={services}
+                    user={state.user ?? LOCAL_USER}
+                    active={routeActive && !settingsOpen}
+                  />
+                }
                 projectSpaceApis={availableProjectSpaceApis}
                 onArchiveRuntimeTasks={onArchiveChatConversations}
                 onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}

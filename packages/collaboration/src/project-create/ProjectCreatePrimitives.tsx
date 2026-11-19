@@ -76,14 +76,16 @@ export function CollaboratorToken({
   label,
   onRemove,
   removeLabel,
+  testId,
 }: {
   icon: ReactNode
   label: string
   onRemove?: () => void
   removeLabel?: string
+  testId?: string
 }) {
   return (
-    <span className="collaboration-project-create-collaborator-token">
+    <span className="collaboration-project-create-collaborator-token" data-testid={testId}>
       {icon}
       <span>{label}</span>
       {onRemove ? (

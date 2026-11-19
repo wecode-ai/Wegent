@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Archive, CheckCheck } from 'lucide-react'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import {
@@ -38,6 +39,7 @@ interface TaskBoardViewProps {
   runtimeTaskLifecycle: RuntimeTaskLifecycleStoreSnapshot
   unreadRuntimeTaskKeys: ReadonlySet<string>
   onCreateTask: () => void
+  toolbarAction?: ReactNode
   projectSpaceApis: ProjectSpaceApi[]
   onArchiveRuntimeTasks: (
     addresses: RuntimeTaskAddress[]
@@ -134,6 +136,7 @@ export function TaskBoardView({
   runtimeTaskLifecycle,
   unreadRuntimeTaskKeys,
   onCreateTask,
+  toolbarAction,
   projectSpaceApis,
   onArchiveRuntimeTasks,
   onMarkRuntimeTaskRead,
@@ -455,6 +458,7 @@ export function TaskBoardView({
   return (
     <div className="contents" data-testid="task-board-surface">
       <ProjectBoardBody<RuntimeMyWorkItem>
+        toolbarAction={toolbarAction}
         translate={boardTranslate}
         state={board.state}
         activeDragItemId={board.activeDragItemId}

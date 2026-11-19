@@ -25,7 +25,11 @@ from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.cloud_project import CloudProjectCreate
+from app.schemas.cloud_project import (
+    CloudProjectCreate,
+    CloudProjectMemberCreate,
+    CloudProjectMemberUpdate,
+)
 from app.schemas.delivery import LoopItemCreate
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.cloud_projects.service import cloud_project_service
@@ -146,6 +150,77 @@ def mysql_url() -> Iterator[str]:
                 db.exec_driver_sql(f"DROP DATABASE `{database}`")
     finally:
         admin.dispose()
+
+
+def test_minimum_member_role_observes_promotion_after_an_old_snapshot(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine, expire_on_commit=False) as setup:
+            owner = User(user_name="minimum-role-owner", password_hash="unused")
+            member = User(user_name="minimum-role-member", password_hash="unused")
+            setup.add_all([owner, member])
+            setup.flush()
+            project = CloudProject(
+                public_id=str(uuid.uuid4()),
+                project_key="MINROLE",
+                name="Minimum member role",
+                created_by_user_id=owner.id,
+                metadata_json={},
+            )
+            authorize_project(setup, project)
+            grant = ResourceMember.create(
+                resource_type="CloudProject",
+                resource_id=int(project.id),
+                entity_id=str(member.id),
+                role="Viewer",
+                status="approved",
+            )
+            setup.add(grant)
+            setup.commit()
+            project_id, owner_id, member_id, grant_id = (
+                int(project.id),
+                owner.id,
+                member.id,
+                grant.id,
+            )
+
+        with Session(engine, expire_on_commit=False) as stale:
+            assert stale.connection().get_isolation_level() == "REPEATABLE READ"
+            cached_grant = stale.get(ResourceMember, grant_id)
+            assert cached_grant.role == "Viewer"
+            transaction = stale.get_transaction()
+            with Session(engine) as writer:
+                promoted = cloud_project_service.update_member(
+                    writer,
+                    project_id,
+                    member_id,
+                    owner_id,
+                    CloudProjectMemberUpdate(role=BaseRole.Maintainer),
+                )
+                assert promoted["direct_role"] == "Maintainer"
+            assert stale.get_transaction() is transaction
+            assert cached_grant.role == "Viewer"
+
+            ensured = cloud_project_service.add_member(
+                stale,
+                project_id,
+                owner_id,
+                CloudProjectMemberCreate(
+                    user_id=member_id,
+                    role=BaseRole.Developer,
+                    role_mode="at_least",
+                ),
+            )
+            assert ensured["role"] == "Maintainer"
+            assert ensured["direct_role"] == "Maintainer"
+            assert cached_grant.role == "Maintainer"
+        with Session(engine) as observer:
+            assert observer.get(ResourceMember, grant_id).role == "Maintainer"
+    finally:
+        engine.dispose()
 
 
 def test_my_work_legacy_and_explicit_ordering_page_on_mysql(mysql_url: str) -> None:

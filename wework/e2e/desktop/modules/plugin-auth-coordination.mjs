@@ -10,7 +10,8 @@ import {
   publishIndependentPluginReleases,
   verifyIndependentPluginMutations,
 } from './plugin-write-coordination.mjs'
-import { pluginApi, until } from './plugin-regression-fixture.mjs'
+import { pluginApi, testId, until } from './plugin-regression-fixture.mjs'
+import { refreshPluginInventory } from './plugin-inventory-state.mjs'
 import {
   assertBackgroundPluginAuthPaused,
   describePluginAuthRecovery,
@@ -18,6 +19,39 @@ import {
   isFreshPluginAuthRecovery,
   readPluginAuthTarget,
 } from './plugin-auth-coordination-evidence.mjs'
+
+async function deviceSyncInFlight(control) {
+  const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(
+    typeof status.deviceId === 'string' && status.deviceId.trim(),
+    'Authentication baseline requires the stable local Executor identity'
+  )
+  const debug = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body', { value: status.deviceId.trim() })
+  )
+  assert.equal(
+    typeof debug.pluginDeviceSyncInFlight,
+    'boolean',
+    'Authentication baseline requires the real device-sync diagnostic'
+  )
+  return debug.pluginDeviceSyncInFlight
+}
+
+export async function holdBackgroundPluginAuthRow({ cloud, control, installedId, timeoutMs }) {
+  // Finish the real device-wide sync before injecting auth faults. Otherwise
+  // its batch can hold unrelated plugin leases while waiting on the target row.
+  await control.command('clickIfPresent', testId('plugin-detail-back-button'))
+  await refreshPluginInventory(control, timeoutMs)
+  await control.command('click', testId('new-chat-button'))
+  await control.command('waitFor', testId('plugins-workspace'), { visible: false, timeoutMs })
+  await until(
+    () => deviceSyncInFlight(control),
+    inFlight => inFlight === false,
+    'Renderer device synchronization did not finish before authentication faults',
+    timeoutMs
+  )
+  return holdInstalledPluginRow(cloud, installedId)
+}
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -165,7 +199,12 @@ export async function verifyPluginAuthCoordination({
   } finally {
     await otherLease.release()
   }
-  const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
+  const backgroundRow = await holdBackgroundPluginAuthRow({
+    cloud,
+    control,
+    installedId,
+    timeoutMs,
+  })
   const executorLog = join(resultDir, 'executor.log')
   let recoveryBefore
   let recoveryOffset
@@ -188,6 +227,11 @@ export async function verifyPluginAuthCoordination({
     await signalAutomaticRetry()
     pendingWait = await backgroundRow.waitFor('blocked')
     assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
+    assert.equal(
+      await deviceSyncInFlight(control),
+      false,
+      'A renderer device-sync waiter cannot certify blocked background authentication'
+    )
     await verifyIndependentPluginMutations(cloud, independent, evidence)
     assert.equal(
       await readPendingWait(),

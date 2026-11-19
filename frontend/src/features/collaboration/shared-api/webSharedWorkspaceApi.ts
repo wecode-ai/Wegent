@@ -773,10 +773,11 @@ export function createWebSharedWorkspaceApi(
         }>(`/users/search?q=${encodeURIComponent(query)}&limit=20`)
         return response.users.map(user => ({ ...user, email: user.email ?? null }))
       },
-      add(projectId, userId, role = 'Developer') {
+      add(projectId, userId, role = 'Developer', options) {
         return client.post(`/v1/cloud-projects/${encoded(projectId)}/members`, {
           user_id: userId,
           role,
+          ...(options?.roleMode ? { role_mode: options.roleMode } : {}),
         })
       },
       update(projectId, userId, input) {

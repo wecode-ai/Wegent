@@ -184,6 +184,7 @@ write_state() {
 }
 
 cleanup() {
+    local status=$?
     trap - EXIT INT TERM
     for child_pid in "$RUST_PID" "$PYTHON_PID" "$BUILD_PID"; do
         if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
@@ -196,8 +197,10 @@ cleanup() {
         fi
     done
     if [ -n "$STATE_FILE" ]; then
-        rm -f "$STATE_FILE" "$STATE_FILE.$$"
+        rm -f "$STATE_FILE" "$STATE_FILE.$$" || true
     fi
+    # Cleanup must never replace the child's exit/signal status.
+    exit "$status"
 }
 
 trap 'exit 130' INT

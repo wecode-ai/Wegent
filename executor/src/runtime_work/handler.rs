@@ -21,6 +21,8 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
 use tokio::time::sleep;
 
+use super::turn_diagnostics;
+
 use crate::{
     agents::{
         codex_notification_requires_user_input, codex_runtime_approval_policy,

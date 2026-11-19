@@ -8,6 +8,7 @@ import { templateMessages } from "../templates/messages";
 import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
   readTemplateAgents,
+  templateAgentId,
   templateRoutingResolver,
   materializeTemplateAgents,
 } from "../templates/agents";
@@ -73,6 +74,7 @@ import {
   ProjectAgentConfiguration,
 } from "../project-agent-config";
 import {
+  configureProjectMembers,
   normalizeCollaborationGroupDraftForPersistence,
   ProjectCreateDialog,
   projectCreateLabels,
@@ -89,6 +91,7 @@ import type {
   CollaborationWorkspaceMember,
   CollaborationOwnedAgent,
   CollaborationProject,
+  CollaborationPlatformResources,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
 } from "../types";
@@ -124,6 +127,20 @@ export interface CollaborationProjectRendererContext {
   project: CollaborationProject;
   workspace: CollaborationProjectRendererWorkspaceContext | null;
 }
+
+interface ProjectCreationDirectory {
+  members: CollaborationWorkspaceMember[];
+  agents: CollaborationOwnedAgent[];
+  groups: CollaborationGroup[];
+  resources: CollaborationPlatformResources;
+}
+
+const emptyProjectCreationDirectory: ProjectCreationDirectory = {
+  members: [],
+  agents: [],
+  groups: [],
+  resources: { agents: [], execution_environments: [] },
+};
 
 function navigateWithin(
   host: CollaborationPlatformHostAdapter,
@@ -1464,19 +1481,37 @@ function CollaborationPlatformAppContent({
   const [projectWorkspaceId, setProjectWorkspaceId] = useState<string | null>(
     null,
   );
-  const [projectWorkspaceMembers, setProjectWorkspaceMembers] = useState<
-    CollaborationWorkspaceMember[]
-  >([]);
-  const [projectWorkspaceAgents, setProjectWorkspaceAgents] = useState<
-    CollaborationOwnedAgent[]
-  >([]);
-  const [projectWorkspaceGroups, setProjectWorkspaceGroups] = useState<
-    CollaborationGroup[]
-  >([]);
+  const projectCreationScope = useMemo(
+    () => ({
+      api,
+      accountScope: host.accountScope,
+      workspaceId: projectWorkspaceId,
+    }),
+    [api, host.accountScope, projectWorkspaceId],
+  );
+  const [projectDirectorySnapshot, setProjectDirectorySnapshot] = useState<{
+    scope: typeof projectCreationScope;
+    data: ProjectCreationDirectory;
+  } | null>(null);
+  const {
+    members: projectWorkspaceMembers,
+    agents: projectWorkspaceAgents,
+    groups: projectWorkspaceGroups,
+    resources: projectCreationResources,
+  } = projectDirectorySnapshot?.scope === projectCreationScope
+    ? projectDirectorySnapshot.data
+    : emptyProjectCreationDirectory;
+  const [projectMembersLoading, setProjectMembersLoading] = useState(false);
+  const [projectMembersError, setProjectMembersError] = useState<string | null>(
+    null,
+  );
+  const [projectAgentsError, setProjectAgentsError] = useState<string | null>(
+    null,
+  );
+  const [projectGroupsError, setProjectGroupsError] = useState<string | null>(
+    null,
+  );
   const [projectResourceRefreshKey, setProjectResourceRefreshKey] = useState(0);
-  const [projectCreationResources, setProjectCreationResources] = useState<
-    import("../types").CollaborationPlatformResources
-  >({ agents: [], execution_environments: [] });
   const [projectEnvironmentLoading, setProjectEnvironmentLoading] =
     useState(false);
   const [projectEnvironmentError, setProjectEnvironmentError] = useState(false);
@@ -1551,26 +1586,39 @@ function CollaborationPlatformAppContent({
           : projectWorkspace.namespace));
   useEffect(() => {
     if (!projectDialogOpen) {
-      setProjectWorkspaceMembers([]);
-      setProjectWorkspaceAgents([]);
-      setProjectWorkspaceGroups([]);
-      setProjectCreationResources({ agents: [], execution_environments: [] });
+      setProjectDirectorySnapshot(null);
+      setProjectMembersLoading(false);
+      setProjectMembersError(null);
+      setProjectAgentsError(null);
+      setProjectGroupsError(null);
       setProjectEnvironmentLoading(false);
       setProjectEnvironmentError(false);
       return;
     }
     let active = true;
-    setProjectWorkspaceMembers([]);
-    setProjectWorkspaceAgents([]);
-    setProjectWorkspaceGroups([]);
-    setProjectCreationResources({ agents: [], execution_environments: [] });
+    const publishDirectory = (update: Partial<ProjectCreationDirectory>) => {
+      if (!active) return;
+      setProjectDirectorySnapshot((current) => ({
+        scope: projectCreationScope,
+        data: {
+          ...(current?.scope === projectCreationScope
+            ? current.data
+            : emptyProjectCreationDirectory),
+          ...update,
+        },
+      }));
+    };
+    setProjectMembersLoading(Boolean(projectWorkspaceId && api.workspaces));
+    setProjectMembersError(null);
+    setProjectAgentsError(null);
+    setProjectGroupsError(null);
     setProjectEnvironmentLoading(Boolean(api.resources));
     setProjectEnvironmentError(false);
     if (api.resources)
       void api.resources
         .list()
         .then((resources) => {
-          if (active) setProjectCreationResources(resources);
+          publishDirectory({ resources });
         })
         .catch(() => {
           if (active) setProjectEnvironmentError(true);
@@ -1578,31 +1626,53 @@ function CollaborationPlatformAppContent({
         .finally(() => {
           if (active) setProjectEnvironmentLoading(false);
         });
-    if (projectWorkspaceId && api.workspaces)
-      void Promise.all([
-        api.workspaces.listMembers(projectWorkspaceId),
-        api.workspaces.listAgents(projectWorkspaceId),
-        api.workspaces.listCollaborationGroups(projectWorkspaceId),
-      ])
-        .then(([members, agents, groups]) => {
-          if (!active) return;
-          setProjectWorkspaceMembers(members);
-          setProjectWorkspaceAgents(agents);
-          setProjectWorkspaceGroups(groups);
+    if (projectWorkspaceId && api.workspaces) {
+      void api.workspaces
+        .listMembers(projectWorkspaceId)
+        .then((members) => {
+          publishDirectory({ members });
         })
-        .catch(() => {
+        .catch((cause) => {
           if (!active) return;
-          setProjectWorkspaceMembers([]);
-          setProjectWorkspaceAgents([]);
-          setProjectWorkspaceGroups([]);
+          setProjectMembersError(
+            cause instanceof Error ? cause.message : messages.loadFailed,
+          );
+        })
+        .finally(() => {
+          if (active) setProjectMembersLoading(false);
         });
+      void api.workspaces
+        .listAgents(projectWorkspaceId)
+        .then((agents) => {
+          publishDirectory({ agents });
+        })
+        .catch((cause) => {
+          if (active)
+            setProjectAgentsError(
+              cause instanceof Error ? cause.message : messages.loadFailed,
+            );
+        });
+      void api.workspaces
+        .listCollaborationGroups(projectWorkspaceId)
+        .then((groups) => {
+          publishDirectory({ groups });
+        })
+        .catch((cause) => {
+          if (active)
+            setProjectGroupsError(
+              cause instanceof Error ? cause.message : messages.loadFailed,
+            );
+        });
+    }
     return () => {
       active = false;
     };
   }, [
     api.resources,
     api.workspaces,
+    messages.loadFailed,
     projectDialogOpen,
+    projectCreationScope,
     projectResourceRefreshKey,
     projectWorkspaceId,
   ]);
@@ -3047,13 +3117,19 @@ function CollaborationPlatformAppContent({
               name: projectCreateLabels[locale].currentUser,
             },
             members: projectWorkspaceMembers,
+            membersLoading: projectMembersLoading,
+            membersError: projectMembersError,
+            reloadMembers: () =>
+              setProjectResourceRefreshKey((value) => value + 1),
             searchUsers:
               projectCreateLocation === "cloud"
                 ? api.members.searchUsers
                 : undefined,
             agents: selectedProjectResourceAgents,
+            agentsError: projectAgentsError,
             defaultAgentResourceIds: defaultProjectAgentResourceIds,
             groups: projectWorkspaceGroups,
+            groupsError: projectGroupsError,
             executionEnvironments:
               projectCreationResources.execution_environments,
             executionEnvironmentLoading: projectEnvironmentLoading,
@@ -3066,7 +3142,43 @@ function CollaborationPlatformAppContent({
               host.loadProjectCollaborationGroupGenerationModels,
             generateCollaborationGroupDraft:
               host.generateProjectCollaborationGroupDraft,
+            validate: async (selection) => {
+              const availableAgentIds = new Set([
+                ...selectedProjectResourceAgents.map((agent) => agent.id),
+                ...(
+                  selection.template?.spec.resources.collaboration.agents ?? []
+                ).map((agent) => templateAgentId(agent.key)),
+              ]);
+              if (
+                selection.agentResourceIds.some(
+                  (id) => !availableAgentIds.has(id),
+                )
+              ) {
+                throw new Error(messages.selectedProjectAgentsUnavailable);
+              }
+            },
             configure: async (project, selection) => {
+              const currentUserId =
+                host.currentUser?.id ??
+                projectWorkspace?.created_by_user_id ??
+                0;
+              if (
+                selection.memberUserIds.some(
+                  (userId) => userId !== currentUserId,
+                )
+              ) {
+                await configureProjectMembers({
+                  api,
+                  projectId: project.id,
+                  currentUserId,
+                  memberUserIds: selection.memberUserIds,
+                  members: projectWorkspaceMembers,
+                  verificationFailureMessage:
+                    locale === "zh-CN"
+                      ? "未能确认该成员拥有项目 Developer 权限，请重试"
+                      : "Project Developer access has not been confirmed for this member. Please retry.",
+                });
+              }
               if (selection.template) {
                 await prepareTemplateProject(
                   api,
@@ -3075,10 +3187,6 @@ function CollaborationPlatformAppContent({
                   locale,
                 );
               }
-              const existingMembers = await api.members.list(project.id);
-              const existingMemberIds = new Set(
-                existingMembers.map((member) => member.user_id),
-              );
               const selectedAgents = selectedProjectResourceAgents.filter(
                 (agent) => selection.agentResourceIds.includes(agent.id),
               );
@@ -3097,11 +3205,6 @@ function CollaborationPlatformAppContent({
                   : [],
               );
               await Promise.all([
-                ...selection.memberUserIds
-                  .filter((userId) => !existingMemberIds.has(userId))
-                  .map((userId) =>
-                    api.members.add(project.id, userId, "Developer"),
-                  ),
                 ...(projectCreateLocation === "cloud"
                   ? selection.executionEnvironmentDeviceIds
                   : []

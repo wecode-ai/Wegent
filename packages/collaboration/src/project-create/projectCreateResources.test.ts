@@ -22,6 +22,11 @@ it.each(["loading", "error"] as const)(
       onCreated: vi.fn(),
       onClose: vi.fn(),
       resourceSetup: {
+        location: "cloud",
+        currentUser: { id: 1, name: "Owner" },
+        members: [],
+        agents: [],
+        groups: [],
         configure,
         validate,
         executionEnvironments: [],
@@ -61,6 +66,7 @@ it.each(["loading", "error"] as const)(
         project,
         expect.objectContaining({ executionEnvironmentDeviceIds: [] }),
       );
+      expect(props.onCreated).toHaveBeenCalledWith(project, "cloud");
       create.mockClear();
       configure.mockClear();
 
@@ -83,7 +89,16 @@ it.each(["loading", "error"] as const)(
           is_current_device: true,
         },
       ];
-      await act(async () => root.render(createElement(Harness)));
+      // Start another dialog after the first creation completed successfully.
+      await act(async () =>
+        root.render(createElement(Harness, { key: "after-device-discovery" })),
+      );
+      act(() => {
+        current.commands.setName("Product");
+        current.commands.setTemplateDocument(
+          builtinCollaborationTemplates()[0].document,
+        );
+      });
       expect(readySelections.length).toBeGreaterThan(0);
       for (const selection of readySelections) expect(selection).toEqual([75]);
       expect(current.state.executionEnvironmentDeviceIds).toEqual([75]);
@@ -92,7 +107,9 @@ it.each(["loading", "error"] as const)(
       props.resourceSetup!.executionEnvironments = [
         ...props.resourceSetup!.executionEnvironments!,
       ];
-      await act(async () => root.render(createElement(Harness)));
+      await act(async () =>
+        root.render(createElement(Harness, { key: "after-device-discovery" })),
+      );
       expect(current.state.executionEnvironmentDeviceIds).toEqual([]);
       act(() => current.commands.setExecutionEnvironmentDeviceIds([75]));
       await act(async () => current.commands.submit());

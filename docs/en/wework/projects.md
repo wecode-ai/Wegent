@@ -16,6 +16,7 @@ sidebar_position: 3
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
+<!-- ui-source: src/features/todo/TaskBoardProjectCreateAction.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
 ## Open an Issue by reference
@@ -36,8 +37,13 @@ Groups collapse and expand independently. Only the project region scrolls; perso
 
 For remote projects, **Choose a group** initially selects **Personal group**, or you can choose an existing group. The first use creates an independent personal group, which later requests reuse. Existing business groups and their projects are not adopted or moved. The add-folder button beside Projects creates a group. Switching groups preserves the project name and description and clears the previous group's member, agent, and template selections; configure these again in the target group before creating.
 
-When creating a cloud project, open **Project collaborators → Add collaborators** to select group members, or enter a name or email in **Search people, Agents or groups** to find other existing users. Selected people appear in the collaborator list and can be removed before creation. Clicking **Create project** adds them with the Developer role in the project without adding them to its group. Search failures display an error; change the query to retry.
+To create a project space from ordinary tasks, open the top **Tasks** tab, choose **Board** in the sidebar's **Task view** menu, then select **More → New project space** on the right-hand side of the board toolbar. The same entry remains available in wide and narrow windows. Creation opens the new project space. A separately opened personal board also provides **More → New project space**; an empty state with no available project offers **New project space** directly.
 
+These entries share the creation dialog with **Collaboration → Personal or business group → … → New project**. For cloud projects, open **Project collaborators → Add collaborators** to select group members, or enter a name or email in **Search people, Agents or groups** to find other existing users. Selected people appear in the collaborator list and can be removed before creation; the current user cannot be selected again. Clicking **Create project** adds them with the Developer role without adding them to the parent group or granting assistant access. Wework reads the project roster again. Open **Manage → Members** in the new project to see it immediately; membership remains after a refresh.
+
+The Tasks sidebar's **Projects → New project → Cloud project** connects a remote code directory used for execution. That code workspace has separate ownership from the project space containing members, Issues and boards. Use **New project space** to assemble collaborators during creation.
+
+Search failures retain the draft and selected people so you can retry. If the project was created but some members could not be added, the dialog lists their names and reasons. Choose **Retry project setup** to continue configuring that project and add only people who still need Developer access. Selecting someone with inherited Viewer access grants Developer access within the project and preserves their parent-group role; higher project roles remain unchanged. When the host provides only a cloud account directory, local projects hide that people picker and explain the limitation.
 Start with the project name, then confirm its group, visibility and collaborators. Template discovery, member configuration and Team responsibilities use views within the same creation window. **Back to project** or Escape returns to the previous configuration level while preserving the project draft. After selecting a template, the main form shows a template and role-count summary; use **Configure members** to adjust roles. Missing members are identified beside their fields. Complete and confirm the configuration before creating the project.
 
 Templates supply defaults only for empty project names and descriptions. Existing content remains intact when you select, leave or remove a template.
@@ -111,7 +117,7 @@ Record an issue directly at the top of **Collaboration → My work**; choose the
 
 In a narrow window, select **Collaboration navigation** above the page to reveal the complete Issue, project and management navigation. Selecting a destination closes it; select the entry again or press Escape to return to the content. The navigation temporarily occupies the content area while drafts remain intact. The top workspace strip reveals its current tab after switching or resizing. Arrow keys, Home and End move tab focus; Enter or Space activates it.
 
-With no projects yet, the home starts with **Start with your first issue**. **New issue** opens the existing independent-Issue form without requiring a project. Independent Issues belong to the signed-in account; if disconnected, complete the existing sign-in flow first. Project association remains optional. To create or import a project, open **Projects → Personal group → Create project** in the sidebar; blank projects, local folders and existing projects remain available.
+With no projects yet, the home starts with **Start with your first issue**. **New issue** opens the existing independent-Issue form without requiring a project. Independent Issues belong to the signed-in account; if disconnected, complete the existing sign-in flow first. Project association remains optional. To create or import a project, open **Projects → Personal group → …** in the sidebar and choose **New project**, **Create from local folder** or **Import existing project**.
 
 **Collaboration project** selects where the Issue is saved; **Code workspace (optional)** in **Create task** selects the code directory used for execution. These selections are independent. Work that does not need a repository can run without a code directory. The recording area stays compact; mode switches retain drafts and attachments.
 
@@ -367,10 +373,12 @@ Issue visibility is set separately during project creation, in project settings,
 
 DingTalk controls access to AI Table records. Wework project roles control entry and editing in its table view.
 
-### Import more projects into the local space
+<a id="local-project-import"></a>
 
-Wework automatically adds local Task projects to the local space during initial
-setup. To add more projects, use the **New project** dropdown in a local group’s project list. Import options appear when local import is supported and are not repeated in the creation dialog:
+### Import more projects into the personal group
+
+Wework automatically adds local Task projects to the personal group during initial
+setup. To add more projects, open **Collaboration → Projects → Personal group → …** and choose an import action below. These actions remain available while connected to the cloud, always store projects on the current device and show them under the unified personal group. They appear only when the host provides local project storage and importing, and are not repeated in the creation dialog:
 
 - **Import existing project** lists projects that already exist on the Tasks
   page but are not yet in the local space. Wework deduplicates them by runtime
