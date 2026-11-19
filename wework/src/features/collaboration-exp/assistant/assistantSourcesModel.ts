@@ -1,6 +1,5 @@
-import { LOCAL_USER } from '@/api/local/localSession'
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
+import { isStandInBindingOwner, type StandInExecutorApi, type StandInProposal } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 
@@ -27,7 +26,6 @@ export function createAssistantSourcesModel(
   services: WorkbenchServices,
   api: StandInExecutorApi | undefined,
   userId: number,
-  backendUrl: string,
   scope: string
 ) {
   let snapshot: SourceSnapshot = {}
@@ -101,11 +99,7 @@ export function createAssistantSourcesModel(
       const binding = await api.binding(identity.deviceId)
       if (!current()) return
       const target = binding.target
-      if (
-        target &&
-        target.userId !== LOCAL_USER.id &&
-        (target.userId !== userId || (target.backendUrl ?? '') !== backendUrl)
-      ) {
+      if (target && !isStandInBindingOwner(target.userId, userId)) {
         throw Object.assign(new Error(), { code: 'permission_denied' })
       }
       const ownerId = target?.userId ?? userId

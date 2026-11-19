@@ -160,6 +160,7 @@ impl RuntimeWorkRpcHandler {
             && (force || observation["next_poll_at"].as_i64().unwrap_or_default() <= now_ms())
         {
             let source = observation["source"].clone();
+            let previous_error = observation["error_code"].as_str().map(str::to_owned);
             let result = self
                 .connection_call(
                     "collectObservation",
@@ -227,6 +228,21 @@ impl RuntimeWorkRpcHandler {
                     Ok(wakeup)
                 },
             )?;
+            let error = observation["error_code"].as_str();
+            if error != previous_error.as_deref() {
+                log_executor_event(
+                    "Connection observation health changed",
+                    &[
+                        ("observation_id", id.to_owned()),
+                        (
+                            "provider",
+                            source["providerId"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        ("previous_code", previous_error.unwrap_or_default()),
+                        ("code", error.unwrap_or_default().to_owned()),
+                    ],
+                );
+            }
             if wakeup {
                 self.connection_observation_wakeup.notify_one();
             }

@@ -1,7 +1,8 @@
-import type {
-  StandInBindingTarget,
-  StandInInstanceBinding,
-  StandInExecutorApi,
+import {
+  isStandInBindingOwner,
+  type StandInBindingTarget,
+  type StandInInstanceBinding,
+  type StandInExecutorApi,
 } from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
@@ -36,10 +37,7 @@ const configured = (settings: PersonalStandInSettings) =>
 const sameTarget = (
   left: StandInBindingTarget | null | undefined,
   right: StandInBindingTarget | null | undefined
-) =>
-  left?.userId === right?.userId &&
-  left?.deviceId === right?.deviceId &&
-  (left?.backendUrl ?? '') === (right?.backendUrl ?? '')
+) => left?.userId === right?.userId && left?.deviceId === right?.deviceId
 
 /** The local instance binding owns initialization, cancellation and rebind transactions. */
 export function createStandInInstanceSource({
@@ -76,7 +74,10 @@ export function createStandInInstanceSource({
   const publishBinding = (binding: StandInInstanceBinding) =>
     publish({
       binding,
-      ...(!sameTarget(snapshot.binding?.target, binding.target)
+      ...(binding.status !== 'stopped' ||
+      binding.version !== snapshot.binding?.version ||
+      !sameTarget(snapshot.binding?.target, binding.target) ||
+      (binding.target && !isStandInBindingOwner(binding.target.userId, userId))
         ? { stoppedProfile: undefined }
         : {}),
     })
@@ -168,8 +169,7 @@ export function createStandInInstanceSource({
       if (
         binding.status === 'stopped' &&
         binding.target &&
-        (binding.target.userId === LOCAL_USER.id ||
-          (binding.target.userId === userId && (binding.target.backendUrl ?? '') === backendUrl))
+        isStandInBindingOwner(binding.target.userId, userId)
       ) {
         // Binding choices remain usable while the stopped device profile is loading.
         publishBinding(binding)
@@ -236,7 +236,13 @@ export function createStandInInstanceSource({
     publish({ busy: true, error: null })
     try {
       if (operation === 'stop') {
-        if (!api || !binding?.target || !localDeviceId) return
+        if (
+          !api ||
+          !binding?.target ||
+          !isStandInBindingOwner(binding.target.userId, userId) ||
+          !localDeviceId
+        )
+          return
         readRevision++
         activation++
         const stopping = await api.binding(localDeviceId, 'beginStop', input.version!)
@@ -260,7 +266,11 @@ export function createStandInInstanceSource({
         if (operation === 'migrate') throw new StandInMigrationError('not_stopped')
         return
       }
-      if (operation === 'migrate' && !binding.target) throw new StandInMigrationError('not_stopped')
+      if (
+        operation === 'migrate' &&
+        (!binding.target || !isStandInBindingOwner(binding.target.userId, userId))
+      )
+        throw new StandInMigrationError('not_stopped')
       readRevision++
       activation++
       const target = input.target

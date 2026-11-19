@@ -320,14 +320,13 @@ export function createDesktopScenario(options) {
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             text: '发布文档',
           })
-          if (phase === 'workflow') {
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
+            const toggle = '[data-testid="connection-event-condition-toggle"]'
+            await control.command('waitFor', toggle, { visible: true, enabled: true })
+            await control.command('click', toggle)
             await control.command('waitFor', '[data-testid="connection-event-condition"]', {
-              text: '或',
-            })
-          }
-          if (phase === 'workflow_conflict') {
-            await control.command('waitFor', '[data-testid="connection-event-condition"]', {
-              text: '合并冲突',
+              text: phase === 'workflow' ? '或' : '合并冲突',
+              visible: true,
             })
           }
           const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
