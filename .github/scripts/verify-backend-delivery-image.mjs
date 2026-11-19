@@ -23,6 +23,7 @@ export function deliveryImageRequired(paths) {
         ".dockerignore",
         ".github/workflows/e2e-tests.yml",
         ".github/scripts/verify-backend-delivery-image.mjs",
+        ".github/scripts/buildkit-registry-diagnostics.mjs",
         ".github/scripts/backend-delivery-image.test.mjs",
       ].includes(path),
   );
