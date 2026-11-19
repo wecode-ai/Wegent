@@ -109,8 +109,7 @@ def list_issue_comments(
     for message in messages:
         comment = _comment_view(message)
         if (
-            message.metadata.get("dispatch_role") in {"manager", "member"}
-            and message.metadata.get("execution_dispatch") != "comment_only"
+            message.metadata.get("execution_dispatch") != "comment_only"
             and (message.message_id, message.content) in published
         ):
             comment["body"] = ""

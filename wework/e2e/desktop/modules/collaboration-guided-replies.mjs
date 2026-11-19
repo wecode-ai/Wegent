@@ -74,6 +74,14 @@ export function createGuidedReplies({
         body: secondDone ? firstAnswer : secondAnswer,
       })
     },
+    async verifyPublishedSummary(control, activity, listComments, timeoutMs) {
+      const rows = (await listComments()).filter(row => row.body === roundSummary)
+      assert.equal(rows.length, 1, '主讨论总结与执行状态重复发布')
+      assert.ok(!rows[0].reply_to_comment_id, '总结应发布在 Issue 主讨论')
+      await control.command('waitFor', activity, { text: roundSummary, timeoutMs })
+      const timeline = await control.command('getText', activity)
+      assert.equal(timeline.split(roundSummary).length - 1, 1, 'Issue 界面显示了重复总结')
+    },
     async verify({
       control,
       reply,

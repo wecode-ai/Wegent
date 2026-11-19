@@ -980,6 +980,12 @@ export async function createDesktopScenario({
         bindingsAfterReply.map(binding => [binding.device_id, binding.task_id]).sort(),
         '成员回复创建了替代会话'
       )
+      await guidedReplies.verifyPublishedSummary(
+        control,
+        scoped('[data-testid="cloud-task-activity-list"]'),
+        listComments,
+        uiTimeoutMs
+      )
       await captureScreenshot(control, 'remote-group-coordinate-06-member-reply.png', 'body')
     },
 

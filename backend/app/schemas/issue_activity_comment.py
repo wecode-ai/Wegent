@@ -37,6 +37,9 @@ class CollaborationPublicReply(BaseModel):
     dispatch_id: str = Field(min_length=1, max_length=255)
     message_id: str = Field(min_length=1, max_length=64)
     trigger_comment_id: str | None = Field(default=None, min_length=1, max_length=64)
+    execution_trigger_comment_id: str | None = Field(
+        default=None, min_length=1, max_length=64
+    )
 
 
 class IssueActivityCommentCreate(LoopItemCommentCreate):

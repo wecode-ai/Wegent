@@ -29,7 +29,7 @@ from app.services.project_chat.runtime_binding import (
     collaboration_manager_task_id,
     collaboration_member_assignment,
 )
-from app.services.project_chat.service import ReplyContext, project_chat_service
+from app.services.project_chat.service import project_chat_service
 from shared.telemetry.decorators import trace_sync
 
 
@@ -84,34 +84,51 @@ def _reply_author(
     raise HTTPException(425, "Collaboration session activity is not recorded")
 
 
-def _reply_context(
+def _continuation_activity(
     db: Session,
     *,
     dispatch: LoopItemExecution,
     identity: CollaborationPublicReply,
-    reply_to_comment_id: str | None,
-) -> ReplyContext:
-    trigger_id = identity.trigger_comment_id
-    if trigger_id and reply_to_comment_id:
-        raise HTTPException(422, "Choose one Issue reply target")
-    if trigger_id:
-        continuations = db.query(LoopItemExecution).filter_by(
-            cloud_project_id=dispatch.cloud_project_id,
-            loop_item_id=dispatch.loop_item_id,
-            executor_owner_user_id=dispatch.executor_owner_user_id,
-            runtime_task_id=identity.task_id,
-        )
-        if not any(
-            row.runtime_origin_context.get("comment_trigger_message_id") == trigger_id
-            and row.runtime_origin_context.get("dispatch_id") == identity.dispatch_id
+    agent_id: str,
+) -> ProjectChatMessage | None:
+    trigger_id = identity.execution_trigger_comment_id or identity.trigger_comment_id
+    if not trigger_id:
+        return None
+    if identity.trigger_comment_id not in (None, trigger_id):
+        raise HTTPException(422, "The reply and execution have different triggers")
+    continuations = db.query(LoopItemExecution).filter_by(
+        cloud_project_id=dispatch.cloud_project_id,
+        loop_item_id=dispatch.loop_item_id,
+        executor_owner_user_id=dispatch.executor_owner_user_id,
+        runtime_task_id=identity.task_id,
+    )
+    execution = next(
+        (
+            row
             for row in continuations
-        ):
-            raise HTTPException(409, "The comment does not match this execution turn")
-    return project_chat_service._resolve_reply_context(
-        db,
-        project_id=dispatch.cloud_project_id,
-        task_id=dispatch.loop_item_id,
-        reply_to_message_id=trigger_id or reply_to_comment_id,
+            if row.runtime_origin_context.get("comment_trigger_message_id")
+            == trigger_id
+            and row.runtime_origin_context.get("dispatch_id") == identity.dispatch_id
+        ),
+        None,
+    )
+    if execution is None:
+        raise HTTPException(409, "The comment does not match this execution turn")
+    return (
+        db.query(ProjectChatMessage)
+        .filter_by(
+            project_id=dispatch.cloud_project_id,
+            task_id=dispatch.loop_item_id,
+            sender_type="agent",
+            agent_id=agent_id,
+            trigger_message_id=trigger_id,
+        )
+        .filter(
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            ProjectChatMessage.metadata_json["execution_id"].as_integer()
+            == execution.id,
+        )
+        .first()
     )
 
 
@@ -188,11 +205,19 @@ def publish_collaboration_reply(
         identity.task_id,
         identity.message_id,
     )
-    reply = _reply_context(
+    if identity.trigger_comment_id and reply_to_comment_id:
+        raise HTTPException(422, "Choose one Issue reply target")
+    mirror = (
+        _continuation_activity(
+            db, dispatch=dispatch, identity=identity, agent_id=agent_id
+        )
+        or activity
+    )
+    reply = project_chat_service._resolve_reply_context(
         db,
-        dispatch=dispatch,
-        identity=identity,
-        reply_to_comment_id=reply_to_comment_id,
+        project_id=project_id,
+        task_id=item_id,
+        reply_to_message_id=identity.trigger_comment_id or reply_to_comment_id,
     )
     existing = existing_public_reply(db, sender_id=agent_id, key=key, body=body)
     if existing is not None:
@@ -245,8 +270,8 @@ def publish_collaboration_reply(
             "collaboration_public_reply": True,
             "dispatch_id": identity.dispatch_id,
             **(
-                {"collaboration_execution_activity_id": activity.message_id}
-                if activity
+                {"collaboration_execution_activity_id": mirror.message_id}
+                if mirror
                 else {}
             ),
             **(

@@ -354,6 +354,7 @@ impl RuntimeWorkRpcHandler {
                 "task_id": task,
                 "dispatch_id": origin["dispatchId"],
                 "message_id": report["messageId"],
+                "execution_trigger_comment_id": trigger,
                 "trigger_comment_id": if has_other_targets { &Value::Null } else { trigger },
             });
             return self

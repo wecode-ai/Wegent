@@ -560,6 +560,34 @@ async def test_member_reply_without_execution_or_binding_queues_original_session
     assert result[0].metadata["dispatch_id"] == "group-dispatch-1"
     s.rpc.assert_not_called()
 
+    summary = "The CPU and time-window findings were posted in both discussions."
+    projection = (
+        s.db.query(ProjectChatMessage).filter_by(message_id=result[0].message_id).one()
+    )
+    projection.content = summary
+    s.db.commit()
+    published = publish_collaboration_reply(
+        s.db,
+        user_id=s.owner.id,
+        project_id=str(s.project.id),
+        item_id=s.issue.id,
+        body=summary,
+        identity=CollaborationPublicReply(
+            dispatch_id="group-dispatch-1",
+            device_id="admin-native",
+            task_id=s.root.runtime_task_id,
+            message_id="combined-follow-up",
+            execution_trigger_comment_id=request.trigger_message_id,
+        ),
+    )
+    assert published.reply_to_message_id is None
+    rows = list_issue_comments(
+        s.db, user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id
+    )
+    assert [row["id"] for row in rows if row["body"] == summary] == [
+        published.message_id
+    ]
+
 
 @pytest.mark.parametrize("field", ["agent_id", "runtime_task_id", "runtime_device_id"])
 def test_member_reply_rejects_a_session_outside_its_assignment(member_scenario, field):
