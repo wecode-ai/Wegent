@@ -525,6 +525,7 @@ export function AssistantMessage({
             <AssistantErrorCard
               error={message.error}
               errorType={message.errorType}
+              errorInfo={message.errorInfo}
               rawError={hiddenErrorContent}
               message={message}
               onRetry={onRetryFailedMessage}

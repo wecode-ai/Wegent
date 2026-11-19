@@ -428,7 +428,24 @@ impl RuntimeWorkRpcHandler {
             payload["limit"] = json!(limit);
         }
         let reconciliation_ids = super::transcript_read_link::reconciliation_ids(&payload)?;
+        let presentation_read = ![
+            "conversationContextOnly",
+            "conversation_context_only",
+            "navigationOnly",
+            "navigation_only",
+        ]
+        .iter()
+        .any(|key| payload[*key] == true);
         let mut response = self.read_transcript(payload).await?;
+        if presentation_read {
+            if let Some(link) = self.store.get_task_summary(&task_id).filter(|link| {
+                requested_session_id.as_ref().map_or(true, |id| {
+                    runtime_session_id_from_link(link).as_ref() == Some(id)
+                })
+            }) {
+                append_preparation_failure(&mut response, &link);
+            }
+        }
         if let Some(requested) = reconciliation_ids {
             if let Some(accepted) =
                 self.accepted_reconciliation_ids(&task_id, &response, &requested)

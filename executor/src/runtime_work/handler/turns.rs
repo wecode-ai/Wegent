@@ -15,6 +15,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex as StdMutex, OnceLock,
 };
+use wegent_protocol::chat_errors::error_info;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -29,6 +30,29 @@ static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 fn interrupted_by_runtime_stop(result: &Result<crate::agents::CodexAppServerTurn, String>) -> bool {
     matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
         || error == CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED)
+}
+
+fn record_preparation_failure(
+    link: &mut RuntimeTaskLink,
+    request: &ExecutionRequest,
+    error: &AppIpcError,
+    failure_info: &Value,
+    timestamp: i64,
+) {
+    let mut diagnostic = link.runtime_handle["startupFailure"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let message = crate::agents::redact_diagnostic_text(&error.message);
+    diagnostic.insert("code".into(), json!(error.code));
+    diagnostic.insert("message".into(), json!(message));
+    diagnostic.insert("subtaskId".into(), json!(request.subtask_id));
+    diagnostic.insert("createdAt".into(), json!(timestamp));
+    diagnostic.insert("failedAt".into(), json!(timestamp));
+    diagnostic.insert("errorInfo".into(), failure_info.clone());
+    link.runtime_handle["startupFailure"] = Value::Object(diagnostic);
+    link.runtime_handle["lastError"] = json!(message);
+    link.runtime_handle["lastErrorCode"] = json!(error.code);
 }
 
 fn initial_turn_presentation(request: &ExecutionRequest) -> Option<(String, Option<String>)> {
@@ -1140,9 +1164,14 @@ impl RuntimeWorkRpcHandler {
                 ("error", error.message.clone()),
             ],
         );
+        let failure_info = error_info(None, Some(&error.message));
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
-        self.store
-            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
+        self.store.update_task(local_task_id, |link| {
+            let diagnostic = link.runtime_handle["startupFailure"].clone();
+            apply_local_task_failure(link, error);
+            link.runtime_handle["startupFailure"] = diagnostic;
+            record_preparation_failure(link, &turn.request, error, &failure_info, now_ms());
+        });
     }
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
@@ -2468,10 +2497,13 @@ impl RuntimeWorkRpcHandler {
                         }),
                     ),
                     ExecutionOutcome::Failed { message } => {
-                        self.persist_failed_assistant_message(
+                        let failure_info = error_info(turn.error_type.as_deref(), Some(&message));
+                        self.persist_failed_assistant_message_with_info(
                             local_task_id,
                             &event_request,
                             &message,
+                            failure_info.clone(),
+                            false,
                         );
                         let mut fields =
                             task_fields(&event_request.task_id, &event_request.subtask_id);
@@ -2484,8 +2516,9 @@ impl RuntimeWorkRpcHandler {
                             local_task_id,
                             &event_request,
                             json!({
-                                "error": {"message": message},
-                                "type": turn.error_type,
+                                "error": {"message": message, "code": failure_info["code"]},
+                                "error_info": failure_info,
+                                "type": failure_info["code"],
                                 "startedAt": turn.started_at_ms,
                                 "completedAt": turn.completed_at_ms,
                                 "durationMs": turn.duration_ms,
@@ -2507,6 +2540,7 @@ impl RuntimeWorkRpcHandler {
                     return;
                 }
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
+                let failure_info = error_info(None, Some(&error));
                 self.persist_failed_assistant_message(local_task_id, &event_request, &error);
                 let mut fields = task_fields(&event_request.task_id, &event_request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
@@ -2517,7 +2551,10 @@ impl RuntimeWorkRpcHandler {
                     "response.failed",
                     local_task_id,
                     &event_request,
-                    json!({"error": {"message": error}}),
+                    json!({
+                        "error": {"message": error, "code": failure_info["code"]},
+                        "error_info": failure_info,
+                    }),
                 );
             }
         }
@@ -2539,6 +2576,23 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         error: &str,
     ) {
+        self.persist_failed_assistant_message_with_info(
+            local_task_id,
+            request,
+            error,
+            error_info(None, Some(error)),
+            true,
+        );
+    }
+
+    fn persist_failed_assistant_message_with_info(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        error: &str,
+        failure_info: Value,
+        preparation: bool,
+    ) {
         let timestamp = now_ms();
         let message = json!({
             "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
@@ -2547,12 +2601,22 @@ impl RuntimeWorkRpcHandler {
             "status": "failed",
             "error": error,
             "errorType": "response.failed",
+            "errorCode": failure_info["code"],
+            "errorInfo": failure_info,
             "subtaskId": request.subtask_id,
             "createdAt": timestamp,
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
-            record_runtime_start_failure(link, &AppIpcError::new("runtime_start_failed", error));
+            if preparation {
+                record_preparation_failure(
+                    link,
+                    request,
+                    &AppIpcError::new("runtime_start_failed", error),
+                    &message["errorInfo"],
+                    timestamp,
+                );
+            }
             if link.thread_id.is_some() {
                 return;
             }

@@ -1,13 +1,17 @@
 import { useState } from "react";
 import { AlertTriangle, ChevronDown } from "lucide-react";
 import type { WorkbenchMessage } from "@wegent/chat-core/runtime-conversation";
-import { parseChatError } from "@wegent/chat-core/chat-error";
+import {
+  parseChatError,
+  type ChatErrorInfo,
+} from "@wegent/chat-core/chat-error";
 import { useConversationTranslation } from "./ConversationTranslation";
 import { GitAccountConfigurationButton } from "../controls/GitAccountConfiguration";
 
 export function AssistantErrorCard({
   error,
   errorType,
+  errorInfo,
   rawError,
   message,
   onRetry,
@@ -15,6 +19,7 @@ export function AssistantErrorCard({
 }: {
   error?: string;
   errorType?: string;
+  errorInfo?: ChatErrorInfo;
   rawError?: string;
   message: WorkbenchMessage;
   onRetry?: (message: WorkbenchMessage) => void;
@@ -22,7 +27,11 @@ export function AssistantErrorCard({
 }) {
   const { t, translate } = useConversationTranslation();
   const [isDetailExpanded, setIsDetailExpanded] = useState(false);
-  const parsedError = parseChatError(rawError || error || "", errorType);
+  const parsedError = parseChatError(
+    rawError || error || "",
+    errorType,
+    errorInfo,
+  );
   const displayError = parsedError.gitFailure
     ? `${parsedError.gitFailure.domain}: ${parsedError.gitFailure.message}`
     : rawError || error;
@@ -87,7 +96,11 @@ export function AssistantErrorCard({
               onClick={() => onRetry(message)}
               className="h-8 min-h-11 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
             >
-              {t("assistant_error.actions.retry")}
+              {t(
+                parsedError.retryPolicy === "after_change"
+                  ? "assistant_error.actions.retry_after_change"
+                  : "assistant_error.actions.retry",
+              )}
             </button>
           ) : null}
           {hasErrorDetails && (

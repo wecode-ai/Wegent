@@ -21,6 +21,7 @@ mod collect;
 mod delivery;
 mod events;
 mod handlers;
+mod metrics;
 mod persist;
 mod sql;
 mod text_value;
@@ -85,7 +86,7 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
         tracing::warn!(%error, task_id, subtask_id, "executor failure table read failed");
     })
     .ok()?;
-    let (row, metrics_message) = persist::persist_executor_failure(
+    let (row, metrics_message, labels) = persist::persist_executor_failure(
         mysql,
         &task_table,
         &subtask_table,
@@ -99,6 +100,14 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
         |error| tracing::warn!(%error, task_id, subtask_id, "executor failure transaction failed"),
     )
     .ok()??;
+    metrics::record(
+        &row,
+        "FAILED",
+        Some(code),
+        Some(message),
+        Some(&result),
+        labels,
+    );
     if let Some(ctx) = ctx {
         persist::publish_task_run_metrics(ctx, &row, subtask_id, "FAILED", metrics_message).await;
         if let Err(error) =

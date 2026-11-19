@@ -45,6 +45,7 @@ pub(crate) async fn retry(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
+    let mut observation = crate::chat_metrics::RequestObservation::new("web");
     let Some(payload) = RetryPayload::parse(&data) else {
         return Ok(Reply::payload(error_ack("Invalid payload")));
     };
@@ -63,6 +64,7 @@ pub(crate) async fn retry(
         Err(RetryFailure::Ack(ack)) => return Ok(Reply::payload(ack)),
         Err(RetryFailure::Internal) => return Err(internal_error()),
     };
+    observation.accept();
     match super::chat_trigger::trigger_existing(state, &prepared.turn, user_id).await {
         Ok(()) => Ok(Reply::payload(json!({"success": true}))),
         Err(error) => {

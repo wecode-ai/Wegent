@@ -239,7 +239,7 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
         || !accumulated_content.is_empty()
         || !blocks.is_empty()
         || normalized_status == "COMPLETED"
-        || (normalized_status == "FAILED" && error_code.is_some());
+        || normalized_status == "FAILED";
     if !has_payload {
         return None;
     }
@@ -295,17 +295,27 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
         final_result.insert("value".into(), Value::String(text_value));
     }
 
-    if normalized_status == "FAILED"
-        && let Some(code) = error_code
-    {
-        final_result.extend(failure_details(error_message.unwrap_or_default(), code));
+    if normalized_status == "FAILED" {
+        let code = error_code.or_else(|| final_result.get("error_type").and_then(Value::as_str));
+        let details = failure_details(
+            error_message.unwrap_or_default(),
+            code.unwrap_or("generic_error"),
+        );
+        final_result.extend(details);
     }
 
     Some(Value::Object(final_result))
 }
 
 pub(super) fn failure_details(message: &str, code: &str) -> Map<String, Value> {
-    let mut details = Map::from_iter([("error_type".into(), json!(code))]);
+    let info = crate::chat_errors::classify_chat_error(Some(code), Some(message));
+    let mut details = Map::from_iter([
+        ("error_type".into(), json!(info.code)),
+        (
+            "error_info".into(),
+            crate::chat_errors::error_info(Some(info.code), Some(message)),
+        ),
+    ]);
     if let Some(status_code) = extract_http_status_code(message) {
         details.insert("error_code".into(), json!(status_code));
     }

@@ -11,25 +11,25 @@ describe('errorParser', () => {
         const error = new Error('forbidden')
         const result = parseError(error)
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect not allowed errors', () => {
         const result = parseError('Request not allowed')
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect unauthorized errors', () => {
         const result = parseError('unauthorized access')
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect 403 errors', () => {
         const result = parseError('403 Forbidden')
         expect(result.type).toBe('forbidden')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
     })
 
@@ -37,37 +37,37 @@ describe('errorParser', () => {
       it('should detect multi-modal errors', () => {
         const result = parseError('multi-modal not supported')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect multimodal errors (no hyphen)', () => {
         const result = parseError('multimodal content not supported')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect llm model mismatch errors', () => {
         const result = parseError('llm model expected but received')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect "do not support" errors', () => {
         const result = parseError('Model do not support image input')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect "does not support" errors', () => {
         const result = parseError('This model does not support image processing')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect image not supported errors', () => {
         const result = parseError('Model not support image input')
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
     })
 
@@ -123,7 +123,7 @@ describe('errorParser', () => {
       it('should detect quota exceeded errors', () => {
         const result = parseError('quota exceeded for this model')
         expect(result.type).toBe('quota_exceeded')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect token limit errors', () => {
@@ -149,7 +149,7 @@ describe('errorParser', () => {
       it('should detect invalid parameter errors', () => {
         const result = parseError('invalid parameter provided')
         expect(result.type).toBe('invalid_parameter')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
     })
 
@@ -157,13 +157,13 @@ describe('errorParser', () => {
       it('should detect 413 errors', () => {
         const result = parseError('413 Payload Too Large')
         expect(result.type).toBe('payload_too_large')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect payload too large text', () => {
         const result = parseError('payload too large')
         expect(result.type).toBe('payload_too_large')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
     })
 
@@ -225,6 +225,70 @@ describe('errorParser', () => {
         expect(result.type).toBe('llm_error')
         expect(result.retryable).toBe(true)
       })
+
+      it('retains a native overload code despite a misleading network message', () => {
+        expect(parseError('Disconnected', 'server_overloaded')).toMatchObject({
+          type: 'server_overloaded',
+          category: 'model',
+          retryPolicy: 'after_backoff',
+          retryable: true,
+        })
+      })
+
+      it.each([
+        ['authentication_expired', 'access', 'after_change'],
+        ['skill_deploy_failed', 'runtime', 'after_change'],
+        ['executor_start_failed', 'runtime', 'after_change'],
+        ['workspace_unavailable', 'runtime', 'after_change'],
+        ['tool_execution_failed', 'tool', 'unknown'],
+        ['connector_unavailable', 'tool', 'after_backoff'],
+        ['plugin_load_failed', 'tool', 'after_change'],
+        ['stream_protocol_error', 'transport', 'after_backoff'],
+        ['internal_error', 'platform', 'after_backoff'],
+        ['storage_error', 'platform', 'after_backoff'],
+        ['dispatch_error', 'platform', 'after_backoff'],
+      ])('recognizes %s without guessing from its message', (type, category, retryPolicy) => {
+        expect(parseError('Something went wrong', type)).toMatchObject({
+          type,
+          category,
+          retryPolicy,
+        })
+      })
+
+      it('uses the canonical structured cause ahead of a weak LLM wrapper', () => {
+        expect(
+          parseError('Opaque error', 'llm_error', {
+            code: 'skills_unmanaged_entries',
+            retry_policy: 'after_change',
+          })
+        ).toMatchObject({
+          type: 'skills_unmanaged_entries',
+          category: 'runtime',
+          retryPolicy: 'after_change',
+        })
+      })
+
+      it('uses a validated backend retry policy for a contextual failure', () => {
+        expect(
+          parseError('Tool failed', 'tool_execution_failed', { retry_policy: 'none' })
+        ).toMatchObject({ retryPolicy: 'none', retryable: false })
+      })
+
+      it('ignores an unrecognized retry policy', () => {
+        expect(
+          parseError('Disconnected', 'network_error', {
+            retry_policy: 'unexpected' as never,
+          })
+        ).toMatchObject({ retryPolicy: 'after_backoff', retryable: true })
+      })
+
+      it('does not accept inherited object properties as backend error types', () => {
+        expect(parseError('Unknown cause', 'toString')).toMatchObject({
+          type: 'generic_error',
+          category: 'unknown',
+          retryPolicy: 'unknown',
+        })
+      })
     })
 
     describe('generic errors', () => {
@@ -281,13 +345,35 @@ describe('errorParser', () => {
     })
 
     describe('real-world scenarios', () => {
+      it('recognizes the Skills directory conflict in a stored generic error', () => {
+        const error = 'Agent Skills directory contains unmanaged entries'
+        expect(parseError(error, 'generic_error')).toMatchObject({
+          type: 'skills_unmanaged_entries',
+          category: 'runtime',
+          retryPolicy: 'after_change',
+          retryable: false,
+          originalError: error,
+        })
+      })
+
+      it('keeps specific causes inside executor wrappers', () => {
+        expect(parseError('Executor failed: insufficient_quota (429)').type).toBe('quota_exceeded')
+        expect(parseError('Container request timed out').type).toBe('timeout_error')
+        expect(parseError('Executor request failed: connection reset').type).toBe('network_error')
+        expect(parseError('Executor not logged in').type).toBe('authentication_expired')
+      })
+
+      it('does not assume a bad gateway response proves a timeout', () => {
+        expect(parseError('502 Bad Gateway').type).toBe('provider_error')
+      })
+
       it('should detect model not support image from DeepSeek API response', () => {
         // Real error from DeepSeek API
         const error =
           'data: {"error":{"code":null,"message":"{\\"error\\":{\\"code\\":\\"InvalidParameter\\",\\"message\\":\\"Model do not support image input. Request id: 021768537375878a77eec5e653ab4759e46069478d0f365166e60\\",\\"param\\":\\"image_url\\",\\"type\\":\\"BadRequest\\"}}, model_id: DeepSeek-V3.2-251201","param":null,"type":"api_error"}}"'
         const result = parseError(error)
         expect(result.type).toBe('llm_unsupported')
-        expect(result.retryable).toBe(true)
+        expect(result.retryable).toBe(false)
       })
 
       it('should detect peer closed connection as network error', () => {
@@ -359,11 +445,29 @@ describe('errorParser', () => {
         'errors.network_error': 'Network error',
         'errors.timeout_error': 'Timeout error',
         'errors.generic_error': 'Generic error',
+        'errors.skills_unmanaged_entries': 'Skills directory does not match its managed records',
+        'errors.server_overloaded': 'Model service is busy',
       }
       return translations[key] || key
     }
 
     describe('specific error types should return friendly messages', () => {
+      it('displays a known Skills error instead of the unknown-error summary', () => {
+        expect(
+          getErrorDisplayMessage(
+            'Agent Skills directory contains unmanaged entries',
+            mockT,
+            'generic_error'
+          )
+        ).toBe('Skills directory does not match its managed records')
+      })
+
+      it('displays native model overload independently of the raw message', () => {
+        expect(getErrorDisplayMessage('Disconnected', mockT, 'server_overloaded')).toBe(
+          'Model service is busy'
+        )
+      })
+
       it('should return friendly message for network errors', () => {
         const message = getErrorDisplayMessage('WebSocket not connected', mockT)
         expect(message).toBe('Network error')

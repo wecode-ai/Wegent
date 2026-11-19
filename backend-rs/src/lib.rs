@@ -286,6 +286,8 @@ mod task_pipeline_stage_info_repo;
 pub mod task_routing;
 mod task_run_metric_hooks;
 mod task_run_metrics;
+pub(crate) use wegent_protocol::chat_errors;
+mod chat_metrics;
 mod task_share_api;
 use wegent_capabilities::task_skills;
 mod task_source_group;

@@ -856,6 +856,7 @@ pub(super) async fn project(
             project_in_transaction(transaction, user_id, &device_id, identity).await
         })
         .await?;
+    metrics::record(effects.matched.as_ref(), identity);
     effects.deliver(state, runtime).await;
     Ok(projected)
 }
@@ -976,6 +977,7 @@ async fn lifecycle_effects(
 
 mod activity;
 mod execution_lookup;
+mod metrics;
 pub(super) use execution_lookup::execution_for_runtime;
 #[cfg(test)]
 use execution_lookup::{
