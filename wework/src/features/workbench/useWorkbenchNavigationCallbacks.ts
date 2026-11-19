@@ -11,11 +11,7 @@ import {
   type LocalRuntimeSidebarIdentity,
 } from '@/lib/local-runtime-sidebar-identity'
 import { navigateTo } from '@/lib/navigation'
-import {
-  normalizeRuntimeWorkspacePath,
-  runtimeProjectToProject,
-  runtimeProjectUiId,
-} from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   runtimeProjectSyncTargetKey,
   type RuntimeProjectSyncTarget,
@@ -363,12 +359,15 @@ export function useOpenStandaloneWorkspace({
           })
         )
         dispatch({
-          type: 'project_workspace_selected',
-          project: runtimeProjectToProject({
+          type: 'runtime_project_registered',
+          projectWork: {
             project: {
               key: response.projectKey,
               stateDeviceId: response.deviceId,
               name: response.name,
+              kind: 'local',
+              source: 'local_project',
+              roots: response.roots.map(path => ({ kind: 'local', path })),
             },
             deviceWorkspaces: [
               {
@@ -378,8 +377,7 @@ export function useOpenStandaloneWorkspace({
                 tasks: [],
               },
             ],
-          }),
-          startFreshChat: true,
+          },
         })
         if (launchOptions)
           queueWorkbenchWorkspaceLaunch(

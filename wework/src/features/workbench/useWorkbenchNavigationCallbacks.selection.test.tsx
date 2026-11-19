@@ -4,6 +4,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { ProjectWithTasks, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 import { navigateTo } from '@/lib/navigation'
+import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
+import { initialWorkbenchState, workbenchReducer, type WorkbenchAction } from './workbenchReducer'
 import {
   useOpenStandaloneWorkspace,
   useSelectProject,
@@ -73,8 +75,13 @@ it('confirms a registered local project while unrelated task-list refresh is pen
   const refresh = new Promise<void>(resolve => {
     release = resolve
   })
-  const dispatch = vi.fn()
-  const localState = { ...state, devices: [{ device_id: 'device' }] } as WorkbenchState
+  let localState = {
+    ...initialWorkbenchState,
+    devices: [{ device_id: 'device' }],
+  } as WorkbenchState
+  const dispatch = (action: WorkbenchAction) => {
+    localState = workbenchReducer(localState, action)
+  }
   const client = {
     runtime: {
       upsertLocalRuntimeProject: async () => ({
@@ -106,12 +113,14 @@ it('confirms a registered local project while unrelated task-list refresh is pen
       })
     })
     await waitFor(() => expect(confirmed).toBe(true))
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'project_workspace_selected',
-        project: expect.objectContaining({ name: 'Created' }),
-      })
-    )
+    expect(localState.currentProject?.name).toBe('Created')
+    expect(resolveRuntimeTaskProjects(localState.projects, localState.runtimeWork)).toEqual([
+      expect.objectContaining({ id: localState.currentProject?.id, name: 'Created' }),
+    ])
+    expect(localState.runtimeWork?.projects[0].project.roots).toEqual([
+      { kind: 'local', path: '/workspace' },
+    ])
+    expect(localState.runtimeWork?.projects[0].deviceWorkspaces[0].workspacePath).toBe('/workspace')
     expect(navigateTo).toHaveBeenCalledWith('/')
   } finally {
     await act(async () => {
