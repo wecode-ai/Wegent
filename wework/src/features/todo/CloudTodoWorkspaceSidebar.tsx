@@ -33,6 +33,7 @@ export function CloudTodoWorkspaceSidebar({ model }: { model: CloudTodoWorkspace
     setRenameProject,
     setRenameProjectName,
     setRenameError,
+    archiveBusy,
     setArchiveProject,
     setArchiveError,
     selectProject,
@@ -128,6 +129,7 @@ export function CloudTodoWorkspaceSidebar({ model }: { model: CloudTodoWorkspace
                 key: spaceKey,
                 name: project.name,
                 selected: sameProjectSpace(selectedProjectRef, projectSpaceRef(project)),
+                archiveDisabled: archiveBusy,
                 onArchive: () => {
                   setArchiveError(null)
                   setArchiveProject(project)

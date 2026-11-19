@@ -91,6 +91,7 @@ export function initialCloudTodoWorkspaceState(hasLocal: boolean) {
     batchConfirmItems: null as LocatedLoopItem[] | null,
     batchConfirmRetryItemKeys: new Set() as ReadonlySet<string>,
     runtimeBatchArchiveItems: null as LocatedLoopItem[] | null,
+    batchArchiveError: null as string | null,
     issueResourceAttachmentState: { owner: null, itemId: null, attachments: [] } as {
       owner: string | null
       itemId: string | null
@@ -372,6 +373,9 @@ export function createCloudTodoWorkspaceState(hasLocal: boolean) {
       value: SetStateAction<CloudTodoWorkspaceState['batchConfirmRetryItemKeys']>
     ) {
       update({ batchConfirmRetryItemKeys: resolve(value, snapshot.batchConfirmRetryItemKeys) })
+    },
+    setBatchArchiveError(value: SetStateAction<CloudTodoWorkspaceState['batchArchiveError']>) {
+      update({ batchArchiveError: resolve(value, snapshot.batchArchiveError) })
     },
     setRuntimeBatchArchiveItems(
       value: SetStateAction<CloudTodoWorkspaceState['runtimeBatchArchiveItems']>
