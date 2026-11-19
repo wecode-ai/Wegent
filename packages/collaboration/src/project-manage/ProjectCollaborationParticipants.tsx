@@ -8,6 +8,7 @@ import { useState, type ReactNode } from 'react'
 export type ParticipantTab = 'members' | 'agents' | 'groups'
 
 export function CollaborationParticipantsTabs({
+  className,
   agentsContent,
   agentsLabel,
   ariaLabel,
@@ -20,6 +21,7 @@ export function CollaborationParticipantsTabs({
   tabOrder = ['agents', 'members', 'groups'],
   onTabChange,
 }: {
+  className?: string
   agentsContent: ReactNode
   agentsLabel: string
   ariaLabel: string
@@ -60,6 +62,7 @@ export function CollaborationParticipantsTabs({
   const value = tabs.some(tab => tab.id === selectedTab) ? selectedTab : tabs[0]?.id
   return (
     <TabsRoot
+      className={className}
       value={value}
       onValueChange={next => {
         if (next !== null) {

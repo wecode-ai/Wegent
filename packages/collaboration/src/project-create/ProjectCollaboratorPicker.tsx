@@ -5,6 +5,7 @@ import {
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
+import { selectionTriggerClasses } from '../controls/recipes'
 import { Popover, PopoverTrigger, PopoverContent } from '../controls/Popover'
 import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
 import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -61,7 +62,10 @@ export function ProjectCollaboratorPicker({
             query,
             async () => {
               try {
-                return { users: await searchUsers(query.trim()), failed: false }
+                return {
+                  users: await searchUsers(query.trim()),
+                  failed: false,
+                }
               } catch {
                 return { users: [] as CollaborationUser[], failed: true }
               }
@@ -132,18 +136,19 @@ export function ProjectCollaboratorPicker({
           <button
             ref={setTrigger}
             type="button"
-            className="collaboration-project-create-collaborator-trigger"
+            className={selectionTriggerClasses('property', 'dense')}
             data-testid="collaboration-project-create-add-collaborator"
             aria-expanded={open}
           />
         }
       >
-        <Plus aria-hidden="true" />
+        <Plus aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />
         <span>{labels.addCollaborator}</span>
       </PopoverTrigger>
       <PopoverContent
         {...theme}
         container={modalContainer}
+        anchor={trigger?.closest<HTMLElement>('[data-participant-field]') ?? trigger}
         side="bottom"
         align="start"
         sideOffset={6}
@@ -175,6 +180,7 @@ export function ProjectCollaboratorPicker({
             {peopleSearchStatus}
           </p>
           <CollaborationParticipantsTabs
+            className="collaboration-project-collaborator-tabs"
             ariaLabel={labels.collaborators}
             initialTab="members"
             onTabChange={setActiveTab}

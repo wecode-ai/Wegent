@@ -13,7 +13,9 @@ const unsupported = async (): Promise<never> => {
   throw new Error('This preview only supports directory search')
 }
 function Example({ disabled = false, empty = false, failure = false }) {
-  const [selected, onChange] = useState<IssueParticipant[]>([])
+  const [selected, onChange] = useState<IssueParticipant[]>([
+    { id: 1, kind: 'human', key: 'human:1', name: 'Me' },
+  ])
   const api = useMemo(
     () => ({
       ...createPersonalIssuesApi({

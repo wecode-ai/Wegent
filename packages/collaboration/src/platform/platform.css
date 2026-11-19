@@ -649,10 +649,11 @@ button.collaboration-project-offline:hover {
   border: 0;
   border-radius: 6px;
   color: rgb(var(--color-text-secondary));
-  background: rgb(var(--color-bg-muted));
+  background: transparent;
 }
 
-.collaboration-project-new-conversation:hover {
+.collaboration-project-new-conversation:hover,
+.collaboration-project-new-conversation[aria-expanded='true'] {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-hover));
 }

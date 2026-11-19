@@ -69,6 +69,8 @@ Composer 上下文行使用 `ComposerContextButton`，选值时使用 `SelectFie
 
 工具栏里的人员和插件选择也使用该样式。工作区选定后显示工作区名称。讨论工具栏在空间不足时换行，保留操作名称。事项详情的内联属性选择使用 `appearance="property"`，编辑表单的字段使用描边样式。
 
+新建事项和新建项目共用 `ParticipantField` 与 `ParticipantToken`，已选成员和添加入口放在同一字段。
+
 对话框页脚通过 `Button` 的 `primary`、`ghost`、`outline` 和 `destructive` 变体表达操作语义。行内删除入口复用 `DeleteIconButton` 或 `destructive-ghost`。同一组按钮使用统一的 `size`，禁用状态交由组件处理。
 
 ## 弹窗和浮层

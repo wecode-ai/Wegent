@@ -29,7 +29,8 @@ import type {
   CollaborationWorkspaceMember,
 } from '../types'
 import { ProjectCollaboratorPicker } from './ProjectCollaboratorPicker'
-import { ChoiceButton, CollaboratorToken } from './ProjectCreatePrimitives'
+import { ChoiceButton } from './ProjectCreatePrimitives'
+import { ParticipantField, ParticipantToken } from '../controls/ParticipantField'
 import type {
   ProjectCreateCollaborationGroupDraft,
   ProjectCreateDialogProps,
@@ -422,15 +423,15 @@ export function ProjectCreateFormView({
                 </ControlButton>
               </div>
             ) : null}
-            <div className="collaboration-project-create-collaborator-tokens">
+            <ParticipantField className="collaboration-project-create-collaborator-tokens">
               {!inGroup('human', String(resourceSetup.currentUser.id)) && (
-                <CollaboratorToken
+                <ParticipantToken
                   icon={<UserRound aria-hidden="true" />}
                   label={labels.currentUser}
                 />
               )}
               {directMembers.map(member => (
-                <CollaboratorToken
+                <ParticipantToken
                   key={`member:${member.user_id}`}
                   icon={<UserRound aria-hidden="true" />}
                   label={member.user_name}
@@ -439,7 +440,7 @@ export function ProjectCreateFormView({
                 />
               ))}
               {directAgents.map(agent => (
-                <CollaboratorToken
+                <ParticipantToken
                   key={`agent:${agent.id}`}
                   icon={<Bot aria-hidden="true" />}
                   label={agent.name}
@@ -447,63 +448,63 @@ export function ProjectCreateFormView({
                   onRemove={() => removeAgent(agent.id)}
                 />
               ))}
-            </div>
-            <ProjectCollaboratorPicker
-              labels={labels}
-              open={collaboratorPickerOpen && !collaboratorsLocked}
-              onOpenChange={setCollaboratorPickerOpen}
-              people={people.map(member => ({
-                id: member.user_id,
-                user_name: member.user_name,
-                email: member.email,
-              }))}
-              excludedIds={[resourceSetup.currentUser.id, ...state.memberUserIds]}
-              searchUsers={resourceSetup.searchUsers}
-              agents={availableAgents}
-              groups={resourceSetup.groups}
-              onSelectPerson={user => {
-                if (collaboratorsLocked) return
-                setAddedPeople(current => [
-                  ...current.filter(member => member.user_id !== user.id),
-                  {
-                    id: user.id,
-                    user_id: user.id,
-                    user_name: user.user_name,
-                    email: user.email,
-                    role: 'Developer',
-                  },
-                ])
-                commands.setMemberUserIds([...state.memberUserIds, user.id])
-                setCollaboratorPickerOpen(false)
-              }}
-              onSelectAgent={addAgent}
-              onSelectGroup={importGroup}
-              groupAction={
-                selectedAgents.length > 0 && resourceSetup.generateCollaborationGroupDraft ? (
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
-                    data-testid="collaboration-project-create-new-group"
-                    disabled={groupGenerating || generationModelsLoading}
-                    onClick={openGroupModelPicker}
-                  >
-                    {groupGenerating ? (
-                      <LoaderCircle aria-hidden="true" className="collaboration-spin" />
-                    ) : (
-                      <Sparkles aria-hidden="true" />
-                    )}
-                    <span>
-                      <strong>{labels.createCollaborationGroup}</strong>
-                      <small>
-                        {groupGenerating
-                          ? labels.generatingGroup
-                          : labels.groupRecommendationDescription}
-                      </small>
-                    </span>
-                  </ControlButton>
-                ) : null
-              }
-            />
+              <ProjectCollaboratorPicker
+                labels={labels}
+                open={collaboratorPickerOpen && !collaboratorsLocked}
+                onOpenChange={setCollaboratorPickerOpen}
+                people={people.map(member => ({
+                  id: member.user_id,
+                  user_name: member.user_name,
+                  email: member.email,
+                }))}
+                excludedIds={[resourceSetup.currentUser.id, ...state.memberUserIds]}
+                searchUsers={resourceSetup.searchUsers}
+                agents={availableAgents}
+                groups={resourceSetup.groups}
+                onSelectPerson={user => {
+                  if (collaboratorsLocked) return
+                  setAddedPeople(current => [
+                    ...current.filter(member => member.user_id !== user.id),
+                    {
+                      id: user.id,
+                      user_id: user.id,
+                      user_name: user.user_name,
+                      email: user.email,
+                      role: 'Developer',
+                    },
+                  ])
+                  commands.setMemberUserIds([...state.memberUserIds, user.id])
+                  setCollaboratorPickerOpen(false)
+                }}
+                onSelectAgent={addAgent}
+                onSelectGroup={importGroup}
+                groupAction={
+                  selectedAgents.length > 0 && resourceSetup.generateCollaborationGroupDraft ? (
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      data-testid="collaboration-project-create-new-group"
+                      disabled={groupGenerating || generationModelsLoading}
+                      onClick={openGroupModelPicker}
+                    >
+                      {groupGenerating ? (
+                        <LoaderCircle aria-hidden="true" className="collaboration-spin" />
+                      ) : (
+                        <Sparkles aria-hidden="true" />
+                      )}
+                      <span>
+                        <strong>{labels.createCollaborationGroup}</strong>
+                        <small>
+                          {groupGenerating
+                            ? labels.generatingGroup
+                            : labels.groupRecommendationDescription}
+                        </small>
+                      </span>
+                    </ControlButton>
+                  ) : null
+                }
+              />
+            </ParticipantField>
             {!state.collaborationGroupDraft &&
             selectedAgents.length >= 2 &&
             resourceSetup.generateCollaborationGroupDraft &&

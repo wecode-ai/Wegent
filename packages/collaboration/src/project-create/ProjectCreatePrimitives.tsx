@@ -102,30 +102,6 @@ export function ChoiceButton({
   )
 }
 
-export function CollaboratorToken({
-  icon,
-  label,
-  onRemove,
-  removeLabel,
-}: {
-  icon: ReactNode
-  label: string
-  onRemove?: () => void
-  removeLabel?: string
-}) {
-  return (
-    <span className="collaboration-project-create-collaborator-token">
-      {icon}
-      <span>{label}</span>
-      {onRemove ? (
-        <ControlButton variant="unstyled" type="button" onClick={onRemove} aria-label={removeLabel}>
-          <X aria-hidden="true" />
-        </ControlButton>
-      ) : null}
-    </span>
-  )
-}
-
 export function CollaborationGroupWorkflow({
   label,
   pendingLabel,

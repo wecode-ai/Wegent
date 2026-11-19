@@ -361,7 +361,7 @@ export function WeworkPersonalHome({
                     appearance="plain"
                     aria-label={t('personalHome.sort')}
                     data-testid="personal-home-sort"
-                    className="wework-native-select text-text-secondary hover:bg-muted"
+                    className="wework-native-select"
                   />
                   <SelectContent>
                     {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (

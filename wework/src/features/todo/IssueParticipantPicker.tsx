@@ -6,10 +6,11 @@ import {
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { ParticipantField, ParticipantToken } from '@wegent/collaboration/controls'
 import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
 import { TabsList, TabsPanel, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { Bot, Plus, UserRound, Users, X } from 'lucide-react'
+import { Bot, Plus, UserRound, Users } from 'lucide-react'
 import { useId, useMemo, useState, useSyncExternalStore } from 'react'
 
 import {
@@ -156,10 +157,8 @@ export function IssueParticipantPicker({
       className="grid gap-2"
       aria-label={t('independentIssues.participants')}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 text-sm text-text-secondary">
-          {t('independentIssues.participants')}
-        </span>
+      <span className="text-sm text-text-secondary">{t('independentIssues.participants')}</span>
+      <ParticipantField>
         {selected.map(person => {
           const Icon = icon(person.kind)
           const label = participantLabel(person, [...selected, ...results], {
@@ -169,154 +168,149 @@ export function IssueParticipantPicker({
           const identity = `${label} · ${t(`issue_creation.participant_${person.kind}`)}`
           const identified = participantNeedsIdentifier(person, [...selected, ...results], userId)
           return (
-            <span
+            <ParticipantToken
               key={person.key}
               title={identity}
-              className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-muted pl-2 text-sm"
-            >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{identified ? person.name : label}</span>
-              {identified && <span className="shrink-0 text-text-secondary"> · #{person.id}</span>}
-              {person.key !== `human:${userId}` && (
-                <ControlButton
-                  variant="unstyled"
-                  type="button"
-                  disabled={disabled}
-                  data-testid={`issue-participant-remove-${person.key}`}
-                  aria-label={t('independentIssues.removePerson', { name: identity })}
-                  className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md hover:bg-background md:min-h-7 md:min-w-7"
-                  onClick={() => onChange(selected.filter(item => item.key !== person.key))}
-                >
-                  <X className="h-3 w-3" />
-                </ControlButton>
-              )}
-            </span>
+              icon={<Icon aria-hidden="true" />}
+              label={identified ? person.name : label}
+              description={identified ? `· #${person.id}` : undefined}
+              disabled={disabled}
+              removeTestId={`issue-participant-remove-${person.key}`}
+              removeLabel={t('independentIssues.removePerson', { name: identity })}
+              onRemove={
+                person.key === `human:${userId}`
+                  ? undefined
+                  : () => onChange(selected.filter(item => item.key !== person.key))
+              }
+            />
           )
         })}
-      </div>
-      <TabsRoot
-        value={tab}
-        onValueChange={next => {
-          if (next) {
-            setTab(next)
-            setQuery('')
-          }
-        }}
-      >
-        <SearchableSelect
-          className="w-full justify-start"
-          density="compact"
-          header={
-            <TabsList aria-label={t('issue_creation.participant_type')} className="mb-2">
-              {(['human', 'agent', 'group'] as const).map(kind => (
-                <TabsTab
-                  value={kind}
-                  key={kind}
-                  disabled={disabled}
-                  data-testid={`issue-participant-tab-${kind}`}
-                  className="min-w-0 flex-1 truncate px-2"
-                >
-                  {t(`issue_creation.participant_${kind}`)}
-                </TabsTab>
-              ))}
-            </TabsList>
-          }
-          multiple
-          value={selected.map(person => person.key)}
-          options={options}
-          disabled={disabled}
-          filter={false}
-          query={query}
-          onSearchChange={setQuery}
-          open={open}
-          onOpenChange={setOpen}
-          searchDescriptionId={`${pickerId}-status`}
-          testId="issue-participant-add"
-          menuTestId="issue-participant-picker"
-          searchTestId="independent-issue-search-people"
-          accessibleLabel={t('issue_creation.add_participants')}
-          searchPlaceholder={t('issue_creation.search_participants')}
-          emptyLabel={t('issue_creation.no_participants')}
-          triggerContent={
-            <>
-              <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-              <span className="min-w-0 truncate">{t('issue_creation.add_participants')}</span>
-            </>
-          }
-          searchStatus={
-            <>
-              <p
-                id={`${pickerId}-status`}
-                data-testid="issue-participant-results-status"
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-                className={
-                  busy || (!error && !candidates.length)
-                    ? 'px-2.5 py-3 text-sm text-text-secondary'
-                    : 'sr-only'
-                }
-              >
-                {statusMessage}
-              </p>
-              {error && (
-                <div
-                  role="alert"
-                  className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 text-sm text-destructive"
-                >
-                  {t('issue_creation.participants_load_failed')}
-                  <ControlButton
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    data-testid="issue-participant-retry"
-                    onClick={() => setRevision(v => v + 1)}
-                  >
-                    {t('independentIssues.retry')}
-                  </ControlButton>
-                </div>
-              )}
-            </>
-          }
-          renderOptions={list =>
-            (['human', 'agent', 'group'] as const).map(kind => (
-              <TabsPanel className="flex min-h-0 flex-col" key={kind} value={kind}>
-                {tab === kind ? list : null}
-              </TabsPanel>
-            ))
-          }
-          footer={
-            <div className="flex justify-end">
-              <ControlButton
-                variant="outline"
-                size="sm"
-                type="button"
-                data-testid="issue-participant-done"
-                onClick={() => setOpen(false)}
-              >
-                {t('issue_creation.participant_done')}
-              </ControlButton>
-            </div>
-          }
-          onChange={next => {
-            const candidateKeys = new Set(candidates.map(person => person.key))
-            const retained = selected.filter(
-              person => !candidateKeys.has(person.key) || next.includes(person.key)
-            )
-            const added = candidates
-              .filter(
-                person =>
-                  next.includes(person.key) && !selected.some(current => current.key === person.key)
-              )
-              .map(person =>
-                participantNeedsIdentifier(person, results, userId)
-                  ? { ...person, needsIdentifier: true }
-                  : person
-              )
-            onChange([...retained, ...added])
+        <TabsRoot
+          className="min-w-0 max-w-full"
+          value={tab}
+          onValueChange={next => {
+            if (next) {
+              setTab(next)
+              setQuery('')
+            }
           }}
-        />
-      </TabsRoot>
+        >
+          <SearchableSelect
+            appearance="property"
+            density="dense"
+            header={
+              <TabsList aria-label={t('issue_creation.participant_type')} className="mb-2">
+                {(['human', 'agent', 'group'] as const).map(kind => (
+                  <TabsTab
+                    value={kind}
+                    key={kind}
+                    disabled={disabled}
+                    data-testid={`issue-participant-tab-${kind}`}
+                    className="min-w-0 flex-1 truncate px-2"
+                  >
+                    {t(`issue_creation.participant_${kind}`)}
+                  </TabsTab>
+                ))}
+              </TabsList>
+            }
+            multiple
+            value={selected.map(person => person.key)}
+            options={options}
+            disabled={disabled}
+            filter={false}
+            query={query}
+            onSearchChange={setQuery}
+            open={open}
+            onOpenChange={setOpen}
+            searchDescriptionId={`${pickerId}-status`}
+            testId="issue-participant-add"
+            menuTestId="issue-participant-picker"
+            searchTestId="independent-issue-search-people"
+            accessibleLabel={t('issue_creation.add_participants')}
+            searchPlaceholder={t('issue_creation.search_participants')}
+            emptyLabel={t('issue_creation.no_participants')}
+            triggerContent={
+              <>
+                <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+                <span className="min-w-0 truncate">{t('issue_creation.add_participants')}</span>
+              </>
+            }
+            searchStatus={
+              <>
+                <p
+                  id={`${pickerId}-status`}
+                  data-testid="issue-participant-results-status"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                  className={
+                    busy || (!error && !candidates.length)
+                      ? 'px-2.5 py-3 text-sm text-text-secondary'
+                      : 'sr-only'
+                  }
+                >
+                  {statusMessage}
+                </p>
+                {error && (
+                  <div
+                    role="alert"
+                    className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 text-sm text-destructive"
+                  >
+                    {t('issue_creation.participants_load_failed')}
+                    <ControlButton
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      data-testid="issue-participant-retry"
+                      onClick={() => setRevision(v => v + 1)}
+                    >
+                      {t('independentIssues.retry')}
+                    </ControlButton>
+                  </div>
+                )}
+              </>
+            }
+            renderOptions={list =>
+              (['human', 'agent', 'group'] as const).map(kind => (
+                <TabsPanel className="flex min-h-0 flex-col" key={kind} value={kind}>
+                  {tab === kind ? list : null}
+                </TabsPanel>
+              ))
+            }
+            footer={
+              <div className="flex justify-end">
+                <ControlButton
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  data-testid="issue-participant-done"
+                  onClick={() => setOpen(false)}
+                >
+                  {t('issue_creation.participant_done')}
+                </ControlButton>
+              </div>
+            }
+            onChange={next => {
+              const candidateKeys = new Set(candidates.map(person => person.key))
+              const retained = selected.filter(
+                person => !candidateKeys.has(person.key) || next.includes(person.key)
+              )
+              const added = candidates
+                .filter(
+                  person =>
+                    next.includes(person.key) &&
+                    !selected.some(current => current.key === person.key)
+                )
+                .map(person =>
+                  participantNeedsIdentifier(person, results, userId)
+                    ? { ...person, needsIdentifier: true }
+                    : person
+                )
+              onChange([...retained, ...added])
+            }}
+          />
+        </TabsRoot>
+      </ParticipantField>
     </section>
   )
 }

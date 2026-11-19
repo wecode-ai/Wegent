@@ -52,6 +52,8 @@ Use `ComposerContextButton` for composer context actions and `appearance="compos
 
 Use the same appearance for assignee and plugin pickers in composer toolbars. A selected workspace shows its name. Discussion toolbar actions wrap when space is limited so that their labels stay readable. Use `appearance="property"` for inline Issue property pickers and the outlined appearance for edit form fields.
 
+Use `ParticipantField` and `ParticipantToken` to show selected people and the add action in one field, as in Issue and project creation.
+
 Use the `Button` variants `primary`, `ghost`, `outline` and `destructive` for dialog footer actions. Inline deletion uses `DeleteIconButton` or `destructive-ghost`. Controls in the same group share a `size`, and Button supplies the disabled treatment.
 
 ## Popup ownership
