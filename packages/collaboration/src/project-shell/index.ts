@@ -5,3 +5,5 @@
 export * from "./ProjectShell";
 export * from "./CollaborationProjectViewShell";
 export * from "./ProjectLoadingSkeleton";
+export * from "./projectSurfaces";
+export * from "./projectSurfaceRouting";

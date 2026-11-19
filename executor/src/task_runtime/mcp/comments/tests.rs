@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::super::{call_backend_tool, BackendToolContext};
+use super::super::{call_backend_tool, BackendToolContext, SpaceContextGrant};
 use super::*;
 
 #[tokio::test]
@@ -67,7 +67,7 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
                 json!([{"type": "user", "id": "52", "label": "Reviewer"}])
             );
             Json(
-                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"]}),
+                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"], "assistant_source":body["assistant_source"]}),
             )
         }),
     );
@@ -90,6 +90,42 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
     .unwrap();
     assert_eq!(written["id"], "visible-report");
     assert_eq!(written["mentions"][0]["id"], "52");
+    assert!(written["assistant_source"].is_null());
+    let mut grant = SpaceContextGrant {
+        space_id: Some("12".into()),
+        item_id: Some("ISSUE-1".into()),
+        device_id: Some("cloud-device".into()),
+        task_id: "owned-runtime".into(),
+        ..Default::default()
+    };
+    for target in ["ISSUE-1", "another-issue"] {
+        grant.item_id = Some(target.into());
+        let bound = BackendToolContext {
+            grant: Some(&grant),
+            ..context
+        };
+        let published = call_backend_tool(
+            &bound,
+            "add_board_item_comment",
+            &json!({
+                "item_id":"ISSUE-1", "body":"Review report",
+                "mentions":[{"type":"user","id":"52","label":"Reviewer"}],
+                "assistant_source":{"device_id":"forged-device","task_id":"forged-task"}
+            }),
+        )
+        .await
+        .unwrap();
+        if target == "ISSUE-1" {
+            assert_eq!(
+                published["assistant_source"],
+                json!({
+                    "device_id":"cloud-device","task_id":"owned-runtime","requires_confirmation":true
+                })
+            );
+        } else {
+            assert!(published["assistant_source"].is_null());
+        }
+    }
     let comments = call_backend_tool(
         &context,
         "list_board_item_comments",

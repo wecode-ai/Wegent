@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LocalCommentRecord } from './localProjectChatClient'
 import { createLocalProjectChatClient } from './localProjectChatClient'
+import { timelineMessageKind } from '@/features/collaboration-exp/model/messageLayer'
 
 const request = vi.fn()
 
@@ -29,6 +30,107 @@ function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommen
 }
 
 describe('createLocalProjectChatClient', () => {
+  it('publishes an assistant conclusion through native source verification', async () => {
+    request.mockResolvedValue(
+      commentRecord({
+        generation_source: 'ai',
+        publication_source: 'human',
+        confirmation_state: 'authorized',
+      })
+    )
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const result = await client.publishAssistantMessage!({
+      projectId: 'p1',
+      taskId: 't1',
+      clientMessageId: 'cm-1',
+      text: 'Approved result',
+      source: { deviceId: 'mac', taskId: 'private' },
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith('todos.comment.publish_assistant', {
+      device_id: 'mac',
+      runtime_task_id: 'private',
+      comment: {
+        project_id: 'p1',
+        task_id: 't1',
+        client_message_id: 'cm-1',
+        sender_type: 'user',
+        sender_id: '0',
+        sender_name: 'local',
+        content: 'Approved result',
+        metadata: {},
+        reply_to_message_id: null,
+      },
+    })
+    expect(result).toMatchObject({
+      generationSource: 'ai',
+      publicationSource: 'human',
+      confirmationState: 'authorized',
+    })
+  })
+  it('keeps process chunks in the execution layer and follows runtime owner instead of trigger author', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        actor_user_id: '8',
+        runtime_owner_user_id: '7',
+        message_type: 'agent_chunk',
+        content: 'private output',
+        metadata: { runtime_address: { deviceId: 'mac', taskId: 'private' } },
+      }),
+    ])
+    for (const id of [7, 8]) {
+      const client = createLocalProjectChatClient(request, {
+        currentUser: { id, user_name: 'viewer' },
+      })
+      const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+      const message = subscription.snapshot.messages[0]
+      expect(timelineMessageKind(message)).toBe('execution')
+      expect(message.actorUserId).toBe('8')
+      expect(message.content).toBe(id === 7 ? 'private output' : '')
+      expect(message.runtimeAddress).toEqual(
+        id === 7 ? { deviceId: 'mac', taskId: 'private' } : undefined
+      )
+      subscription.unsubscribe()
+    }
+  })
+  it('preserves native-owner sources across cloud identity without exposing another participant', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        actor_user_id: '0',
+        runtime_owner_user_id: '0',
+        metadata: {
+          runtime_address: { deviceId: 'mac', taskId: 'private' },
+          runtime_turn_id: 'turn',
+        },
+      }),
+      commentRecord({
+        message_id: 'foreign',
+        sender_id: '42',
+        actor_user_id: '42',
+        metadata: { runtime_address: { deviceId: 'mac', taskId: 'foreign' } },
+      }),
+      commentRecord({
+        message_id: 'reply',
+        sender_type: 'agent',
+        actor_user_id: '0',
+        trigger_message_id: 'm-1',
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 86, user_name: 'cloud' },
+      viewerUserIds: [0, 86],
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    const [own, foreign, reply] = subscription.snapshot.messages
+    expect(own.runtimeAddress).toEqual({ deviceId: 'mac', taskId: 'private' })
+    expect(own.metadata.runtime_turn_id).toBe('turn')
+    expect(foreign.runtimeAddress).toBeUndefined()
+    expect(foreign.metadata.runtime_address).toBeUndefined()
+    expect(reply.triggerMessageId).toBe('m-1')
+    subscription.unsubscribe()
+  })
   beforeEach(() => {
     request.mockReset()
   })
@@ -161,11 +263,164 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
+  it.each(['agent_status', 'agent_chunk'])(
+    'does not reveal another owner private %s source',
+    async messageType => {
+      request.mockResolvedValue([
+        commentRecord({
+          sender_type: 'agent',
+          actor_user_id: '8',
+          message_type: messageType,
+          content: 'PRIVATE TOOL OUTPUT',
+          metadata: {
+            private_prompt: 'secret',
+            runtime_address: { deviceId: 'private-device', taskId: 'private-task' },
+          },
+        }),
+      ])
+      const client = createLocalProjectChatClient(request, {
+        currentUser: { id: 7, user_name: 'owner' },
+      })
+      const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+      const message = subscription.snapshot.messages[0]
+      expect(message.content).toBe('')
+      expect(message.runtimeAddress).toBeUndefined()
+      expect(message.metadata).toEqual({})
+      expect(message.traceState).toBe('history-unavailable')
+      subscription.unsubscribe()
+    }
+  )
+
+  it('keeps a shared agent Runtime source available to its trigger reader', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        actor_user_id: '8',
+        sender_id: 'agent-1',
+        message_type: 'agent_chunk',
+        content: 'PRIVATE TOOL OUTPUT',
+        runtime_owner_user_id: '7',
+        runtime_shared: true,
+        trace_ref: 'trace',
+        metadata: {
+          private_prompt: 'not shared',
+          run_status: 'running',
+          execution_id: 42,
+          workflow_task_title: 'Assigned task',
+          runtime_address: { deviceId: 'shared-device', taskId: 'shared-task' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 8, user_name: 'member' },
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    expect(subscription.snapshot.messages[0]).toMatchObject({
+      actorUserId: '8',
+      content: '',
+      runtimeAddress: { deviceId: 'shared-device', taskId: 'shared-task' },
+      traceState: 'available',
+      metadata: {
+        run_status: 'running',
+        execution_id: 42,
+        workflow_task_title: 'Assigned task',
+      },
+    })
+    subscription.unsubscribe()
+  })
+
+  it('hides a private agent Runtime source from the trigger author', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        actor_user_id: '8',
+        sender_id: 'private-agent',
+        runtime_owner_user_id: '7',
+        runtime_shared: false,
+        trace_ref: 'trace',
+        metadata: {
+          private_prompt: 'not shared',
+          execution_id: 99,
+          workflow_task_title: 'Private task',
+          runtime_address: { deviceId: 'private-device', taskId: 'private-task' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 8, user_name: 'member' },
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    expect(subscription.snapshot.messages[0]).toMatchObject({
+      actorUserId: '8',
+      runtimeAddress: undefined,
+      traceState: 'restricted',
+      metadata: {},
+    })
+    subscription.unsubscribe()
+  })
+
+  it('keeps the native local owner read model and execution classification', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        actor_user_id: '0',
+        runtime_owner_user_id: '0',
+        sender_id: 'agent-1',
+        message_type: 'agent_chunk',
+        content: 'Owned execution output',
+        trace_ref: 'trace',
+        metadata: {
+          member_assistant_result: { summary: 'Owned result' },
+          runtime_address: { deviceId: 'local-device', taskId: 'local-task' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 7, user_name: 'cloud owner' },
+      viewerUserIds: [0, 7],
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    expect(subscription.snapshot.messages[0]).toMatchObject({
+      type: 'agent_chunk',
+      content: 'Owned execution output',
+      runtimeAddress: { deviceId: 'local-device', taskId: 'local-task' },
+      traceState: 'available',
+      metadata: { member_assistant_result: { summary: 'Owned result' } },
+    })
+    subscription.unsubscribe()
+  })
+
+  it('fails closed when a local agent message has no resolved actor', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        sender_id: 'agent-1',
+        content: 'Public result',
+        metadata: {
+          private_prompt: 'must remain private',
+          runtime_address: { deviceId: 'private-device', taskId: 'private-task' },
+        },
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 7, user_name: 'owner' },
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    expect(subscription.snapshot.messages[0]).toMatchObject({
+      content: 'Public result',
+      metadata: {},
+      runtimeAddress: undefined,
+    })
+    subscription.unsubscribe()
+  })
+
   it('persists a continued turn on the existing runtime session', async () => {
     request.mockResolvedValue(
       commentRecord({
         message_id: 'agent-turn-2',
         sender_type: 'agent',
+        actor_user_id: '0',
+        runtime_owner_user_id: '0',
         sender_id: 'a1',
         sender_name: 'Bot',
         status: 'streaming',
@@ -245,12 +500,40 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
+  it('forwards the assistant source claim for local store verification', async () => {
+    request.mockResolvedValue(commentRecord())
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+
+    await client.send({
+      projectId: 'p1',
+      taskId: 't1',
+      clientMessageId: 'publication-1',
+      text: 'Public conclusion',
+      assistantSource: { deviceId: 'local-device', taskId: 'session-1' },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'todos.comment.create',
+      expect.objectContaining({
+        comment: expect.objectContaining({
+          metadata: {
+            mentions: [],
+            assistant_source: { deviceId: 'local-device', taskId: 'session-1' },
+          },
+        }),
+      })
+    )
+  })
+
   it('delivers initial comments and polls for status updates', async () => {
     vi.useFakeTimers()
     const streaming = commentRecord({
       id: 2,
       message_id: 'm-2',
       sender_type: 'agent',
+      actor_user_id: '0',
       sender_id: 'a1',
       sender_name: 'Bot',
       content: '',
@@ -290,6 +573,8 @@ describe('createLocalProjectChatClient', () => {
     request.mockResolvedValue([
       commentRecord({
         sender_type: 'agent',
+        actor_user_id: '0',
+        runtime_owner_user_id: '0',
         status: 'pending',
         metadata: {
           execution_id: 4,

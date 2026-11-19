@@ -12,6 +12,7 @@ import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByI
 import type { Milestone, MilestoneInput } from "./types";
 import { milestoneMessages } from "./messages";
 import { useMilestones, milestoneVisibilityScope } from "./useMilestones";
+import type { MilestoneFilterProps } from "./useMilestoneFilter";
 
 const buttonBaseClass =
   "min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40";
@@ -26,7 +27,9 @@ export function MilestonesPage({
   renderIssues,
   onChanged,
   onOpenArchive,
-}: {
+  filter,
+  onFilterChange,
+}: MilestoneFilterProps & {
   api: SharedWorkspaceApi;
   project: CollaborationProject;
   issues: CollaborationIssue[];
@@ -49,7 +52,12 @@ export function MilestonesPage({
     milestoneVisibilityScope(project),
   );
   const [state, setState] = useState<"open" | "closed">("open");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selection, setSelection] = useState<string | null>(null);
+  const selected = filter !== undefined ? filter.milestoneId : selection;
+  function setSelected(value: string | null) {
+    if (filter === undefined) setSelection(value);
+    onFilterChange?.(value);
+  }
   const [editing, setEditing] = useState<Milestone | "new" | null>(null);
   const [deleting, setDeleting] = useState<Milestone | null>(null);
   const [busy, setBusy] = useState(false);

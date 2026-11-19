@@ -32,6 +32,9 @@ export function selectHistoryNodes(input: ExperienceTimelineInput): ExperienceTi
         entry.by_user_id,
         {
           kind: 'handoff',
+          author: !entry.by_user_id
+            ? null
+            : { id: String(entry.by_user_id), name: entry.by_user_name ?? null },
           handoff: {
             action: entry.action,
             targetType: entry.to_type,
@@ -62,6 +65,9 @@ export function selectHistoryNodes(input: ExperienceTimelineInput): ExperienceTi
       entry.by_user_id,
       {
         kind: 'status',
+        author: !entry.by_user_id
+          ? null
+          : { id: String(entry.by_user_id), name: entry.by_user_name ?? null },
         transition: {
           from: entry.from_status_name ?? entry.from_status,
           to: entry.to_status_name ?? entry.to_status,
@@ -69,11 +75,30 @@ export function selectHistoryNodes(input: ExperienceTimelineInput): ExperienceTi
       }
     )
   )
-  return [...new Map([...assignments, ...statuses].map(node => [node.id, node])).values()].sort(
-    (a, b) =>
-      (a.at && b.at ? Date.parse(a.at) - Date.parse(b.at) : a.at ? -1 : b.at ? 1 : 0) ||
-      a.id.localeCompare(b.id)
-  )
+  const names = new Map<string, string>()
+  for (const message of input.messages ?? []) {
+    if (message.projectId !== input.project.id || message.taskId !== issue.id) continue
+    if (message.sender.type === 'user' && message.sender.name.trim())
+      names.set(message.sender.id, message.sender.name)
+    if (message.actorUserId && message.actorDisplayName)
+      names.set(message.actorUserId, message.actorDisplayName)
+  }
+  if (issue.created_by_user_name)
+    names.set(String(issue.created_by_user_id), issue.created_by_user_name)
+  if (issue.assignee_user_id !== null && issue.assignee_name)
+    names.set(String(issue.assignee_user_id), issue.assignee_name)
+  return [...new Map([...assignments, ...statuses].map(node => [node.id, node])).values()]
+    .map(node => ({
+      ...node,
+      author: node.author
+        ? { ...node.author, name: node.author.name || names.get(node.author.id) || null }
+        : null,
+    }))
+    .sort(
+      (a, b) =>
+        (a.at && b.at ? Date.parse(a.at) - Date.parse(b.at) : a.at ? -1 : b.at ? 1 : 0) ||
+        a.id.localeCompare(b.id)
+    )
 }
 
 /** Insert persisted facts without changing the canonical message sequence. */

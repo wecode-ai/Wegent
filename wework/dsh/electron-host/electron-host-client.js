@@ -1,4 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
+import { performance } from 'node:perf_hooks'
 import { JsonLineReader } from './json-line-reader.js'
 
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
@@ -21,9 +22,21 @@ function traceHostRequest(phase, requestId, capability) {
     process.env.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS !== '1'
   )
     return
+  const cpu = process.cpuUsage()
+  const loop = performance.eventLoopUtilization()
   console.debug(
     '[host-pipe-client]',
-    JSON.stringify({ at: new Date().toISOString(), phase, requestId, capability })
+    JSON.stringify({
+      at: new Date().toISOString(),
+      phase,
+      requestId,
+      capability,
+      processId: process.pid,
+      cpuUserMicros: cpu.user,
+      cpuSystemMicros: cpu.system,
+      eventLoopActiveMs: Math.round(loop.active),
+      eventLoopIdleMs: Math.round(loop.idle),
+    })
   )
 }
 

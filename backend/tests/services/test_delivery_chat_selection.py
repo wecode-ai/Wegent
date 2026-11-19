@@ -4,7 +4,7 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.delivery import DeliveryChatSelection
 from app.services.delivery.service import DeliveryService
@@ -43,15 +43,19 @@ def test_delivery_chat_selection_supports_all_latest_and_message_ids(
     test_db.commit()
 
     all_messages = DeliveryService._select_chat_messages(
-        test_db, item, DeliveryChatSelection(mode="all")
+        test_db, item, DeliveryChatSelection(mode="all"), user_id=7
     )
     latest = DeliveryService._select_chat_messages(
-        test_db, item, DeliveryChatSelection(mode="latest", count=2)
+        test_db,
+        item,
+        DeliveryChatSelection(mode="latest", count=2),
+        user_id=7,
     )
     selected = DeliveryService._select_chat_messages(
         test_db,
         item,
         DeliveryChatSelection(mode="message_ids", message_ids=["m1", "m3"]),
+        user_id=7,
     )
 
     assert [message["message_id"] for message in all_messages["messages"]] == [
@@ -71,8 +75,54 @@ def test_delivery_chat_selection_rejects_unknown_message_ids(test_db: Session) -
             test_db,
             item,
             DeliveryChatSelection(mode="message_ids", message_ids=["missing"]),
+            user_id=7,
         )
     except HTTPException as exc:
         assert exc.status_code == 404
     else:
         raise AssertionError("missing chat message must be rejected")
+
+
+def test_delivery_chat_selection_uses_the_viewers_runtime_access(
+    test_db: Session,
+) -> None:
+    item = LoopItem(id="ISSUE-1", cloud_project_id="42")
+    agent = ProjectChatAgent(
+        id="private-agent",
+        cloud_project_id="42",
+        title="Private agent",
+        name="Private agent",
+        created_by_user_id=8,
+        metadata_json={"visibility": "private"},
+    )
+    test_db.add_all(
+        [
+            item,
+            agent,
+            ProjectChatMessage(
+                message_id="private-message",
+                client_message_id="private-message",
+                project_id="42",
+                task_id=item.id,
+                sender_type="agent",
+                sender_id=agent.id,
+                sender_name="Private agent",
+                message_type="text",
+                content="Public summary",
+                metadata_json={"private_prompt": "not shared"},
+                agent_id=agent.id,
+                runtime_device_id="private-device",
+                runtime_task_id="private-task",
+                status="completed",
+            ),
+        ]
+    )
+    test_db.commit()
+
+    snapshot = DeliveryService._select_chat_messages(
+        test_db, item, DeliveryChatSelection(mode="all"), user_id=7
+    )
+    message = snapshot["messages"][0]
+    assert message["content"] == "Public summary"
+    assert message["runtime_address"] is None
+    assert "private_prompt" not in message["metadata"]

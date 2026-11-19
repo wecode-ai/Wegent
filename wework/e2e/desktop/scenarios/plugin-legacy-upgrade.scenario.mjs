@@ -164,15 +164,33 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
+    // Pin the account before the historical executor connects so it cannot
+    // materialize a newer release left by an earlier baseline.
     for (const [role, original] of Object.entries(delivered.packages)) {
       const fixture = await publish(original)
-      const existing = await accountPlugin(cloud, fixture.slug)
-      if (existing) {
-        fixture.installedId = Number(existing.metadata.labels.id)
-        // Re-pin before registration can sync the previous baseline's newer release.
-        if (existing.spec.releaseId !== fixture.releaseId)
-          await update(fixture, null, { releaseId: fixture.releaseId })
+      let installed = await accountPlugin(cloud, fixture.slug)
+      if (!installed) {
+        const result = await pluginApi(
+          cloud,
+          `/plugins/marketplace/${fixture.pluginId}/install?release_id=${fixture.releaseId}`,
+          'POST'
+        )
+        installed = result.plugin
       }
+      fixture.installedId = Number(installed.metadata.labels.id)
+      if (installed.spec.releaseId !== fixture.releaseId) {
+        await update(fixture, null, { releaseId: fixture.releaseId })
+      }
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
+      const desired = await accountPlugin(cloud, fixture.slug)
+      assert.equal(desired.spec.releaseId, fixture.releaseId)
+      assert.equal(desired.spec.version, fixture.version)
       fixtures[role] = fixture
     }
     const installer = await startHistoricalPluginExecutor({
@@ -184,26 +202,8 @@ export async function createDesktopScenario({
       token: releaseAssetToken,
     })
     try {
-      for (const [role, fixture] of Object.entries(fixtures)) {
-        // Installing again would select the marketplace's latest release.
-        if (fixture.installedId === undefined) {
-          await pluginApi(
-            cloud,
-            `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-            'POST'
-          )
-        }
-        const desired = await accountPlugin(cloud, fixture.slug)
-        fixture.installedId = Number(desired.metadata.labels.id)
-        assert.equal(desired.spec.releaseId, fixture.releaseId)
-        assert.equal(desired.spec.version, fixture.version)
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
       }
       let observedState
       const original = await until(
