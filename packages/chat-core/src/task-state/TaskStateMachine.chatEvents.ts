@@ -353,12 +353,12 @@ export function reduceChatDoneEvent({
       : ''
   const incomingBlocks = event.result?.blocks ?? []
   // Evidence binding adds the citation array even when every citation is unavailable.
-  const replaceDraftText =
+  const useSavedAnswer =
     finalStatus === 'completed' &&
     !event.hasError &&
     Array.isArray(event.result?.answer_citations) &&
     incomingBlocks.some(block => block.type === 'text')
-  const finalContent = replaceDraftText
+  const finalContent = useSavedAnswer
     ? (resultValue ?? incomingContent)
     : incomingContent.length > existingMessage.content.length
       ? incomingContent
@@ -367,7 +367,7 @@ export function reduceChatDoneEvent({
   const mergedBlocks = mergeBlocksForDone(
     existingMessage.result?.blocks || [],
     incomingBlocks,
-    replaceDraftText
+    useSavedAnswer
   )
   const mergedResult =
     event.result || existingMessage.result?.blocks
@@ -375,6 +375,7 @@ export function reduceChatDoneEvent({
           ...existingMessage.result,
           ...(event.result || {}),
           thinking: event.result?.thinking || existingMessage.result?.thinking,
+          ...(useSavedAnswer && { reasoning_content: event.result?.reasoning_content }),
           blocks: mergedBlocks,
         }
       : existingMessage.result
@@ -386,6 +387,7 @@ export function reduceChatDoneEvent({
     subtaskStatus: finalSubtaskStatus,
     content: finalContent,
     timestamp: event.hasError ? Date.now() : existingMessage.timestamp,
+    reasoningContent: useSavedAnswer ? undefined : existingMessage.reasoningContent,
     isReasoningStreaming: false,
     error: event.hasError ? event.errorMessage : existingMessage.error,
     messageId: event.messageId ?? existingMessage.messageId,

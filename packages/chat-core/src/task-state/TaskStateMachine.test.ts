@@ -507,7 +507,7 @@ describe('TaskStateMachine', () => {
     expect(blocks.every(block => block.status === 'done')).toBe(true)
   })
 
-  it('replaces draft text with the saved answer when evidence is unavailable', () => {
+  it('replaces same-ID draft text and drops unsaved blocks when evidence is unavailable', () => {
     const machine = new TaskStateMachine(100, createRuntimeActions())
     const draft = 'Answer.[[evidence:0123456789abcdef0123456789abcdef]]'
     const saved = 'Intro. Answer.[[evidence-unavailable]]'
@@ -547,10 +547,18 @@ describe('TaskStateMachine', () => {
         blocks: [
           { id: 'saved-intro', type: 'text', content: 'Intro.', status: 'done' },
           {
+            id: 'tool-after-intro',
+            type: 'tool',
+            tool_use_id: 'tool-after-intro',
+            tool_name: 'Read',
+            status: 'done',
+          },
+          {
             id: 'search',
             type: 'tool',
             tool_use_id: 'search',
             tool_name: 'Search',
+            tool_output: 'Result',
             status: 'done',
           },
           {
@@ -568,19 +576,61 @@ describe('TaskStateMachine', () => {
     expect(message).toMatchObject({
       status: 'completed',
       content: saved,
+      reasoningContent: undefined,
       result: {
         answer_citations: [],
         value: saved,
         blocks: [
-          { type: 'thinking', content: 'Thought.', status: 'done' },
           { id: 'saved-intro', type: 'text', content: 'Intro.' },
           { id: 'tool-after-intro', type: 'tool' },
           { id: 'search', type: 'tool', tool_output: 'Result' },
-          { id: 'stream-only-tool', type: 'tool' },
-          { type: 'thinking', content: 'Follow-up thought.', status: 'done' },
           { id: 'saved-text', type: 'text', content: 'Answer.[[evidence-unavailable]]' },
         ],
       },
+    })
+  })
+
+  it('uses saved block order after text streams without block IDs', () => {
+    const machine = new TaskStateMachine(100, createRuntimeActions())
+    const first = '正文 A。'
+    const draft = '正文 B。[[evidence:0123456789abcdef0123456789abcdef]]'
+    const final = '正文 B。[[evidence-unavailable]]'
+    const tool = { id: 'search', type: 'tool', tool_use_id: 'search', tool_name: 'Search' } as const
+    const blocks = [
+      { ...tool, status: 'done' },
+      { id: 'saved-a', type: 'text', content: first, status: 'done' },
+      { id: 'saved-thought-a', type: 'thinking', content: '先查。', status: 'done' },
+      { id: 'saved-thought-b', type: 'thinking', content: '继续分析。', status: 'done' },
+      { id: 'saved-b', type: 'text', content: final, status: 'done' },
+    ] as const
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatBlockUpdated(42, { ...tool, status: 'pending' })
+    machine.handleChatChunk(42, first, undefined, undefined, undefined, 0)
+    machine.handleChatChunk(42, '', { reasoning_chunk: '先查。' })
+    // Updating an existing tool splits the stored thinking block, but not the draft block.
+    machine.handleChatBlockUpdated(42, { id: tool.id, status: 'done' })
+    machine.handleChatChunk(42, '', { reasoning_chunk: '继续分析。' })
+    machine.handleChatChunk(42, draft, undefined, undefined, undefined, first.length)
+
+    expect(machine.getState().messages.get('ai-42')?.result?.blocks).toMatchObject([
+      tool,
+      { type: 'text', content: first },
+      { type: 'thinking', content: '先查。继续分析。' },
+      { type: 'text', content: draft },
+    ])
+
+    machine.handleChatDone(42, first + final, {
+      value: first + final,
+      answer_citations: [],
+      reasoning_content: '先查。继续分析。',
+      blocks: [...blocks],
+    })
+
+    expect(machine.getState().messages.get('ai-42')).toMatchObject({
+      status: 'completed',
+      content: first + final,
+      result: { blocks, reasoning_content: '先查。继续分析。' },
     })
   })
 
