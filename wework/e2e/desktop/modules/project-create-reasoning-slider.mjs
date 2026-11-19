@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { DEFAULT_MODEL_ID } from './shared.mjs'
+import { DEFAULT_MODEL_ID, verifyModelPickerEscape } from './shared.mjs'
 import { withProjectRenderer } from './project-create-test-utils.mjs'
 import { assertProjectKeyboardFocus } from './project-create-focus-indicator.mjs'
 
@@ -62,7 +62,8 @@ export async function verifyReasoningSliderAccessibility(control, trigger) {
   await control.command('nativePress', TRACK, { key: 'Shift+Tab' })
   const lastStep = `${MENU} button[data-testid^="model-control-reasoning-"]:last-of-type`
   await assertProjectKeyboardFocus(lastStep)
-  await control.command('nativePress', lastStep, { key: 'Escape' })
-  await control.command('waitFor', MENU, { visible: false })
+  await verifyModelPickerEscape(control, lastStep, 'nativePress', () =>
+    control.command('waitFor', MENU, { visible: false })
+  )
   assert.equal(await control.command('getActiveElementTestId', 'body'), 'model-selector-button')
 }
