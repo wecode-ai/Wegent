@@ -1,4 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import {
+  createPreparingAttachment,
+  failedPreparationFile,
+} from '@wegent/chat-core/runtime-attachments'
 import type { Attachment } from '@wegent/chat-core/runtime'
 export interface MultiAttachmentUploadState {
   attachments: Attachment[]
@@ -17,6 +21,15 @@ export interface ComposerAttachmentsOptions {
 }
 
 const DEFAULT_ATTACHMENT_SCOPE_KEY = 'default'
+
+interface PendingSelection {
+  file: File
+  attachment: Attachment
+  submitted: boolean
+  captured: boolean
+  resolve: (attachment: Attachment) => void
+  reject: (error: unknown) => void
+}
 
 interface AttachmentSource {
   file?: File
@@ -57,6 +70,8 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   const deleteAttachment = options.deleteAttachment
   const scopeKey = options.scopeKey ?? DEFAULT_ATTACHMENT_SCOPE_KEY
   const [stateByScope, setStateByScope] = useState<Record<string, MultiAttachmentUploadState>>({})
+  const stateRef = useRef(stateByScope)
+  const pendingByScope = useRef(new Map<string, Set<PendingSelection>>())
   const uploadSequence = useRef(0)
   const scopeEpochs = useRef(new Map<string, number>())
   const latestAttemptsByScope = useRef(new Map<string, Map<string, string>>())
@@ -70,46 +85,30 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       targetScopeKey: string,
       updater: (current: MultiAttachmentUploadState) => MultiAttachmentUploadState
     ) => {
-      setStateByScope(currentByScope => {
-        const current = currentByScope[targetScopeKey] ?? emptyAttachmentState()
-        const next = updater(current)
-        if (next === current) return currentByScope
-        return {
-          ...currentByScope,
-          [targetScopeKey]: next,
-        }
-      })
+      const current = stateRef.current[targetScopeKey] ?? emptyAttachmentState()
+      const next = updater(current)
+      if (next === current) return
+      stateRef.current = { ...stateRef.current, [targetScopeKey]: next }
+      setStateByScope(stateRef.current)
     },
     []
   )
+
+  const captureAttachmentsForScope = useCallback((targetScopeKey: string) => {
+    const attachments = stateRef.current[targetScopeKey]?.attachments ?? []
+    const pending = [...(pendingByScope.current.get(targetScopeKey) ?? [])].filter(
+      item => !item.submitted
+    )
+    pending.forEach(item => {
+      item.captured = true
+    })
+    return [...attachments, ...pending.map(item => item.attachment)]
+  }, [])
 
   const isUploading = state.uploadingFiles.size > 0
   const isAttachmentReadyToSend = useMemo(
     () => !isUploading && state.attachments.every(attachment => attachment.status === 'ready'),
     [isUploading, state.attachments]
-  )
-
-  const addExistingAttachmentForScope = useCallback(
-    (targetScopeKey: string, attachment: Attachment, file?: File) => {
-      if (file) {
-        const id = `${file.name}:${++uploadSequence.current}`
-        const source: AttachmentSource = { file, filename: file.name, cancelled: false, attachment }
-        const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
-        sources.set(id, source)
-        sourcesByScope.current.set(targetScopeKey, sources)
-        const attachments = attachmentSourcesByScope.current.get(targetScopeKey) ?? new Map()
-        attachments.set(attachment.id, source)
-        attachmentSourcesByScope.current.set(targetScopeKey, attachments)
-      }
-      updateScopeState(targetScopeKey, current => {
-        if (current.attachments.some(item => item.id === attachment.id)) return current
-        return {
-          ...current,
-          attachments: [...current.attachments, attachment],
-        }
-      })
-    },
-    [updateScopeState]
   )
 
   const discardSourceAttachment = useCallback(
@@ -134,13 +133,30 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       const epoch = scopeEpochs.current.get(targetScopeKey) ?? 0
       const fileList = Array.isArray(files) ? files : [files]
       const selections = fileList.map(file => {
-        if (!trackSource) return { file, fileId: undefined, source: undefined }
+        let resolve!: PendingSelection['resolve']
+        let reject!: PendingSelection['reject']
+        const ready = new Promise<Attachment>((yes, no) => {
+          resolve = yes
+          reject = no
+        })
+        const pending: PendingSelection = {
+          file,
+          attachment: createPreparingAttachment(file, ready),
+          submitted: false,
+          captured: false,
+          resolve,
+          reject,
+        }
+        const pendingFiles = pendingByScope.current.get(targetScopeKey) ?? new Set()
+        pendingFiles.add(pending)
+        pendingByScope.current.set(targetScopeKey, pendingFiles)
+        if (!trackSource) return { file, fileId: undefined, source: undefined, pending }
         const fileId = `${file.name}:${++uploadSequence.current}`
         const source: AttachmentSource = { file, filename: file.name, cancelled: false }
         const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
         sources.set(fileId, source)
         sourcesByScope.current.set(targetScopeKey, sources)
-        return { file, fileId, source }
+        return { file, fileId, source, pending }
       })
       if (trackSource) {
         updateScopeState(targetScopeKey, current => {
@@ -151,8 +167,15 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
           return { ...current, uploadingFiles }
         })
       }
-      for (const { file, fileId: queuedFileId, source } of selections) {
-        if (source?.cancelled || (scopeEpochs.current.get(targetScopeKey) ?? 0) !== epoch) continue
+      for (const { file, fileId: queuedFileId, source, pending } of selections) {
+        if (
+          !pending.submitted &&
+          (source?.cancelled || (scopeEpochs.current.get(targetScopeKey) ?? 0) !== epoch)
+        ) {
+          pending.reject(new Error('Attachment selection was cancelled'))
+          pendingByScope.current.get(targetScopeKey)?.delete(pending)
+          continue
+        }
         const fileId = queuedFileId ?? `${file.name}:${++uploadSequence.current}`
         const latestAttempts =
           latestAttemptsByScope.current.get(targetScopeKey) ?? new Map<string, string>()
@@ -161,6 +184,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
         const previewUrl = createImagePreview(file)
         updateScopeState(targetScopeKey, current => {
+          if (pending.submitted) return current
           const uploadingFiles = new Map(current.uploadingFiles)
           const errors = new Map(current.errors)
           errors.delete(file.name)
@@ -174,6 +198,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
           const textMetadataPromise = readTextAttachmentMetadata(file)
           const attachment = await uploadAttachment(file, progress => {
             updateScopeState(targetScopeKey, current => {
+              if (pending.submitted) return current
               const uploadingFiles = new Map(current.uploadingFiles)
               const existing = uploadingFiles.get(fileId)
               if (existing) {
@@ -189,12 +214,18 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             attachmentSourcesByScope.current.set(targetScopeKey, sources)
           }
           const textMetadata = await textMetadataPromise
-          if (!source && (scopeEpochs.current.get(targetScopeKey) ?? 0) !== epoch) {
+          if (
+            !pending.submitted &&
+            !source &&
+            (scopeEpochs.current.get(targetScopeKey) ?? 0) !== epoch
+          ) {
+            pending.reject(new Error('Attachment selection was cancelled'))
             releaseAttachmentPreview(attachment)
             if (attachment.id > 0) await deleteAttachment(attachment.id)
             continue
           }
-          if (source?.cancelled) {
+          if (!pending.submitted && source?.cancelled) {
+            pending.reject(new Error('Attachment selection was cancelled'))
             await discardSourceAttachment(source)
             continue
           }
@@ -211,7 +242,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
               ...enrichedAttachment,
               ui_kind: 'pasted-text',
             }
-          if (previewUrl) {
+          if (previewUrl && !pending.submitted && enrichedAttachment.mime_type === file.type) {
             if (enrichedAttachment.local_preview_url !== previewUrl) {
               releaseAttachmentPreview(enrichedAttachment)
             }
@@ -221,9 +252,18 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             }
             previewTransferred = true
           }
+          if (pending.submitted) {
+            releaseAttachmentPreview(enrichedAttachment)
+            enrichedAttachment = {
+              ...enrichedAttachment,
+              local_preview_url: enrichedAttachment.local_path,
+            }
+          }
           if (source) source.attachment = enrichedAttachment
+          pending.resolve(enrichedAttachment)
 
           updateScopeState(targetScopeKey, current => {
+            if (pending.submitted) return current
             const uploadingFiles = new Map(current.uploadingFiles)
             uploadingFiles.delete(fileId)
             return {
@@ -236,11 +276,13 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
           })
           options.onAction?.('upload')
         } catch (error) {
+          pending.reject(error)
           options.onAction?.('failed')
           const isLatestAttempt =
             latestAttemptsByScope.current.get(targetScopeKey)?.get(file.name) === fileId
           retainFailedAttempt = Boolean(source && !source.cancelled && isLatestAttempt)
           updateScopeState(targetScopeKey, current => {
+            if (pending.submitted) return current
             const uploadingFiles = new Map(current.uploadingFiles)
             const errors = new Map(current.errors)
             uploadingFiles.delete(fileId)
@@ -250,6 +292,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             return { ...current, uploadingFiles, errors }
           })
         } finally {
+          pendingByScope.current.get(targetScopeKey)?.delete(pending)
           const latestAttempts = latestAttemptsByScope.current.get(targetScopeKey)
           if (!retainFailedAttempt && latestAttempts?.get(file.name) === fileId) {
             latestAttempts.delete(file.name)
@@ -270,8 +313,42 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     ]
   )
 
+  const addExistingAttachmentForScope = useCallback(
+    (targetScopeKey: string, attachment: Attachment, file?: File) => {
+      const retryFile = failedPreparationFile(attachment)
+      if (retryFile) {
+        void handleFileSelectForScope(targetScopeKey, retryFile)
+        return
+      }
+      if (file) {
+        const id = `${file.name}:${++uploadSequence.current}`
+        const source: AttachmentSource = { file, filename: file.name, cancelled: false, attachment }
+        const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
+        sources.set(id, source)
+        sourcesByScope.current.set(targetScopeKey, sources)
+        const attachments = attachmentSourcesByScope.current.get(targetScopeKey) ?? new Map()
+        attachments.set(attachment.id, source)
+        attachmentSourcesByScope.current.set(targetScopeKey, attachments)
+      }
+      updateScopeState(targetScopeKey, current => {
+        if (current.attachments.some(item => item.id === attachment.id)) return current
+        return {
+          ...current,
+          attachments: [...current.attachments, attachment],
+        }
+      })
+    },
+    [handleFileSelectForScope, updateScopeState]
+  )
+
   const removeSourceFileForScope = useCallback(
     async (targetScopeKey: string, file: File) => {
+      const pendingFiles = pendingByScope.current.get(targetScopeKey)
+      for (const pending of pendingFiles ?? []) {
+        if (pending.file !== file || pending.submitted) continue
+        pending.reject(new Error('Attachment selection was cancelled'))
+        pendingFiles?.delete(pending)
+      }
       const sources = sourcesByScope.current.get(targetScopeKey)
       const removed = [...(sources?.entries() ?? [])].filter(([, source]) => source.file === file)
       if (!removed.length) return
@@ -347,6 +424,10 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const resetAttachmentsForScope = useCallback(
     (targetScopeKey: string) => {
+      for (const pending of pendingByScope.current.get(targetScopeKey) ?? []) {
+        if (pending.captured) pending.submitted = true
+      }
+      pendingByScope.current.delete(targetScopeKey)
       scopeEpochs.current.set(targetScopeKey, (scopeEpochs.current.get(targetScopeKey) ?? 0) + 1)
       latestAttemptsByScope.current.delete(targetScopeKey)
       for (const source of sourcesByScope.current.get(targetScopeKey)?.values() ?? []) {
@@ -420,6 +501,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   )
 
   return {
+    captureAttachmentsForScope,
     state,
     stateByScope,
     attachments: state.attachments,

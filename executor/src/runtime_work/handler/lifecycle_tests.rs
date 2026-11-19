@@ -195,6 +195,7 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
             }),
             Ok(crate::agents::CodexAppServerTurn {
                 quota_recovery: None,
+                error_type: None,
                 thread_id: "thread-1".into(),
                 outcome,
                 response_item_id: None,

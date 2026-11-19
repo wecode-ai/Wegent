@@ -6,6 +6,30 @@ use super::*;
 
 struct ProviderHold(PathBuf);
 
+#[tokio::test]
+async fn quota_recheck_reservation_remains_publicly_queued() {
+    let _lock = crate::test_env::lock();
+    let (handler, _root) = super::super::tests::isolated_runtime_work_handler("quota-recheck");
+    let turn = queued_wait("waiting", now_ms() - 1);
+    handler.store.upsert_task(RuntimeTaskLink::new_pending(
+        "waiting".into(),
+        "/work".into(),
+        "Wait".into(),
+    ));
+    handler.project_quota_waits(&VecDeque::from([turn.clone()]));
+    handler.reserve_turn_preparation(&turn);
+    let response = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+    assert_eq!(response["task"]["status"], "queued");
+    assert_eq!(response["task"]["running"], false);
+    assert_eq!(response["task"]["executionState"]["phase"], "queued");
+    assert!(response["task"]["runtimeHandle"]["quotaWait"].is_object());
+    assert!(handler
+        .preparing_turns
+        .lock()
+        .unwrap()
+        .contains_key("waiting"));
+}
+
 impl Drop for ProviderHold {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
@@ -258,10 +282,13 @@ fn quota_wait_can_be_cancelled_between_dequeue_and_preflight() {
                 .enqueue_forced(turn.clone());
             handler.reserve_turn_preparation(&turn);
             assert_eq!(
-                handler
-                    .cancel_task(json!({"taskId":"waiting"}))
-                    .await
-                    .unwrap()["accepted"],
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.cancel_task(json!({"taskId":"waiting"})),
+                )
+                .await
+                .expect("Cancellation must not wait for the provider query")
+                .unwrap()["accepted"],
                 true
             );
             handler.start_quota_turn(turn).await;
@@ -415,6 +442,15 @@ fn quota_wait_protocol_checks_windows_and_rejects_changed_native_owners() {
 #[test]
 fn quota_interrupt_during_account_read_does_not_wait_for_the_send_gate() {
     verify_quota_wait_protocol(true);
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug)]
+enum ReplacementCheckpoint {
+    PendingQuery,
+    CancelledAtSendGate,
+    ReplacedAtSendGate,
+    ReplacedAtQueueOperation,
 }
 
 #[cfg(unix)]
@@ -601,6 +637,133 @@ done
                 .active_task_ids
                 .contains_key("waiting"));
             assert!(!home.path().join("unexpected-turn").exists());
+
+            for checkpoint in [
+                ReplacementCheckpoint::PendingQuery,
+                ReplacementCheckpoint::CancelledAtSendGate,
+                ReplacementCheckpoint::ReplacedAtSendGate,
+                ReplacementCheckpoint::ReplacedAtQueueOperation,
+            ] {
+                let query_completed = !matches!(checkpoint, ReplacementCheckpoint::PendingQuery);
+                let waits_for_queue =
+                    matches!(checkpoint, ReplacementCheckpoint::ReplacedAtQueueOperation);
+                // A cancelled request must not consume the next scenario's marker.
+                handler.codex_app_server.restart().await;
+                fs::remove_file(home.path().join("account-requested")).unwrap();
+                fs::write(home.path().join("hold-account"), "").unwrap();
+                let mut replacement_turn = queued_wait("replacement", 0);
+                if waits_for_queue {
+                    let mut saved = wait(&replacement_turn).unwrap();
+                    saved.account = account_identity(&account);
+                    set_wait(&mut replacement_turn, &saved);
+                    fs::write(
+                        home.path().join("turns.json"),
+                        r#"{"data":[{"id":"failed","status":"failed","items":[]}]}"#,
+                    )
+                    .unwrap();
+                    fs::write(
+                        home.path().join("limits.json"),
+                        json!({"rateLimits":{"primary":{"usedPercent":100,"resetsAt":deadline / 1000}}})
+                            .to_string(),
+                    )
+                    .unwrap();
+                }
+                let mut link = RuntimeTaskLink::new_pending(
+                    "replacement".into(),
+                    "/work".into(),
+                    "Replacement".into(),
+                );
+                link.thread_id = Some("thread".into());
+                handler.store.upsert_task(link);
+                handler.reserve_turn_preparation(&replacement_turn);
+                let recovering = handler.start_quota_turn(replacement_turn.clone());
+                tokio::pin!(recovering);
+                tokio::select! {
+                    _ = &mut recovering => panic!("Recovery finished before the held provider query"),
+                    requested = tokio::time::timeout(Duration::from_secs(2), async {
+                        while !home.path().join("account-requested").exists() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }) => requested.unwrap(),
+                }
+                let gate = handler.task_send_gate("replacement");
+                let send = gate.lock().await;
+                let operation = if waits_for_queue {
+                    Some(handler.turn_queue_operation.clone().lock_owned().await)
+                } else {
+                    None
+                };
+                if query_completed {
+                    fs::remove_file(home.path().join("hold-account")).unwrap();
+                    let client = handler.codex_app_server.for_request(&replacement_turn.request).unwrap();
+                    // The fixture answers requests in order. This round trip flushes account/read.
+                    client.request("account/read", json!({"refreshToken": false})).await.unwrap();
+                    // An account mismatch reaches the gate immediately; the queue case reads on.
+                    assert!(futures_util::poll!(recovering.as_mut()).is_pending());
+                }
+                let send = if waits_for_queue {
+                    drop(send);
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        futures_util::future::poll_fn(|cx| {
+                            assert!(std::future::Future::poll(recovering.as_mut(), cx).is_pending());
+                            // Owning the send gate proves the query and first ownership guard ran.
+                            if gate.try_lock().is_err() {
+                                std::task::Poll::Ready(())
+                            } else {
+                                std::task::Poll::Pending
+                            }
+                        }),
+                    )
+                    .await
+                    .expect("Recovery must reach the held queue operation");
+                    None
+                } else {
+                    Some(send)
+                };
+                let retained_execution = if matches!(
+                    checkpoint,
+                    ReplacementCheckpoint::ReplacedAtSendGate
+                        | ReplacementCheckpoint::ReplacedAtQueueOperation
+                ) {
+                    // Keep the sender alive so ownership changes without cancellation winning.
+                    Some(handler.active_local_executions.lock().unwrap().remove("replacement").unwrap())
+                } else {
+                    None
+                };
+                handler.reserve_turn_preparation(&replacement_turn);
+                let (cancel, _cancelled) = oneshot::channel();
+                let (_stopped, stopped) = oneshot::channel();
+                let execution =
+                    handler.start_local_task_execution("replacement".into(), cancel, stopped);
+                let expected = handler.store.get_task("replacement").unwrap();
+                drop(send);
+                drop(operation);
+                tokio::time::timeout(Duration::from_secs(2), recovering)
+                    .await
+                    .expect("Replaced quota recovery must stop without waiting for the provider");
+                assert!(handler.is_current_local_task_execution("replacement", execution));
+                assert!(handler
+                    .preparing_turns
+                    .lock()
+                    .unwrap()
+                    .contains_key("replacement"));
+                assert_eq!(
+                    serde_json::to_value(handler.store.get_task("replacement").unwrap()).unwrap(),
+                    serde_json::to_value(expected).unwrap(),
+                    "Old recovery must preserve the replacement's task state and preparation ({checkpoint:?})"
+                );
+                drop(retained_execution);
+                handler.finish_local_task_execution("replacement", execution);
+                handler
+                    .preparing_turns
+                    .lock()
+                    .unwrap()
+                    .remove("replacement");
+                if !query_completed {
+                    fs::remove_file(home.path().join("hold-account")).unwrap();
+                }
+            }
             handler.codex_app_server.restart().await;
             fs::remove_dir_all(root).unwrap();
         });
@@ -881,4 +1044,60 @@ async fn interrupt_timeout_preserves_the_unconfirmed_execution() {
         .is_empty());
     handler.finish_local_task_execution("task", execution);
     let _ = fs::remove_dir_all(root);
+}
+
+fn with_handler(label: &str, verify: impl FnOnce(&RuntimeWorkRpcHandler)) {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _homes: Vec<_> = [
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_CODEX_HOME",
+        "CODEX_HOME",
+        "WEGENT_WORKBENCH_HOME",
+    ]
+    .into_iter()
+    .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
+    .collect();
+    let (handler, root) = super::super::tests::isolated_runtime_work_handler(label);
+    verify(&handler);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn seed_wait(handler: &RuntimeWorkRpcHandler, active: bool) {
+    let mut link = RuntimeTaskLink::new_pending("waiting".into(), "/work".into(), "Wait".into());
+    link.thread_id = Some("thread".into());
+    if active {
+        crate::runtime_work::lifecycle::begin_native_request(&mut link);
+    }
+    handler.store.upsert_task(link);
+    let turns = VecDeque::from([queued_wait("waiting", now_ms() + 3_600_000)]);
+    handler.turn_scheduler.lock().unwrap().queued_turns = turns.clone();
+    handler.project_quota_waits(&turns);
+}
+
+#[test]
+fn publishing_a_parked_quota_wait_also_settles_the_active_lifecycle() {
+    with_handler("quota-park-projection", |handler| {
+        seed_wait(handler, true);
+        let public = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+        assert_eq!(public["task"]["status"], "queued");
+        assert_eq!(public["task"]["running"], false);
+        assert_eq!(public["task"]["executionState"]["phase"], "queued");
+        assert!(public["task"]["runtimeHandle"]["quotaWait"].is_object());
+    });
+}
+
+#[test]
+fn admitting_a_quota_recheck_removes_the_wait_with_the_starting_lifecycle() {
+    with_handler("quota-admit-projection", |handler| {
+        seed_wait(handler, false);
+        handler.turn_scheduler.lock().unwrap().queued_turns.clear();
+        handler.store.update_task("waiting", |link| {
+            crate::runtime_work::lifecycle::begin_native_request(link);
+        });
+        let public = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+        assert_eq!(public["task"]["running"], true);
+        assert_eq!(public["task"]["executionState"]["phase"], "starting");
+        assert!(public["task"]["runtimeHandle"].get("quotaWait").is_none());
+    });
 }

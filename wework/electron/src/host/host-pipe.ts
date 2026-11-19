@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { performance } from 'node:perf_hooks'
 import type { Readable, Writable } from 'node:stream'
 import { JsonLineReader } from './json-line-reader.mjs'
 import { SmartAppVerificationError } from './smart-app-verification-types.js'
@@ -128,6 +129,8 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
         process.env.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS !== '1'
       )
         return
+      const cpu = process.cpuUsage()
+      const loop = performance.eventLoopUtilization()
       console.debug(
         '[host-pipe-request]',
         JSON.stringify({
@@ -135,6 +138,11 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
           requestId: message.id,
           capability: message.capability,
           phase,
+          processId: process.pid,
+          cpuUserMicros: cpu.user,
+          cpuSystemMicros: cpu.system,
+          eventLoopActiveMs: Math.round(loop.active),
+          eventLoopIdleMs: Math.round(loop.idle),
           elapsedMs: Math.round(performance.now() - startedAt),
         })
       )

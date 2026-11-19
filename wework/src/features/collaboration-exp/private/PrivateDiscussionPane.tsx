@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, ChevronRight, Lock, X } from 'lucide-react'
 import {
   canStartWorkOnCollaborationIssue,
+  createAssistantConversation,
+  createAssistantInteraction,
+  createRuntimeAssistantTransport,
   type CollaborationIssue,
   type CollaborationProject,
   type IssueParticipationViewer,
@@ -17,6 +20,7 @@ import type { ExperiencePrivateConversation } from '../model'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useConclusionPublication } from './useConclusionPublication'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
 import './PrivateExperience.css'
 
 export interface PrivateDiscussionPaneProps {
@@ -54,7 +58,7 @@ export function PrivateDiscussionPane(props: PrivateDiscussionPaneProps) {
 function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountKey: string }) {
   const { project, issue, conversation, active = true, sourceNodeId, onClose } = props
   const { t } = useTranslation('collaborationExp')
-  const { state, openRuntimeTask } = useWorkbench()
+  const { state, services, openRuntimeTask } = useWorkbench()
   const actorId = project.current_user_id ?? state.user?.id
   const reader = projectViewer(project, Number(state.user?.id), props.participationViewer)
   const sourceScope =
@@ -135,6 +139,48 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
     wasPreview.current = showConclusion
   }, [showConclusion])
   const address = useMemo(() => ({ ...conversation.address }), [conversation.address])
+  const assistantInteraction = useMemo(() => {
+    const runtime = services.runtimeWorkApi
+    if (!runtime || !conversation.address.deviceId.trim() || !conversation.address.taskId.trim())
+      return null
+    const endpoint = experienceAssistantEndpoint(state.devices, conversation.address.deviceId, {
+      ownerUserId: conversation.ownerUserId,
+      roleId: 'issue-private',
+      displayName: conversation.title ?? 'Assistant',
+      capabilities: { attachments: true, cancel: true, trace: true },
+    })
+    if (!endpoint) return null
+    const scopedConversation = createAssistantConversation(endpoint, {
+      id: conversation.address.taskId,
+      projectId: project.id,
+      issueId: issue.id,
+      ...conversation.address,
+    })
+    return createAssistantInteraction(
+      endpoint,
+      scopedConversation,
+      createRuntimeAssistantTransport({
+        async send(input) {
+          const send = input.interruptWhenBusy
+            ? runtime.interruptAndSendRuntimeMessage
+            : runtime.sendRuntimeMessage
+          return send({
+            ...input.runtimeOptions,
+            address: input.address,
+            message: input.message,
+            clientUserMessageId: input.clientUserMessageId,
+            ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+            conversationContext: input.conversationContext,
+            ...(input.queueIfBusy ? { queueIfBusy: true } : {}),
+          })
+        },
+        async cancel(target) {
+          return (await runtime.cancelRuntimeTask(target)).accepted
+        },
+        transcript: target => runtime.getRuntimeTranscript(target),
+      })
+    )
+  }, [conversation, issue.id, project.id, services.runtimeWorkApi, state.devices])
   const draft = {
     value: conclusionDraft.value,
     revision: conclusionDraft.revision,
@@ -144,6 +190,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   }
   const publication = useConclusionPublication({
     ...props,
+    assistantSource: conversation.address,
     scopeKey: conclusionKey,
     expectedUserId: Number(actorId),
     active:
@@ -257,6 +304,36 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               }}
               sendEphemeral={false}
               runtimeContext={{ conversationContext: 'private_discussion' }}
+              assistantSend={
+                assistantInteraction && actorId !== undefined
+                  ? async input => {
+                      try {
+                        const result = await assistantInteraction.send({
+                          requestId: input.clientUserMessageId,
+                          idempotencyKey: input.clientUserMessageId,
+                          projectId: project.id,
+                          issueId: issue.id,
+                          // Runtime ownership is distinct from the profile publishing conclusions.
+                          senderUserId: conversation.ownerUserId,
+                          visibility: 'private',
+                          message: input.message,
+                          attachmentIds: input.attachmentIds,
+                          interruptWhenBusy: input.interruptWhenBusy,
+                          runtimeOptions: input.runtimeOptions,
+                        })
+                        return {
+                          sent: true,
+                          ...(result.queued === true ? { queued: true } : {}),
+                        }
+                      } catch (cause) {
+                        return {
+                          sent: false,
+                          error: cause instanceof Error ? cause.message : String(cause),
+                        }
+                      }
+                    }
+                  : undefined
+              }
               readOnly={sourceScope === 'source'}
               nativeConversation
               coordinateUserInput
