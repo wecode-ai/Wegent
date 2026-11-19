@@ -237,7 +237,7 @@ export function AutomationEmptyState({
         {t('todo.automation_create', '创建')}
         <ChevronDown className="h-3.5 w-3.5" />
       </ControlButton>
-      <div className="mx-auto w-full max-w-[660px] px-5 pb-16 pt-[61px] md:px-0">
+      <div className="mx-auto w-full max-w-[700px] px-5 pb-16 pt-[61px]">
         <header className="mb-[23px]">
           <h1 className="text-heading-lg font-normal tracking-[-0.02em]">
             {t('todo.automations_title', '已安排的任务')}

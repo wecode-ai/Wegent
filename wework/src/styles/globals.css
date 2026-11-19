@@ -1021,6 +1021,7 @@ button.plugin-operation-notice-dismiss svg {
 }
 
 .plugin-market-body {
+  container: plugin-market / inline-size;
   display: flex;
   flex-direction: column;
 }
@@ -1710,10 +1711,20 @@ button.plugin-route-back-button:hover {
   border-bottom: 1px solid rgb(var(--color-border) / 0.32);
 }
 
+@container plugin-market (min-width: 48rem) {
+  .plugin-market-toolbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .plugin-market-toolbar-search {
+    width: 300px;
+  }
+}
+
 .plugin-market-search-input {
   height: 44px;
   width: 100%;
-  max-width: 300px;
   border: 1px solid rgb(var(--color-border) / 0.55);
   border-radius: 9px;
   background-color: rgb(var(--color-bg-base));

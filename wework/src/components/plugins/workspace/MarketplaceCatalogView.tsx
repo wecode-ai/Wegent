@@ -131,7 +131,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
       {hasMarketplace && (
         <div className="plugin-market-body">
           <div
-            className="plugin-market-toolbar flex flex-col gap-3 md:flex-row md:items-center md:gap-3"
+            className="plugin-market-toolbar flex flex-col gap-3"
             data-testid="plugins-market-toolbar"
           >
             <div className="min-w-0 flex-1 overflow-x-auto">
@@ -167,7 +167,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                   )
                   if (marketplace) onSelectLocalMarketplaceTab(marketplace)
                 }}
-                className="w-max min-w-full md:w-max"
+                className="w-max min-w-full"
               />
             </div>
             <div
@@ -187,7 +187,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                   </span>
                 ))}
             </div>
-            <div className="flex w-full shrink-0 items-center gap-2 md:w-auto">
+            <div className="plugin-market-toolbar-search flex w-full shrink-0 items-center gap-2">
               <MarketplaceSearchInput
                 ref={searchInputRef}
                 initialValue={query}

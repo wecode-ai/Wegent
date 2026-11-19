@@ -66,7 +66,7 @@ export const MarketplaceSearchInput = forwardRef<
   useEffect(() => cancelPendingQuery, [cancelPendingQuery])
 
   return (
-    <label className="relative min-w-0 flex-1 md:w-[300px] md:flex-none">
+    <label className="relative min-w-0 flex-1">
       <span className="sr-only">{label}</span>
       <ControlInput
         ref={inputRef}
