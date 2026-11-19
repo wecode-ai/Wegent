@@ -2,9 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::{fs, os::unix::fs::symlink};
 
 use super::*;
+
+fn write_script_fixture(binary: &std::path::Path, script: String) {
+    // A parallel fork may retain the script's writer until exec. Execute a stable
+    // launcher inode and let the shell read scenario data without executing it.
+    fs::write(binary.with_extension("sh"), script).unwrap();
+    let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/codex-script-fixture.sh");
+    symlink(launcher, binary).unwrap();
+}
 
 #[tokio::test]
 async fn native_search_hydrates_complete_match_turn_and_pages_neighbor_context() {
@@ -56,7 +65,7 @@ done
         "[needle](https://hidden.example/needle) ![needle](image.png) `needle` {}end",
         "padding ".repeat(30_000)
     );
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__LOG__", &log.to_string_lossy())
@@ -64,9 +73,12 @@ done
                 "__MATCH_TEXT__",
                 &serde_json::to_string(&match_text).unwrap(),
             ),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
+    // Retain a writer as a concurrent fork can do on Linux; startup must succeed.
+    let _fixture_writer = fs::OpenOptions::new()
+        .write(true)
+        .open(binary.with_extension("sh"))
+        .unwrap();
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -381,13 +393,11 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#;
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__DIRECTORY__", &directory.path().to_string_lossy()),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -693,13 +703,11 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#;
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__DIRECTORY__", &directory.path().to_string_lossy()),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],
@@ -831,14 +839,12 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#;
-    fs::write(
+    write_script_fixture(
         &binary,
         crate::test_env::with_codex_bundled_catalog(script)
             .replace("__LOG__", &log.to_string_lossy())
             .replace("__METADATA__", &metadata.to_string()),
-    )
-    .unwrap();
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let request = serde_json::from_value(json!({
         "user_name":"synthetic", "team_namespace":"default", "team_name":"search",
         "team_id":12, "bot":[{"id":31,"shell_type":"Codex"}],

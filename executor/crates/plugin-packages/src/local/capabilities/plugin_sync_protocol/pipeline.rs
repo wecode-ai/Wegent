@@ -71,7 +71,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 ),
                 ("changed", changes.changed.to_string()),
                 ("requires_restart", changes.requires_restart.to_string()),
-                ("detection_ms", changes.detection_ms.to_string()),
+                (
+                    "detection_ms",
+                    changes.detection_time.as_millis().to_string(),
+                ),
                 ("inspected_plugins", changes.inspected_plugins.to_string()),
                 ("hashed_files", changes.hashed_files.to_string()),
                 ("hashed_bytes", changes.hashed_bytes.to_string()),
@@ -386,7 +389,7 @@ fn merge_changes(total: &mut activation_revision::Changes, change: activation_re
     total.requires_restart |= change.requires_restart;
     total.plugins.extend(change.plugins);
     total.skills.extend(change.skills);
-    total.detection_ms += change.detection_ms;
+    total.detection_time += change.detection_time;
     total.inspected_plugins += change.inspected_plugins;
     total.hashed_files += change.hashed_files;
     total.hashed_bytes += change.hashed_bytes;
