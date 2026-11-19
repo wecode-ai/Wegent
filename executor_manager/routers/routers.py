@@ -48,7 +48,6 @@ from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.services.sandbox.repository import get_sandbox_repository
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
-from shared.metrics import ApiRouteMetrics, track_api
 from shared.models.attachment_sync import AttachmentSyncRequest, AttachmentSyncResponse
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
@@ -97,11 +96,6 @@ from executor_manager.routers.wegent_e2b_proxy import router as wegent_e2b_proxy
 
 # Create main API router with unified prefix
 api_router = APIRouter(prefix=ROUTE_PREFIX)
-
-# Request metrics for the executor management entry points.
-_CALLBACK_METRICS = ApiRouteMetrics("/executor-manager/callback")
-_EXECUTOR_DELETE_METRICS = ApiRouteMetrics("/executor-manager/executor/delete")
-_EXECUTOR_LOAD_METRICS = ApiRouteMetrics("/executor-manager/executor/load")
 
 # Mount sub-routers to api_router
 api_router.include_router(sandbox_router)
@@ -297,7 +291,6 @@ def verify_executor_callback_from_body(
 
 
 @api_router.post("/callback")
-@track_api(_CALLBACK_METRICS)
 async def callback_handler(
     event_data: dict = Body(...),
     http_request: Request = None,
@@ -432,7 +425,6 @@ class DeleteExecutorRequest(BaseModel):
 
 
 @api_router.post("/executor/delete")
-@track_api(_EXECUTOR_DELETE_METRICS)
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -492,7 +484,6 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
 
 
 @api_router.get("/executor/load")
-@track_api(_EXECUTOR_LOAD_METRICS)
 async def get_executor_load(http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
