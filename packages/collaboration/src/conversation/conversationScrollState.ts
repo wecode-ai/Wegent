@@ -136,22 +136,31 @@ export function createConversationScrollState(currentScrollKey: string | null) {
     const item = anchor?.element.closest<HTMLElement>(
       '[data-runtime-item-id], [data-processing-block-id]'
     )
-    console.debug('[Wework] History prepend layout', {
-      phase,
-      mode: state.mode,
-      owned: owned(),
-      anchorItemId: anchor?.itemId ?? null,
-      anchorConnected: anchor?.element.isConnected ?? false,
-      anchorOffset: anchor?.offsetFromScrollerTop ?? null,
-      anchorTextOffset: anchor?.textOffset ?? null,
-      itemTop:
-        item && viewport
-          ? item.getBoundingClientRect().top - viewport.getBoundingClientRect().top
-          : null,
-      scrollTop: viewport?.scrollTop ?? null,
-      scrollHeight: viewport?.scrollHeight ?? null,
-      clientHeight: viewport?.clientHeight ?? null,
-    })
+    // Use the host's persisted diagnostic channel; generic renderer logs are not retained.
+    console.debug(
+      '[Wework] Runtime task create diagnostic',
+      JSON.stringify({
+        stage: 'history-prepend-layout',
+        timestamp: new Date().toISOString(),
+        phase,
+        mode: state.mode,
+        owned: owned(),
+        anchorItemId: anchor?.itemId ?? null,
+        anchorConnected: anchor?.element.isConnected ?? false,
+        anchorOffset: anchor?.offsetFromScrollerTop ?? null,
+        anchorTextOffset: anchor?.textOffset ?? null,
+        anchorScrollTop: anchor?.scrollTopPx ?? null,
+        selfScrollOffset: readerState.selfScrollOffset,
+        lastScrollPosition: readerState.lastScrollPosition,
+        itemTop:
+          item && viewport
+            ? item.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+            : null,
+        scrollTop: viewport?.scrollTop ?? null,
+        scrollHeight: viewport?.scrollHeight ?? null,
+        clientHeight: viewport?.clientHeight ?? null,
+      })
+    )
   }
   let lastSnapshot: { key: string | null; snapshot: ConversationScrollSnapshot } | null = null
   let restoring: ConversationScrollSnapshot | null = null

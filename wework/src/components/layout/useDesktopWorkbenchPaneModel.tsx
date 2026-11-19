@@ -249,6 +249,9 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     get activeBottomPanelContext() {
       return workspaceTargets.activeBottomPanelContext
     },
+    get environmentInfoLayoutRightPanelOpen() {
+      return panelSnapshot.rightPanelOpen
+    },
     get environmentInfoDocked() {
       return paneLayout.environmentInfoDocked
     },

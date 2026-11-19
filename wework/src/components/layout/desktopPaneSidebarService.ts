@@ -1,6 +1,8 @@
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   attachRightWorkspaceSidebarController,
   isRightWorkspaceExtensionTab,
+  rightWorkspaceDshSidebar,
   type WeworkWorkspaceScope,
   type WeworkWorkspaceSidebarOpenTabSeed,
 } from './workspace-panels/rightWorkspaceDshSidebar'
@@ -24,9 +26,29 @@ export function createDesktopPaneSidebarService(state: DesktopPaneWorkspaceState
     reconcile(next: DesktopPaneSidebarInput) {
       input = next
       if (detach) return
+      if (import.meta.env.VITE_WEWORK_E2E === 'true')
+        logRuntimeTaskCreateStage('workspace-sidebar-controller-attached', {
+          sessionId: input.scope.sessionId,
+          active: input.active,
+          panelOpen: state.getSnapshot().rightPanelOpen,
+          descriptorTypes: rightWorkspaceDshSidebar.getTabs().map(tab => tab.id),
+        })
       detach = attachRightWorkspaceSidebarController({
         active: () => Boolean(input?.active),
-        openTab: seed => input?.openExtensionTab(seed),
+        openTab: seed => {
+          const before = state.getSnapshot()
+          input?.openExtensionTab(seed)
+          if (import.meta.env.VITE_WEWORK_E2E === 'true')
+            logRuntimeTaskCreateStage('workspace-sidebar-open-delivered', {
+              sessionId: input?.scope.sessionId,
+              active: input?.active,
+              descriptorType: seed.type,
+              descriptorRegistered: Boolean(rightWorkspaceDshSidebar.getTab(seed.type)),
+              previousPanelOpen: before.rightPanelOpen,
+              panelOpen: state.getSnapshot().rightPanelOpen,
+              extensionActive: isRightWorkspaceExtensionTab(state.getSnapshot().rightPanelView),
+            })
+        },
         closeTab: id => {
           const row = find(id)
           if (row) input?.closeTab(row.internalId)

@@ -80,6 +80,7 @@ export interface DesktopPaneWorkspaceInput
   feedbackDialogRequest: FeedbackDialogRequest
   activeBottomPanelContext: BottomPanelRenderContext
   environmentInfoDocked: boolean
+  environmentInfoLayoutRightPanelOpen: boolean
   setEnvironmentInfoOpen(open: boolean): void
   onEnvironmentOverlayDismiss(): void
   onWorkspaceStateChange(paneKey: string, state: WorkbenchPaneWorkspaceState): void
@@ -393,7 +394,12 @@ export function createDesktopPaneWorkspaceSession(
     }
     previousReady = input.startupSurfaceReady
     previousReadySource = input.startupSurfaceSource
-    if (!snapshot.rightPanelOpen && resources.restoreEnvironmentInfoAfterSubagentsRef.current) {
+    // Closing the last tab can publish before layout commits its new docking mode.
+    if (
+      !snapshot.rightPanelOpen &&
+      !input.environmentInfoLayoutRightPanelOpen &&
+      resources.restoreEnvironmentInfoAfterSubagentsRef.current
+    ) {
       resources.restoreEnvironmentInfoAfterSubagentsRef.current = false
       input.setEnvironmentInfoOpen(true)
     }

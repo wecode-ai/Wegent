@@ -57,8 +57,12 @@ export function createIssueHumanInteractionSource(
           if (question && ['resolved', 'cancelled'].includes(question.status)) {
             if (!snapshot.resolved.some(item => item.id === previous.id))
               publish({ resolved: [...snapshot.resolved, previous].slice(-100) })
-          } else {
-            // Absence or a pending question is not authoritative terminal evidence.
+          } else if (
+            !question ||
+            (question.recipient_user_id === previous.sharedRequest!.recipient_user_id &&
+              question.responsible_user_id === previous.sharedRequest!.responsible_user_id)
+          ) {
+            // Missing metadata cannot settle a question; a confirmed handoff retires this inbox lease.
             retained.push({ ...previous, cached: true })
           }
         } catch (cause) {
