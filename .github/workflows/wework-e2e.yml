@@ -1514,7 +1514,7 @@ jobs:
       packages: write
     env:
       CI: true
-      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
 
     steps:
       - name: Checkout code
@@ -1529,6 +1529,14 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           publish: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
+
+      - name: Set up macOS Inspector backend runtime
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Prepare real macOS Backend dependencies
+        run: .github/scripts/prepare-macos-inspector-e2e.sh
 
       - name: Prepare real macOS object storage
         id: macos_object_storage
