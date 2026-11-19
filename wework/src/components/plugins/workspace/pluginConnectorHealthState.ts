@@ -23,6 +23,10 @@ interface HealthInput {
   revision: number
   busy: boolean
 }
+interface HealthReadReceipt {
+  isCurrent(): boolean
+}
+
 export function createPluginConnectorHealthState(key: string) {
   let input: HealthInput | undefined
   let snapshot: { states: Record<string, 'connected' | 'disconnected'>; error: string | null } = {
@@ -31,13 +35,34 @@ export function createPluginConnectorHealthState(key: string) {
   }
   let generation = 0
   let request = 0
+  let operation = 0
+  let latestRead:
+    | {
+        request: number
+        generation: number
+        operation: number
+        promise: Promise<HealthReadReceipt | null>
+      }
+    | undefined
+  const invalidateOperation = () => {
+    operation += 1
+    request += 1
+    latestRead = undefined
+  }
+  // A superseding health read may carry the same explicit intent, never a newer action.
+  const followRead = (read: number, version: number, action: number) => {
+    const next = latestRead
+    return next && next.request > read && next.generation === version && next.operation === action
+      ? next.promise
+      : null
+  }
   let initialized = false
   const observers = new Set<() => void>()
   const publish = (patch: Partial<typeof snapshot>) => {
     snapshot = { ...snapshot, ...patch }
     observers.forEach(listener => listener())
   }
-  const refresh = () => {
+  const refresh = (): Promise<HealthReadReceipt | null> => {
     const latest = input
     if (!latest || !observers.size) return Promise.resolve(null)
     const read = ++request
@@ -56,7 +81,8 @@ export function createPluginConnectorHealthState(key: string) {
       return Promise.resolve(null)
     }
     const version = generation
-    return Promise.all(
+    const action = operation
+    const pending: Promise<HealthReadReceipt | null> = Promise.all(
       connectors.map(async ({ connector, target }) => {
         try {
           const health = await localConnectorAuthHealth(target)
@@ -82,7 +108,8 @@ export function createPluginConnectorHealthState(key: string) {
         }
       })
     ).then(entries => {
-      if (!observers.size || generation !== version || read !== request) return null
+      if (!observers.size || generation !== version || operation !== action) return null
+      if (read !== request) return followRead(read, version, action)
       publish({
         states: Object.fromEntries(
           entries.flatMap(([slug, state]) => {
@@ -92,11 +119,14 @@ export function createPluginConnectorHealthState(key: string) {
         ),
         error: entries.find(([, , error]) => error)?.[2] ?? null,
       })
+      if (read !== request) return followRead(read, version, action)
       return {
         isCurrent: () =>
-          observers.size > 0 && generation === version && read === request && !input?.busy,
+          observers.size > 0 && generation === version && operation === action && !input?.busy,
       }
     })
+    latestRead = { request: read, generation: version, operation: action, promise: pending }
+    return pending
   }
   return {
     key,
@@ -109,6 +139,8 @@ export function createPluginConnectorHealthState(key: string) {
         input.t !== next.t ||
         input.revision !== next.revision ||
         input.busy !== next.busy
+      if (input && (input.revision !== next.revision || input.busy !== next.busy))
+        invalidateOperation()
       input = next
       observers.add(listener)
       if (changed || !initialized) {
@@ -120,7 +152,7 @@ export function createPluginConnectorHealthState(key: string) {
         queueMicrotask(() => {
           if (!observers.size) {
             generation += 1
-            request += 1
+            invalidateOperation()
             initialized = false
           }
         })
@@ -128,16 +160,16 @@ export function createPluginConnectorHealthState(key: string) {
     },
     refresh,
     clearError() {
-      request += 1
+      invalidateOperation()
       if (snapshot.error !== null) publish({ error: null })
     },
     clear() {
-      request += 1
+      invalidateOperation()
       publish({ states: {}, error: null })
     },
     remember(slug: string, connected: 'connected' | 'disconnected') {
       if (!observers.size) return
-      request += 1
+      invalidateOperation()
       publish({ states: { ...snapshot.states, [slug]: connected }, error: null })
     },
   }

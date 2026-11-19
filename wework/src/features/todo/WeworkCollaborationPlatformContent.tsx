@@ -88,6 +88,26 @@ import type { WeworkCollaborationPlatformProps } from './weworkCollaborationType
 import { WeworkSharedProject } from './WeworkSharedProject'
 export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
+  const loadProjectCollaborationGroupGenerationModels = useCallback(async () => {
+    const response = await props.services.modelApi.listModels()
+    const models = response.data.filter(
+      model => model.isActive !== false && !model.compatibilityDisabled
+    )
+    const defaultSelection =
+      getNewChatModelSelection(props.user) ?? defaultNewChatModelSelection(models)
+    return {
+      models: models.map(model => ({
+        modelName: model.name,
+        modelType: model.type,
+        displayName: getModelDisplayLabel(model),
+        options: {
+          ...getDefaultModelOptions(model),
+          ...modelSelectionIdentityOptions(model),
+        },
+      })),
+      defaultSelection,
+    }
+  }, [props.services.modelApi, props.user])
   const [issueSearchOpen, setIssueSearchOpen] = useState(false)
   const [issueSearchQuery, setIssueSearchQuery] = useState('')
   useWindowEvent(
@@ -639,26 +659,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                 }}
               />
             ),
-            loadProjectCollaborationGroupGenerationModels: async () => {
-              const response = await props.services.modelApi.listModels()
-              const models = response.data.filter(
-                model => model.isActive !== false && !model.compatibilityDisabled
-              )
-              const defaultSelection =
-                getNewChatModelSelection(props.user) ?? defaultNewChatModelSelection(models)
-              return {
-                models: models.map(model => ({
-                  modelName: model.name,
-                  modelType: model.type,
-                  displayName: getModelDisplayLabel(model),
-                  options: {
-                    ...getDefaultModelOptions(model),
-                    ...modelSelectionIdentityOptions(model),
-                  },
-                })),
-                defaultSelection,
-              }
-            },
+            loadProjectCollaborationGroupGenerationModels,
             generateProjectCollaborationGroupDraft: (input, onProgress, onEvent) =>
               generateCollaborationGroupDraft({
                 input,
