@@ -421,13 +421,17 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   })
 }
 
+const catalogTestCodexUser = 'desktop-e2e-user'
+const catalogTestCodexWorkspace = 'desktop-e2e-account'
+
 function syntheticChatGptAuth() {
   const claims = Buffer.from(
     JSON.stringify({
       email: 'desktop-e2e@example.test',
       exp: Math.floor(Date.now() / 1000) + 3600,
       'https://api.openai.com/auth': {
-        chatgpt_account_id: 'desktop-e2e-account',
+        chatgpt_account_id: catalogTestCodexWorkspace,
+        chatgpt_user_id: catalogTestCodexUser,
         chatgpt_plan_type: 'pro',
       },
     })
@@ -435,7 +439,7 @@ function syntheticChatGptAuth() {
   return {
     auth_mode: 'chatgpt',
     tokens: {
-      account_id: 'desktop-e2e-account',
+      account_id: catalogTestCodexWorkspace,
       access_token: 'desktop-e2e-access-token',
       refresh_token: 'desktop-e2e-refresh-token',
       id_token: `header.${claims}.signature`,
@@ -449,10 +453,12 @@ const cachedOfficialMarketplaceId = 'openai-curated-remote'
 const cachedOfficialPluginId = `cached-documents@${cachedOfficialMarketplaceId}`
 const cachedOfficialCard = `[data-testid="plugin-marketplace-row-${cachedOfficialPluginId}"]`
 
-async function seedOfficialCatalog({ accountScope, authJson, deviceId, userDataDirectory }) {
-  const authFingerprint = createHash('sha256').update(authJson).digest('hex')
+async function seedOfficialCatalog({ accountScope, deviceId, userDataDirectory }) {
+  const authScope = createHash('sha256')
+    .update(JSON.stringify(['chatgpt', catalogTestCodexWorkspace, catalogTestCodexUser]))
+    .digest('hex')
   const scope = createHash('sha256')
-    .update(JSON.stringify([deviceId, authFingerprint, accountScope]))
+    .update(JSON.stringify([deviceId, authScope, accountScope]))
     .digest('hex')
   const storagePath = join(userDataDirectory, 'renderer-local-storage.json')
   const storage = JSON.parse(await readFile(storagePath, 'utf8'))
@@ -561,14 +567,16 @@ async function verifyComposerPluginNetworkIsolation({
     // Restart to clear the renderer's in-memory plugin inventory. The installed
     // package remains in the isolated real Codex home, while every external
     // Codex request is held open by the proxy instead of returning an error.
-    await restartDesktopApp(() =>
-      seedOfficialCatalog({
+    await restartDesktopApp(async () => {
+      await seedOfficialCatalog({
         accountScope: JSON.stringify([cloudConnection.apiBaseUrl, cloudConnection.user.id]),
-        authJson,
         deviceId,
         userDataDirectory: electronUserDataDirectory,
       })
-    )
+      const refreshedAuth = syntheticChatGptAuth()
+      refreshedAuth.tokens.access_token = 'desktop-e2e-refreshed-access-token'
+      await writeFile(join(codexHome, 'auth.json'), JSON.stringify(refreshedAuth), 'utf8')
+    })
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

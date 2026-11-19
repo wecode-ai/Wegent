@@ -3,6 +3,7 @@ import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
   openAiRemoteCatalog,
   RemotePluginCatalogIdentityChanged,
+  RemotePluginCatalogStorageError,
   type RemotePluginCatalogSnapshot,
 } from '@/api/local/codexRemoteCatalog'
 import {
@@ -12,6 +13,8 @@ import {
   subscribePluginMarketplaceCache,
 } from './pluginMarketplaceCache'
 import { remoteCatalogErrorKind } from './remotePluginError'
+
+export type OpenAiPluginCatalogError = ReturnType<typeof remoteCatalogErrorKind> | 'storage'
 
 export function useOpenAiPluginCatalog({
   cacheKey,
@@ -40,7 +43,7 @@ export function useOpenAiPluginCatalog({
   const [state, setState] = useState<{
     cacheKey: string
     loading: boolean
-    error: ReturnType<typeof remoteCatalogErrorKind> | null
+    error: OpenAiPluginCatalogError | null
   } | null>(null)
   const refresh = useCallback(() => {
     if (enabled) setRefreshRequest(value => ({ cacheKey, revision: value.revision + 1 }))
@@ -89,7 +92,13 @@ export function useOpenAiPluginCatalog({
           setIdentityRevision(value => value + 1)
           return
         }
-        if (enabled) setState({ cacheKey, loading: false, error: remoteCatalogErrorKind(error) })
+        if (enabled) {
+          const kind =
+            error instanceof RemotePluginCatalogStorageError
+              ? 'storage'
+              : remoteCatalogErrorKind(error)
+          setState({ cacheKey, loading: false, error: kind })
+        }
       }
     })
     return () => {

@@ -412,6 +412,7 @@ export function ModelSettingsPage({
     setLocalLoginError(null)
     try {
       const initialAuthSha256 = localAuthStatus?.sha256 ?? null
+      const initialCatalogScope = localAuthStatus?.catalogScope ?? null
       const login = await startLocalCodexLogin()
       if (localLoginGenerationRef.current !== generation) {
         void cancelLocalCodexLogin(login.loginId)
@@ -428,7 +429,8 @@ export function ModelSettingsPage({
         const nextStatus = await getLocalCodexAuthStatus()
         if (localLoginGenerationRef.current !== generation) return
         if (nextStatus.exists && nextStatus.sha256 && nextStatus.sha256 !== initialAuthSha256) {
-          invalidateOpenAiRemoteCatalogAccount()
+          if (nextStatus.catalogScope !== initialCatalogScope)
+            invalidateOpenAiRemoteCatalogAccount()
           localLoginIdRef.current = null
           setLocalLoginState('idle')
           await loadLocalAuthStatus()

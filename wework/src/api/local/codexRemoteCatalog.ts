@@ -1,5 +1,6 @@
 import { emptyComponents } from '@wegent/chat-core/codex-installed-plugins'
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
+import { commitLocalStorageValue } from '@/desktop/localStoragePersistence'
 import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { raceWithTimeout } from '@/lib/promise-timeout'
@@ -17,6 +18,12 @@ export interface RemotePluginCatalogSnapshot {
 export class RemotePluginCatalogIdentityChanged extends Error {
   constructor() {
     super('Plugin catalog scope changed')
+  }
+}
+
+export class RemotePluginCatalogStorageError extends Error {
+  constructor(cause: unknown) {
+    super('Could not save the OpenAI plugin catalog', { cause })
   }
 }
 
@@ -79,7 +86,9 @@ function isCatalogItem(value: unknown): value is PluginMarketplaceItem {
   const item = value as Partial<PluginMarketplaceItem>
   return (
     typeof item.id === 'string' &&
+    item.id.trim().length > 0 &&
     typeof item.name === 'string' &&
+    item.name.trim().length > 0 &&
     typeof item.displayName === 'string' &&
     typeof item.description === 'string' &&
     typeof item.remotePluginId === 'string' &&
@@ -140,11 +149,18 @@ function compactInterface(value: PluginInterface | null | undefined) {
   }
 }
 
-function persistCatalog(snapshot: PersistedCatalog): boolean {
+async function persistCatalog(
+  snapshot: PersistedCatalog,
+  assertCurrent: () => void
+): Promise<void> {
+  const commit = (value: string) =>
+    commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, value, {
+      checkBrowserQuota: true,
+      assertCurrent,
+    })
   try {
-    const storage = window.localStorage
     try {
-      storage.setItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(snapshot))
+      await commit(JSON.stringify(snapshot))
     } catch (error) {
       if (!(error instanceof DOMException) || error.name !== 'QuotaExceededError') throw error
       const compact = {
@@ -154,17 +170,14 @@ function persistCatalog(snapshot: PersistedCatalog): boolean {
           interface: compactInterface(item.interface),
         })),
       }
-      storage.setItem(
-        REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
-        COMPACT_CATALOG_PREFIX + compressToUTF16(JSON.stringify(compact))
-      )
+      await commit(COMPACT_CATALOG_PREFIX + compressToUTF16(JSON.stringify(compact)))
     }
-    return true
   } catch (error) {
+    if (error instanceof RemotePluginCatalogIdentityChanged) throw error
     console.warn('[Wework] Failed to persist OpenAI plugin catalog', {
       errorType: error instanceof Error ? error.name : typeof error,
     })
-    return false
+    throw new RemotePluginCatalogStorageError(error)
   }
 }
 
@@ -172,7 +185,6 @@ function persistCatalog(snapshot: PersistedCatalog): boolean {
 export function createSharedRemotePluginCatalog() {
   let active: { identity: string; pending?: Promise<RemotePluginCatalogSnapshot> } | undefined
   let latest: PersistedCatalog | undefined
-  let needsPersistence = false
 
   function hasSnapshotOrRefresh(): boolean {
     if (latest || active?.pending) return true
@@ -190,6 +202,7 @@ export function createSharedRemotePluginCatalog() {
     cacheOnly,
     onCached,
     load,
+    isAccountCurrent,
   }: {
     scope: string
     requestIdentity: string
@@ -197,18 +210,21 @@ export function createSharedRemotePluginCatalog() {
     cacheOnly: boolean
     onCached: (snapshot: RemotePluginCatalogSnapshot | undefined) => void
     load: (cached: RemotePluginCatalogSnapshot | undefined) => Promise<PluginMarketplaceItem[]>
+    isAccountCurrent?: () => boolean
   }): Promise<RemotePluginCatalogSnapshot | undefined> {
     const requestScope =
       active?.identity === requestIdentity ? active : { identity: requestIdentity }
+    const assertCurrent = () => {
+      if (active !== requestScope || isAccountCurrent?.() === false)
+        throw new RemotePluginCatalogIdentityChanged()
+    }
     active = requestScope
     if (latest?.scope !== scope) {
       latest = readPersistedCatalog(scope)
-      needsPersistence = false
     }
     const cached = latest
     onCached(cached)
     if (requestScope.pending) return requestScope.pending
-    if (cached && needsPersistence) needsPersistence = !persistCatalog(cached)
     if (cacheOnly) return Promise.resolve(cached)
     if (!force && cached && Date.now() - cached.fetchedAt < REMOTE_PLUGIN_CATALOG_FRESH_MS) {
       return Promise.resolve(cached)
@@ -217,13 +233,14 @@ export function createSharedRemotePluginCatalog() {
       Promise.resolve().then(() => load(cached)),
       30_000,
       () => new Error('Remote plugin catalog timed out')
-    ).then(items => {
-      if (active !== requestScope) throw new Error('Plugin catalog scope changed')
+    ).then(async items => {
+      assertCurrent()
       if ((cached?.items.length && items.length === 0) || !items.every(isCatalogItem))
         throw new Error('Incomplete remote plugin catalog')
       const result: PersistedCatalog = { version: 1, scope, fetchedAt: Date.now(), items }
+      await persistCatalog(result, assertCurrent)
+      assertCurrent()
       latest = result
-      needsPersistence = !persistCatalog(result)
       return result
     })
     requestScope.pending = request
@@ -237,7 +254,6 @@ export function createSharedRemotePluginCatalog() {
   function clear() {
     active = undefined
     latest = undefined
-    needsPersistence = false
     if (typeof window === 'undefined') return
     try {
       window.localStorage.removeItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)

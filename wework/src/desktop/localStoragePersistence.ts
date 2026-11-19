@@ -58,13 +58,19 @@ export async function readCommittedLocalStorageValue(key: string): Promise<strin
 }
 
 /** Publish to browser windows only after the owning host has committed the value. */
-export async function commitLocalStorageValue(key: string, value: string): Promise<void> {
+export async function commitLocalStorageValue(
+  key: string,
+  value: string,
+  options?: { checkBrowserQuota?: boolean; assertCurrent?: () => void }
+): Promise<void> {
   if (!isElectronRuntime()) {
     localStorage.setItem(key, value)
     return
   }
   if (flushScheduled) flushPendingChanges()
   const commit = writeQueue.then(async () => {
+    options?.assertCurrent?.()
+    if (options?.checkBrowserQuota) verifyBrowserStorageCapacity(key, value)
     const update = { clear: false, changes: new Map([[key, value]]) }
     const persisted = retryUpdate ? mergeUpdates(retryUpdate, update) : update
     await invokeDesktopHost('rendererStorage.update', {
@@ -73,11 +79,12 @@ export async function commitLocalStorageValue(key: string, value: string): Promi
     })
     retryUpdate = null
     writeFailure = null
+    options?.assertCurrent?.()
     try {
       const storage = window.localStorage
       const prototype = storagePrototype(storage)
-      const setItem = prototype[STORAGE_METHODS]?.setItem ?? prototype.setItem
-      setItem.call(storage, key, value)
+      const methods = prototype[STORAGE_METHODS] ?? prototype
+      methods.setItem.call(storage, key, value)
     } catch (error) {
       console.error('[Wework] Could not publish committed localStorage value:', error)
     }
@@ -85,6 +92,19 @@ export async function commitLocalStorageValue(key: string, value: string): Promi
   // A rejected command is not a queued write to retry alongside unrelated changes.
   writeQueue = commit.catch(() => {})
   await commit
+}
+
+function verifyBrowserStorageCapacity(key: string, value: string): void {
+  // The host file is restored into localStorage at launch. Reject a value
+  // that cannot fit there before committing it to the host.
+  const storage = window.localStorage
+  const previous = storage.getItem(key)
+  if (previous === value) return
+  const prototype = storagePrototype(storage)
+  const methods = prototype[STORAGE_METHODS] ?? prototype
+  methods.setItem.call(storage, key, value)
+  if (previous === null) methods.removeItem.call(storage, key)
+  else methods.setItem.call(storage, key, previous)
 }
 
 function storageEntries(storage: Storage): Record<string, string> {

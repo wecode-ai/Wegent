@@ -2892,9 +2892,9 @@ async function readRemoteCatalogScope() {
   const deviceId = status.deviceId?.trim()
   if (!deviceId) throw new Error('Plugin catalog device is unavailable')
   const auth = await getLocalCodexAuthStatus({ startCodex: false })
-  if (auth.error || (auth.exists && !auth.sha256))
+  if (auth.error || (auth.exists && !auth.catalogScope))
     throw new Error('Could not verify plugin catalog authentication')
-  return { deviceId, runtimeInstanceId: status.runtimeInstanceId, authFingerprint: auth.sha256 }
+  return { deviceId, runtimeInstanceId: status.runtimeInstanceId, authScope: auth.catalogScope }
 }
 
 async function fetchRemoteCatalogItems(
@@ -2949,11 +2949,11 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
     30_000,
     () => new Error('Remote plugin catalog identity check timed out')
   )
-  const { deviceId, authFingerprint, runtimeInstanceId } = identity
+  const { deviceId, authScope, runtimeInstanceId } = identity
   // Runtime instance identity fences pending work, while the durable entry follows
-  // the device and credentials across a restart.
+  // the device and account across a restart.
   const scope = await sha256Hex(
-    new Blob([JSON.stringify([deviceId, authFingerprint, options.accountScope])])
+    new Blob([JSON.stringify([deviceId, authScope, options.accountScope])])
   )
   if (!requestAccountIsCurrent() || options.canStart?.() === false)
     throw new Error('Plugin catalog scope changed')
@@ -2961,6 +2961,7 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
     scope,
     requestIdentity: JSON.stringify([scope, runtimeInstanceId, accountEpoch]),
     force: options.forceRefetch,
+    isAccountCurrent: requestAccountIsCurrent,
     cacheOnly: options.cacheOnly === true,
     onCached: snapshot => options.onCached(snapshot, deviceId),
     load: async cached => {
@@ -2969,7 +2970,7 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
       if (
         current.deviceId !== deviceId ||
         current.runtimeInstanceId !== runtimeInstanceId ||
-        current.authFingerprint !== authFingerprint ||
+        current.authScope !== authScope ||
         !requestAccountIsCurrent()
       )
         throw new RemotePluginCatalogIdentityChanged()

@@ -1,6 +1,9 @@
 import { Blob as NodeBlob } from 'node:buffer'
 import { createHash, webcrypto } from 'node:crypto'
-import { renderHook, waitFor } from '@testing-library/react'
+import { mkdir, mkdtemp, rm, rmdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearPluginMarketplaceCache,
@@ -22,17 +25,28 @@ import {
   REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
 } from './codexRemoteCatalog'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
+import { RendererStorageStore } from '../../../electron/src/host/renderer-storage-store'
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(),
+  invokeHost: vi.fn(),
   deviceId: 'device-a',
   runtimeInstanceId: 'runtime-a',
-  authFingerprint: 'codex-account-a',
+  authScope: 'codex-account-a',
+  authFingerprint: 'old-credentials',
   startCodex: vi.fn(),
 }))
 
 vi.mock('@/api/local/runtimeAuthStatus', () => ({
-  getLocalCodexAuthStatus: vi.fn(async () => ({ sha256: mocks.authFingerprint })),
+  getLocalCodexAuthStatus: vi.fn(async () => ({
+    exists: true,
+    catalogScope: mocks.authScope,
+    sha256: mocks.authFingerprint,
+  })),
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: mocks.invokeHost,
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
@@ -76,7 +90,7 @@ describe('OpenAI official catalog persistence', () => {
 
   function seed(fetchedAt: number) {
     const scope = createHash('sha256')
-      .update(JSON.stringify([mocks.deviceId, mocks.authFingerprint, cacheKey]))
+      .update(JSON.stringify([mocks.deviceId, mocks.authScope, cacheKey]))
       .digest('hex')
     localStorage.setItem(
       REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
@@ -99,9 +113,11 @@ describe('OpenAI official catalog persistence', () => {
     clearPluginMarketplaceCache()
     mocks.deviceId = 'device-a'
     mocks.runtimeInstanceId = 'runtime-restarted'
-    mocks.authFingerprint = 'codex-account-a'
+    mocks.authScope = 'codex-account-a'
+    mocks.authFingerprint = 'old-credentials'
     mocks.startCodex.mockClear()
     mocks.request.mockReset().mockResolvedValue(liveResponse)
+    mocks.invokeHost.mockReset().mockResolvedValue({ persisted: true })
     vi.stubGlobal('Blob', NodeBlob)
     vi.stubGlobal('crypto', webcrypto)
     vi.spyOn(Date, 'now').mockReturnValue(now)
@@ -114,9 +130,10 @@ describe('OpenAI official catalog persistence', () => {
     vi.restoreAllMocks()
   })
 
-  test('uses the persisted snapshot after restart within 30 minutes without starting Codex', async () => {
+  test('uses the persisted snapshot after restart and credential renewal within 30 minutes', async () => {
     const fetchedAt = now - 29 * 60_000 - 59_000
     seed(fetchedAt)
+    mocks.authFingerprint = 'renewed-credentials'
     const onCached = vi.fn()
     const result = await createLocalCodexPluginApi().readRemoteCatalog({
       accountScope: cacheKey,
@@ -168,6 +185,7 @@ describe('OpenAI official catalog persistence', () => {
     const all = api.readRemoteCatalog({ ...options, cacheOnly: true, onCached: allCached })
     await vi.waitFor(() => expect(allCached).toHaveBeenCalledOnce())
     expect(mocks.request).toHaveBeenCalledTimes(1)
+    mocks.authFingerprint = 'renewed-during-refresh'
     complete()
     const [automaticResult, manualResult, allResult] = await Promise.all([automatic, manual, all])
     expect(manualResult.snapshot).toBe(automaticResult.snapshot)
@@ -267,6 +285,9 @@ describe('OpenAI official catalog persistence', () => {
   })
 
   test.each([
+    { id: '' },
+    { name: '' },
+    { name: '   ' },
     { interface: { logo: 123 } },
     { components: { ...catalogItem.components, hooks: undefined } },
     { currentDeviceInstallation: { state: 'uninstalling' } },
@@ -366,16 +387,12 @@ describe('OpenAI official catalog persistence', () => {
     }
   })
 
-  test.each([1, 2])('recovers catalog persistence after %i quota failures', async failures => {
+  test.each([1, 2])('handles %i quota failures before committing to the host', async failures => {
     seed(now - 31 * 60_000)
     const before = JSON.parse(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)!)
     const storageSetItem = Storage.prototype.setItem
     let remaining = failures
-    const persist = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
-      this: Storage,
-      key,
-      value
-    ) {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
       if (key === REMOTE_PLUGIN_CATALOG_STORAGE_KEY && remaining-- > 0)
         throw new DOMException('Quota exceeded', 'QuotaExceededError')
       storageSetItem.call(this, key, value)
@@ -383,31 +400,86 @@ describe('OpenAI official catalog persistence', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const options = { accountScope: cacheKey, forceRefetch: false, onCached: vi.fn() }
     const api = createLocalCodexPluginApi()
-    await api.readRemoteCatalog(options)
-    const cold = createSharedRemotePluginCatalog()
-    const readCached = () =>
-      cold.read({
-        scope: before.scope,
-        requestIdentity: before.scope,
-        force: false,
-        cacheOnly: true,
-        onCached: vi.fn(),
-        load: vi.fn(),
-      })
-    const attempts = persist.mock.calls.length
-    expect(attempts).toBe(2)
-    const durableBeforeRetry = await readCached()
+    const refresh = api.readRemoteCatalog(options)
     if (failures === 2) {
-      expect(durableBeforeRetry?.fetchedAt).toBe(before.fetchedAt)
-      await api.readRemoteCatalog(options)
-      expect(JSON.parse(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)!).fetchedAt).toBe(
-        now
-      )
+      await expect(refresh).rejects.toThrow('Could not save the OpenAI plugin catalog')
+      expect(mocks.invokeHost).not.toHaveBeenCalled()
+      expect(JSON.parse(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)!)).toEqual(before)
     } else {
-      expect(durableBeforeRetry?.fetchedAt).toBe(now)
+      await expect(refresh).resolves.toMatchObject({ snapshot: { fetchedAt: now } })
+      expect(mocks.invokeHost).toHaveBeenCalledOnce()
       expect(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)).toMatch(/^lz:/)
     }
     expect(mocks.request).toHaveBeenCalledTimes(1)
+  })
+
+  test('reports a failed disk write and restores the retried catalog after restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-official-catalog-'))
+    const store = new RendererStorageStore(root)
+    try {
+      seed(now - 1000)
+      const previous = localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)!
+      await store.initialize({ [REMOTE_PLUGIN_CATALOG_STORAGE_KEY]: previous, appearance: 'dark' })
+      const blocked = join(root, `renderer-local-storage.json.${process.pid}.tmp`)
+      await mkdir(blocked)
+      mocks.invokeHost.mockImplementation(async (method, update) => {
+        expect(method).toBe('rendererStorage.update')
+        await store.update(update)
+        return { persisted: true }
+      })
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
+      const opened = renderHook(() =>
+        useOpenAiPluginCatalog({
+          cacheKey,
+          accountScope: cacheKey,
+          deviceId: mocks.deviceId,
+          enabled: true,
+          restoreForAll: false,
+          readCatalog,
+        })
+      )
+      try {
+        await waitFor(() => expect(opened.result.current.loading).toBe(false))
+        act(() => opened.result.current.refresh())
+        await waitFor(() => expect(opened.result.current.error).toBe('storage'))
+        expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toHaveLength(1)
+        expect(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)).toBe(previous)
+        expect((await store.read())[REMOTE_PLUGIN_CATALOG_STORAGE_KEY]).toBe(previous)
+
+        await rmdir(blocked)
+        act(() => opened.result.current.refresh())
+        await waitFor(() => {
+          expect(opened.result.current.error).toBeNull()
+          expect(opened.result.current.loading).toBe(false)
+        })
+        expect(mocks.request).toHaveBeenCalledTimes(2)
+      } finally {
+        opened.unmount()
+        await store.close()
+      }
+
+      const entries = await new RendererStorageStore(root).initialize({})
+      expect(entries.appearance).toBe('dark')
+      const persisted = entries[REMOTE_PLUGIN_CATALOG_STORAGE_KEY]
+      localStorage.setItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, persisted)
+      const cold = createSharedRemotePluginCatalog()
+      const { scope } = JSON.parse(previous)
+      const load = vi.fn()
+      await expect(
+        cold.read({
+          scope,
+          requestIdentity: scope,
+          force: false,
+          cacheOnly: false,
+          onCached: vi.fn(),
+          load,
+        })
+      ).resolves.toMatchObject({ fetchedAt: now, items: [{ id: listing.id }] })
+      expect(load).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   test('keeps the file while detaching cards and requiring verification when reopening the market', async () => {
@@ -505,7 +577,7 @@ describe('OpenAI official catalog persistence', () => {
     try {
       await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(1))
       expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toHaveLength(1)
-      mocks.authFingerprint = 'codex-account-b'
+      mocks.authScope = 'codex-account-b'
       completeOld()
       await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2))
       expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([])
@@ -523,7 +595,7 @@ describe('OpenAI official catalog persistence', () => {
     async state => {
       seed(now - 1000)
       if (state === 'damaged') localStorage.setItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, '{invalid')
-      else mocks.authFingerprint = 'codex-account-b'
+      else mocks.authScope = 'codex-account-b'
       const initial = localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)
       const complete = holdCatalogRequest()
       const onCached = vi.fn()
@@ -533,7 +605,7 @@ describe('OpenAI official catalog persistence', () => {
       const rejected = expect(pending).rejects.toThrow('Plugin catalog scope changed')
       await vi.waitFor(() => expect(mocks.request).toHaveBeenCalledOnce())
       expect(onCached).toHaveBeenCalledWith(undefined, 'device-a')
-      mocks.authFingerprint = 'codex-account-c'
+      mocks.authScope = 'codex-account-c'
       complete()
       await rejected
       expect(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)).toBe(initial)
