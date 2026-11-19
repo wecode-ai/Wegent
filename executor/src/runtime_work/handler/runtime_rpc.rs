@@ -9,10 +9,24 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<i64, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
-            let user = self.runtime_account_identity().await?;
-            user["id"].as_i64().filter(|id| *id > 0).ok_or_else(|| {
-                AppIpcError::new("permission_denied", "Connected account identity is invalid")
-            })
+            let connection = self.require_runtime_connection()?;
+            let owner = Self::connected_runtime_user(&connection).await?;
+            if connection.auth_token.starts_with("wg-") {
+                let mut snapshot = self.backend_connection.lock().map_err(|_| {
+                    AppIpcError::new(
+                        "cloud_unavailable",
+                        "Runtime connection state is unavailable",
+                    )
+                })?;
+                let current = snapshot
+                    .as_mut()
+                    .filter(|current| **current == connection)
+                    .ok_or_else(|| {
+                        AppIpcError::new("cloud_unavailable", "Runtime connection changed")
+                    })?;
+                current.authenticated_user_id = Some(owner);
+            }
+            Ok(owner)
         })
     }
 

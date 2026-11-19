@@ -26,45 +26,36 @@ pub(super) fn connection_event() -> Value {
 
 #[tokio::test]
 async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
-    use axum::{extract::Path, http::StatusCode, routing::get, Json, Router};
+    use axum::{extract::Path, http::StatusCode, routing::get, Router};
 
     let root = tempfile::tempdir().unwrap();
     let (mut handler, store, mut settings) = fixture(root.path());
-    let identity_available = Arc::new(AtomicBool::new(true));
-    let owner = identity_available.clone();
-    let router = Router::new()
-        .route(
-            "/api/users/me",
-            get(move || {
-                let available = owner.load(Ordering::Relaxed);
-                async move {
-                    if available {
-                        (StatusCode::OK, Json(json!({"id":7})))
-                    } else {
-                        (StatusCode::SERVICE_UNAVAILABLE, Json(json!({})))
-                    }
-                }
-            }),
-        )
-        .route(
-            "/api/v1/loop-items/{id}",
-            get(|Path(id): Path<String>| async move {
+    let release_issue = Arc::new(tokio::sync::Notify::new());
+    let issue_gate = release_issue.clone();
+    let router = Router::new().route(
+        "/api/v1/loop-items/{id}",
+        get(move |Path(id): Path<String>| {
+            let issue_gate = issue_gate.clone();
+            async move {
                 if id == "missing" {
+                    issue_gate.notified().await;
                     StatusCode::NOT_FOUND
                 } else {
                     StatusCode::SERVICE_UNAVAILABLE
                 }
-            }),
-        );
+            }
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url,
         auth_token: "test-session".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
-    handler.verify_local_stand_in_owner(7).await.unwrap();
+    handler.verify_local_stand_in_owner(7).unwrap();
     settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":"project","store":"cloud"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}});
     store.save_personal_stand_in(7, "mac", settings).unwrap();
 
@@ -86,8 +77,7 @@ async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
                 .unwrap(),
         );
     }
-    for (round, owner_online) in [(1, true), (2, false)] {
-        identity_available.store(owner_online, Ordering::Relaxed);
+    for round in [1, 2] {
         let mut incoming = connection_event();
         incoming["message"]["id"] = json!(format!("connection-{round}"));
         let healthy = store
@@ -107,6 +97,34 @@ async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
             .unwrap()
             .iter()
             .all(|event| event["kind"] == "connection"));
+        if round == 1 {
+            assert_eq!(
+                store
+                    .stand_in_event(7, issue_events[0]["id"].as_str().unwrap())
+                    .unwrap()["status"],
+                "pending",
+                "The source is routable before the slow Issue read returns"
+            );
+            release_issue.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    handler
+                        .coordination_snapshot_for_test(&store, 7)
+                        .await
+                        .unwrap();
+                    if store
+                        .stand_in_event(7, issue_events[0]["id"].as_str().unwrap())
+                        .unwrap()["status"]
+                        == "cancelled"
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
         assert_eq!(
             store.stand_in_processing_state(7).unwrap()["error"],
             Value::Null
@@ -121,11 +139,7 @@ async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
         );
     }
     assert_eq!(
-        handler
-            .verify_local_stand_in_owner(8)
-            .await
-            .unwrap_err()
-            .code,
+        handler.verify_local_stand_in_owner(8).unwrap_err().code,
         "permission_denied"
     );
     handler
@@ -134,8 +148,8 @@ async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
         .unwrap()
         .as_mut()
         .unwrap()
-        .auth_token = "other-session".into();
-    assert!(handler.verify_local_stand_in_owner(7).await.is_err());
+        .authenticated_user_id = Some(8);
+    assert!(handler.verify_local_stand_in_owner(7).is_err());
     server.abort();
 }
 

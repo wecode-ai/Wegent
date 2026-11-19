@@ -72,6 +72,12 @@
                 "maxLength": 512,
                 "description": "Exact repository path on this instance. Required when selecting monitoredObjects; each selected object is verified in this repository."
               },
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Observe change request status for one exact source branch in a repository."
+              },
               "monitoredObjects": {
                 "type": "array",
                 "minItems": 1,
@@ -323,6 +329,12 @@
                 "minLength": 1,
                 "maxLength": 512,
                 "description": "Exact repository path on this instance. Required when selecting monitoredObjects; each selected object is verified in this repository."
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Observe change request status for one exact source branch in a repository."
               },
               "monitoredObjects": {
                 "type": "array",

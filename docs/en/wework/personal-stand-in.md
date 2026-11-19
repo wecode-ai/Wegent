@@ -165,6 +165,8 @@ Stand-in chats currently require the Codex runtime for operation approvals; the 
 
 ## DingTalk and collaboration sources
 
+The shared DSH EventBus schedules connection collection for the assistant, the GitHub and GitLab sidebar, and task subscriptions. The host combines duplicate collection requests, provider plugins read their resources, and the Executor stores each subscriber’s cursor and delivery receipts. A source collection is cancelled after 15 seconds. The conversation manages any model turn it has already accepted.
+
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
 
 Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.

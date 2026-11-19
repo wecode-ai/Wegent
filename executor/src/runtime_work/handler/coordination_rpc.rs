@@ -76,7 +76,7 @@ impl RuntimeWorkRpcHandler {
             return self.project_router_rpc(&store, method, &payload).await;
         }
         let user = context_user(&payload)?;
-        self.verify_local_stand_in_owner(user).await?;
+        self.verify_local_stand_in_owner(user)?;
         let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
         let _guard = gate.lock().await;
         let settings = store

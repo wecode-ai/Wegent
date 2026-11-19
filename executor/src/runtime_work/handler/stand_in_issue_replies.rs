@@ -492,6 +492,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: format!("http://{}", listener.local_addr().unwrap()),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });

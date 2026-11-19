@@ -6,6 +6,25 @@ use crate::task_runtime::personal_stand_in::{
     stand_in_collection_connection, stand_in_connection, stand_in_identities,
 };
 
+const MAX_INTAKE_WORKERS: usize = 8;
+const INTAKE_TIMEOUT: Duration = Duration::from_secs(15);
+
+struct IntakeWorker {
+    revision: String,
+    result: tokio::task::JoinHandle<Result<Vec<Value>, AppIpcError>>,
+}
+
+#[derive(Default)]
+pub(super) struct StandInIntakeWorkers {
+    tasks: HashMap<(i64, String), IntakeWorker>,
+}
+
+impl Drop for IntakeWorker {
+    fn drop(&mut self) {
+        self.result.abort();
+    }
+}
+
 #[path = "stand_in_intake_policy.rs"]
 mod intake_policy;
 use intake_policy::{immediate_intake, intake_order};
@@ -154,7 +173,19 @@ impl RuntimeWorkRpcHandler {
             }) else {
                 continue;
             };
-            if self
+            let origin = &link.runtime_handle["origin"];
+            if origin["projectStore"] == "cloud" {
+                let project = origin["cloudProjectId"].as_str().unwrap_or_default();
+                if !crate::task_runtime::personal_stand_in::role_project_matches(
+                    role, project, "cloud",
+                ) || crate::task_runtime::personal_stand_in::project_policy(
+                    role, project, "cloud",
+                )["automatic"]
+                    == false
+                {
+                    continue;
+                }
+            } else if self
                 .validate_followup_role(store, user, role, &link)
                 .await
                 .is_err()
@@ -209,53 +240,44 @@ impl RuntimeWorkRpcHandler {
             .collect();
         let now = chrono::Utc::now().timestamp_millis();
         let identities = stand_in_identities(settings);
+        let configuration = LocalTaskStore::coordination_event_version(&json!([
+            LocalTaskStore::coordination_configuration_version(settings),
+            self.backend_connection_snapshot()?
+                .as_ref()
+                .map(super::runtime_owner::connection_owner_key),
+        ]));
+        let pending_ids: HashSet<_> = pending
+            .iter()
+            .filter_map(|event| event["id"].as_str())
+            .collect();
+        self.stand_in_intake_workers
+            .lock()
+            .expect("intake worker lock poisoned")
+            .tasks
+            .retain(|(owner, id), _| *owner != user || pending_ids.contains(id.as_str()));
         pending.sort_by_key(|event| intake_order(&identities, event, now));
         let mut events = Vec::new();
-        'event: for mut event in pending {
+        for mut event in pending {
             event = self.resolve_connection_event_binding(&event, &identities);
-            let mut recipients = Vec::new();
-            for role in &identities {
-                if role["enabled"] != true || self.validate_intake_role(role, &event).is_err() {
+            let result = if self.intake_uses_cloud(&event) {
+                let Some(result) = self
+                    .poll_intake_worker(user, &event, &identities, &configuration)
+                    .await
+                else {
+                    continue;
+                };
+                result
+            } else {
+                self.authorize_intake_event(store, user, &event, &identities)
+                    .await
+            };
+            let recipients = match result {
+                Ok(recipients) => recipients,
+                Err(error) => {
+                    log_intake_failure(&event, &error);
                     continue;
                 }
-                let validation = if event["kind"] == "assignment" {
-                    self.read_assignment_intake(store, user, role, &event)
-                        .await
-                        .map(|_| ())
-                } else if matches!(event["kind"].as_str(), Some("work_state" | "followup")) {
-                    match event["taskId"]
-                        .as_str()
-                        .and_then(|id| self.local_task_link(id))
-                    {
-                        Some(link) => self.validate_followup_role(store, user, role, &link).await,
-                        None => Err(AppIpcError::new(
-                            "source_removed",
-                            "The followed work no longer exists",
-                        )),
-                    }
-                } else {
-                    Ok(())
-                };
-                match validation {
-                    Ok(()) => {}
-                    Err(error)
-                        if matches!(
-                            error.code.as_str(),
-                            "source_removed"
-                                | "permission_denied"
-                                | "invalid_assignment"
-                                | "not_found"
-                        ) =>
-                    {
-                        continue
-                    }
-                    Err(error) => {
-                        log_intake_failure(&event, &error);
-                        continue 'event;
-                    }
-                }
-                recipients.push(role["id"].clone());
-            }
+            };
             let paused = recipients.is_empty()
                 && identities.iter().any(|role| {
                     role["enabled"] == false && self.validate_intake_role(role, &event).is_ok()
@@ -284,6 +306,113 @@ impl RuntimeWorkRpcHandler {
             }
         }
         Ok(events)
+    }
+
+    fn intake_uses_cloud(&self, event: &Value) -> bool {
+        match event["kind"].as_str() {
+            Some("assignment") => event["projectStore"] == "cloud",
+            Some("work_state" | "followup") => event["taskId"]
+                .as_str()
+                .and_then(|id| self.local_task_link(id))
+                .is_some_and(|link| link.runtime_handle["origin"]["projectStore"] == "cloud"),
+            _ => false,
+        }
+    }
+
+    async fn poll_intake_worker(
+        &self,
+        user: i64,
+        event: &Value,
+        identities: &[Value],
+        configuration: &str,
+    ) -> Option<Result<Vec<Value>, AppIpcError>> {
+        let key = (user, event["id"].as_str()?.to_owned());
+        let revision = LocalTaskStore::coordination_event_version(&json!([configuration, event]));
+        let mut worker = {
+            let mut workers = self
+                .stand_in_intake_workers
+                .lock()
+                .expect("intake worker lock poisoned");
+            if let Some(worker) = workers.tasks.get(&key) {
+                if worker.revision == revision {
+                    if !worker.result.is_finished() {
+                        return None;
+                    }
+                    workers.tasks.remove(&key)?
+                } else {
+                    workers.tasks.remove(&key);
+                    return None;
+                }
+            } else {
+                if workers.tasks.len() >= MAX_INTAKE_WORKERS {
+                    return None;
+                }
+                let handler = self.clone();
+                let event = event.clone();
+                let roles = identities.to_vec();
+                let result = tokio::spawn(async move {
+                    let store = LocalTaskStore::open(handler.task_store_path.as_ref())
+                        .map_err(settings_error)?;
+                    tokio::time::timeout(
+                        INTAKE_TIMEOUT,
+                        handler.authorize_intake_event(&store, user, &event, &roles),
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppIpcError::new("stand_in_event_timeout", "Event authorization timed out")
+                    })?
+                });
+                workers.tasks.insert(key, IntakeWorker { revision, result });
+                return None;
+            }
+        };
+        Some((&mut worker.result).await.unwrap_or_else(|_| {
+            Err(AppIpcError::new(
+                "stand_in_event_worker_failed",
+                "Event authorization worker stopped",
+            ))
+        }))
+    }
+
+    async fn authorize_intake_event(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        event: &Value,
+        identities: &[Value],
+    ) -> Result<Vec<Value>, AppIpcError> {
+        let mut recipients = Vec::new();
+        for role in identities {
+            if role["enabled"] != true || self.validate_intake_role(role, event).is_err() {
+                continue;
+            }
+            let result = match event["kind"].as_str() {
+                Some("assignment") => self
+                    .read_assignment_intake(store, user, role, event)
+                    .await
+                    .map(|_| ()),
+                Some("work_state" | "followup") => {
+                    let Some(link) = event["taskId"]
+                        .as_str()
+                        .and_then(|id| self.local_task_link(id))
+                    else {
+                        continue;
+                    };
+                    self.validate_followup_role(store, user, role, &link).await
+                }
+                _ => Ok(()),
+            };
+            match result {
+                Ok(()) => recipients.push(role["id"].clone()),
+                Err(error)
+                    if matches!(
+                        error.code.as_str(),
+                        "source_removed" | "permission_denied" | "invalid_assignment" | "not_found"
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(recipients)
     }
 
     fn coordinator_work(&self, user: i64) -> Vec<RuntimeTaskLink> {
@@ -554,7 +683,7 @@ impl RuntimeWorkRpcHandler {
                             json!(selected)
                         );
                         request["prompt"] = json!(message);
-                        result = self.send_message(json!({"taskId":id,"message":required(args, "message")?,"restoreUserMessageContent":true,"executionRequest":request,"clientUserMessageId":client,"commandId":client,"queueIfBusy":true,"automaticStandIn":true})).await?;
+                        result = self.send_message_from_event(json!({"taskId":id,"message":required(args, "message")?,"restoreUserMessageContent":true,"executionRequest":request,"clientUserMessageId":client,"commandId":client,"queueIfBusy":true,"automaticStandIn":true})).await?;
                         if result["pending"] == true {
                             return Ok(None);
                         }

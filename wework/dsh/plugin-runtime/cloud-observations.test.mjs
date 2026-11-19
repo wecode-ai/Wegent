@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createServer } from 'node:http'
+import { collectObservation } from './connection-observations.js'
 import { cloudObservationClient, runCloudObservation } from './cloud-observations.js'
+
+const collector = registry => (providerId, input, signal) =>
+  collectObservation(registry, providerId, input, { signal })
 
 const observation = {
   id: 'observation',
@@ -40,11 +44,11 @@ test('a lease from another account cannot invoke a provider or commit facts', as
   const calls = []
   await assert.rejects(
     runCloudObservation(
-      { call: async () => assert.fail('Foreign lease must not read a provider') },
       async action => {
         calls.push(action)
         return { ownerId: 8, observation }
       },
+      async () => assert.fail('Foreign lease must not read a provider'),
       { expectedOwnerId: 7 }
     ),
     error => error.code === 'observation_owner_changed'
@@ -71,7 +75,7 @@ test('a cloud collector persists the same Node provider cycle without starting a
       }
     },
   }
-  assert.deepEqual(await runCloudObservation(registry, request), { accepted: true })
+  assert.deepEqual(await runCloudObservation(request, collector(registry)), { accepted: true })
   assert.deepEqual(
     calls.map(call => call.action),
     ['read_lease', 'commit']
@@ -95,7 +99,7 @@ test('collection failures persist only the bounded error and retain the Backend 
       })
     },
   }
-  await runCloudObservation(registry, request)
+  await runCloudObservation(request, collector(registry))
   assert.deepEqual(calls[1], {
     action: 'fail',
     input: { errorCode: 'temporary_failure', retryAfterMs: 30000 },
@@ -132,7 +136,7 @@ test('losing the collection lease aborts the in-flight page and prevents further
     if (action === 'renew') throw lost
     assert.fail(`Unexpected ${action} after losing the lease`)
   }
-  const running = runCloudObservation(registry, request)
+  const running = runCloudObservation(request, collector(registry))
   const rejected = assert.rejects(running, error => error === lost)
   await started
   t.mock.timers.tick(20000)

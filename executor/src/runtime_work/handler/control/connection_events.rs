@@ -457,12 +457,7 @@ impl RuntimeWorkRpcHandler {
             "wait_for_event":intent["wait_for_event"],"observation_id":observation_id,"after_sequence":after_sequence,"initial_sequence":after_sequence,"status":if waiting_goal.is_some() { "preparing" } else { "armed" },
             "waiting_goal":waiting_goal});
         if self.cloud_connection_observations.load(Ordering::Acquire) {
-            let owner = self
-                .runtime_http(reqwest::Method::GET, "/users/me", None)
-                .await?;
-            if owner["id"].as_i64().map_or(true, |id| id <= 0) {
-                return Err(invalid("Connected account is unavailable"));
-            }
+            let owner = Self::local_connection_user(&self.require_runtime_connection()?)?;
             let device = self.cloud_device_id()?;
             let cloud_id = format!(
                 "{:x}",
@@ -470,7 +465,7 @@ impl RuntimeWorkRpcHandler {
                     [device, task, key]
                 )))
             );
-            record["cloud_registration"] = json!({"owner_id":owner["id"],"device_id":device,"subscription_id":cloud_id,"initial_checkpoint":initial_checkpoint});
+            record["cloud_registration"] = json!({"owner_id":owner,"device_id":device,"subscription_id":cloud_id,"initial_checkpoint":initial_checkpoint});
             record["status"] = json!("preparing");
         }
         self.save_event_subscription_replacing(&id, &record, &superseded)?;
@@ -533,11 +528,20 @@ impl RuntimeWorkRpcHandler {
         self.save_event_subscription(id, record)
     }
 
-    pub(in crate::runtime_work::handler) async fn poll_conversation_connection_events(
+    #[cfg(test)]
+    async fn poll_conversation_connection_events(
         &self,
         maintenance: bool,
     ) -> Result<(), AppIpcError> {
-        let cycle = uuid::Uuid::new_v4().to_string();
+        self.dispatch_conversation_connection_events(maintenance, true)
+            .await
+    }
+
+    pub(in crate::runtime_work::handler) async fn dispatch_conversation_connection_events(
+        &self,
+        maintenance: bool,
+        collect: bool,
+    ) -> Result<(), AppIpcError> {
         let records = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::Active,
@@ -556,100 +560,123 @@ impl RuntimeWorkRpcHandler {
                         {
                             return true;
                         }
-                        if record["status"] != "armed" || record["cloud_subscription"].is_object() {
+                        if !collect
+                            || record["status"] != "armed"
+                            || record["cloud_subscription"].is_object()
+                        {
                             return false;
                         }
                         let source = record["observation_id"]
                             .as_str()
                             .and_then(|id| state["observations"].get(id));
                         source.is_some_and(|source| {
-                            source["next_poll_at"].as_i64().unwrap_or_default() <= now_ms()
-                                || source["last_collected_at"] != record["last_collected_at"]
+                            source["last_collected_at"] != record["last_collected_at"]
+                                || source["error_code"] != record["error_code"]
                         })
                     })
                     .map(|(id, record)| (id.clone(), record.clone()))
                     .collect::<serde_json::Map<String, Value>>())
             },
         )?;
+        let mut by_task = std::collections::BTreeMap::<String, Vec<_>>::new();
         for (id, snapshot) in records {
-            let cancelling =
-                snapshot["status"] == "cancelled" && snapshot["cloud_cancel_pending"] == true;
-            let refreshing = snapshot["cloud_refresh_pending"] == true
-                && matches!(
-                    snapshot["status"].as_str(),
-                    Some("preparing" | "armed" | "pending")
-                );
-            if snapshot["cloud_subscription"].is_object()
-                && !cancelling
-                && !refreshing
-                && !matches!(
-                    snapshot["status"].as_str(),
-                    Some("preparing" | "resuming_goal")
-                )
-            {
-                continue;
-            }
-            if !matches!(
+            let task = snapshot["task_id"].as_str().unwrap_or_default().to_owned();
+            by_task.entry(task).or_default().push((id, snapshot));
+        }
+        let mut workers = stream::iter(by_task.into_values())
+            .map(|records| async move {
+                for (id, snapshot) in records {
+                    if let Err(error) = self.poll_conversation_subscription(&id, snapshot).await {
+                        log_executor_event(
+                            "Conversation event processing deferred",
+                            &[("code", error.code)],
+                        );
+                    }
+                }
+            })
+            .buffer_unordered(4);
+        while workers.next().await.is_some() {}
+        Ok(())
+    }
+
+    async fn poll_conversation_subscription(
+        &self,
+        id: &str,
+        snapshot: Value,
+    ) -> Result<(), AppIpcError> {
+        let cancelling =
+            snapshot["status"] == "cancelled" && snapshot["cloud_cancel_pending"] == true;
+        let refreshing = snapshot["cloud_refresh_pending"] == true
+            && matches!(
                 snapshot["status"].as_str(),
-                Some("preparing" | "armed" | "pending" | "resuming_goal")
-            ) && !cancelling
-            {
-                continue;
-            }
-            let task = snapshot["task_id"].as_str().unwrap_or_default();
-            let gate = self.task_send_gate(&format!("connection-events:{task}"));
-            let _guard = gate.lock().await;
-            // A model may cancel or replace a subscription while collection was scheduled.
-            let mut record = event_store::read(
-                &self.event_subscription_path(),
-                event_store::Scope::Row("operations", &id),
-                |state| Ok(state["operations"][&id].clone()),
-            )?;
-            let advanced = ["intent", "source", "waiting_goal", "task_id", "device_id"]
-                .iter()
-                .all(|field| record[field] == snapshot[field])
-                && matches!(snapshot["status"].as_str(), Some("armed" | "pending"))
-                && matches!(record["status"].as_str(), Some("armed" | "pending"));
-            if record != snapshot && !advanced {
-                continue;
-            }
-            if record["pending_wakeup"] == true {
-                record["pending_wakeup"] = json!(false);
-                self.save_event_subscription(&id, &record)?;
-            }
-            if cancelling {
-                let mut record = record;
-                if let Err(error) = self
-                    .finish_cloud_connection_cancellation(&id, &mut record)
-                    .await
-                {
-                    log_executor_event(
-                        "Cloud event-wait cancellation deferred",
-                        &[("code", error.code)],
-                    );
-                }
-                continue;
-            }
-            if refreshing && record["cloud_subscription"].is_object() {
-                let mut record = record;
-                if let Err(error) = self.submit_cloud_observation_refresh(&mut record).await {
-                    record["error_code"] = json!(error.code);
-                }
-                self.save_event_subscription(&id, &record)?;
-                continue;
-            }
+                Some("preparing" | "armed" | "pending")
+            );
+        if snapshot["cloud_subscription"].is_object()
+            && !cancelling
+            && !refreshing
+            && !matches!(
+                snapshot["status"].as_str(),
+                Some("preparing" | "resuming_goal")
+            )
+        {
+            return Ok(());
+        }
+        if !matches!(
+            snapshot["status"].as_str(),
+            Some("preparing" | "armed" | "pending" | "resuming_goal")
+        ) && !cancelling
+        {
+            return Ok(());
+        }
+        let task = snapshot["task_id"].as_str().unwrap_or_default();
+        let gate = self.task_send_gate(&format!("connection-events:{task}"));
+        let _guard = gate.lock().await;
+        // A model may cancel or replace a subscription while collection was scheduled.
+        let mut record = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", id),
+            |state| Ok(state["operations"][id].clone()),
+        )?;
+        let advanced = ["intent", "source", "waiting_goal", "task_id", "device_id"]
+            .iter()
+            .all(|field| record[field] == snapshot[field])
+            && matches!(snapshot["status"].as_str(), Some("armed" | "pending"))
+            && matches!(record["status"].as_str(), Some("armed" | "pending"));
+        if record != snapshot && !advanced {
+            return Ok(());
+        }
+        if record["pending_wakeup"] == true {
+            record["pending_wakeup"] = json!(false);
+            self.save_event_subscription(id, &record)?;
+        }
+        if cancelling {
+            let mut record = record;
             if let Err(error) = self
-                .collect_conversation_subscription(&id, record.clone(), &cycle)
+                .finish_cloud_connection_cancellation(id, &mut record)
                 .await
             {
-                let mut record = event_store::read(
-                    &self.event_subscription_path(),
-                    event_store::Scope::Row("operations", &id),
-                    |state| Ok(state["operations"][&id].clone()),
-                )?;
-                record["error_code"] = json!(error.code);
-                self.save_event_subscription(&id, &record)?;
+                log_executor_event(
+                    "Cloud event-wait cancellation deferred",
+                    &[("code", error.code)],
+                );
             }
+            return Ok(());
+        }
+        if refreshing && record["cloud_subscription"].is_object() {
+            let mut record = record;
+            if let Err(error) = self.submit_cloud_observation_refresh(&mut record).await {
+                record["error_code"] = json!(error.code);
+            }
+            return self.save_event_subscription(id, &record);
+        }
+        if let Err(error) = self.collect_conversation_subscription(id, record).await {
+            let mut record = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("operations", id),
+                |state| Ok(state["operations"][id].clone()),
+            )?;
+            record["error_code"] = json!(error.code);
+            self.save_event_subscription(id, &record)?;
         }
         Ok(())
     }
@@ -658,7 +685,6 @@ impl RuntimeWorkRpcHandler {
         &self,
         id: &str,
         mut record: Value,
-        cycle: &str,
     ) -> Result<(), AppIpcError> {
         let task = record["task_id"].as_str().unwrap().to_owned();
         let Some(link) = self
@@ -686,7 +712,6 @@ impl RuntimeWorkRpcHandler {
         let context = ControlContext::from_request(&request)
             .ok_or_else(|| invalid("Conversation no longer permits personal control"))?;
         self.validate_control_context(&context)?;
-        self.authorize_control_target(&context, &link).await?;
         if record["status"] == "preparing" {
             self.prepare_event_subscription(id, &mut record).await?;
             if record["status"] == "cancelled" {
@@ -719,7 +744,11 @@ impl RuntimeWorkRpcHandler {
             && record["operation_id"].is_null()
             && matches!(record["status"].as_str(), Some("armed" | "pending"))
         {
-            let observation = self.read_event_observation(&record, cycle, false).await?;
+            let observation = self.stored_event_observation(
+                record["observation_id"]
+                    .as_str()
+                    .ok_or_else(|| invalid("Missing observation identity"))?,
+            )?;
             record = event_store::read(
                 &self.event_subscription_path(),
                 event_store::Scope::Row("operations", id),
@@ -805,7 +834,7 @@ impl RuntimeWorkRpcHandler {
         }
         let message = record["continuation"].as_str().unwrap().to_owned();
         let result = self
-            .control_continue(
+            .control_continue_from_event(
                 &context,
                 link,
                 json!({"conversation_id":workbench_control::conversation_id(&self.device_id,&task),
