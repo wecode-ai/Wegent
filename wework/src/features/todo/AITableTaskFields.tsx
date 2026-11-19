@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, Pencil, Sparkles, X } from 'lucide-react'
 
-import type { AITableApi, AITableField, AITableRecord } from '@/api/aitable'
+import type { AITableApi, AITableField } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
@@ -30,6 +31,7 @@ const EDITABLE_TYPES = new Set([
 ])
 const CONTENT_TYPES = new Set(['multiLineText', 'richText'])
 const PROPERTY_LIMIT = 8
+const EMPTY_FIELDS: AITableField[] = []
 
 function textValue(value: unknown): string {
   if (value === null || value === undefined) return ''
@@ -318,26 +320,35 @@ export function AITableTaskFields({
   project: CloudProject
   item: CloudLoopItem
 }) {
-  const [fields, setFields] = useState<AITableField[]>([])
-  const [record, setRecord] = useState<AITableRecord | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
   const recordId = item.id.split(':').at(-1) ?? ''
-
-  useEffect(() => {
-    let active = true
-    if (!api.getRecord) return
-    void Promise.all([api.describe(project.id), api.getRecord(project.id, recordId)])
-      .then(([description, nextRecord]) => {
-        if (!active) return
-        setFields(description.fields)
-        setRecord(nextRecord)
-      })
-      .catch(cause => active && setError(cause instanceof Error ? cause.message : '字段加载失败'))
-    return () => {
-      active = false
-    }
-  }, [api, project.id, recordId])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(JSON.stringify([project.id, recordId]), async signal => {
+        await Promise.resolve()
+        signal.throwIfAborted()
+        if (!api.getRecord) throw new Error('字段加载失败')
+        const [description, record] = await Promise.all([
+          api.describe(project.id),
+          api.getRecord(project.id, recordId),
+        ])
+        return { fields: description.fields, record }
+      }),
+    [api, project.id, recordId]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const fields = snapshot.data?.fields ?? EMPTY_FIELDS
+  const record = snapshot.data?.record ?? null
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : '字段加载失败'
+      : null
 
   const layout = useMemo(() => {
     if (!record) return { content: [], properties: [], more: [] }
@@ -377,9 +388,15 @@ export function AITableTaskFields({
   async function updateField(fieldId: string, value: unknown) {
     try {
       const updated = await api.updateRecord(project.id, recordId, { [fieldId]: value })
-      setRecord(current =>
+      resource.update(current =>
         current
-          ? { ...current, cells: { ...current.cells, [fieldId]: updated.cells[fieldId] ?? value } }
+          ? {
+              ...current,
+              record: {
+                ...current.record,
+                cells: { ...current.record.cells, [fieldId]: updated.cells[fieldId] ?? value },
+              },
+            }
           : current
       )
       track('feature_action_completed', { domain: 'table_record', action: 'update' })

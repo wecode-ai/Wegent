@@ -9,7 +9,8 @@
 // unknown types stay read-only and their raw payloads round-trip untouched.
 // Field management (add/rename/delete) requires a Developer-or-higher role.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import {
   AllCommunityModule,
   ModuleRegistry,
@@ -22,7 +23,7 @@ import {
 import { AgGridReact } from 'ag-grid-react'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
-import type { AITableApi, AITableDescription, AITableField, AITableRecord } from '@/api/aitable'
+import type { AITableApi, AITableField, AITableRecord } from '@/api/aitable'
 import type { CloudProject } from '@/api/deliveries'
 import { track } from '@/telemetry/client'
 
@@ -368,79 +369,77 @@ function RecordActions({ data, context }: ICellRendererParams<AITableRecord>) {
   )
 }
 
+function createAITableResource(api: AITableApi, project: CloudProject) {
+  let request: { keyword?: string; viewId?: string } = {}
+  const resource = createAsyncResource(project.id, async signal => {
+    await api.configureProject(project)
+    signal.throwIfAborted()
+    const schema = await api.describe(project.id)
+    signal.throwIfAborted()
+    const viewId =
+      request.viewId ??
+      (project.provider_config.view_id ||
+        (schema.views?.length ? viewValue(schema.views[0], ['viewId', 'view_id', 'id']) : ''))
+    const page = await api.listRecords(project.id, {
+      query: request.keyword,
+      limit: 100,
+      viewId: viewId || undefined,
+    })
+    signal.throwIfAborted()
+    return {
+      description: schema,
+      records: page.items,
+      cursor: page.cursor,
+      hasMore: page.has_more,
+      selectedViewId: viewId,
+    }
+  })
+  return {
+    ...resource,
+    load(keyword?: string, viewId?: string) {
+      request = { keyword, viewId }
+      return resource.reload()
+    },
+  }
+}
+
 export function AITableView({ api, project }: { api: AITableApi; project: CloudProject }) {
-  const [description, setDescription] = useState<AITableDescription | null>(null)
-  const [records, setRecords] = useState<AITableRecord[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const resource = useMemo(() => createAITableResource(api, project), [api, project])
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const description = snapshot.data?.description ?? null
+  const records = snapshot.data?.records ?? []
+  const cursor = snapshot.data?.cursor ?? null
+  const hasMore = snapshot.data?.hasMore ?? false
+  const selectedViewId = snapshot.data?.selectedViewId ?? project.provider_config.view_id ?? ''
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
+  const [mutationError, setError] = useState<string | null>(null)
+  const error =
+    mutationError ??
+    (snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : '加载表格失败'
+      : null)
+  const setRecords = (change: (current: AITableRecord[]) => AITableRecord[]) =>
+    resource.update(data => data && { ...data, records: change(data.records) })
   const [query, setQuery] = useState('')
   const [newFieldName, setNewFieldName] = useState('')
   const [newFieldType, setNewFieldType] = useState('text')
   const [addingField, setAddingField] = useState(false)
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [mutationBusy, setMutationBusy] = useState(false)
-  const [selectedViewId, setSelectedViewId] = useState(project.provider_config.view_id ?? '')
   const canManageFields = ['Owner', 'Maintainer', 'Developer'].includes(
     project.access_role ?? 'Owner'
   )
   const canEditRecords = canManageFields
 
   const load = useCallback(
-    async (keyword?: string, viewId = selectedViewId) => {
-      setLoading(true)
+    (keyword?: string, viewId = selectedViewId) => {
       setError(null)
-      try {
-        await api.configureProject(project)
-        const [schema, page] = await Promise.all([
-          api.describe(project.id),
-          api.listRecords(project.id, { query: keyword, limit: 100, viewId: viewId || undefined }),
-        ])
-        setDescription(schema)
-        setRecords(page.items)
-        setCursor(page.cursor)
-        setHasMore(page.has_more)
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : '加载表格失败')
-      } finally {
-        setLoading(false)
-      }
+      return resource.load(keyword, viewId)
     },
-    [api, project, selectedViewId]
+    [resource, selectedViewId]
   )
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      setError(null)
-      try {
-        await api.configureProject(project)
-        const initialViewId = project.provider_config.view_id ?? ''
-        const schema = await api.describe(project.id)
-        const resolvedViewId =
-          initialViewId ||
-          (schema.views?.length ? viewValue(schema.views[0], ['viewId', 'view_id', 'id']) : '')
-        const page = await api.listRecords(project.id, {
-          limit: 100,
-          viewId: resolvedViewId || undefined,
-        })
-        if (cancelled) return
-        setDescription(schema)
-        setSelectedViewId(resolvedViewId)
-        setRecords(page.items)
-        setCursor(page.cursor)
-        setHasMore(page.has_more)
-      } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : '加载表格失败')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [api, project])
 
   const fields = useMemo(() => description?.fields ?? [], [description])
   const selectedView = useMemo(
@@ -521,9 +520,15 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
         cursor,
         viewId: selectedViewId || undefined,
       })
-      setRecords(current => [...current, ...page.items])
-      setCursor(page.cursor)
-      setHasMore(page.has_more)
+      resource.update(
+        data =>
+          data && {
+            ...data,
+            records: [...data.records, ...page.items],
+            cursor: page.cursor,
+            hasMore: page.has_more,
+          }
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '加载更多记录失败')
     } finally {

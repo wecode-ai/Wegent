@@ -77,14 +77,14 @@ struct LeaseRedis {
 }
 
 #[tokio::test]
-async fn cancelling_auto_update_response_keeps_transaction_and_unlock_owned() {
+async fn cancelling_plugin_write_response_keeps_transaction_and_unlock_owned() {
     let redis = std::sync::Arc::new(LeaseRedis::default());
     let operation_redis = redis.clone();
     let (entered, entered_rx) = tokio::sync::oneshot::channel();
     let (finish, finish_rx) = tokio::sync::oneshot::channel();
     let (released, released_rx) = tokio::sync::oneshot::channel();
     let response = tokio::spawn(async move {
-        super::super::auto_update::complete_auto_update(async move {
+        complete_plugin_write(async move {
             let lease = PluginWriteLease::acquire(Some(operation_redis.as_ref()), 23).await?;
             entered.send(()).unwrap();
             finish_rx.await.unwrap();

@@ -1,7 +1,12 @@
 import { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { AITableApi } from '@/api/aitable'
-import type { DwsApi, DwsAuthStatus } from '@/api/dws'
+import type { DwsApi } from '@/api/dws'
 import type {
   CloudLoopItem,
   CloudProject,
@@ -34,37 +39,43 @@ function configText(project: CloudProject, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-function AITableProviderSettings({
-  aitableApi,
-  dwsApi,
-  project,
-  updateProject,
-  reportError,
-}: {
+type AITableProviderSettingsProps = {
   aitableApi?: AITableApi
   dwsApi?: DwsApi
   project: CloudProject
   updateProject: ProjectManageExtensionContext<CloudProject>['updateProject']
   reportError: ProjectManageExtensionContext<CloudProject>['reportError']
-}) {
+}
+
+function AITableProviderSettings(props: AITableProviderSettingsProps) {
+  const { project, aitableApi, dwsApi } = props
+  const key = JSON.stringify([project.id, project.project_store, project.current_user_id])
+  const [scope, setScope] = useState({ key, aitableApi, dwsApi, revision: 0 })
+  if (scope.key !== key || scope.aitableApi !== aitableApi || scope.dwsApi !== dwsApi)
+    setScope({ key, aitableApi, dwsApi, revision: scope.revision + 1 })
+  return <AITableProviderSettingsContent key={scope.revision} {...props} />
+}
+
+function AITableProviderSettingsContent({
+  dwsApi,
+  project,
+  updateProject,
+  reportError,
+}: AITableProviderSettingsProps) {
   const [aitableUrl, setAITableUrl] = useState(() => configText(project, 'source_url'))
-  const [dwsStatus, setDwsStatus] = useState<DwsAuthStatus | null>(null)
+  const auth = useMemo(
+    () => (dwsApi ? createAsyncResource('aitable-auth', () => dwsApi.authStatus()) : null),
+    [dwsApi]
+  )
+  const authSnapshot = useSyncExternalStore(
+    auth?.subscribe ?? subscribeIdleResource,
+    auth?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const dwsStatus = authSnapshot.data
   const [aitableBusy, setAITableBusy] = useState(false)
   const [aitableSaved, setAITableSaved] = useState(false)
   const aitableLink = parseDingTalkAITableLink(aitableUrl)
-
-  useEffect(() => {
-    if (!aitableApi) return
-    void aitableApi.configureProject(project).catch(cause => reportError(cause, '加载字段失败'))
-  }, [aitableApi, project, reportError])
-
-  useEffect(() => {
-    if (!dwsApi) return
-    void dwsApi
-      .authStatus()
-      .then(setDwsStatus)
-      .catch(() => setDwsStatus(null))
-  }, [dwsApi])
 
   async function saveAITable() {
     if (!aitableLink || aitableBusy) return
@@ -117,7 +128,7 @@ function AITableProviderSettings({
                 void dwsApi
                   .login()
                   .then(() => waitForDwsAuthentication(dwsApi))
-                  .then(setDwsStatus)
+                  .then(status => auth?.update(() => status))
                   .catch(cause => reportError(cause, '连接钉钉失败'))
                   .finally(() => setAITableBusy(false))
               }}

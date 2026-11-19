@@ -270,10 +270,10 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     'Uninstall left the cloud install active'
   )
   await waitForValue(
-    async () => (await readCapabilities()).plugins[managedKey],
-    entry => entry === undefined,
-    `Local capabilities still include ${managedKey} after account uninstall`,
-    10_000
+    readCapabilities,
+    capabilities => capabilities.plugins[managedKey] === undefined,
+    'Uninstall did not remove the managed plugin from the local capability manifest',
+    PLUGIN_SYNC_TIMEOUT_MS
   )
   // Immutable packages remain available to running agents; Codex owns its cache.
   await access(removedEntry.store_path)

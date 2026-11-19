@@ -216,7 +216,7 @@ experimental_bearer_token="must-not-select"
         let profile = super::super::native_provider::profile_for_test(&launch.config_overrides);
         assert_eq!(profile["requires_openai_auth"], true);
         assert_eq!(profile["wire_api"], "responses");
-        assert_eq!(profile["supports_websockets"], false);
+        assert_eq!(profile["supports_websockets"], true);
         assert_eq!(profile["supports_standalone_web_search"], false);
         assert!(profile.get("auth").is_none());
         assert!(profile["base_url"]

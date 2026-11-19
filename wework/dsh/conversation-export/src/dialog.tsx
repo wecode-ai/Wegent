@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useDOMEvent, useDocumentEvent, useFocusRequest } from '@wegent/collaboration/dom-events'
 
 import type {
   WeworkConversationReference,
@@ -55,88 +61,63 @@ export default function ConversationExportDialog() {
   const [selection, setSelection] = useState<ConversationExportSelection>(() =>
     defaultConversationExportSelection('markdown')
   )
-  const [snapshot, setSnapshot] = useState<WeworkConversationSnapshot | null>(null)
-  const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [progress, setProgress] = useState('')
-  const [error, setError] = useState('')
+  const [operationProgress, setProgress] = useState('')
+  const [operationError, setError] = useState('')
   const [completedPath, setCompletedPath] = useState('')
   const dialogRef = useRef<HTMLElement | null>(null)
-  const previousFocusRef = useRef<HTMLElement | null>(null)
+  const transcript = useMemo(
+    () =>
+      reference
+        ? createAsyncResource(
+            JSON.stringify(reference),
+            async (): Promise<WeworkConversationSnapshot> => {
+              const host = window.__WEWORK_DSH_EXTENSIONS__
+              if (!host) throw new Error('Wework extension host is unavailable')
+              return host.conversations.getTranscript(reference)
+            }
+          )
+        : null,
+    [reference]
+  )
+  const query = useSyncExternalStore(
+    transcript?.subscribe ?? subscribeIdleResource,
+    transcript?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const snapshot = query.data ?? null
+  const loading = Boolean(reference) && (query.status === 'idle' || query.status === 'loading')
+  const progress = loading ? translate('正在读取会话…', 'Reading conversation…') : operationProgress
+  const error =
+    operationError ||
+    (query.status === 'error'
+      ? query.error instanceof Error
+        ? query.error.message
+        : translate('读取会话失败', 'Unable to read conversation')
+      : '')
 
-  useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent<WeworkConversationReference>).detail
-      setReference(detail)
-      setFormat('markdown')
-      setSelection(defaultConversationExportSelection('markdown'))
-      setSnapshot(null)
-      setLoading(true)
-      setProgress(translate('正在读取会话…', 'Reading conversation…'))
-      setError('')
-      setCompletedPath('')
-    }
-    window.addEventListener(OPEN_EVENT, open)
-    return () => window.removeEventListener(OPEN_EVENT, open)
-  }, [])
-
-  useEffect(() => {
-    if (!reference) return
-    previousFocusRef.current = document.activeElement as HTMLElement | null
-    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus())
-    return () => {
-      window.cancelAnimationFrame(frame)
-      previousFocusRef.current?.focus()
-      previousFocusRef.current = null
-    }
-  }, [reference])
-
-  useEffect(() => {
-    if (!reference || submitting) return
-    const handleKeyDown = (event: KeyboardEvent) => {
+  useDOMEvent<CustomEvent<WeworkConversationReference>>('window', OPEN_EVENT, event => {
+    setReference(event.detail)
+    setFormat('markdown')
+    setSelection(defaultConversationExportSelection('markdown'))
+    setProgress('')
+    setError('')
+    setCompletedPath('')
+  })
+  useFocusRequest(dialogRef, reference ?? undefined, {
+    enabled: Boolean(reference),
+    animationFrame: true,
+    restoreFocus: true,
+  })
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       setReference(null)
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [reference, submitting])
-
-  useEffect(() => {
-    if (!reference) return
-    let active = true
-    const loadTranscript = async () => {
-      const host = window.__WEWORK_DSH_EXTENSIONS__
-      if (!host) {
-        await Promise.resolve()
-        if (!active) return
-        setLoading(false)
-        setProgress('')
-        setError('Wework extension host is unavailable')
-        return
-      }
-      try {
-        const transcript = await host.conversations.getTranscript(reference)
-        if (!active) return
-        setSnapshot(transcript)
-        setLoading(false)
-        setProgress('')
-      } catch (reason) {
-        if (!active) return
-        setLoading(false)
-        setProgress('')
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : translate('读取会话失败', 'Unable to read conversation')
-        )
-      }
-    }
-    void loadTranscript()
-    return () => {
-      active = false
-    }
-  }, [reference])
+    },
+    { enabled: Boolean(reference) && !submitting }
+  )
 
   const counts = useMemo(
     () => (snapshot ? countConversationExportContent(snapshot) : null),

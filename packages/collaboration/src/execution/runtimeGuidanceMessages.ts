@@ -44,6 +44,7 @@ export function createAppliedRuntimeGuidanceMessage(
     status: 'done',
     createdAt: new Date(appliedAtMs).toISOString(),
     runtimeGuidance: true,
+    ...(payload.source && { source: payload.source }),
     ...(guidanceMessage.runtimeGoalRequest && { runtimeGoalRequest: true }),
     ...(guidanceMessage.codeComments?.length && { codeComments: guidanceMessage.codeComments }),
   }

@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode, type RefObject } from 'react'
+import { memo, useMemo, type ReactNode, type Ref, type RefObject } from 'react'
 import { Boxes, RefreshCw } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
@@ -71,7 +71,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   localMarketplaceTabs: MarketplaceOption[]
   query: string
   searchInputRef: RefObject<MarketplaceSearchInputHandle | null>
-  scrollRef: RefObject<HTMLDivElement | null>
+  scrollRef: Ref<HTMLDivElement>
   installedStrip: ReactNode
   showInstalledStrip: boolean
   pluginMarketplaceState: {

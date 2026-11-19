@@ -15,7 +15,6 @@ use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tracing::Instrument;
 
 use crate::json_compat::{python_str, python_strip, python_truthy};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
@@ -28,7 +27,7 @@ use crate::state::AppState;
 
 use super::auth;
 use super::write_coordination::{
-    PluginWriteLease, business_revision, coordination_error, http_error,
+    PluginWriteLease, business_revision, complete_plugin_write, coordination_error, http_error,
 };
 use crate::http_compat::FastApiError;
 
@@ -96,25 +95,11 @@ async fn auto_update_installed_plugins(
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
     let resolvers = state.entity_resolvers.clone();
-    complete_auto_update(async move {
+    complete_plugin_write(async move {
         auto_update_batch(&mysql, redis.as_ref(), &resolvers, user.id).await
     })
     .await
     .map_err(http_error)
-}
-
-pub(super) async fn complete_auto_update<T, F>(operation: F) -> MysqlResult<T>
-where
-    T: Send + 'static,
-    F: std::future::Future<Output = MysqlResult<T>> + Send + 'static,
-{
-    // Client cancellation must not drop the transaction before its lease is released.
-    // The operation retains its existing acquisition, transaction and release bounds.
-    tokio::spawn(operation.in_current_span())
-        .await
-        .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
-            reason: "plugin auto-update task failed".into(),
-        })?
 }
 
 /// Discover candidates without preventing authentication or installation.

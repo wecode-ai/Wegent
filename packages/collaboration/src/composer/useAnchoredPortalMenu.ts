@@ -1,4 +1,5 @@
-import { useLayoutEffect, useState, type RefObject } from 'react'
+import { useMemo, type RefObject } from 'react'
+import { useElementGeometry } from '../dom-events'
 
 interface AnchoredPortalMenuLayout {
   left: number
@@ -21,64 +22,29 @@ export function useAnchoredPortalMenu(
   menuRef: RefObject<HTMLElement | null>,
   { align = 'start', gap = TRIGGER_GAP, placement = 'best-fit' }: AnchoredPortalMenuOptions = {}
 ) {
-  const [layout, setLayout] = useState<AnchoredPortalMenuLayout | null>(null)
-
-  useLayoutEffect(() => {
-    if (!open) return
-
-    const update = () => {
-      const anchor = anchorRef.current
-      const menu = menuRef.current
-      if (!anchor || !menu) return
-
-      const anchorRect = anchor.getBoundingClientRect()
-      const menuRect = menu.getBoundingClientRect()
-      const availableAbove = Math.max(0, anchorRect.top - gap - VIEWPORT_MARGIN)
-      const availableBelow = Math.max(
-        0,
-        window.innerHeight - VIEWPORT_MARGIN - anchorRect.bottom - gap
-      )
-      const desiredHeight = menu.scrollHeight || menuRect.height
-      const placeBelow =
-        placement === 'prefer-below'
-          ? desiredHeight <= availableBelow
-          : availableBelow > availableAbove
-      const maxHeight = placeBelow ? availableBelow : availableAbove
-      const menuHeight = Math.min(desiredHeight, maxHeight)
-      const maxLeft = Math.max(
-        VIEWPORT_MARGIN,
-        window.innerWidth - VIEWPORT_MARGIN - menuRect.width
-      )
-      const preferredLeft = align === 'end' ? anchorRect.right - menuRect.width : anchorRect.left
-      const left = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
-      const top = Math.round(
-        placeBelow
-          ? anchorRect.bottom + gap
-          : Math.max(VIEWPORT_MARGIN, anchorRect.top - gap - menuHeight)
-      )
-
-      setLayout(current => {
-        if (current?.left === left && current.top === top && current.maxHeight === maxHeight) {
-          return current
-        }
-        return { left, maxHeight, top }
-      })
-    }
-
-    update()
-    window.addEventListener('resize', update)
-    window.addEventListener('scroll', update, true)
-    const observer =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => update())
-    if (anchorRef.current) observer?.observe(anchorRef.current)
-    if (menuRef.current) observer?.observe(menuRef.current)
-
-    return () => {
-      window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
-      observer?.disconnect()
-    }
-  }, [align, anchorRef, gap, menuRef, open, placement])
-
-  return open ? layout : null
+  const targets = useMemo(() => [anchorRef, menuRef], [anchorRef, menuRef])
+  const geometry = useElementGeometry(targets, open)
+  return useMemo<AnchoredPortalMenuLayout | null>(() => {
+    const [anchor, menu] = geometry?.elements ?? []
+    if (!geometry || !anchor || !menu) return null
+    const availableAbove = Math.max(0, anchor.top - gap - VIEWPORT_MARGIN)
+    const availableBelow = Math.max(
+      0,
+      geometry.viewportHeight - VIEWPORT_MARGIN - anchor.bottom - gap
+    )
+    const desiredHeight = menu.scrollHeight || menu.height
+    const placeBelow =
+      placement === 'prefer-below'
+        ? desiredHeight <= availableBelow
+        : availableBelow > availableAbove
+    const maxHeight = placeBelow ? availableBelow : availableAbove
+    const menuHeight = Math.min(desiredHeight, maxHeight)
+    const maxLeft = Math.max(VIEWPORT_MARGIN, geometry.viewportWidth - VIEWPORT_MARGIN - menu.width)
+    const preferredLeft = align === 'end' ? anchor.right - menu.width : anchor.left
+    const left = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
+    const top = Math.round(
+      placeBelow ? anchor.bottom + gap : Math.max(VIEWPORT_MARGIN, anchor.top - gap - menuHeight)
+    )
+    return { left, maxHeight, top }
+  }, [geometry, align, gap, placement])
 }

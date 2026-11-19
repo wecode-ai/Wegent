@@ -1,3 +1,7 @@
+import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
+  runtimeCommandApprovalMode,
+} from "@wegent/chat-core/runtime-permission";
 import { normalizeModelOptionValue } from "@wegent/chat-core/local-runtime-model";
 export {
   normalizeModelOptionValue,
@@ -814,6 +818,10 @@ export function normalizeModelOptions(
     permissionMode === "full-access"
   ) {
     normalized.permissionMode = permissionMode;
+  }
+  if (options[RUNTIME_COMMAND_APPROVAL_OPTION] !== undefined) {
+    normalized[RUNTIME_COMMAND_APPROVAL_OPTION] =
+      runtimeCommandApprovalMode(options);
   }
   if (options[MODEL_SELECTION_OPTION]) {
     normalized[MODEL_SELECTION_OPTION] = options[MODEL_SELECTION_OPTION];

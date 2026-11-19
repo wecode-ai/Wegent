@@ -2,7 +2,7 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-focus-board-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useState } = React
+    const { createElement, useState, useSyncExternalStore } = React
     const CONTEXT_KEY = 'focus-board.enabled'
     const STORAGE_NAMESPACE = 'focus-board'
 
@@ -51,9 +51,7 @@ window.__ModuleLoader__.load({
     }
 
     function useBoard(store) {
-      const [items, setItems] = useState(store.getItems())
-      useEffect(() => store.subscribe(setItems), [store])
-      return items
+      return useSyncExternalStore(store.subscribe, store.getItems, store.getItems)
     }
 
     function ProgressRing({ completed, total }) {

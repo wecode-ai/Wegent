@@ -1,6 +1,7 @@
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { IssueTaskConversationPanel } from '@wegent/collaboration'
 import { ArrowUpRight, Bot, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
@@ -305,17 +306,16 @@ export function AiChatModal({
   }, [initialAddress?.deviceId, state?.devices])
 
   // Embedded panes handle Escape locally so sibling drawers keep their context.
-  useEffect(() => {
-    if (!open || embedded) return
-    function handleKeyDown(event: KeyboardEvent) {
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape' && !event.defaultPrevented) {
         event.stopPropagation()
         onClose()
       }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [embedded, onClose, open])
+    },
+    { enabled: open && !embedded }
+  )
 
   const taskRequest = useMemo(() => {
     if (!initialTaskRequest) return null

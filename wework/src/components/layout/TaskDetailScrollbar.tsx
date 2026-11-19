@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
+import { useCallback, useRef, useState, type RefObject } from 'react'
+import { useDOMEvent, useElementGeometry } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
@@ -19,17 +20,20 @@ export function TaskDetailScrollbar({
 }: TaskDetailScrollbarProps) {
   const { t } = useTranslation('common')
   const thumbRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLElement>(null)
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null)
+  const geometry = useElementGeometry([viewportRef, scrollbarRef, contentRef])
   const dragRef = useRef<{ pointerId: number; offset: number; clientY: number } | null>(null)
 
   const update = useCallback(
-    (pointer?: { clientY: number; offset: number }) => {
+    (pointer?: { clientY: number; offset: number }, measuredContentHeight?: number) => {
       const viewport = viewportRef.current
       const track = scrollbarRef.current
       const thumb = thumbRef.current
       if (!viewport || !track || !thumb) return
       const previousScrollTop = viewport.scrollTop
       const viewportHeight = viewport.clientHeight
-      const contentHeight = viewport.scrollHeight
+      const contentHeight = measuredContentHeight ?? viewport.scrollHeight
       const range = Math.max(0, contentHeight - viewportHeight)
       const display = range > 0 && viewportHeight > 0 ? 'flex' : 'none'
       if (track.style.display !== display) track.style.display = display
@@ -72,24 +76,19 @@ export function TaskDetailScrollbar({
     [scrollbarRef, viewportRef]
   )
 
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current
-    const track = scrollbarRef.current
-    const thumb = thumbRef.current
-    if (!viewport || !track || !thumb) return
-
-    const synchronize = () => update(dragRef.current ?? undefined)
-    synchronize()
-    const observer = new ResizeObserver(synchronize)
-    observer.observe(viewport)
-    observer.observe(track)
-    if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
-    viewport.addEventListener('scroll', synchronize)
-    return () => {
-      observer.disconnect()
-      viewport.removeEventListener('scroll', synchronize)
-    }
-  }, [update, scrollbarRef, viewportRef])
+  const bindThumb = useCallback(
+    (thumb: HTMLDivElement | null) => {
+      thumbRef.current = thumb
+      if (!thumb) return
+      const owner = viewportRef.current
+      setViewport(owner)
+      contentRef.current =
+        owner?.firstElementChild instanceof HTMLElement ? owner.firstElementChild : null
+      update(dragRef.current ?? undefined, geometry?.elements[0]?.scrollHeight)
+    },
+    [geometry, update, viewportRef]
+  )
+  useDOMEvent(viewport, 'scroll', () => update(dragRef.current ?? undefined))
 
   return (
     <div
@@ -162,7 +161,7 @@ export function TaskDetailScrollbar({
       }}
     >
       <div
-        ref={thumbRef}
+        ref={bindThumb}
         data-testid="desktop-workbench-scrollbar-thumb"
         className="workbench-scrollbar-thumb w-full rounded-full"
       />

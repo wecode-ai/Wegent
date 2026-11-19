@@ -1,3 +1,5 @@
+import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
+import { renderRuntimeTaskLifecycle } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.fixtures'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
@@ -88,10 +90,14 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   createContext,
+  createRef,
+  forwardRef,
   memo,
   StrictMode,
   useContext,
-  useEffect,
+  useCallback,
+  useSyncExternalStore,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
@@ -115,13 +121,11 @@ import {
 import { resetRuntimeConversationQueueControllersForTests } from './runtimeConversationQueueController'
 import {
   RuntimeTaskLifecycleStore,
-  RuntimeTaskLifecycleStreamCoordinator,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import { createRuntimeUserMessage } from './runtimeUserMessage'
-import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { useWorkbench } from './useWorkbench'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
@@ -795,7 +799,11 @@ function renderWorkbench(
   }
   return render(
     <CloudConnectionContext.Provider value={cloudConnectionValue}>
-      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+      <WorkbenchProvider
+        taskRouteActive
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+      >
         <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
@@ -850,13 +858,14 @@ function renderWorkbenchWithLifecycleCoordinator(
       },
     },
   }
-  return render(
+  const lifecycleOwner = renderRuntimeTaskLifecycle({
+    services: coordinatedServices,
+    store: lifecycleStore,
+  })
+  const view = render(
     <CloudConnectionContext.Provider value={cloudConnectionValue}>
-      <RuntimeTaskLifecycleStreamCoordinator
-        services={coordinatedServices}
-        store={lifecycleStore}
-      />
       <WorkbenchProvider
+        taskRouteActive
         lifecycleStore={lifecycleStore}
         user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
         services={coordinatedServices}
@@ -865,6 +874,14 @@ function renderWorkbenchWithLifecycleCoordinator(
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
   )
+  return {
+    ...view,
+    lifecycleStore,
+    unmount: () => {
+      lifecycleOwner.unmount()
+      view.unmount()
+    },
+  }
 }
 
 function renderWorkbenchForUser(
@@ -882,7 +899,7 @@ function renderWorkbenchForUser(
   }
   return render(
     <CloudConnectionContext.Provider value={cloudConnectionValue}>
-      <WorkbenchProvider user={user} services={services}>
+      <WorkbenchProvider taskRouteActive user={user} services={services}>
         <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
@@ -921,7 +938,7 @@ function renderWorkbenchWithDefaultServices(children: React.ReactNode) {
 
   return render(
     <CloudConnectionContext.Provider value={cloudConnectionValue}>
-      <WorkbenchProvider user={LOCAL_USER}>
+      <WorkbenchProvider taskRouteActive user={LOCAL_USER}>
         <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
@@ -951,8 +968,7 @@ const WorkbenchProbeSessionContext = createContext<WorkbenchProbeSessionValue | 
 function WorkbenchProbeSessionProvider({ children }: { children: React.ReactNode }) {
   const workbench = useWorkbench()
   const { state: workbenchState } = workbench
-  const routeRuntimeTask = useRuntimeTaskRouteRestoration()
-  const currentRuntimeTask = workbenchState.currentRuntimeTask ?? routeRuntimeTask
+  const currentRuntimeTask = workbenchState.currentRuntimeTask
 
   return (
     <WorkbenchProbePaneSession
@@ -1176,15 +1192,25 @@ const EPHEMERAL_STREAM_ADDRESS: RuntimeTaskAddress = {
 
 function RuntimeTopLevelStreamLifecycleProbe() {
   const { subscribeRuntimeTaskStream } = useWorkbench()
-  const lifecycle = useRuntimeTaskLifecycle(TOP_LEVEL_STREAM_ADDRESS)
-
-  useEffect(
-    () =>
-      subscribeRuntimeTaskStream(TOP_LEVEL_STREAM_ADDRESS, {
+  const retainOwner = useContext(WorkbenchOwnerLeaseContext)
+  const store = useRuntimeTaskLifecycleStore()
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const releaseOwner = retainOwner?.()
+      const stopLifecycle = store.subscribe(listener)
+      const stopStream = subscribeRuntimeTaskStream(TOP_LEVEL_STREAM_ADDRESS, {
         onMessageAction: () => undefined,
-      }),
-    [subscribeRuntimeTaskStream]
+      })
+      return () => {
+        stopStream()
+        stopLifecycle()
+        releaseOwner?.()
+      }
+    },
+    [store, subscribeRuntimeTaskStream, retainOwner]
   )
+  const snapshot = useSyncExternalStore(subscribe, store.getSnapshot, store.getSnapshot)
+  const lifecycle = store.selectTask(snapshot, TOP_LEVEL_STREAM_ADDRESS)
 
   return (
     <span data-testid="top-level-runtime-stream-lifecycle">
@@ -1195,12 +1221,6 @@ function RuntimeTopLevelStreamLifecycleProbe() {
 
 function EphemeralRuntimeLifecycleProbe() {
   const workbench = useWorkbench()
-  const lifecycleStore = useRuntimeTaskLifecycleStore()
-
-  useEffect(() => {
-    lifecycleStore.sendRequested(EPHEMERAL_STREAM_ADDRESS)
-    lifecycleStore.sendAccepted(EPHEMERAL_STREAM_ADDRESS)
-  }, [lifecycleStore])
 
   return (
     <button type="button" onClick={() => void workbench.openRuntimeTask(EPHEMERAL_STREAM_ADDRESS)}>
@@ -2503,11 +2523,6 @@ function FollowUpProbe() {
   const firstQueuedMessage = paneSession.queuedMessages[0]
   const busyResumeQueuedMessagesWithInputRef = useRef(paneSession.resumeQueuedMessagesWithInput)
   const idleSendRef = useRef(paneSession.send)
-  useEffect(() => {
-    if (paneSession.status.isBusy) {
-      busyResumeQueuedMessagesWithInputRef.current = paneSession.resumeQueuedMessagesWithInput
-    }
-  }, [paneSession.resumeQueuedMessagesWithInput, paneSession.status.isBusy])
   const gptModel =
     workbench.projectChat.models.find(model => model.name === 'gpt-5-2025-08-07') ?? null
 
@@ -2716,6 +2731,15 @@ function FollowUpProbe() {
         }}
       >
         capture idle follow-up send
+      </button>
+      <button
+        type="button"
+        data-testid="capture-busy-follow-up-resume"
+        onClick={() => {
+          busyResumeQueuedMessagesWithInputRef.current = paneSession.resumeQueuedMessagesWithInput
+        }}
+      >
+        capture busy follow-up resume
       </button>
       <button
         type="button"
@@ -3495,7 +3519,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const renderTree = (localUser: User) => (
       <CloudConnectionContext.Provider value={cloudConnectionValue(localUser)}>
-        <WorkbenchProvider user={localUser}>
+        <WorkbenchProvider taskRouteActive user={localUser}>
           <WorkbenchProbeSessionProvider>
             <BootstrapProbe />
           </WorkbenchProbeSessionProvider>
@@ -3888,6 +3912,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     render(
       <CloudConnectionContext.Provider value={cloudConnectionValue}>
         <WorkbenchProvider
+          taskRouteActive
           user={user}
           services={createWorkbenchServices()}
           composerAppsSourceActive
@@ -5606,7 +5631,11 @@ describe('WorkbenchProvider runtime tasks', () => {
           : undefined,
       })
     const renderTree = (services: WorkbenchServices) => (
-      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+      <WorkbenchProvider
+        taskRouteActive
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+      >
         <WorkbenchProbeSessionProvider>
           <RemoteRuntimeCacheProbe />
         </WorkbenchProbeSessionProvider>
@@ -6480,7 +6509,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           disconnect: vi.fn(),
         }}
       >
-        <WorkbenchProvider user={LOCAL_USER} services={services}>
+        <WorkbenchProvider taskRouteActive user={LOCAL_USER} services={services}>
           <WorkbenchProbeSessionProvider>
             <ProjectSendProbe />
           </WorkbenchProbeSessionProvider>
@@ -6572,7 +6601,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     }
     render(
       <CloudConnectionContext.Provider value={connection}>
-        <WorkbenchProvider user={LOCAL_USER} services={services}>
+        <WorkbenchProvider taskRouteActive user={LOCAL_USER} services={services}>
           <WorkbenchProbeSessionProvider>
             <OwnerProbe />
           </WorkbenchProbeSessionProvider>
@@ -7572,14 +7601,24 @@ describe('WorkbenchProvider runtime tasks', () => {
     render(
       <WorkspaceTabActivityContext.Provider value={tabId => tabId === activeTabId}>
         <section data-testid="destination-task-tab">
-          <WorkbenchProvider user={user} services={taskServices} workspaceTabId="task">
+          <WorkbenchProvider
+            taskRouteActive
+            user={user}
+            services={taskServices}
+            workspaceTabId="task"
+          >
             <WorkbenchProbeSessionProvider>
               <ProjectSendProbe />
             </WorkbenchProbeSessionProvider>
           </WorkbenchProvider>
         </section>
         <section data-testid="source-plugin-tab">
-          <WorkbenchProvider user={user} services={pluginServices} workspaceTabId="plugins">
+          <WorkbenchProvider
+            taskRouteActive
+            user={user}
+            services={pluginServices}
+            workspaceTabId="plugins"
+          >
             <WorkbenchProbeSessionProvider>
               <ProjectSendProbe />
             </WorkbenchProbeSessionProvider>
@@ -7686,6 +7725,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       <WorkspaceTabActivityContext.Provider value={tabId => workspaceTabs.activeTabId === tabId}>
         <WorkspaceTabsContext.Provider value={workspaceTabs}>
           <WorkbenchProvider
+            taskRouteActive
             user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
             services={services}
             workspaceTabId={taskTab.id}
@@ -7715,6 +7755,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       <WorkspaceTabActivityContext.Provider value={tabId => workspaceTabs.activeTabId === tabId}>
         <WorkspaceTabsContext.Provider value={workspaceTabs}>
           <WorkbenchProvider
+            taskRouteActive
             user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
             services={services}
             workspaceTabId={taskTab.id}
@@ -9909,6 +9950,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       const lifecycleStore = new RuntimeTaskLifecycleStore('pending-create')
       const view = (sync: boolean) => (
         <WorkbenchProvider
+          taskRouteActive
           services={services}
           syncRuntimeTaskLifecycle={sync}
           lifecycleStore={lifecycleStore}
@@ -9960,10 +10002,10 @@ describe('WorkbenchProvider runtime tasks', () => {
   )
 
   test('clears thinking when a created runtime task transcript is already complete', async () => {
-    let createdClientMessageId: string | undefined
+    const createdClientMessageId = deferred<string | undefined>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => {
-        createdClientMessageId = request.clientUserMessageId
+        createdClientMessageId.resolve(request.clientUserMessageId)
         return {
           accepted: true,
           deviceId: 'device-1',
@@ -9983,7 +10025,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'user',
             content: '修复 CI',
             status: 'done',
-            clientUserMessageId: createdClientMessageId,
+            clientUserMessageId: await createdClientMessageId.promise,
           },
           {
             id: `${address.taskId}:assistant:1`,
@@ -13777,6 +13819,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     render(
       <>
         <WorkbenchProvider
+          taskRouteActive
           user={user}
           services={createWorkbenchServices()}
           consumePluginTrials={false}
@@ -13785,7 +13828,12 @@ describe('WorkbenchProvider runtime tasks', () => {
             <PluginTrialInputProbe testId="inactive-plugin-trial-input" />
           </WorkbenchProbeSessionProvider>
         </WorkbenchProvider>
-        <WorkbenchProvider user={user} services={createWorkbenchServices()} consumePluginTrials>
+        <WorkbenchProvider
+          taskRouteActive
+          user={user}
+          services={createWorkbenchServices()}
+          consumePluginTrials
+        >
           <WorkbenchProbeSessionProvider>
             <PluginTrialInputProbe testId="active-plugin-trial-input" />
           </WorkbenchProbeSessionProvider>
@@ -13814,7 +13862,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
     const services = createWorkbenchServices()
     const renderProvider = (consumePluginTrials: boolean) => (
-      <WorkbenchProvider user={user} services={services} consumePluginTrials={consumePluginTrials}>
+      <WorkbenchProvider
+        taskRouteActive
+        user={user}
+        services={services}
+        consumePluginTrials={consumePluginTrials}
+      >
         <WorkbenchProbeSessionProvider>
           <PluginTrialInputProbe testId="deferred-plugin-trial-input" />
         </WorkbenchProbeSessionProvider>
@@ -15658,7 +15711,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('updates runtime titles without mutating Issues during lifecycle reconciliation', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (handlers.onChatStart) streamHandlers = handlers
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
     const updateLoopItem = vi.fn()
@@ -16092,7 +16145,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbenchWithLifecycleCoordinator(
+    const ephemeral = renderWorkbenchWithLifecycleCoordinator(
       <>
         <EphemeralRuntimeLifecycleProbe />
         <FollowUpProbe />
@@ -16100,6 +16153,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       services
     )
 
+    act(() => {
+      ephemeral.lifecycleStore.sendRequested(EPHEMERAL_STREAM_ADDRESS)
+      ephemeral.lifecycleStore.sendAccepted(EPHEMERAL_STREAM_ADDRESS)
+    })
     await userEvent.click(await screen.findByText('open ephemeral runtime'))
     await waitFor(() => expect(streamHandlers.some(handlers => handlers.onChatStart)).toBe(true))
     act(() => {
@@ -17508,6 +17565,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
     )
+    await userEvent.click(screen.getByTestId('capture-busy-follow-up-resume'))
     await userEvent.click(screen.getByText('stop current response'))
     await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
     await act(async () => {
@@ -19464,27 +19522,39 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     const skillSources: unknown[] = []
     let refreshPromise: Promise<void> | undefined
-    function SkillsSourceProbe() {
+    const skillsPort = createRef<{
+      listLocalSkills: unknown
+      refreshWorkLists: () => Promise<void>
+    }>()
+    const SkillsSourceProbe = forwardRef(function SkillsSourceProbe(
+      _props,
+      ref: React.ForwardedRef<NonNullable<typeof skillsPort.current>>
+    ) {
       const workbench = useWorkbench()
-      useEffect(() => {
-        skillSources.push(workbench.projectChat.listLocalSkills)
-      }, [workbench.projectChat.listLocalSkills])
+      useImperativeHandle(
+        ref,
+        () => ({
+          listLocalSkills: workbench.projectChat.listLocalSkills,
+          refreshWorkLists: workbench.refreshWorkLists,
+        }),
+        [workbench.projectChat.listLocalSkills, workbench.refreshWorkLists]
+      )
       return (
         <button
           type="button"
           data-testid="refresh-skills-work-lists"
           onClick={() => {
-            refreshPromise = workbench.refreshWorkLists()
+            refreshPromise = skillsPort.current!.refreshWorkLists()
           }}
         >
           refresh skill work lists
         </button>
       )
-    }
+    })
     renderWorkbench(
       <>
         <RuntimeTaskSkillsProbe />
-        <SkillsSourceProbe />
+        <SkillsSourceProbe ref={skillsPort} />
       </>,
       services
     )
@@ -19517,6 +19587,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     })
 
+    skillSources.push(skillsPort.current!.listLocalSkills)
     const skillSource = skillSources.at(-1)
     const previousRuntimeReads = vi.mocked(services.runtimeWorkApi!.listRuntimeWork!).mock.calls
       .length
@@ -19529,6 +19600,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         previousRuntimeReads + 1
       )
     )
+    skillSources.push(skillsPort.current!.listLocalSkills)
     expect(skillSources.at(-1)).toBe(skillSource)
 
     await userEvent.click(screen.getByText('list local apps'))

@@ -4,6 +4,42 @@
 
 """Tests for task services API endpoints."""
 
+from types import SimpleNamespace
+from typing import Generator, Optional
+from unittest.mock import Mock
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.api.dependencies import get_db
+from app.api.endpoints.internal import services
+from app.core.config import settings
+
+
+@pytest.fixture
+def internal_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[SimpleNamespace, None, None]:
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+    task = SimpleNamespace(
+        json={"status": {"app": {"name": "Existing app", "address": "localhost:3000"}}}
+    )
+    store = Mock()
+    store.get_task_by_states.return_value = task
+    db = Mock()
+    emitter = Mock()
+    monkeypatch.setattr(services, "task_store", store)
+    monkeypatch.setattr(services, "get_extended_emitter", lambda: emitter)
+    monkeypatch.setattr(services, "get_main_event_loop", lambda: None)
+    app = FastAPI()
+    app.include_router(services.router, prefix="/api/internal")
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        yield SimpleNamespace(
+            client=client, task=task, store=store, db=db, emitter=emitter
+        )
+
 
 class TestTaskServicesAPI:
     """Test cases for task services API endpoints."""
@@ -107,6 +143,94 @@ class TestTaskServicesAPI:
 
 class TestInternalServicesAPI:
     """Test cases for internal services API endpoints."""
+
+    @pytest.mark.parametrize(
+        "authorization",
+        [None, "Bearer invalid-token", "Basic test-internal-token"],
+    )
+    @pytest.mark.parametrize(
+        "method,path",
+        [("GET", "/health"), ("GET", "/123"), ("POST", "/update")],
+    )
+    def test_rejects_unauthorized_requests_without_side_effects(
+        self,
+        internal_services: SimpleNamespace,
+        authorization: Optional[str],
+        method: str,
+        path: str,
+    ) -> None:
+        headers = {"Authorization": authorization} if authorization else {}
+
+        response = internal_services.client.request(
+            method,
+            f"/api/internal/services{path}",
+            headers=headers,
+            json=(
+                {"task_id": 123, "previewUrl": "https://preview.example.test/app"}
+                if method == "POST"
+                else None
+            ),
+        )
+
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+        internal_services.store.get_task_by_states.assert_not_called()
+        internal_services.store.update_json.assert_not_called()
+        internal_services.db.commit.assert_not_called()
+        internal_services.emitter.emit_task_app_update.assert_not_called()
+        assert internal_services.task.json["status"]["app"] == {
+            "name": "Existing app",
+            "address": "localhost:3000",
+        }
+
+    def test_valid_token_updates_and_reads_merged_app(
+        self, internal_services: SimpleNamespace
+    ) -> None:
+        headers = {"Authorization": "Bearer test-internal-token"}
+        expected_app = {
+            "name": "Existing app",
+            "address": "localhost:3000",
+            "previewUrl": "https://preview.example.test/app",
+        }
+
+        response = internal_services.client.post(
+            "/api/internal/services/update",
+            headers=headers,
+            json={"task_id": 123, "previewUrl": expected_app["previewUrl"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "app": expected_app}
+        internal_services.store.update_json.assert_called_once_with(
+            internal_services.db,
+            task=internal_services.task,
+            payload={"status": {"app": expected_app}},
+        )
+        internal_services.db.commit.assert_called_once_with()
+        internal_services.db.refresh.assert_called_once_with(internal_services.task)
+        read = internal_services.client.get(
+            "/api/internal/services/123", headers=headers
+        )
+        assert read.status_code == 200
+        assert read.json() == {"success": True, "app": expected_app}
+
+    def test_unconfigured_token_rejects_writes(
+        self,
+        internal_services: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "")
+
+        response = internal_services.client.post(
+            "/api/internal/services/update",
+            headers={"Authorization": "Bearer test-internal-token"},
+            json={"task_id": 123, "name": "Changed app"},
+        )
+
+        assert response.status_code == 401
+        internal_services.store.update_json.assert_not_called()
+        internal_services.db.commit.assert_not_called()
+        internal_services.emitter.emit_task_app_update.assert_not_called()
 
     def test_internal_service_update_request_schema(self):
         """Test ServiceUpdateRequest schema for internal API."""
