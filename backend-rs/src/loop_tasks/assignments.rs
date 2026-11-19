@@ -59,6 +59,8 @@ pub(super) struct IssueAssignmentResponse {
     receipt_tracking: bool,
     human_read_at: Option<String>,
     stand_in_received_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) dispatch_receipt: Option<serde_json::Value>,
 }
 
 /// `IssueAssignmentListResponse`.
@@ -83,7 +85,14 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    list_assignment_items(&state.mysql, item_id, current_user).await
+    let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
+    for item in &mut result.items {
+        if let Some(receipt) = item.dispatch_receipt.as_mut() {
+            super::assignment_receipts::project_delivery(state, receipt).await?;
+            super::assignment_receipts::project_device_wait(state, receipt).await;
+        }
+    }
+    Ok(result)
 }
 
 /// Read and render assignments after the existing Issue access checks.
@@ -137,7 +146,19 @@ pub(crate) async fn require_issue_read_for_user(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = require_cloud_project_role(state, &project.id, user_id).await?;
+    let access = match require_cloud_project_role(state, &project.id, user_id).await {
+        Ok(access) => access,
+        Err(error) => {
+            if error.status() == StatusCode::NOT_FOUND
+                && super::issue_invitation::permits_read(&state.mysql, item_id, user_id)
+                    .await
+                    .map_err(internal)?
+            {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
     // `_require_issue_project` re-reads the item through the session's identity
     // map, so it issues no statement.
     if is_external_provider(&access.project) {
@@ -167,7 +188,7 @@ pub(crate) async fn require_cloud_project_role(
 }
 
 /// `can_view_item(db, access, item, user_id)`.
-async fn can_view_item(
+pub(crate) async fn can_view_item(
     state: &AppState,
     access: &ProjectAccess,
     item: &LoopItemGetRow,
@@ -265,16 +286,29 @@ async fn provider_get(state: &AppState, item_id: &str, user_id: i32) -> Result<(
         .await
         .map_err(internal)?
         .ok_or_else(todo_not_found)?;
-    let number = item_number(item_id).ok_or_else(todo_not_found)?;
     let access = require_cloud_project_role(state, &project.id, user_id).await?;
-    let issue = get_issue(state, &project, number).await?;
-    let response = issue_response(state, &project, &access.role, user_id, &issue)
+    require_provider_issue_view(state, &access, item_id, user_id)
+        .await
+        .map(|_| ())
+}
+
+/// Read an external issue through the provider's normal detail permission check.
+pub(crate) async fn require_provider_issue_view(
+    state: &AppState,
+    access: &ProjectAccess,
+    item_id: &str,
+    user_id: i32,
+) -> Result<PageIssue, FastApiError> {
+    let project = &access.project;
+    let number = item_number(item_id).ok_or_else(todo_not_found)?;
+    let issue = get_issue(state, project, number).await?;
+    let response = issue_response(state, project, &access.role, user_id, &issue)
         .await
         .map_err(internal)?;
     if !response.can_view_detail() {
         return Err(todo_not_found());
     }
-    Ok(())
+    Ok(issue)
 }
 
 /// `_get_issue` -> `_request`: one provider issue by number.
@@ -447,6 +481,7 @@ async fn assignment_response(
         receipt_tracking: metadata.receipt_tracking.unwrap_or(false),
         human_read_at: metadata.human_read_at.clone(),
         stand_in_received_at: metadata.stand_in_received_at.clone(),
+        dispatch_receipt: metadata.dispatch_receipt.clone(),
     })
 }
 
@@ -627,6 +662,7 @@ mod tests {
             receipt_tracking: false,
             human_read_at: None,
             stand_in_received_at: None,
+            dispatch_receipt: None,
         };
         let value = crate::json_contract_tests::serialized(&row).unwrap();
         assert_eq!(

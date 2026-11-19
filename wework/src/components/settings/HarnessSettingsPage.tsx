@@ -1,24 +1,19 @@
 import { ChevronDown, FolderOpen, RotateCcw, SquareTerminal } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { createHarnessSettingsEditor } from './harnessSettingsEditor'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   defaultLocalHarnessPreferences,
-  formatLocalHarnessArgs,
-  formatLocalHarnessEnv,
   localHarnessLabel,
-  normalizeLocalHarnessPreferences,
-  parseLocalHarnessArgs,
-  parseLocalHarnessEnv,
   LOCAL_HARNESS_IDS,
   type ClaudeCodePermissionMode,
   type LocalHarnessId,
-  type LocalHarnessPreference,
 } from '@/lib/local-harness'
 import { listLocalHarnesses, type LocalHarnessDescriptor } from '@/lib/local-terminal'
 import { openNativeExecutablePicker } from '@/lib/native-executable-picker'
-import { updateAppPreferences } from '@/desktop/appPreferences'
 import {
   SettingsGroup,
   SettingsPage,
@@ -27,48 +22,33 @@ import {
   SettingsSwitch,
 } from './settings-ui'
 
-interface HarnessDraft {
-  preference: LocalHarnessPreference
-  argsText: string
-  envText: string
-}
-
-function toDraft(preference: LocalHarnessPreference): HarnessDraft {
-  return {
-    preference,
-    argsText: formatLocalHarnessArgs(preference.args),
-    envText: formatLocalHarnessEnv(preference.env),
-  }
-}
-
-function buildDrafts(preferences: LocalHarnessPreference[]): Record<LocalHarnessId, HarnessDraft> {
-  return Object.fromEntries(
-    normalizeLocalHarnessPreferences(preferences).map(preference => [
-      preference.id,
-      toDraft(preference),
-    ])
-  ) as Record<LocalHarnessId, HarnessDraft>
-}
-
 export function HarnessSettingsPage() {
   const { t } = useTranslation('common')
   const preferencesState = useAppPreferencesState()
   const storedPreferences =
     preferencesState?.preferences.localHarnesses ?? defaultLocalHarnessPreferences
-  const [drafts, setDrafts] = useState(() => buildDrafts(storedPreferences))
-  const [draftSource, setDraftSource] = useState(storedPreferences)
-  const [descriptors, setDescriptors] = useState<LocalHarnessDescriptor[]>([])
-  const [detecting, setDetecting] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [dirty, setDirty] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
+  const [editor] = useState(() => createHarnessSettingsEditor(storedPreferences))
+  const subscribe = useCallback(
+    (listener: () => void) => editor.subscribe(listener, storedPreferences),
+    [editor, storedPreferences]
+  )
+  const state = useSyncExternalStore(subscribe, editor.getSnapshot)
+  const { drafts } = state
+  const updateDraft = editor.updateDraft
   const [expandedId, setExpandedId] = useState<LocalHarnessId | null>(null)
-  const draftRevisionRef = useRef(0)
-
-  if (!dirty && draftSource !== storedPreferences) {
-    setDraftSource(storedPreferences)
-    setDrafts(buildDrafts(storedPreferences))
-  }
+  const status =
+    state.status.kind === 'saving'
+      ? t('workbench.harness_settings_saving')
+      : state.status.kind === 'saved'
+        ? t('workbench.harness_settings_saved')
+        : state.status.kind === 'failed'
+          ? t('workbench.harness_settings_save_failed')
+          : state.status.kind === 'invalid'
+            ? t('workbench.harness_settings_env_invalid', {
+                name: localHarnessLabel(state.status.id),
+                line: state.status.line,
+              })
+            : null
 
   const overrides = useMemo(
     () => ({
@@ -82,97 +62,19 @@ export function HarnessSettingsPage() {
       drafts.kimi_code.preference.executablePath,
     ]
   )
-  useEffect(() => {
-    let cancelled = false
-    void listLocalHarnesses(overrides)
-      .then(harnesses => {
-        if (!cancelled) {
-          setDescriptors(harnesses)
-        }
-      })
-      .catch(error => {
-        console.error('Failed to detect local harnesses:', error)
-        if (!cancelled) {
-          setDescriptors([])
-          setStatus(t('workbench.harness_settings_detection_failed', '编码工具检测失败'))
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [overrides, t])
-
-  const updateDraft = (id: LocalHarnessId, updater: (draft: HarnessDraft) => HarnessDraft) => {
-    setDrafts(current => ({ ...current, [id]: updater(current[id]) }))
-    draftRevisionRef.current += 1
-    setDirty(true)
-    setStatus(null)
-  }
-
-  useEffect(() => {
-    if (!dirty || saving) return
-
-    const timeout = window.setTimeout(() => {
-      const revision = draftRevisionRef.current
-      const nextPreferences: LocalHarnessPreference[] = []
-      for (const id of LOCAL_HARNESS_IDS) {
-        const draft = drafts[id]
-        const parsedEnv = parseLocalHarnessEnv(draft.envText)
-        if (parsedEnv.error) {
-          setStatus(
-            t('workbench.harness_settings_env_invalid', {
-              name: localHarnessLabel(id),
-              line: parsedEnv.error.split(':')[1],
-              defaultValue: `${localHarnessLabel(id)} 的环境变量第 ${
-                parsedEnv.error.split(':')[1]
-              } 行无效`,
-            })
-          )
-          return
-        }
-        nextPreferences.push({
-          ...draft.preference,
-          executablePath: draft.preference.executablePath?.trim() || null,
-          args: parseLocalHarnessArgs(draft.argsText),
-          env: parsedEnv.env,
-        })
-      }
-
-      setSaving(true)
-      setStatus(t('workbench.harness_settings_saving', '正在保存…'))
-      void updateAppPreferences({ localHarnesses: nextPreferences })
-        .then(preferences => {
-          if (draftRevisionRef.current === revision) {
-            setDraftSource(preferences.localHarnesses)
-            setDrafts(buildDrafts(preferences.localHarnesses))
-            setDirty(false)
-            setStatus(t('workbench.harness_settings_saved', '编码工具设置已自动保存'))
-          }
-        })
-        .catch(error => {
-          console.error('Failed to save local harness settings:', error)
-          setStatus(t('workbench.harness_settings_save_failed', '编码工具设置保存失败'))
-        })
-        .finally(() => setSaving(false))
-    }, 400)
-
-    return () => window.clearTimeout(timeout)
-  }, [dirty, drafts, saving, t])
-
-  const applyExecutablePath = async (id: LocalHarnessId, executablePath: string | null) => {
+  const detection = useMemo(
+    () =>
+      createAsyncResource('settings/local-harness-detection', () => listLocalHarnesses(overrides)),
+    [overrides]
+  )
+  const detected = useSyncExternalStore(detection.subscribe, detection.getSnapshot)
+  const descriptors = detected.data ?? []
+  const detecting = !detected.settled || detected.status === 'loading'
+  const applyExecutablePath = (id: LocalHarnessId, executablePath: string | null) => {
     updateDraft(id, current => ({
       ...current,
       preference: { ...current.preference, executablePath },
     }))
-    setDetecting(true)
-    try {
-      setDescriptors(await listLocalHarnesses({ ...overrides, [id]: executablePath }))
-    } catch (error) {
-      console.error('Failed to detect local harnesses:', error)
-      setStatus(t('workbench.harness_settings_detection_failed', '编码工具检测失败'))
-    } finally {
-      setDetecting(false)
-    }
   }
 
   const selectExecutable = async (
@@ -188,7 +90,7 @@ export function HarnessSettingsPage() {
       })
     )
     if (selected) {
-      await applyExecutablePath(id, selected)
+      applyExecutablePath(id, selected)
     }
   }
 
@@ -246,9 +148,12 @@ export function HarnessSettingsPage() {
                     <span className="mt-0.5 block truncate text-xs text-text-muted">
                       {detecting
                         ? t('workbench.harness_status_detecting', '检测中')
-                        : descriptor?.installed
-                          ? descriptor.version || t('workbench.harness_status_installed', '已安装')
-                          : t('workbench.harness_status_not_installed', '未检测到')}
+                        : detected.status === 'error'
+                          ? t('workbench.harness_settings_detection_failed')
+                          : descriptor?.installed
+                            ? descriptor.version ||
+                              t('workbench.harness_status_installed', '已安装')
+                            : t('workbench.harness_status_not_installed', '未检测到')}
                     </span>
                   </span>
                   <ChevronDown
@@ -406,6 +311,32 @@ export function HarnessSettingsPage() {
         })}
       </div>
 
+      {detected.status === 'error' && (
+        <div
+          data-testid="harness-settings-detection-error"
+          className="mt-4 text-sm text-text-secondary"
+        >
+          <p>{t('workbench.harness_settings_detection_failed')}</p>
+          <button
+            type="button"
+            data-testid="harness-settings-retry-detection"
+            onClick={() => void detection.reload()}
+            className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+          >
+            {t('common.retry')}
+          </button>
+        </div>
+      )}
+      {state.status.kind === 'failed' && (
+        <button
+          type="button"
+          data-testid="harness-settings-retry-save"
+          onClick={editor.retry}
+          className="mt-4 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+        >
+          {t('common.retry')}
+        </button>
+      )}
       {status ? (
         <p data-testid="harness-settings-status" className="mt-4 text-sm text-text-secondary">
           {status}

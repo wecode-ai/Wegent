@@ -71,7 +71,6 @@ describe('desktop resource migration', () => {
       'node e2e/desktop/run-checkpoints.mjs --plugins-only',
       'node e2e/desktop/run-checkpoints.mjs --memory-only',
       'node e2e/desktop/run-checkpoints.mjs --segment embedded-browser',
-      'node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions',
       'node e2e/desktop/run-checkpoints.mjs --segment local-harness',
       'node e2e/desktop/run-checkpoints.mjs --segment streaming-text',
     ])
@@ -169,7 +168,7 @@ describe('desktop resource migration', () => {
       readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
       readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
       readFile(join(weworkRoot, 'electron/pnpm-workspace.yaml'), 'utf8'),
-      readFile(join(weworkRoot, 'electron/patches/@trycua__cua-driver@0.22.1.patch'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/patches/@trycua__cua-driver@0.52.13.patch'), 'utf8'),
       readFile(join(weworkRoot, 'resources/licenses/cua-driver-LICENSE.md'), 'utf8'),
       readFile(join(weworkRoot, 'scripts/prepare-codex-binary.mjs'), 'utf8'),
       readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
@@ -182,7 +181,7 @@ describe('desktop resource migration', () => {
     expect(builderConfig).toContain("asarUnpack: ['**/*.{node,dylib,so,dll}']")
     expect(builderConfig).toContain("{ from: '../resources/licenses', to: 'licenses' }")
     expect(builderConfig).toContain("{ from: '../../LICENSE', to: 'LICENSE' }")
-    expect(electronWorkspace).toContain("'@trycua/cua-driver@0.22.1':")
+    expect(electronWorkspace).toContain("'@trycua/cua-driver@0.52.13':")
     expect(asarPatch).toContain('app.asar.unpacked')
     expect(cuaLicense).toContain('Copyright (c) 2025 Cua AI, Inc.')
     expect(codexPreparation).toContain("join(repoRoot, 'LICENSES', 'Apache-2.0.txt')")

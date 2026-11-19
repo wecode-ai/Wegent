@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  RESOURCE_EXCLUSIVE_CHECKPOINTS,
+  isResourceExclusiveCheckpoint,
   linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
@@ -135,7 +135,7 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
     checkpoints: ['independent-a', checkpoint, 'independent-b'],
     workerCount: 4,
     resourceFor: () => null,
-    exclusiveFor: id => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(id),
+    exclusiveFor: isResourceExclusiveCheckpoint,
     run: async id => {
       started.push(id)
       active.add(id)
@@ -149,30 +149,59 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
   assert.deepEqual(overlaps, [])
 })
 
-test('separates Linux Core Python bootstrap from the competing cloud fixtures', async () => {
-  const checkpoint = 'python-runtime'
-  const cloudCheckpoints = ['collaboration-shared-core', 'collaboration-templates']
-  const independent = 'stand-in-memory-timer'
+test('keeps the strict runtime load budget isolated from other Electron workloads', async () => {
+  const checkpoint = 'runtime-load-performance'
+  const started = []
   const active = new Set()
-  let independentRanWithPython = false
-  let cloudFixturesRanTogether = false
+  const overlaps = []
 
   await runWithCheckpointResources({
-    checkpoints: [checkpoint, independent, ...cloudCheckpoints],
+    checkpoints: ['independent-a', checkpoint, 'independent-b'],
     workerCount: 4,
-    resourceFor: linuxCoreCheckpointResources,
+    resourceFor: () => null,
+    exclusiveFor: isResourceExclusiveCheckpoint,
     run: async id => {
+      started.push(id)
       active.add(id)
-      if (active.has(checkpoint)) {
-        assert.ok(cloudCheckpoints.every(cloud => !active.has(cloud)))
-        independentRanWithPython ||= active.has(independent)
-      }
-      cloudFixturesRanTogether ||= cloudCheckpoints.every(cloud => active.has(cloud))
+      if (active.has(checkpoint) && active.size > 1) overlaps.push([...active])
       await new Promise(resolve => setImmediate(resolve))
       active.delete(id)
     },
   })
 
-  assert.equal(independentRanWithPython, true)
-  assert.equal(cloudFixturesRanTogether, true)
+  assert.equal(started[0], checkpoint)
+  assert.deepEqual(overlaps, [])
 })
+
+for (const checkpoint of ['python-runtime', 'plugin-development']) {
+  test(`separates Linux Core ${checkpoint} from the competing cloud fixtures`, async () => {
+    const cloudCheckpoints = [
+      'collaboration-shared-core',
+      'collaboration-templates',
+      'collaboration-template-app-device-routing',
+    ]
+    const independent = 'tray-lifecycle'
+    const active = new Set()
+    let independentRanWithPython = false
+    let cloudFixturesRanTogether = false
+
+    await runWithCheckpointResources({
+      checkpoints: [checkpoint, independent, ...cloudCheckpoints],
+      workerCount: 4,
+      resourceFor: linuxCoreCheckpointResources,
+      run: async id => {
+        active.add(id)
+        if (active.has(checkpoint)) {
+          assert.ok(cloudCheckpoints.every(cloud => !active.has(cloud)))
+          independentRanWithPython ||= active.has(independent)
+        }
+        cloudFixturesRanTogether ||= cloudCheckpoints.every(cloud => active.has(cloud))
+        await new Promise(resolve => setImmediate(resolve))
+        active.delete(id)
+      },
+    })
+
+    assert.equal(independentRanWithPython, true)
+    assert.equal(cloudFixturesRanTogether, true)
+  })
+}

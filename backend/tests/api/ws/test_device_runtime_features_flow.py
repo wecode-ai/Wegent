@@ -40,6 +40,13 @@ class _MemoryDeviceCache:
     ) -> bool:
         return await self.set(key, value, expire)
 
+    async def update_json_if_present(self, key, update, *, expire):
+        current = copy.deepcopy(self.values.get(key))
+        if current is None or not update(current):
+            return False
+        self.values[key] = current
+        return True
+
     async def mget(self, keys: list[str]) -> dict[str, dict]:
         return {
             key: copy.deepcopy(self.values[key]) for key in keys if key in self.values
@@ -53,6 +60,7 @@ def _runtime_features(*, managed: bool) -> dict:
     return {
         "schemaVersion": 3,
         "pluginSync": {"protocolVersion": 2},
+        "connectionEvents": {"protocolVersion": 1},
         "interactiveSessions": {
             "codeServer": False,
             "terminal": True,
@@ -437,3 +445,39 @@ async def test_malformed_runtime_features_do_not_block_registration_or_heartbeat
     assert devices[0]["status"] == "online"
     assert devices[0]["executor_version"] == "1.0.1"
     assert devices[0]["runtime_features"] is None
+
+
+@pytest.mark.parametrize(
+    "advertisement",
+    [
+        None,
+        {},
+        [],
+        "1",
+        {"protocolVersion": "1"},
+        {"protocolVersion": True},
+        {"protocolVersion": 0},
+    ],
+)
+def test_malformed_event_protocol_does_not_erase_other_features(advertisement):
+    from app.schemas.device import RuntimeFeatures
+
+    features = RuntimeFeatures.model_validate(
+        {
+            "schemaVersion": 4,
+            "connectionEvents": advertisement,
+            "projectEditing": {"plugins": False},
+        }
+    )
+    document = features.model_dump(by_alias=True, exclude_none=True)
+    assert "connectionEvents" not in document
+    assert document["projectEditing"]["plugins"] is False
+
+
+def test_legacy_features_do_not_infer_event_protocol():
+    from app.schemas.device import RuntimeFeatures
+
+    document = RuntimeFeatures.model_validate({"schemaVersion": 4}).model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert "connectionEvents" not in document

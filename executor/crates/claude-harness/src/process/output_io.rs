@@ -223,10 +223,10 @@ where
     };
     let stdout = join_streaming_stdout(stdout_task).await;
     let stderr = join_output(stderr_task).await;
-    process_tree.disarm();
+    let ownership_error = process_tree.disarm().err();
 
-    if let Some(error) =
-        writer_error.filter(|_| status.as_ref().is_ok_and(|status| status.success()))
+    if let Some(error) = ownership_error
+        .or_else(|| writer_error.filter(|_| status.as_ref().is_ok_and(|status| status.success())))
     {
         return CommandOutcome::Failure {
             stderr: error.to_string(),

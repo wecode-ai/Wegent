@@ -19,10 +19,11 @@ import { portableDesktopRelease } from './lib/portable-desktop-release.mjs'
 import {
   downloadPublishedDesktopArchive,
   downloadPublishedDesktopRelease,
+  readDesktopReleaseInstallation,
   readPrebuiltDesktopRelease,
 } from './lib/published-desktop-release.mjs'
 
-async function fixture(run) {
+async function fixture(run, afterStopPreparation) {
   const root = await mkdtemp(join(tmpdir(), 'wework-published-release-'))
   try {
     const appRoot = join(root, 'built')
@@ -43,6 +44,7 @@ async function fixture(run) {
         sourceSha: 'a'.repeat(40),
         dataSchema: 1,
         readableDataSchemas: [1],
+        afterStopPreparation,
       })
     )
     const release = await portableDesktopRelease({
@@ -86,6 +88,19 @@ test('downloads a published target unchanged without extracting or packaging it'
       [release.name, 'release-windows-x64.json'].sort()
     )
   }))
+
+test('a stopped-preparation capability is bound to the immutable package, not a caller claim', () =>
+  fixture(async ({ options, release }) => {
+    assert.equal(release.afterStopPreparation, 1)
+    await downloadPublishedDesktopRelease(options)
+    await assert.rejects(
+      readDesktopReleaseInstallation(join(options.directory, 'source'), {
+        ...release,
+        afterStopPreparation: undefined,
+      }),
+      /does not match/
+    )
+  }, 1))
 
 test('reads unchanged producer artifacts and rejects corrupt bytes or a different identity', () =>
   fixture(async ({ root, release, requests }) => {

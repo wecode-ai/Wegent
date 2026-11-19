@@ -1,6 +1,6 @@
 {
   "title": "Custom models",
-  "description": "Choose a service and enter your API key to add models.",
+  "description": "Configure a connection and its models, then save once to use them.",
   "newProvider": "Custom endpoint",
   "addProvider": "Add models",
   "loading": "Loading models…",
@@ -8,7 +8,7 @@
   "disabled": "Disabled",
   "edit": "Edit",
   "delete": "Delete",
-  "deleteProvider": "Delete endpoint",
+  "deleteProvider": "Delete provider",
   "deleteDescription": "Delete “{{name}}” and its {{count}} models? Existing conversations will remain.",
   "keyConfigured": "Key configured",
   "missingKey": "API key unavailable on this device; enter it again",
@@ -18,7 +18,7 @@
   "failed": "The operation failed",
   "cancel": "Cancel",
   "confirm": "Confirm",
-  "name": "Endpoint name",
+  "name": "Connection name",
   "protocol": "API protocol",
   "keepKey": "Configured — leave blank to keep",
   "optionalKey": "Optional for unauthenticated endpoints",
@@ -47,12 +47,11 @@
   "discovering": "Fetching…",
   "discoveryEmpty": "No models returned. You can add a model manually.",
   "retry": "Retry",
-  "editorDescription": "Choose a service and enter your API key to fetch models.",
+  "editorDescription": "Configure the connection and select models here, then save once to use them.",
   "service": "Service",
   "chooseService": "Choose a service",
   "customInterface": "Custom endpoint",
   "presetHint": "The endpoint is configured automatically.",
-  "selectAtLeastOne": "Add at least one model.",
   "editModels": "Edit models",
   "showKey": "Show key",
   "hideKey": "Hide key",
@@ -73,5 +72,6 @@
   "testConnection": "Test connection",
   "testing": "Testing…",
   "testSuccess": "Connected",
-  "testFailed": "Failed"
+  "testFailed": "Failed",
+  "searchModels": "Search model ID or name"
 }

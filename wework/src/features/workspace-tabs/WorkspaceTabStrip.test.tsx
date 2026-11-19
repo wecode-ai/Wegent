@@ -2,7 +2,7 @@ import { defaultAppPreferences, type AppPreferencesPatch } from '@/desktop/appPr
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ComponentProps } from 'react'
+import { act, type ComponentProps } from 'react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -122,6 +122,60 @@ describe('WorkspaceTabStrip', () => {
     window.history.replaceState({}, '', '/')
     delete window.__WEWORK_DSH_UI__
     delete window.__WEWORK_RUNTIME_CONFIG__
+  })
+
+  test('moves roving focus with arrows and Home/End while activation remains explicit', async () => {
+    const user = userEvent.setup()
+    renderStrip()
+    const tabs = within(screen.getByTestId('workspace-tab-strip')).getAllByRole('tab')
+    const current = tabs.find(tab => tab.getAttribute('aria-selected') === 'true')!
+    expect(tabs.filter(tab => tab.tabIndex === 0)).toEqual([current])
+    current.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(tabs[1]).toHaveFocus()
+    expect(current).toHaveAttribute('aria-selected', 'true')
+    expect(tabs[1]).toHaveAttribute('tabindex', '0')
+    await user.keyboard('{Enter}')
+    expect(tabs[1]).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{End}')
+    expect(tabs.at(-1)).toHaveFocus()
+    expect(tabs[1]).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Home}')
+    expect(tabs[0]).toHaveFocus()
+    expect(tabs[1].getAttribute('aria-controls')).toBe(
+      tabs[1].dataset.testid!.replace('workspace-tab-select-', 'workspace-tab-content-')
+    )
+  })
+
+  test('fits and reveals the selected tab when the strip becomes narrow', () => {
+    const originalObserver = globalThis.ResizeObserver
+    let resize: (() => void) | undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resize = () => callback([], this as unknown as ResizeObserver)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    try {
+      renderStrip()
+      const strip = screen.getByTestId('workspace-tab-strip')
+      const selected = within(strip).getByRole('tab', { selected: true }).parentElement!
+      Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 98 })
+      vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({ left: 100, right: 198 } as DOMRect)
+      vi.spyOn(selected, 'getBoundingClientRect').mockReturnValue({
+        left: 247,
+        right: 345,
+      } as DOMRect)
+      act(() => resize!())
+      expect(strip.style.getPropertyValue('--workspace-tab-viewport-width')).toBe('98px')
+      expect(strip.scrollLeft).toBe(147)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalObserver)
+    }
   })
 
   test('opens project spaces as a real tab and switches between tabs', async () => {
@@ -382,9 +436,11 @@ describe('WorkspaceTabStrip', () => {
       history: [],
       errors: {},
       drafts: {},
+      replyDrafts: [],
       busy: new Set(),
       loading: false,
       setDraft: vi.fn(),
+      discardDraft: vi.fn().mockResolvedValue(true),
       respond: vi.fn(),
       refresh: vi.fn(),
       open: vi.fn(),

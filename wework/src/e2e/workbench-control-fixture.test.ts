@@ -48,6 +48,14 @@ vi.mock('../../e2e/desktop/modules/scenario-progress.mjs', () => ({
   waitForScenarioProgress: vi.fn(),
 }))
 
+vi.mock('../../e2e/desktop/modules/workbench-control-collaboration.mjs', () => ({
+  createWorkbenchControlCollaboration: () => ({
+    handleHttp: vi.fn().mockResolvedValue(false),
+    verify: vi.fn().mockResolvedValue(undefined),
+    diagnostics: () => ({}),
+  }),
+}))
+
 vi.mock('../../e2e/desktop/modules/transport-fault-proxy.mjs', () => ({
   TransportFaultProxy: class {
     url = 'http://rest-only.test'

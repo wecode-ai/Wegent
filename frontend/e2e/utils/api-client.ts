@@ -12,7 +12,9 @@ export interface ApiResponse<T = unknown> {
 export function createBackendRequestHeaders(token?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    // Avoid reusing sockets after the E2E Uvicorn server closes its idle connection.
+    // Every request must opt out of reuse: the shared Playwright agent can
+    // hand a request with this header a socket pooled by an earlier request,
+    // and the E2E Uvicorn server may already have closed that idle socket.
     Connection: 'close',
   }
   if (token) headers.Authorization = `Bearer ${token}`
@@ -566,8 +568,13 @@ export class ApiClient {
   }
 
   /**
-   * Generic PUT request
+   * Generic PATCH request
    */
+  async patch<T = unknown>(endpoint: string, data?: unknown): Promise<ApiResponse<T>> {
+    return this.call<T>('PATCH', endpoint, data)
+  }
+
+  /** Generic PUT request. */
   async put<T = unknown>(endpoint: string, data?: unknown): Promise<ApiResponse<T>> {
     return this.call<T>('PUT', endpoint, data)
   }

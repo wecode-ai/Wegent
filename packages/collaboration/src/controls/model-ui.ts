@@ -1,4 +1,13 @@
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
+  runtimeCommandApprovalMode,
+} from "@wegent/chat-core/runtime-permission";
+import { normalizeModelOptionValue } from "@wegent/chat-core/local-runtime-model";
+export {
+  normalizeModelOptionValue,
+  normalizeModelOptionAliases,
+} from "@wegent/chat-core/local-runtime-model";
+import {
   builtinCodexCatalogModel,
   codexCatalogModelIdForUpstream,
 } from "@wegent/chat-core/codex-catalog";
@@ -702,32 +711,6 @@ function resolveOptionSummaryLabel(
   return option.summaryLabel || resolveOptionLabel(option, resolveLabel);
 }
 
-export function normalizeModelOptionValue(
-  optionId: string,
-  value?: string,
-): string | undefined {
-  if (!value) return value;
-  if (optionId !== "reasoning") return value;
-
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, "_");
-  if (["extra_high", "x_high", "x-high"].includes(normalized)) {
-    return "xhigh";
-  }
-  if (normalized === "maximum") return "max";
-  return value;
-}
-
-export function normalizeModelOptionAliases(
-  options: ModelOptions = {},
-): ModelOptions {
-  return Object.fromEntries(
-    Object.entries(options).map(([optionId, value]) => [
-      optionId,
-      normalizeModelOptionValue(optionId, value) ?? value,
-    ]),
-  );
-}
-
 function selectedControlValue(
   control: ModelControlConfig,
   options: ModelOptions,
@@ -835,6 +818,10 @@ export function normalizeModelOptions(
     permissionMode === "full-access"
   ) {
     normalized.permissionMode = permissionMode;
+  }
+  if (options[RUNTIME_COMMAND_APPROVAL_OPTION] !== undefined) {
+    normalized[RUNTIME_COMMAND_APPROVAL_OPTION] =
+      runtimeCommandApprovalMode(options);
   }
   if (options[MODEL_SELECTION_OPTION]) {
     normalized[MODEL_SELECTION_OPTION] = options[MODEL_SELECTION_OPTION];

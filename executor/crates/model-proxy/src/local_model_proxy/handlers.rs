@@ -1,10 +1,49 @@
 use super::*;
 
+const SKIPPED_UPSTREAM_RESPONSE_HEADERS: [&str; 10] = [
+    "connection",
+    "content-encoding",
+    "content-length",
+    "content-type",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "transfer-encoding",
+    "trailer",
+    "upgrade",
+];
+
+pub(super) fn forward_official_response_headers(
+    upstream: &LocalModelProxyUpstream,
+    upstream_headers: &reqwest::header::HeaderMap,
+    response_headers: &mut HeaderMap,
+) {
+    if !upstream.is_official_chatgpt_codex() {
+        return;
+    }
+    for (name, value) in upstream_headers {
+        if SKIPPED_UPSTREAM_RESPONSE_HEADERS.contains(&name.as_str())
+            || name.as_str().starts_with("proxy-")
+            || name.as_str().starts_with("sec-websocket-")
+            || name == header::SET_COOKIE
+        {
+            continue;
+        }
+        if let (Ok(name), Ok(value)) = (
+            header::HeaderName::from_bytes(name.as_str().as_bytes()),
+            HeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            response_headers.append(name, value);
+        }
+    }
+}
+
 pub(crate) async fn handle_token_route(
     Path(token): Path<String>,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
+    let body = request_body::decode(&mut headers, body)?;
     let token = token_route_token(token, &body)?;
     handle_for_token(token, headers, body).await
 }
@@ -52,6 +91,7 @@ pub(super) async fn handle_harness_messages(
     )
     .await?;
     let status = upstream_response.status();
+    let upstream_headers = upstream_response.headers().clone();
     let content_type = upstream_response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -113,6 +153,7 @@ pub(super) async fn handle_harness_messages(
         if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
             response.headers_mut().insert(header::CONTENT_TYPE, value);
         }
+        forward_official_response_headers(&upstream, &upstream_headers, response.headers_mut());
         return Ok(response);
     }
     if upstream.api_format == "anthropic-messages" {
@@ -143,6 +184,7 @@ pub(super) async fn handle_harness_messages(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
         );
+        forward_official_response_headers(&upstream, &upstream_headers, response.headers_mut());
         return Ok(response);
     }
     let stream = diagnostic_upstream_stream(
@@ -151,7 +193,7 @@ pub(super) async fn handle_harness_messages(
         request_started_at,
     );
     let mut response = Response::new(Body::from_stream(harness_protocol::adapt_upstream_sse(
-        upstream.api_format,
+        upstream.api_format.clone(),
         stream,
     )));
     *response.status_mut() = status;
@@ -159,11 +201,12 @@ pub(super) async fn handle_harness_messages(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/event-stream"),
     );
+    forward_official_response_headers(&upstream, &upstream_headers, response.headers_mut());
     Ok(response)
 }
 
 pub(super) async fn handle_bound_thread(
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
     if bearer_token(&headers).as_deref() != Some(API_KEY) {
@@ -172,6 +215,7 @@ pub(super) async fn handle_bound_thread(
             detail: "invalid local model proxy authorization".to_owned(),
         });
     }
+    let body = request_body::decode(&mut headers, body)?;
     let token = bound_thread_token(&body)?;
     handle_for_token(token, headers, body).await
 }
@@ -243,6 +287,65 @@ pub(super) fn token_route_token(token: String, body: &[u8]) -> Result<String, Ht
     Ok(recovered)
 }
 
+pub(super) struct AuthorizedRequest {
+    pub upstream: LocalModelProxyUpstream,
+    pub history: std::sync::Arc<history::CodexToolHistory>,
+    pub model_routing: ModelRequestRouting,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+    foreign_history_keys: HashSet<String>,
+    text_only: bool,
+}
+
+pub(super) fn authorize_request(token: &str, body: &[u8]) -> Result<AuthorizedRequest, HttpError> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let route = registry.routes.get_mut(token).ok_or_else(|| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "unknown or expired local model proxy token".to_owned(),
+    })?;
+    authorize_task_thread(route, body)?;
+    route.last_used = Instant::now();
+    Ok(AuthorizedRequest {
+        upstream: route.upstream.clone(),
+        vision_sidecar: route.vision_sidecar.clone(),
+        history: route.history.clone(),
+        foreign_history_keys: route.foreign_history_keys.clone(),
+        model_routing: begin_model_request(route, body),
+        text_only: route.text_only,
+    })
+}
+
+impl AuthorizedRequest {
+    pub(super) async fn prepare(
+        &self,
+        body: &[u8],
+        forked: bool,
+    ) -> Result<request_policy::PreparedRequest, HttpError> {
+        log_stale_requested_model(&self.upstream, body);
+        let body = if self.text_only {
+            text_only_request(body)?
+        } else {
+            body.to_vec()
+        };
+        let body = progressive_tools::prepare(&body).map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("Invalid native Code Mode request: {error}"),
+        })?;
+        request_policy::prepare(
+            &self.upstream,
+            &body,
+            self.vision_sidecar.as_ref(),
+            self.history.as_ref(),
+            self.model_routing.model_switched,
+            forked,
+            &self.foreign_history_keys,
+        )
+        .await
+    }
+}
+
 pub(super) async fn handle_for_token(
     token: String,
     headers: HeaderMap,
@@ -250,51 +353,26 @@ pub(super) async fn handle_for_token(
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
     let forked_from_thread_id = codex_forked_from_thread_id(&headers);
-    let (upstream, vision_sidecar, history, model_routing, text_only) = {
-        let mut registry = registry()
-            .lock()
-            .expect("local model proxy registry should not be poisoned");
-        prune_registry(&mut registry);
-        let registered = registry.routes.get_mut(&token).ok_or_else(|| HttpError {
-            status: StatusCode::NOT_FOUND,
-            detail: "unknown or expired local model proxy token".to_owned(),
-        })?;
-        authorize_task_thread(registered, &body)?;
-        registered.last_used = Instant::now();
-        (
-            registered.upstream.clone(),
-            registered.vision_sidecar.clone(),
-            registered.history.clone(),
-            begin_model_request(registered, &body),
-            registered.text_only,
-        )
-    };
-    log_stale_requested_model(&upstream, &body);
-    let request_url = upstream.resolved_request_url();
-    let normalized_inter_agent_content = 0;
-    let request_body = if text_only {
-        text_only_request(&body)?
-    } else {
-        body.to_vec()
-    };
-    let request_body = progressive_tools::prepare(&request_body).map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("Invalid native Code Mode request: {error}"),
-    })?;
+    let request = authorize_request(&token, &body)?;
     let request_policy::PreparedRequest {
         body: request_body,
         conversion,
         expanded_browser_tools,
         stripped_encrypted_content,
-    } = request_policy::prepare(
-        &upstream,
-        &request_body,
-        vision_sidecar.as_ref(),
-        history.as_ref(),
-        model_routing.model_switched,
-        forked_from_thread_id.is_some(),
-    )
-    .await?;
+        normalized_reasoning_items,
+        foreign_history_keys,
+    } = request
+        .prepare(&body, forked_from_thread_id.is_some())
+        .await?;
+    let AuthorizedRequest {
+        upstream,
+        history,
+        model_routing,
+        foreign_history_keys: known_foreign_history_keys,
+        ..
+    } = request;
+    let request_url = upstream.resolved_request_url();
+    let normalized_inter_agent_content = 0;
     let tool_capabilities = upstream.responses_tool_capabilities();
     let mut request_log_fields = vec![
         ("api_format", upstream.api_format.clone()),
@@ -311,7 +389,7 @@ pub(super) async fn handle_for_token(
         ("body_bytes", request_body.len().to_string()),
         (
             "convert_custom_tools",
-            tool_capabilities.convert_custom_tools.to_string(),
+            tool_capabilities.custom_tools.enabled().to_string(),
         ),
         (
             "native_tool_search",
@@ -328,6 +406,18 @@ pub(super) async fn handle_for_token(
         (
             "normalized_inter_agent_content",
             normalized_inter_agent_content.to_string(),
+        ),
+        (
+            "normalized_reasoning_items",
+            normalized_reasoning_items.to_string(),
+        ),
+        (
+            "known_foreign_history_items",
+            known_foreign_history_keys.len().to_string(),
+        ),
+        (
+            "foreign_history_items",
+            foreign_history_keys.len().to_string(),
         ),
     ];
     request_log_fields.extend(request_tool_diagnostic_fields(&request_body));
@@ -353,8 +443,9 @@ pub(super) async fn handle_for_token(
     )
     .await?;
     let status = upstream_response.status();
+    let upstream_headers = upstream_response.headers().clone();
     if status.is_success() {
-        commit_model_request(&token, &model_routing);
+        commit_model_request(&token, &model_routing, &foreign_history_keys);
     }
     log_executor_event(
         "local model proxy upstream headers received",
@@ -380,7 +471,7 @@ pub(super) async fn handle_for_token(
         log_executor_event(
             "local model proxy upstream rejected request",
             &[
-                ("api_format", upstream.api_format),
+                ("api_format", upstream.api_format.clone()),
                 ("status", status.as_u16().to_string()),
                 ("body_bytes", response_body.len().to_string()),
                 (
@@ -394,6 +485,7 @@ pub(super) async fn handle_for_token(
         if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
             response.headers_mut().insert(header::CONTENT_TYPE, value);
         }
+        forward_official_response_headers(&upstream, &upstream_headers, response.headers_mut());
         return Ok(response);
     }
     if upstream.api_format != "openai-responses"
@@ -410,7 +502,7 @@ pub(super) async fn handle_for_token(
         log_executor_event(
             "local model proxy converting non-sse response",
             &[
-                ("api_format", upstream.api_format),
+                ("api_format", upstream.api_format.clone()),
                 ("content_type", content_type.unwrap_or_default()),
                 ("body_bytes", response_body.len().to_string()),
             ],
@@ -429,6 +521,11 @@ pub(super) async fn handle_for_token(
                         header::CONTENT_TYPE,
                         HeaderValue::from_static("text/event-stream"),
                     );
+                    forward_official_response_headers(
+                        &upstream,
+                        &upstream_headers,
+                        response.headers_mut(),
+                    );
                     return Ok(response);
                 }
                 Conversion::Anthropic(context) => {
@@ -443,6 +540,11 @@ pub(super) async fn handle_for_token(
                     response.headers_mut().insert(
                         header::CONTENT_TYPE,
                         HeaderValue::from_static("text/event-stream"),
+                    );
+                    forward_official_response_headers(
+                        &upstream,
+                        &upstream_headers,
+                        response.headers_mut(),
                     );
                     return Ok(response);
                 }
@@ -462,6 +564,11 @@ pub(super) async fn handle_for_token(
                         header::CONTENT_TYPE,
                         HeaderValue::from_static("text/event-stream"),
                     );
+                    forward_official_response_headers(
+                        &upstream,
+                        &upstream_headers,
+                        response.headers_mut(),
+                    );
                     return Ok(response);
                 }
             }
@@ -475,6 +582,7 @@ pub(super) async fn handle_for_token(
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/event-stream"),
         );
+        forward_official_response_headers(&upstream, &upstream_headers, response.headers_mut());
         return Ok(response);
     }
     let is_converted = conversion.is_some();
@@ -525,5 +633,6 @@ pub(super) async fn handle_for_token(
     } else if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
+    forward_official_response_headers(&upstream, &upstream_headers, response.headers_mut());
     Ok(response)
 }

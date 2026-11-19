@@ -1,9 +1,8 @@
 import {
   cloudRunnerModels,
-  runnerModelIdentity,
-  runnerModelKey,
   runnerSupportsModel,
   type ProjectAgentConfigurationHost,
+  type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
@@ -12,6 +11,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
 import { WeworkAgentPickerDialog } from './WeworkAgentPickerDialog'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
+import { createProjectAgentEditorApi } from './projectAgentEditorApi'
 
 export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   renderDialog: props => <WeworkAgentPickerDialog {...props} />,
@@ -26,13 +26,59 @@ export function createWeworkProjectAgentConfigurationHost(
   localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
   localModelApi?: WorkbenchServices['modelApi'],
   pluginApi?: WorkbenchServices['pluginApi'],
-  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>,
+  projectDefinition?: {
+    agents: SharedWorkspaceApi['agents']
+    modelApi: WorkbenchServices['modelApi']
+    name: string
+  }
 ): ProjectAgentConfigurationHost {
+  const editor =
+    projectDefinition && agentResourceApi
+      ? {
+          api: createProjectAgentEditorApi(projectDefinition.agents, agentResourceApi),
+          modelApi: projectDefinition.modelApi,
+          ownerLabel: projectDefinition.name,
+        }
+      : localAgentApi && localModelApi
+        ? { api: localAgentApi, modelApi: localModelApi, ownerLabel: undefined }
+        : undefined
   return {
     ...weworkProjectAgentConfigurationHost,
     ...(localAgentApi
       ? {
-          async listTemplateAgentModels(runtime) {
+          async listTemplateAgentEnvironments(projectId, location) {
+            const environments =
+              location === 'cloud'
+                ? await agentResourceApi!.listEnvironments(projectId)
+                : await localAgentApi.listEnvironments(projectId)
+            return environments
+              .filter(item => location !== 'cloud' || item.project_authorized)
+              .map(item => ({
+                id: item.id,
+                device_key: item.device_key,
+                name: item.name,
+                kind: 'local_device' as const,
+                coding_tools: item.runtimes ?? [],
+                owner_type: item.owner_type,
+                owner_id: item.owner_id,
+                owner_name: '',
+                status: item.status === 'unknown' ? ('offline' as const) : item.status,
+                updated_at: '',
+                can_use: location !== 'cloud' || item.project_authorized,
+              }))
+          },
+          async listTemplateAgentModels(runtime, context) {
+            if (context?.environmentId) {
+              const source = context.location === 'cloud' ? agentResourceApi! : localAgentApi
+              const environments = await source.listEnvironments(context.projectId)
+              const selected = environments.find(item => item.id === context.environmentId)
+              if (!selected || (context.location === 'cloud' && !selected.project_authorized))
+                throw new Error('RUNNER_ENVIRONMENT_UNAVAILABLE')
+              const catalog = await source.listNativeModels(selected, context.projectId)
+              if (catalog.catalog_error) throw new Error(catalog.catalog_error)
+              return { models: catalog.models.filter(model => model.runtime === runtime) }
+            }
             const environments = await localAgentApi.listRunnerEnvironments()
             const current = environments.length === 1 ? environments[0] : undefined
             if (!current) throw new Error('template_environment_unavailable')
@@ -48,54 +94,6 @@ export function createWeworkProjectAgentConfigurationHost(
             return cloudRunnerModels(models).filter(
               model => model.runtime === runtime && runnerSupportsModel(current, model)
             )
-          },
-          async resolveTemplateAgentRouting(
-            runtime,
-            location,
-            projectId,
-            _environmentId,
-            selectedModel
-          ) {
-            const environments = await localAgentApi.listRunnerEnvironments(
-              location === 'local' ? projectId : undefined
-            )
-            if (environments.length !== 1) throw new Error('template_model_default_unavailable')
-            const current = environments[0]
-            const defaults = current.models.filter(
-              model => model.runtime === runtime && model.is_default
-            )
-            const model = selectedModel ?? (defaults.length === 1 ? defaults[0] : undefined)
-            if (!model) throw new Error('template_model_default_unavailable')
-            if (model.runtime !== runtime || !runnerSupportsModel(current, model))
-              throw new Error('template_model_unavailable')
-            if (
-              selectedModel?.source === 'cloud' &&
-              !cloudRunnerModels(await localAgentApi.listModels()).some(
-                candidate => runnerModelKey(candidate) === runnerModelKey(selectedModel)
-              )
-            )
-              throw new Error('template_model_unavailable')
-            let environmentId = current.id
-            if (location === 'cloud') {
-              if (!agentResourceApi) throw new Error('template_environment_unavailable')
-              const currentDeviceKeys = [current.device_key, current.app_device_id].filter(
-                (key): key is string => Boolean(key)
-              )
-              const authorized = (await agentResourceApi.listEnvironments(projectId)).filter(
-                environment =>
-                  environment.status === 'online' &&
-                  currentDeviceKeys.some(
-                    key => environment.device_key === key || environment.app_device_id === key
-                  ) &&
-                  (!projectId || environment.project_authorized)
-              )
-              if (authorized.length !== 1) throw new Error('template_environment_unavailable')
-              environmentId = authorized[0].id
-            }
-            return {
-              executionPolicy: { mode: 'fixed', environment_id: environmentId },
-              modelPolicy: { mode: 'fixed', model: runnerModelIdentity(model) },
-            }
           },
         }
       : {}),
@@ -188,14 +186,19 @@ export function createWeworkProjectAgentConfigurationHost(
               />
             )
           },
-          renderLocalAgentEditor({ projectId, resourceId, onClose, onSaved }) {
+        }
+      : {}),
+    ...(editor
+      ? {
+          renderProjectAgentEditor({ projectId, resourceId, onClose, onSaved }) {
             return (
               <ProjectChatAgentEditor
-                api={localAgentApi}
+                api={editor.api}
                 deviceApi={deviceApi}
                 editingAgentId={resourceId}
                 key={resourceId}
-                modelApi={localModelApi}
+                modelApi={editor.modelApi}
+                ownerLabel={editor.ownerLabel}
                 pluginApi={pluginApi}
                 projectId={projectId}
                 skillApi={agentResourceApi}

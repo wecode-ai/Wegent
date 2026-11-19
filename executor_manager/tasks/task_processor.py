@@ -15,6 +15,7 @@ Uses get_metadata_field() helper for transparent field access across both format
 
 from typing import Any, Dict, List, Union
 
+from executor_manager.clients.executor_binding import ObsoleteExecutorDispatch
 from executor_manager.config import config
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.github.github_app import get_github_app
@@ -227,6 +228,8 @@ class TaskProcessor:
                     "error_code": error_code,
                 }, False
 
+        except ObsoleteExecutorDispatch:
+            raise
         except Exception as e:
             error_msg = str(e)
             error_code = getattr(e, "error_code", "")

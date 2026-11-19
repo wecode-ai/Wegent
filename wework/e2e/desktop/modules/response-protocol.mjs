@@ -313,6 +313,18 @@ function encryptedReasoningItem(id, encryptedContent) {
   }
 }
 
+function reasoningTextItem(id, text) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'reasoning',
+      id,
+      summary: [],
+      content: [{ type: 'reasoning_text', text }],
+    },
+  }
+}
+
 function streamingMarkdownReport() {
   const sectionCount = readPositiveInteger(
     process.env.WEWORK_E2E_MEMORY_SECTION_COUNT,
@@ -743,8 +755,40 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
   return {
     mode: 'search',
-    ...selectToolSearch(request, namespaceName ? `${namespaceName} ${toolName}` : toolName),
+    ...selectToolSearch(
+      request,
+      namespaceName ? `${namespaceName} ${toolName}` : toolName,
+      directToolName
+    ),
   }
+}
+
+function discoveryCallIdAfterCatalogUpdate(request, searchCallId, directToolName) {
+  if (!searchCallId || !directToolName?.startsWith('mcp__')) return searchCallId
+  const namespace = directToolName.slice(5, directToolName.lastIndexOf('__'))
+  const input = Array.isArray(request.input) ? request.input : []
+  const outputIndex = input.findLastIndex(
+    item => item.type?.endsWith('_call_output') && item.call_id === searchCallId
+  )
+  if (outputIndex < 0) return searchCallId
+  let catalogIndex = -1
+  for (let index = outputIndex + 1; index < input.length; index += 1) {
+    const item = input[index]
+    if (item.type !== 'message' || item.role !== 'developer') continue
+    const text = modelMessageText(item)
+    if (!text.startsWith('<tools>\n') || !text.endsWith('\n</tools>')) continue
+    const lines = text.split('\n')
+    const added = lines.indexOf('Added deferred tool namespaces:')
+    if (added < 0) continue
+    const removed = lines.indexOf('Removed deferred tool namespaces:', added + 1)
+    if (
+      lines
+        .slice(added + 1, removed < 0 ? -1 : removed)
+        .some(line => line === '- ' + namespace || line.startsWith('- ' + namespace + ': '))
+    )
+      catalogIndex = index
+  }
+  return catalogIndex < 0 ? searchCallId : searchCallId + '-catalog-' + catalogIndex
 }
 
 function mcpToolRequestEvents(
@@ -752,6 +796,24 @@ function mcpToolRequestEvents(
   { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
 ) {
   const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  searchCallId = discoveryCallIdAfterCatalogUpdate(request, searchCallId, directToolName)
+  if (
+    selection.mode === 'search' &&
+    searchCallId &&
+    requestContainsToolOutput(request, searchCallId)
+  ) {
+    const output = toolOutputText(request, searchCallId) ?? ''
+    const signal = [
+      'Native discovery execution failed',
+      'Native discovery requires one exact capability',
+      'Discovery must select between one and eight real native capabilities',
+      'ReferenceError',
+      'SyntaxError',
+    ].find(signal => output.includes(signal))
+    assert.fail(
+      `Native discovery did not expose ${directToolName ?? toolName}${signal ? `: ${signal}` : ''}`
+    )
+  }
   return {
     mode: selection.mode,
     events:
@@ -761,8 +823,9 @@ function mcpToolRequestEvents(
   }
 }
 
-function selectToolSearch(request, query) {
-  if (requestAdvertisesProgrammaticExec(request)) return discoverySelection(request, query)
+function selectToolSearch(request, query, qualifiedName) {
+  if (requestAdvertisesProgrammaticExec(request))
+    return discoverySelection(request, query, qualifiedName)
   const tools = Array.isArray(request.tools) ? request.tools : []
   const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
   const searchTools = tools.filter(
@@ -919,6 +982,7 @@ export {
   codexRequestKind,
   handleModelMaintenanceRequest,
   latestModelInputText,
+  modelMessageText,
   isReplyPredictionRequest,
   isReplyPredictionVisionRequest,
   REPLY_PREDICTION_PROMPT,
@@ -934,6 +998,7 @@ export {
   assistantMessageSequence,
   assistantMessage,
   encryptedReasoningItem,
+  reasoningTextItem,
   streamingMarkdownReport,
   streamingTextEvents,
   localProtocolCase,

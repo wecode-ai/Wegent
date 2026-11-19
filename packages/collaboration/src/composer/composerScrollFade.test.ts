@@ -90,6 +90,25 @@ describe('composer scroll fade', () => {
     expectFade(0, 16)
   })
 
+  it('requests caret recovery only when viewport geometry changes', () => {
+    stop()
+    const recover = vi.fn()
+    stop = observeComposerScrollFade(viewport, content, recover)
+    notifyResize()
+    scrollTo(100)
+    scrollHeight = 800
+    notifyResize()
+    expect(recover).not.toHaveBeenCalled()
+    height = 200
+    notifyResize()
+    expect(recover).toHaveBeenCalledOnce()
+    notifyResize()
+    expect(recover).toHaveBeenCalledOnce()
+    Object.defineProperty(viewport, 'clientWidth', { value: 390 })
+    notifyResize()
+    expect(recover).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps fitting, rounding overflow and hidden viewports unmasked', () => {
     scrollHeight = 101
     notifyResize()

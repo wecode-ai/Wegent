@@ -8,6 +8,7 @@ import {
   selectE2EModel,
   fetchJson,
   CLOUD_PUBLIC_MODEL_NAME,
+  MODEL_REQUEST_TIMEOUT_MS,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -254,8 +255,10 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         await control.command('waitFor', `${probeResult}[role="alert"]`)
         await control.command('click', '[data-testid="provider-editor-test-error-details"]')
         await control.command('waitFor', `${probeResult}[role="alert"]`, {
-          text: 'required capability probe tool call',
+          text: '连接失败',
         })
+        assert.equal(probeRequests, 1, 'The invalid function arguments must be rejected')
+        assert.equal(nativeProbeRequests, 1, 'Both configured tool protocols must be probed')
         await control.command('clickWhenEnabled', probe)
         await control.command('waitFor', `${probeResult}[role="status"]`)
         assert.equal(
@@ -287,7 +290,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: `${DONE} ${round}` }
+            { text: `${DONE} ${round}`, timeoutMs: MODEL_REQUEST_TIMEOUT_MS }
           )
           assert.equal(await readFile(artifact, 'utf8'), TOOL_OK)
         }

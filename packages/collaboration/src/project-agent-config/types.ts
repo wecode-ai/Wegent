@@ -12,26 +12,23 @@ export interface ProjectAgentOwnerOption {
 }
 
 export interface ProjectAgentConfigurationHost {
-  requiresTemplateEnvironmentSelection?: boolean;
-  resolveTemplateAgentRouting?(
-    runtime: "codex" | "claude_code",
-    location: "local" | "cloud",
-    projectId?: string,
-    environmentId?: string,
-    model?: import('../agent-form/runnerRouting').RunnerModelIdentity,
-  ): Promise<import("../templates/types").TemplateAgentRouting>;
   listTemplateAgentModels?(
-    runtime: 'codex' | 'claude_code',
-    projectId?: string,
+    runtime: "codex" | "claude_code",
+    context?: {
+      projectId?: string;
+      environmentId?: string;
+      location?: "local" | "cloud";
+    },
   ): Promise<{
-    models: import('../agent-form/runnerRouting').RunnerModel[];
+    models: import("../agent-form/runnerRouting").RunnerModel[];
   }>;
   listTemplateCloudAgentModels?(
-    runtime: 'codex' | 'claude_code',
+    runtime: "codex" | "claude_code",
     projectId?: string,
-  ): Promise<import('../agent-form/runnerRouting').RunnerModel[]>;
+  ): Promise<import("../agent-form/runnerRouting").RunnerModel[]>;
   listTemplateAgentEnvironments?(
     projectId: string,
+    location?: "local" | "cloud",
   ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
   templateAgentEnvironmentSettingsHref?(
     project: import("../types").CollaborationProject,
@@ -77,7 +74,8 @@ export interface ProjectAgentConfigurationHost {
     onSaved(agent: { name: string; teamId: number }): Promise<void>;
     workspaceName: string;
   }): ReactNode;
-  renderLocalAgentEditor?(props: {
+  /** Edits a project-owned definition through its local or cloud storage API. */
+  renderProjectAgentEditor?(props: {
     projectId?: string;
     resourceId: string;
     onClose(): void;

@@ -20,14 +20,17 @@ FROM rust-builder-base AS rust-builder-deps
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
 COPY backend-rs/crates ./crates
 COPY shared/rust /app/shared/rust
+COPY shared/assets/calendars /app/shared/assets/calendars
 RUN mkdir src \
     && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
     && cargo build --release --locked --bin wegent-backend-rs
 
 FROM rust-builder-deps AS rust-builder
+COPY shared/assets/codex-models /app/shared/assets/codex-models
 COPY backend-rs/src ./src
 COPY backend-rs/migrations ./migrations
+COPY shared/data/builtin-connector-apps.json /app/shared/data/builtin-connector-apps.json
 RUN find src -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs
 

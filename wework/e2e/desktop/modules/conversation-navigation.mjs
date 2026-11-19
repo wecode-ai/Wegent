@@ -3,7 +3,6 @@ import {
   countTextOccurrences,
   getElementMetrics,
   getSingleElementMetrics,
-  verifyViewImageProcessingBlock,
   waitForComposerFocus,
   waitForElementInsideScroller,
   waitForOverflowMetrics,
@@ -11,6 +10,7 @@ import {
 } from './conversation-layout.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
+import { waitForClosedStartupSplash } from './native-window-state.mjs'
 
 import { latestModelInputText } from './response-protocol.mjs'
 
@@ -60,8 +60,6 @@ import {
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
   TURN_NAVIGATION_REGRESSION_TURN_COUNT,
   TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN,
-  VIEW_IMAGE_COMPLETION_TEXT,
-  VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
@@ -833,6 +831,10 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 
   const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
   await control.command('click', markerSelector)
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: promptText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command(
     'scrollIntoViewAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
@@ -1222,40 +1224,13 @@ async function reopenCurrentTurnNavigationTask(
     )
 
     await verifyEnvironmentPanelScrollStability(control)
+    await verifyTurnNavigationComposerClearance(control, expectedTurnCount)
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   return restartedApp
-}
-
-async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
-  control.setScenario('view_image')
-  await control.command(
-    'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await selectE2EModel(control)
-  await sendPrompt(control, composerSelector, VIEW_IMAGE_PROMPT)
-  await withTimeout(
-    control.awaitScenarioRequest('view_image'),
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The model service did not receive the standalone view_image request'
-  )
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      text: VIEW_IMAGE_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await verifyViewImageProcessingBlock(control)
 }
 
 async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
@@ -1422,14 +1397,24 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
     initialPrompt: QUEUE_DIRECT_INITIAL,
     queuedPrompts: [QUEUE_DIRECT_FIRST, QUEUE_DIRECT_SECOND, QUEUE_DIRECT_THIRD],
   })
-  const queueSnapshot = JSON.parse(
-    await control.command('snapshot', '[data-testid="conversation-queue-panel"]')
+  const queueTestIds = JSON.parse(
+    await control.command('getTestIdOrder', '[data-testid="conversation-queue-panel"]')
   )
-  const dragHandleTestIds = queueSnapshot.testIds.filter(testId =>
-    testId.startsWith('queue-drag-handle-')
-  )
+  const dragHandleTestIds = queueTestIds.filter(testId => testId.startsWith('queue-drag-handle-'))
   assert.equal(dragHandleTestIds.length, 3, 'The three queued messages did not expose drag handles')
   const firstQueuedId = dragHandleTestIds[0].slice('queue-drag-handle-'.length)
+  const thirdQueuedId = dragHandleTestIds[2].slice('queue-drag-handle-'.length)
+  for (const [id, prompt] of [
+    [firstQueuedId, QUEUE_DIRECT_FIRST],
+    [thirdQueuedId, QUEUE_DIRECT_THIRD],
+  ]) {
+    assert.ok(
+      (await control.command('getText', `[data-testid="conversation-queue-row-${id}"]`)).includes(
+        prompt
+      ),
+      'Queue drag targets must follow visible message order, independent of message IDs'
+    )
+  }
   await control.command('drag', `[data-testid="${dragHandleTestIds[2]}"]`, {
     target: `[data-testid="conversation-queue-row-${firstQueuedId}"]`,
   })
@@ -1573,7 +1558,7 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'queue-management-03-dialog-paths.png')
 }
 
-async function verifyLastUserMessageEdit({ composerSelector, control }) {
+async function verifyLastUserMessageEdit({ composerSelector, control, restartDesktopApp }) {
   control.setScenario('message_edit')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1604,6 +1589,26 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     MESSAGE_EDIT_ORIGINAL_PROMPT,
     'Clicking the user-message copy button did not copy the visible message text'
   )
+
+  const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The message-edit fixture did not expose its runtime task ID')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await restartDesktopApp()
+  await waitForClosedStartupSplash(control)
+  await control.command('focusMainWindow', 'body')
+  await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
+  await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
 
   await control.command(
     'hover',
@@ -1706,10 +1711,7 @@ export {
   verifyBackgroundGuidanceNavigation,
   verifyForegroundGuidanceScroll,
   verifyTurnNavigationTracksVisibleTurnMessages,
-  verifyEnvironmentPanelScrollStability,
-  verifyTurnNavigationComposerClearance,
   reopenCurrentTurnNavigationTask,
-  verifyStandaloneViewImageTask,
   verifyVisionSidecar,
   verifyMultimodalVision,
   startPausedQueueCase,

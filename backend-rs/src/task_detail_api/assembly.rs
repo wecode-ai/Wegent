@@ -153,6 +153,7 @@ pub(crate) async fn build_task_detail(
     task_id: i64,
     user_id: i64,
     client_origin: Option<&str>,
+    subtasks_ordered_in_sql: bool,
 ) -> anyhow::Result<TaskDetailOutcome> {
     let mysql = &state.mysql;
     let kinds = KindStore {
@@ -343,8 +344,13 @@ pub(crate) async fn build_task_detail(
     for (index, lineage_task_id) in lineage_task_ids.iter().enumerate() {
         // `list_by_task_ordered` runs the new-format owner guard itself, so
         // an unowned task contributes no subtasks.
-        let listing =
-            list_subtasks_by_task(&*state.task_store, *lineage_task_id, task.user_id).await?;
+        let listing = list_subtasks_by_task(
+            &*state.task_store,
+            *lineage_task_id,
+            task.user_id,
+            subtasks_ordered_in_sql,
+        )
+        .await?;
         if index > 0 {
             inherited_task_ids.push(*lineage_task_id);
         }

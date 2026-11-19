@@ -10,6 +10,11 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     next_cursor: Option<&str>,
 ) {
     fs::create_dir_all(root).unwrap();
+    fs::write(
+        root.join("bundled_models.json"),
+        crate::test_env::CODEX_BUNDLED_CATALOG,
+    )
+    .unwrap();
     let terminal_boundary = |turn: &Value| {
         matches!(
             turn["status"].as_str(),
@@ -51,6 +56,11 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     for (method, response) in [
         ("initialize", json!({"userAgent":"test"})),
         ("thread_list", json!({"data":[],"nextCursor":null})),
+        ("thread_unsubscribe", json!({"status":"notLoaded"})),
+        (
+            "thread_resume",
+            json!({"thread":{"id":handler.local_task_link("task-1").and_then(|link| link.thread_id).unwrap_or_else(|| "thread-1".into()),"modelProvider":"~"}}),
+        ),
         (
             "thread_read",
             json!({"thread":{"id":"thread-1","cwd":"/tmp/project","historyMode":"paginated"}}),
@@ -91,6 +101,8 @@ pub(in crate::runtime_work::handler) fn install_native_history(
   }
   $method = $request.method.Replace('/', '_')
   if ($method -eq 'thread_list' -and $request.params.cursor -eq 'page-2') { $method = 'thread_list_page2' }
+  if (Test-Path (Join-Path $PSScriptRoot ($method + '.defer'))) { continue }
+  while (Test-Path (Join-Path $PSScriptRoot ($method + '.hold'))) { Start-Sleep -Milliseconds 10 }
   $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
   if (Test-Path $errorFile) {
     $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))
@@ -98,13 +110,17 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     [Console]::WriteLine((@{id=$request.id;error=$failure} | ConvertTo-Json -Depth 100 -Compress))
     continue
   }
+  $notificationFile = Join-Path $PSScriptRoot ($method + '.notifications.jsonl')
+  if (Test-Path $notificationFile) {
+    foreach ($notification in [IO.File]::ReadLines($notificationFile)) { [Console]::WriteLine($notification) }
+  }
   $result = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $PSScriptRoot ($method + '.json'))))
   [Console]::WriteLine((@{id=$request.id;result=$result} | ConvertTo-Json -Depth 100 -Compress))
 }"#,
         )
         .unwrap();
         let binary = root.join("native-history.cmd");
-        fs::write(&binary, "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
+        fs::write(&binary, "@echo off\r\nif \"%~1\"==\"debug\" (\r\n  type \"%~dp0bundled_models.json\"\r\n  exit /b 0\r\n)\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
         binary
     };
     handler.codex_app_server =

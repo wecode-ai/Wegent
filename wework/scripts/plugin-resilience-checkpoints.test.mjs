@@ -50,6 +50,9 @@ vi.mock('../e2e/desktop/modules/plugin-copied-source-reinstall.mjs', () => ({
 vi.mock('../e2e/desktop/modules/plugin-write-coordination.mjs', () => ({
   verifyPluginWriteCoordination: context => state.invoke('write-coordination', context),
 }))
+vi.mock('../e2e/desktop/modules/plugin-local-sync.mjs', () => ({
+  verifyPluginLocalSync: context => state.invoke('local-http-without-registration', context),
+}))
 vi.mock('../e2e/desktop/modules/plugin-install-update-resilience.mjs', () => ({
   verifyPluginInstallUpdateResilience: context => state.invoke('install-and-update', context),
 }))
@@ -271,6 +274,7 @@ test('install/update cases reuse the write-coordination cloud, MinIO and all exi
     'copied-source-reinstall',
     'write-coordination',
     'install-and-update',
+    'local-http-without-registration',
   ])
   expect(state.storages).toHaveLength(1)
   expect(state.proxies).toHaveLength(3)
@@ -300,6 +304,7 @@ for (const name of ['sync-disconnect', 'copied-source-reinstall', 'write-coordin
       'copied-source-reinstall',
       'write-coordination',
       'install-and-update',
+      'local-http-without-registration',
     ])
     const { evidence } = await f.evidence()
     expect(evidence.find(entry => entry.group === name).passed).toBe(false)

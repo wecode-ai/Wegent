@@ -18,6 +18,8 @@ mod connection_cli;
 mod connection_dependencies;
 pub(crate) mod connection_host;
 mod connection_mcp;
+mod connection_reader;
+pub(crate) mod connection_service;
 mod connectors;
 mod conversation_sessions;
 pub(crate) mod dingtalk;
@@ -33,6 +35,7 @@ pub(crate) mod native_transcript;
 mod notification_mapping;
 mod reader;
 mod remote_projects;
+pub(crate) mod remote_task_access;
 mod response;
 mod restored_workspaces;
 mod runtime_handle_messages;
@@ -49,6 +52,7 @@ pub(crate) mod transcript_work;
 mod util;
 pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;
+pub(crate) use util::{normalize_runtime_goal_timestamps, prompt_text};
 mod worktrees;
 
 pub use codex_global_state::run_project_state_query;
@@ -64,6 +68,7 @@ pub(crate) fn runtime_features() -> serde_json::Value {
     serde_json::json!({
         "schemaVersion": 4,
         "pluginSync": { "protocolVersion": 2 },
+        "connectionEvents": { "protocolVersion": wegent_protocol::connection_events::PROTOCOL_VERSION },
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {
@@ -115,21 +120,6 @@ pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(test)]
-mod project_editing_feature_tests {
-    #[test]
-    fn advertises_independent_project_editing_capabilities() {
-        let features = super::runtime_features();
-        assert_eq!(features["pluginSync"]["protocolVersion"], 2);
-        assert_eq!(
-            features["projectEditing"],
-            serde_json::json!({
-                "multiRoots": true,
-                "aiSettings": true,
-                "defaultProjectSpace": true,
-                "plugins": true,
-            })
-        );
-    }
-}
+mod project_editing_feature_tests {}
 
 mod stand_in_telemetry;

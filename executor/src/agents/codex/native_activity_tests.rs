@@ -19,13 +19,235 @@ fn request(activity: &CodexNativeActivity, method: &str) -> CodexNativeRequest {
         .unwrap()
 }
 
+fn loaded_activity() -> CodexNativeActivity {
+    let mut activity = CodexNativeActivity::default();
+    for thread in ["thread", "other"] {
+        activity.observe(&json!({"method":"thread/started","params":{"thread":{"id":thread}}}));
+    }
+    activity
+}
+
+#[test]
+fn native_thread_notifications_supply_models_for_direct_turns() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"native-model", "modelProvider":"openai"
+    }}}));
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("native-model".into()), Some("openai".into()))
+    );
+    let load = request(&activity, "thread/resume");
+    activity.observe_response(&load, &json!({"thread":{"id":"thread"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("native-model")
+    );
+}
+
+#[test]
+fn accepted_turn_model_overrides_survive_direct_reuse() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"thread-model", "modelProvider":"openai"
+    }}}));
+    let turn = activity
+        .request_context(
+            1,
+            "turn/start",
+            &json!({"threadId":"thread","model":" turn-model "}),
+        )
+        .unwrap();
+    assert!(activity.observe_response(&turn, &json!({"turn":{"id":"turn-1"}})));
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("turn-model".into()), Some("openai".into()))
+    );
+
+    // Direct reuse without an override still runs on the overridden model, and
+    // an older thread/read payload must not resurrect the superseded identity.
+    let read = request(&activity, "thread/read");
+    activity.observe_response(&read, &json!({"thread":{"id":"thread"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("turn-model")
+    );
+}
+
+#[test]
+fn turn_model_overrides_apply_when_the_started_notification_arrives_first() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"thread-model", "modelProvider":"openai"
+    }}}));
+    // The native notification can precede the response carrying the override.
+    activity.observe(&json!({"method":"turn/started","params":{
+        "threadId":"thread","turn":{"id":"turn-1","status":"inProgress"}
+    }}));
+    let turn = activity
+        .request_context(
+            1,
+            "turn/start",
+            &json!({"threadId":"thread","model":"turn-model"}),
+        )
+        .unwrap();
+    activity.observe_response(&turn, &json!({"turn":{"id":"turn-1"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("turn-model")
+    );
+}
+
+#[test]
+fn reading_thread_models_does_not_load_or_activate_native_work() {
+    let mut activity = CodexNativeActivity::default();
+    let read = request(&activity, "thread/read");
+    activity.observe_response(
+        &read,
+        &json!({"thread":{
+            "id":"thread", "model":"read-model", "modelProvider":"openai"
+        }}),
+    );
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("read-model".into()), Some("openai".into()))
+    );
+    assert!(!activity.loaded_threads.contains("thread"));
+    assert!(activity.active_threads().is_empty());
+    let load = request(&activity, "thread/resume");
+    activity.observe_response(
+        &load,
+        &json!({"thread":{
+        "id":"thread", "model":"nested-model", "modelProvider":"openai"
+    }, "model":"resolved-override", "modelProvider":"selected-provider"}),
+    );
+    assert_eq!(
+        activity.model_identity("thread"),
+        (
+            Some("resolved-override".into()),
+            Some("selected-provider".into())
+        )
+    );
+    // A delayed metadata read must not replace a newer native load response.
+    activity.observe_response(
+        &read,
+        &json!({"thread":{
+            "id":"thread", "model":"stale-model", "modelProvider":"stale-provider"
+        }}),
+    );
+    assert_eq!(
+        activity.model_identity("thread"),
+        (
+            Some("resolved-override".into()),
+            Some("selected-provider".into())
+        )
+    );
+}
+
+#[test]
+fn resolved_thread_models_follow_native_loads_and_are_removed_on_close() {
+    let mut activity = CodexNativeActivity::default();
+    for method in ["thread/start", "thread/resume", "thread/fork"] {
+        let load = activity.request_context(1, method, &json!({})).unwrap();
+        activity.observe_response(
+            &load,
+            &json!({"thread":{"id":"thread"},"model":method,"modelProvider":"native-provider"}),
+        );
+        assert_eq!(
+            activity.model_identity("thread"),
+            (Some(method.into()), Some("native-provider".into()))
+        );
+    }
+    for message in [
+        json!({"method":"thread/closed","params":{"threadId":"thread"}}),
+        json!({"method":"thread/status/changed","params":{"threadId":"thread","status":{"type":"notLoaded"}}}),
+        json!({"method":"codex/app-server/exited"}),
+    ] {
+        let load = activity
+            .request_context(1, "thread/resume", &json!({}))
+            .unwrap();
+        activity.observe_response(
+            &load,
+            &json!({"thread":{"id":"thread"},"model":"model","modelProvider":"provider"}),
+        );
+        activity.observe(&message);
+        assert_eq!(activity.model_identity("thread"), (None, None));
+    }
+}
+
+#[test]
+fn hook_metadata_uses_the_inference_provider_instead_of_the_internal_router() {
+    let identity = native_activity::reporting_model_identity(
+        (
+            Some("real-model".into()),
+            Some(codex_model_catalog::PROVIDER_ID.into()),
+        ),
+        None,
+        Some("real-provider"),
+    );
+    assert_eq!(
+        identity,
+        (Some("real-model".into()), Some("real-provider".into()))
+    );
+}
+
+#[test]
+fn hook_model_follows_the_current_turn_override_instead_of_the_loaded_thread() {
+    let identity = native_activity::reporting_model_identity(
+        (Some("previous-model".into()), Some("openai".into())),
+        Some("current-turn-model".into()),
+        Some("openai"),
+    );
+    assert_eq!(identity.0.as_deref(), Some("current-turn-model"));
+    let unspecified = native_activity::reporting_model_identity(
+        (Some("thread-default".into()), Some("openai".into())),
+        None,
+        Some("openai"),
+    );
+    assert_eq!(unspecified.0.as_deref(), Some("thread-default"));
+}
+
 fn clear_goal() -> Value {
     json!({"method":"thread/goal/cleared","params":{"threadId":"thread"}})
 }
 
 #[test]
-fn native_turn_settlement_is_idempotent_and_cannot_clear_another_turn() {
+fn activating_an_unloaded_goal_does_not_block_its_own_resume() {
     let mut activity = CodexNativeActivity::default();
+    let set = request(&activity, "thread/goal/set");
+    activity.observe_response(&set, &json!({"goal":{"status":"active"}}));
+    activity.observe(&goal("active"));
+    assert!(
+        activity.active_threads().is_empty(),
+        "Persisting an unloaded Goal must leave admission available to load it"
+    );
+}
+
+#[test]
+fn loaded_goal_mutations_remain_protected_until_native_unload() {
+    for method in ["thread/start", "thread/resume", "thread/fork"] {
+        for unload in [
+            json!({"method":"thread/closed","params":{"threadId":"thread"}}),
+            json!({"method":"thread/status/changed","params":{"threadId":"thread","status":{"type":"notLoaded"}}}),
+        ] {
+            let mut activity = CodexNativeActivity::default();
+            let load = activity.request_context(1, method, &json!({})).unwrap();
+            activity.observe_response(&load, &json!({"thread":{"id":"thread"}}));
+            let set = request(&activity, "thread/goal/set");
+            activity.observe_response(&set, &json!({"goal":{"status":"active"}}));
+            assert_eq!(activity.active_threads().get("thread"), Some(&1));
+            assert!(activity.observe(&unload));
+            let cold_set = request(&activity, "thread/goal/set");
+            activity.observe_response(&cold_set, &json!({"goal":{"status":"active"}}));
+            activity.observe(&goal("active"));
+            assert!(activity.active_threads().is_empty(), "{method}: {unload}");
+        }
+    }
+}
+
+#[test]
+fn native_turn_settlement_is_idempotent_and_cannot_clear_another_turn() {
+    let mut activity = loaded_activity();
     for (thread, id) in [("thread", "one"), ("thread", "two"), ("other", "one")] {
         assert!(activity.observe(&turn("turn/started", thread, id, "inProgress")));
         assert!(!activity.observe(&turn("turn/started", thread, id, "inProgress")));
@@ -48,7 +270,7 @@ fn native_turn_settlement_is_idempotent_and_cannot_clear_another_turn() {
 fn an_active_goal_keeps_successful_continuations_busy_but_not_failed_turns() {
     for status in ["failed", "interrupted", "cancelled"] {
         for started in [false, true] {
-            let mut activity = CodexNativeActivity::default();
+            let mut activity = loaded_activity();
             activity.observe(&goal("active"));
             if started {
                 activity.observe(&turn("turn/started", "thread", "one", "inProgress"));
@@ -60,7 +282,7 @@ fn an_active_goal_keeps_successful_continuations_busy_but_not_failed_turns() {
             );
         }
     }
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     activity.observe(&goal("active"));
     activity.observe(&turn("turn/started", "thread", "one", "inProgress"));
     activity.observe(&turn("turn/completed", "thread", "one", "completed"));
@@ -74,7 +296,7 @@ fn an_active_goal_keeps_successful_continuations_busy_but_not_failed_turns() {
 
 #[test]
 fn native_responses_bridge_startup_and_goal_clear_keeps_a_running_turn() {
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     let goal = request(&activity, "thread/goal/set");
     assert!(activity.observe_response(&goal, &json!({"goal":{"status":"active"}})));
     assert_eq!(activity.active_threads().get("thread"), Some(&1));
@@ -95,13 +317,13 @@ fn native_responses_bridge_startup_and_goal_clear_keeps_a_running_turn() {
 
 #[test]
 fn reading_a_persisted_active_goal_does_not_start_native_work() {
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     let get = request(&activity, "thread/goal/get");
     assert!(!activity.observe_response(&get, &json!({"goal":{"status":"active"}})));
     assert!(activity.active_threads().is_empty());
 
     for response_order in 0..3 {
-        let mut activity = CodexNativeActivity::default();
+        let mut activity = loaded_activity();
         let get = request(&activity, "thread/goal/get");
         let active = json!({"goal":{"status":"active"}});
         if response_order == 0 {
@@ -132,7 +354,7 @@ fn a_goal_terminal_discards_prior_native_work_and_goal_metadata() {
         goal("complete"),
         turn("turn/completed", "thread", "failed", "failed"),
     ] {
-        let mut activity = CodexNativeActivity::default();
+        let mut activity = loaded_activity();
         let get = request(&activity, "thread/goal/get");
         let active = json!({"goal":{"status":"active"}});
         activity.observe_response(&get, &active);
@@ -150,7 +372,7 @@ fn a_goal_terminal_discards_prior_native_work_and_goal_metadata() {
         assert!(activity.active_threads().is_empty(), "{terminal}");
     }
 
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     activity.observe(&turn("turn/started", "thread", "one", "inProgress"));
     activity.observe(&turn("turn/completed", "thread", "one", "completed"));
     activity.observe(&clear_goal());
@@ -163,7 +385,7 @@ fn a_goal_terminal_discards_prior_native_work_and_goal_metadata() {
 fn a_newer_passive_goal_read_preserves_the_pending_set_response_bridge() {
     for get_response_first in [false, true] {
         for status in [Some("active"), Some("complete"), None] {
-            let mut activity = CodexNativeActivity::default();
+            let mut activity = loaded_activity();
             let set = request(&activity, "thread/goal/set");
             let get = request(&activity, "thread/goal/get");
             let set_response = json!({"goal":{"status":"active"}});
@@ -197,7 +419,7 @@ fn native_goal_changes_reject_older_goal_responses() {
         clear_goal(),
     ] {
         for method in ["thread/goal/get", "thread/goal/set"] {
-            let mut activity = CodexNativeActivity::default();
+            let mut activity = loaded_activity();
             activity.observe(&goal("active"));
             let pending = request(&activity, method);
             assert!(activity.observe(&notification));
@@ -209,7 +431,7 @@ fn native_goal_changes_reject_older_goal_responses() {
         }
     }
     for method in ["thread/goal/get", "thread/goal/set", "thread/goal/clear"] {
-        let mut activity = CodexNativeActivity::default();
+        let mut activity = loaded_activity();
         let pending = request(&activity, method);
         activity.observe(&goal("active"));
         assert!(!activity.observe_response(&pending, &json!({"goal":null})));
@@ -223,7 +445,7 @@ fn native_goal_changes_reject_older_goal_responses() {
 
 #[test]
 fn a_failed_terminal_invalidates_old_goal_responses_but_duplicates_preserve_new_goals() {
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     activity.observe(&goal("active"));
     let old_get = request(&activity, "thread/goal/get");
     let failed = turn("turn/completed", "thread", "one", "failed");
@@ -242,7 +464,7 @@ fn a_failed_terminal_invalidates_old_goal_responses_but_duplicates_preserve_new_
 
 #[test]
 fn a_terminal_for_another_turn_cannot_remove_a_live_turn_or_its_goal() {
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     activity.observe(&goal("active"));
     activity.observe(&turn("turn/started", "thread", "current", "inProgress"));
     activity.observe(&turn("turn/completed", "thread", "old", "failed"));
@@ -255,7 +477,7 @@ fn a_terminal_for_another_turn_cannot_remove_a_live_turn_or_its_goal() {
 
 #[test]
 fn goal_response_versions_are_scoped_to_their_own_thread() {
-    let mut activity = CodexNativeActivity::default();
+    let mut activity = loaded_activity();
     let pending = request(&activity, "thread/goal/set");
     let other = json!({"method":"thread/goal/updated","params":{"threadId":"other","goal":{"status":"active"}}});
     activity.observe(&other);
@@ -269,7 +491,7 @@ fn goal_response_versions_are_scoped_to_their_own_thread() {
 #[test]
 fn an_older_goal_read_cannot_clear_a_new_goal_set_response() {
     for set_response_first in [false, true] {
-        let mut activity = CodexNativeActivity::default();
+        let mut activity = loaded_activity();
         let old_get = request(&activity, "thread/goal/get");
         let new_set = request(&activity, "thread/goal/set");
         if set_response_first {
@@ -293,7 +515,7 @@ fn goal_mutation_responses_follow_request_order_in_either_response_order() {
         ("thread/goal/clear", "thread/goal/set", true),
     ] {
         for second_response_first in [false, true] {
-            let mut activity = CodexNativeActivity::default();
+            let mut activity = loaded_activity();
             let first = request(&activity, first_method);
             let second = request(&activity, second_method);
             let response = |method| {

@@ -1,72 +1,48 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useState, useSyncExternalStore, type DragEvent } from 'react'
 import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { createSystemDragPanelModel, type DropAction } from './systemDragPanelModel'
 import { readWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 
-type DropAction = 'new-chat' | 'follow-up' | 'stash'
-type DropStatus = { kind: 'success' | 'error'; action: DropAction } | null
-
-const FEEDBACK_DURATION_MS = 800
-const DROP_DEDUP_WINDOW_MS = 500
+const panelMarkers = new WeakMap<
+  HTMLElement,
+  { owners: Set<object>; previous: string | undefined }
+>()
 
 export function SystemDragPanel() {
   const { t } = useTranslation('common')
-  const [activeAction, setActiveAction] = useState<DropAction | null>(null)
-  const [conversationTitle, setConversationTitle] = useState<string | null>(null)
-  const [dropStatus, setDropStatus] = useState<DropStatus>(null)
-  const lastTextDropRef = useRef<{ key: string; timestamp: number } | null>(null)
-
-  const dismiss = useCallback(() => {
-    setDropStatus(null)
-    setActiveAction(null)
-    void invokeDesktopHost('systemDrag.dismissPanel')
-  }, [])
-
+  const [model] = useState(createSystemDragPanelModel)
+  const { activeAction, conversationTitle, dropStatus } = useSyncExternalStore(
+    model.subscribe,
+    model.getSnapshot,
+    model.getSnapshot
+  )
+  const dismiss = model.dismiss
   useEscapeKey(dismiss)
-
-  useEffect(() => {
-    document.documentElement.dataset.systemDragPanel = 'true'
+  const bindPanel = useCallback((node: HTMLElement | null) => {
+    if (!node) return
+    const root = node.ownerDocument.documentElement
+    let marker = panelMarkers.get(root)
+    if (!marker) {
+      marker = { owners: new Set(), previous: root.dataset.systemDragPanel }
+      panelMarkers.set(root, marker)
+    }
+    const owner = {}
+    marker.owners.add(owner)
+    root.dataset.systemDragPanel = 'true'
     return () => {
-      delete document.documentElement.dataset.systemDragPanel
+      if (!marker.owners.delete(owner) || marker.owners.size) return
+      panelMarkers.delete(root)
+      if (marker.previous === undefined) delete root.dataset.systemDragPanel
+      else root.dataset.systemDragPanel = marker.previous
     }
   }, [])
-
-  const complete = async (action: DropAction, text: string | null, paths: string[]) => {
-    try {
-      const payload = { action, text, paths }
-      await invokeDesktopHost('systemDrag.complete', { payload })
-      setDropStatus({ kind: 'success', action })
-    } catch (error) {
-      console.error('[Wework] Failed to complete system drop:', error)
-      setDropStatus({ kind: 'error', action })
-    }
-    window.setTimeout(() => {
-      void invokeDesktopHost('systemDrag.dismissPanel')
-      setDropStatus(null)
-      setActiveAction(null)
-    }, FEEDBACK_DURATION_MS)
-  }
-
-  useEffect(() => {
-    void invokeDesktopHost<{ conversationTitle: string | null }>('systemDrag.getContext').then(
-      context => setConversationTitle(context.conversationTitle)
-    )
-  }, [])
-
   const handleTextDrop = (action: DropAction, event: DragEvent<HTMLDivElement>) => {
     const text = event.dataTransfer.getData('text/plain').trim()
     const paths = readWorkspacePathDragData(event.dataTransfer)?.map(entry => entry.path) ?? []
     event.preventDefault()
-    setActiveAction(action)
-    if (!text && paths.length === 0) return
-    const key = `${action}:${text}:${paths.join('\0')}`
-    const now = performance.timeOrigin + event.timeStamp
-    const previous = lastTextDropRef.current
-    if (previous?.key === key && now - previous.timestamp < DROP_DEDUP_WINDOW_MS) return
-    lastTextDropRef.current = { key, timestamp: now }
-    void complete(action, text || null, paths)
+    model.drop(action, text, paths, performance.timeOrigin + event.timeStamp)
   }
 
   const zones = [
@@ -94,7 +70,11 @@ export function SystemDragPanel() {
     : undefined
 
   return (
-    <main data-testid="system-drag-panel" className="mx-auto h-[60px] w-[440px] bg-transparent p-1">
+    <main
+      ref={bindPanel}
+      data-testid="system-drag-panel"
+      className="mx-auto h-[60px] w-[440px] bg-transparent p-1"
+    >
       <section className="relative h-full overflow-hidden rounded-xl border border-border bg-background/95 shadow-lg backdrop-blur-md">
         <div className="flex h-full">
           <aside
@@ -144,7 +124,7 @@ export function SystemDragPanel() {
                     onDragOver={event => {
                       event.preventDefault()
                       event.dataTransfer.dropEffect = 'copy'
-                      setActiveAction(action)
+                      model.setActiveAction(action)
                     }}
                     onDrop={event => handleTextDrop(action, event)}
                   >

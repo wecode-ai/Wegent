@@ -8,6 +8,7 @@ export async function fetchLocalRuntime(control, url, init = {}) {
     await control.command('fetchLocalRuntime', 'body', {
       value: JSON.stringify({ url: String(url), ...request }),
       ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
+      preserveResultAcrossClientReplacement: true,
     })
   )
   signal?.throwIfAborted()
@@ -23,4 +24,17 @@ export async function fetchLocalRuntimeJson(control, url, init = {}) {
   const body = await response.json()
   assert.equal(response.ok, true, `${init.method ?? 'GET'} ${url} failed: ${JSON.stringify(body)}`)
   return body
+}
+
+/** Invoke a native capability through the real authenticated renderer HTTP boundary. */
+export async function invokeLocalHost(control, capability, params = {}, { timeoutMs } = {}) {
+  const origin = await control.command('getLocationOrigin', 'body')
+  const body = await fetchLocalRuntimeJson(control, `${origin}/wework/electron-host/v1/invoke`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ capability, params }),
+    timeoutMs,
+  })
+  assert.equal(body.ok, true, `${capability} failed: ${body.error?.message}`)
+  return body.result
 }

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { test, expect, executorMockUrl } from '../../fixtures/executor-test'
-import { createApiClient } from '../../utils/api-client'
+import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import { runtimeProcess, type Runtime } from '../../utils/pipeline-archive-runtime'
 import { modelToolDefinitions, modelToolMatches } from '../../utils/model-tool-discovery'
 
@@ -72,6 +72,8 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
   test.setTimeout(90_000)
   const logPath = process.env.E2E_STALLED_BACKEND_LOG
   expect(logPath, 'Run against the dedicated CI short-threshold Backend').toBeTruthy()
+  const gatewayLogPath = process.env.E2E_STALLED_GATEWAY_LOG
+  expect(gatewayLogPath, 'Read the Rust gateway SSE evidence').toBeTruthy()
   const logStart = (await readFile(logPath!, 'utf8')).length
   const backendLog = async () => (await readFile(logPath!, 'utf8')).slice(logStart)
   const prefix = `e2e-stalled-${randomUUID()}`
@@ -208,7 +210,9 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
     await expect
       .poll(
         async () => {
-          const response = await request.get(`${MANAGER}/sandboxes/${taskId}`)
+          const response = await request.get(`${MANAGER}/sandboxes/${taskId}`, {
+            headers: createBackendRequestHeaders(),
+          })
           if (response.status() === 404) return false
           expect(response.status()).toBe(200)
           const sandbox = await response.json()
@@ -263,10 +267,10 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
         { timeout: 20_000 }
       )
       .toBeTruthy()
-    const log = await backendLog()
-    expect(log).toContain(
-      `Stream created, starting to iterate events: task_id=${taskId}, subtask_id=${subtask.id}`
+    const streamOpened = new RegExp(
+      `Chat Shell SSE stream opened task_id=${taskId} subtask_id=${subtask.id}(?:\\s|$)`
     )
+    await expect.poll(() => readFile(gatewayLogPath!, 'utf8')).toMatch(streamOpened)
     const inspected = await detail()
     expect(inspected.status).toBe('RUNNING')
     const inspectedSubtask = inspected.subtasks.find(item => item.id === subtask.id)!
@@ -414,9 +418,17 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
         expect((await api.delete(`/api/tasks/${taskId}`)).status).toBe(200)
       })
       await attempt(async () => {
-        const response = await request.delete(`${MANAGER}/sandboxes/${taskId}`)
+        const response = await request.delete(`${MANAGER}/sandboxes/${taskId}`, {
+          headers: createBackendRequestHeaders(),
+        })
         expect([200, 404]).toContain(response.status())
-        expect((await request.get(`${MANAGER}/sandboxes/${taskId}`)).status()).toBe(404)
+        expect(
+          (
+            await request.get(`${MANAGER}/sandboxes/${taskId}`, {
+              headers: createBackendRequestHeaders(),
+            })
+          ).status()
+        ).toBe(404)
       })
     }
     for (const cleanup of cleanups.reverse()) await attempt(cleanup)

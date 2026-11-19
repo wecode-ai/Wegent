@@ -12,20 +12,36 @@ from datetime import datetime
 from fastapi import HTTPException
 
 
-def encode_my_work_cursor(updated_at: str, item_id: str, user_id: int) -> str:
+def encode_my_work_cursor(
+    updated_at: str,
+    item_id: str,
+    user_id: int,
+    attention: tuple[int, int] | None = None,
+    order: str = "attention",
+) -> str:
     payload = json.dumps(
         {
             "v": 1,
             "user_id": user_id,
             "updated_at": updated_at,
             "id": item_id,
+            **(
+                {"attention": attention, "order": order}
+                if attention is not None
+                else {}
+            ),
         },
         separators=(",", ":"),
     ).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-def decode_my_work_cursor(cursor: str | None, user_id: int) -> tuple[str, str] | None:
+def decode_my_work_cursor(
+    cursor: str | None,
+    user_id: int,
+    attention: bool = False,
+    order: str = "attention",
+) -> tuple[str, str, int, int] | None:
     if cursor is None:
         return None
     try:
@@ -36,13 +52,23 @@ def decode_my_work_cursor(cursor: str | None, user_id: int) -> tuple[str, str] |
                 cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True
             )
         )
-        if not isinstance(payload, dict) or set(payload) != {
+        expected = {
             "v",
             "user_id",
             "updated_at",
             "id",
-        }:
+        } | ({"attention", "order"} if attention else set())
+        if not isinstance(payload, dict) or set(payload) != expected:
             raise ValueError("Unexpected cursor fields")
+        if attention and payload["order"] != order:
+            raise ValueError("Cursor sort changed")
+        ranks = payload.get("attention", [0, 0])
+        if (
+            not isinstance(ranks, list)
+            or len(ranks) != 2
+            or any(type(rank) is not int or not 0 <= rank <= 4 for rank in ranks)
+        ):
+            raise ValueError("Invalid attention ordering key")
         updated_at = datetime.fromisoformat(payload["updated_at"])
         item_id = payload["id"]
         if (
@@ -64,4 +90,4 @@ def decode_my_work_cursor(cursor: str | None, user_id: int) -> tuple[str, str] |
             raise ValueError("Invalid ordering key")
     except (binascii.Error, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Invalid My Work cursor") from exc
-    return payload["updated_at"], item_id
+    return payload["updated_at"], item_id, ranks[0], ranks[1]

@@ -150,7 +150,13 @@ async fn run_tool_json(
         crate::python_runtime::isolate_python_environment(&mut command)
             .map_err(|message| AppIpcError::new("python_runtime_unavailable", message))?;
     }
-    let mut child = command.spawn().map_err(|_| {
+    let mut child = command.spawn().map_err(|_cause| {
+        #[cfg(test)]
+        eprintln!(
+            "Connection tool spawn failed: kind={:?} os_error={:?}",
+            _cause.kind(),
+            _cause.raw_os_error()
+        );
         AppIpcError::new(
             "connection_cli_unavailable",
             "Plugin tool could not be started",
@@ -394,6 +400,34 @@ fn retryable_tool_request(code: &str) -> bool {
 mod connection_tool_tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn tool_fixture(root: &Path, name: &str) -> PathBuf {
+        // A checked-in inode cannot retain a writer inherited by parallel forks.
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/connection-tool-outcome.sh");
+        let script = root.join(name);
+        std::os::unix::fs::symlink(fixture, &script).unwrap();
+        script
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn writable_tool_inodes_fail_before_structured_output_is_available() {
+        use std::io::Write;
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("fresh-tool");
+        let mut writer = fs::File::create(&script).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let cause = std::process::Command::new(&script).spawn().unwrap_err();
+        assert_eq!(cause.raw_os_error(), Some(libc::ETXTBSY));
+        let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "connection_cli_unavailable");
+        drop(writer);
+    }
+
     #[test]
     fn generic_and_transport_failures_retain_structured_causes_and_only_reads_get_retry_hints() {
         for code in [
@@ -442,9 +476,7 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn structured_generic_action_failure_is_never_replayed() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(&script, "#!/bin/sh\nprintf x >> attempts\nprintf '%s' '{\"success\":false,\"error\":{\"code\":\"request_failed\"}}'\nexit 1\n").unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let script = tool_fixture(temp.path(), "generic-action");
         let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
             .await
             .unwrap_err();
@@ -466,9 +498,7 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn structured_stderr_errors_preserve_auth_identity_without_exposing_messages() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(&script, "#!/bin/sh\nprintf '%s' '{\"success\":false,\"error\":{\"code\":\"need_login\",\"message\":\"private-token\"}}' >&2\nexit 1\n").unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let script = tool_fixture(temp.path(), "auth-stderr");
         let error = run_tool_json(temp.path(), &script, &[], "exact-plugin", "exact-connector")
             .await
             .unwrap_err();
@@ -531,13 +561,7 @@ mod connection_tool_tests {
     #[tokio::test]
     async fn unknown_action_failure_is_executed_once_without_a_retry_hint() {
         let temp = tempfile::tempdir().unwrap();
-        let script = temp.path().join("tool");
-        fs::write(
-            &script,
-            "#!/bin/sh\nprintf x >> attempts\nprintf '%s' 'private-unknown-error' >&2\nexit 1\n",
-        )
-        .unwrap();
-        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        let script = tool_fixture(temp.path(), "unknown-action");
         let error = run_tool_json(temp.path(), &script, &[], "plugin", "account")
             .await
             .unwrap_err();

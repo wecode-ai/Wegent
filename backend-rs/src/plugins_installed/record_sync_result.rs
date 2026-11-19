@@ -15,13 +15,17 @@ use brz_mysql::MysqlResult;
 use chrono::{Local, NaiveDateTime};
 use serde_json::{Map, Value};
 
-use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
-};
+use crate::device_identity::{PluginDeviceInstallationRow, plugin_device_id_on};
 use crate::plugins_marketplace::db::InstalledKindRow;
 use crate::plugins_marketplace::query::PluginQuery;
 
 use super::report::{DESIRED_INSTALLS_QUERY, DEVICE_ROW_QUERY, INSERT_INSTALLATION_QUERY};
+
+mod local_completion;
+mod versioned;
+
+pub(super) use local_completion::record_local_completion;
+use versioned::record_versioned_result;
 
 /// `PLUGIN_AUTO_UPDATE_FAILURE_LIMIT` (`app/core/constants.py`).
 const AUTO_UPDATE_FAILURE_LIMIT: i64 = 3;
@@ -109,6 +113,11 @@ impl SyncItem {
 #[derive(Debug, Clone)]
 pub struct SyncResult {
     pub scope: Value,
+    /// `plugin_sync`: the acknowledged versioned snapshot metadata.
+    pub plugin_sync: Option<Value>,
+    /// `desired_plugin_snapshot` (`exclude=True`): the payload whose versioned
+    /// acknowledgement this result records.
+    pub desired_plugin_snapshot: Option<Value>,
     pub device_id: String,
     pub success: bool,
     /// `acknowledged` (`exclude=True`): a false value stops the desired-state
@@ -131,6 +140,8 @@ impl SyncResult {
         if !ack.is_object() {
             return Self {
                 scope: Value::Null,
+                plugin_sync: None,
+                desired_plugin_snapshot: None,
                 device_id: device_id.to_string(),
                 success: false,
                 acknowledged: false,
@@ -154,6 +165,8 @@ impl SyncResult {
             .unwrap_or_default();
         let mut result = Self {
             scope: ack.get("scope").cloned().unwrap_or(Value::Null),
+            plugin_sync: ack.get("plugin_sync").cloned(),
+            desired_plugin_snapshot: None,
             device_id: device_id.to_string(),
             success: ack.get("success") != Some(&Value::Bool(false)),
             acknowledged: true,
@@ -181,7 +194,7 @@ impl SyncResult {
 
     /// A dispatch failure (`sync_device_payload`'s error branches) or the
     /// exhausted retry loop. The loop's result keeps the last acknowledgement's
-    /// scope and item arrays, exactly like the source.
+    /// scope, items and versioned snapshot, exactly like the source.
     #[must_use]
     pub fn failure(device_id: &str, last: Option<Self>, error: &str) -> Self {
         match last {
@@ -193,6 +206,8 @@ impl SyncResult {
             }
             None => Self {
                 scope: Value::Null,
+                plugin_sync: None,
+                desired_plugin_snapshot: None,
                 device_id: device_id.to_string(),
                 success: false,
                 acknowledged: false,
@@ -210,6 +225,9 @@ impl SyncResult {
     pub fn to_value(&self) -> Value {
         let mut value = Map::new();
         value.insert("scope".to_string(), self.scope.clone());
+        if let Some(plugin_sync) = &self.plugin_sync {
+            value.insert("plugin_sync".to_string(), plugin_sync.clone());
+        }
         value.insert(
             "device_id".to_string(),
             Value::String(self.device_id.clone()),
@@ -341,31 +359,75 @@ pub async fn record_device_sync_result<Q>(
 where
     Q: PluginQuery,
 {
+    record_device_sync_result_for_installs(session, user_id, result, guard, None).await
+}
+
+pub(crate) async fn record_device_sync_result_for_installs<Q>(
+    session: &mut Q,
+    user_id: i64,
+    result: &SyncResult,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    installed_ids: Option<&[i64]>,
+) -> MysqlResult<()>
+where
+    Q: PluginQuery,
+{
+    // Check ownership before alias mutations. The versioned branch reads its
+    // protocol state once, after resolving the canonical device identity.
+    if result.desired_plugin_snapshot.is_some()
+        && let Some(guard) = guard
+    {
+        guard.check().await?;
+    }
     // `reconcile_plugin_device_rows` owns the first flush boundaries: the
     // superseded alias DELETE batch and the selected canonical `device_id`
     // assignment (dirty even when the value is unchanged).
-    reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
-        .await?;
+    crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(session, user_id, guard, installed_ids)
+    .await?;
     let canonical_id = plugin_device_id_on(session, user_id, &result.device_id).await?;
-    let installs: Vec<InstalledKindRow> = session
+    if let Some(payload) = &result.desired_plugin_snapshot {
+        return record_versioned_result(
+            session,
+            user_id,
+            &canonical_id,
+            result,
+            payload,
+            guard,
+            installed_ids,
+        )
+        .await;
+    }
+    let mut installs: Vec<InstalledKindRow> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
-    let desired_ids: Vec<i64> = installs.iter().map(|installed| installed.id).collect();
+    installs.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
     let mut flush = PendingFlush::default();
-    record_removed_installs(
-        session,
-        user_id,
-        &canonical_id,
-        result,
-        &desired_ids,
-        &mut flush,
-    )
-    .await?;
     let plugin_results: Vec<(i64, SyncItem)> = result
         .plugins
         .iter()
         .filter_map(|item| item.id.as_i64().map(|id| (id, item.clone())))
         .collect();
+    // Source `_record_removed_installs` receives `set(plugin_results)`: a
+    // reported plugin item acknowledges its install attempt even when a newer
+    // uninstall already removed it from the desired set.
+    let retained_ids: Vec<i64> = installs
+        .iter()
+        .map(|installed| installed.id)
+        .chain(plugin_results.iter().map(|(id, _)| *id))
+        .collect();
+    record_removed_installs(
+        session,
+        user_id,
+        &canonical_id,
+        result,
+        &retained_ids,
+        &mut flush,
+        installed_ids,
+    )
+    .await?;
     for installed in &installs {
         let item = plugin_results
             .iter()
@@ -389,14 +451,28 @@ where
     flush.flush_with_guard(session, guard).await
 }
 
+/// The recording aborts on a non-database desired-state failure (the source
+/// lets the exception escape); the transaction rolls back and the follow-up
+/// logs it.
+fn build_failure(error: super::desired_capabilities::BuildError) -> brz_mysql::MysqlError {
+    match error {
+        super::desired_capabilities::BuildError::Mysql(error) => error,
+        other => {
+            tracing::error!(%other, "versioned snapshot desired-state reload failed");
+            super::write_coordination::coordination_error("plugin_sync_desired_state_failed")
+        }
+    }
+}
+
 /// `_record_removed_installs`.
 async fn record_removed_installs<Q>(
     session: &mut Q,
     user_id: i64,
     device_id: &str,
     result: &SyncResult,
-    desired_ids: &[i64],
+    retained_ids: &[i64],
     flush: &mut PendingFlush,
+    installed_ids: Option<&[i64]>,
 ) -> MysqlResult<()>
 where
     Q: PluginQuery,
@@ -406,7 +482,10 @@ where
         .await?;
     let now = Local::now().naive_local();
     for row in rows {
-        if desired_ids.contains(&row.installed_kind_id) {
+        if !installed_ids.is_none_or(|ids| ids.contains(&row.installed_kind_id)) {
+            continue;
+        }
+        if retained_ids.contains(&row.installed_kind_id) {
             continue;
         }
         if result.success {
@@ -418,19 +497,43 @@ where
             .error
             .as_deref()
             .unwrap_or("Device rejected plugin removal");
-        flush.push_update(
-            row.id,
-            vec![
-                "state='failed'".to_string(),
-                "error_code='PLUGIN_SYNC_FAILED'".to_string(),
-                format!("error_message='{}'", escape_sql(error)),
-                format!("attempt_count={}", row.attempt_count + 1),
-                format!("last_sync_at='{}'", format_datetime(now)),
-                format!("updated_at='{}'", format_datetime(now)),
-            ],
-        );
+        flush.push_update(row.id, removed_failed_assignments(&row, error, now));
     }
     Ok(())
+}
+
+/// The columns SQLAlchemy's dirty tracking flushes for a failed removed row.
+///
+/// Assigning the same `state`/`error_code`/`error_message` to an
+/// already-failed row emits nothing for them; `attempt_count`, `last_sync_at`
+/// and `updated_at` always change.
+fn removed_failed_assignments(
+    row: &PluginDeviceInstallationRow,
+    error: &str,
+    now: NaiveDateTime,
+) -> Vec<String> {
+    let mut assigns = Vec::new();
+    if row.state != "failed" {
+        assigns.push("state='failed'".to_string());
+    }
+    if row.error_code != "PLUGIN_SYNC_FAILED" {
+        assigns.push("error_code='PLUGIN_SYNC_FAILED'".to_string());
+    }
+    if row.error_message != error {
+        assigns.push(format!("error_message='{}'", escape_sql(error)));
+    }
+    assigns.push(format!("attempt_count={}", row.attempt_count + 1));
+    assigns.push(format!("last_sync_at='{}'", format_datetime(now)));
+    assigns.push(format!("updated_at='{}'", format_datetime(now)));
+    assigns
+}
+
+/// `_record_desired_install`'s dirty `error_message` assignment.
+///
+/// SQLAlchemy flushes the column only when the assigned text differs from the
+/// loaded one, so the same (possibly empty) text stays out of the UPDATE.
+fn desired_install_error_message_assignment(loaded: &str, assigned: &str) -> Option<String> {
+    (loaded != assigned).then(|| format!("error_message='{}'", escape_sql(assigned)))
 }
 
 /// One deferred write collected by the result recording.
@@ -449,6 +552,7 @@ struct DesiredInsert {
     user_id: i64,
     device_id: String,
     release_id: i64,
+    actual_release_id: i64,
     state: String,
     error_code: String,
     error_message: String,
@@ -467,15 +571,26 @@ struct DesiredInsert {
 struct PendingFlush {
     assigned: bool,
     writes: Vec<PendingWrite>,
+    /// The account protocol state document assignment (`state.json = ...`).
+    state: Option<StateAssignment>,
+}
+
+/// One dirty `PluginSyncState.json` assignment.
+struct StateAssignment {
+    id: Option<i64>,
+    user_id: i64,
+    document: String,
+    changed: bool,
 }
 
 impl PendingFlush {
     /// Guard first (when the session is dirty), then emit the collected
-    /// statements in SQLAlchemy's single-mapper unit-of-work order: dirty
-    /// UPDATEs by primary key, then INSERTs in insertion order, then DELETEs
-    /// by primary key (`save_obj` emits updates before inserts; `_sort_states`
-    /// orders existing states by mapper primary key and new states by
-    /// insertion order). A failed guard emits none of them.
+    /// statements in SQLAlchemy's single-mapper unit-of-work order: the state
+    /// document first, then dirty UPDATEs by primary key, then INSERTs in
+    /// insertion order, then DELETEs by primary key (`save_obj` emits updates
+    /// before inserts; `_sort_states` orders existing states by mapper primary
+    /// key and new states by insertion order). A failed guard emits none of
+    /// them.
     async fn flush_with_guard<Q>(
         &mut self,
         session: &mut Q,
@@ -488,6 +603,24 @@ impl PendingFlush {
             && let Some(guard) = guard
         {
             guard.check().await?;
+        }
+        if self.state.is_some() {
+            // Wait for device rows before taking the shared account-state
+            // write lock. The CAS still precedes every deferred device write.
+            self.lock_device_rows(session).await?;
+        }
+        if let Some(state) = self.state.take() {
+            // Even an unchanged watermark must fence device writes against
+            // a newer dispatch committed after the ACK read its state.
+            let requires_cas = state.changed || !self.writes.is_empty();
+            super::plugin_sync_protocol::write_sync_state_document(
+                session,
+                state.id,
+                state.user_id,
+                &state.document,
+                requires_cas,
+            )
+            .await?;
         }
         self.writes.sort_by_key(|write| match write {
             PendingWrite::Update { id, .. } => (0_u8, *id),
@@ -524,7 +657,7 @@ impl PendingFlush {
                                 insert.user_id,
                                 insert.device_id.as_str(),
                                 insert.release_id,
-                                0_i64,
+                                insert.actual_release_id,
                                 insert.state.as_str(),
                                 insert.error_code.as_str(),
                                 insert.error_message.as_str(),
@@ -536,6 +669,47 @@ impl PendingFlush {
                         .await?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    async fn lock_device_rows<Q: PluginQuery>(&self, session: &mut Q) -> MysqlResult<()> {
+        let mut ids = self
+            .writes
+            .iter()
+            .filter_map(|write| match write {
+                PendingWrite::Update { id, .. } | PendingWrite::Delete(id) => Some(*id),
+                PendingWrite::Insert(_) => None,
+            })
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids {
+            let _: Option<i64> = session
+                .fetch_optional(
+                    "SELECT id FROM plugin_device_installations WHERE id=? FOR UPDATE",
+                    (id,),
+                )
+                .await?;
+        }
+        let mut inserts = self
+            .writes
+            .iter()
+            .filter_map(|write| match write {
+                PendingWrite::Insert(insert) => Some((
+                    insert.user_id,
+                    insert.installed_kind_id,
+                    insert.device_id.as_str(),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        inserts.sort_unstable();
+        inserts.dedup();
+        for identity in inserts {
+            let _: Option<i64> = session.fetch_optional(
+                "SELECT id FROM plugin_device_installations WHERE user_id=? AND installed_kind_id=? AND device_id=? FOR UPDATE", identity,
+            ).await?;
         }
         Ok(())
     }
@@ -564,6 +738,19 @@ impl PendingFlush {
         self.assigned = true;
         self.writes.push(PendingWrite::Insert(insert));
     }
+
+    /// Assign the protocol state document. SQLAlchemy dirties the row on the
+    /// assignment itself, so `before_flush` runs even when the document is
+    /// equal and no UPDATE is emitted.
+    fn assign_state(&mut self, id: Option<i64>, user_id: i64, document: &Value, changed: bool) {
+        self.assigned = true;
+        self.state = Some(StateAssignment {
+            id,
+            user_id,
+            document: crate::json_compat::python_json_value(document),
+            changed,
+        });
+    }
 }
 
 /// `_record_desired_install`.
@@ -583,10 +770,37 @@ where
     let Some(release_id) = integer_release_id(&installed.json.0.to_value()) else {
         return Ok(());
     };
+    record_installation_result(
+        session,
+        user_id,
+        device_id,
+        installed.id,
+        release_id,
+        result,
+        item,
+        flush,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_installation_result<Q: PluginQuery>(
+    session: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    installed_id: i64,
+    release_id: i64,
+    result: &SyncResult,
+    item: Option<SyncItem>,
+    flush: &mut PendingFlush,
+    confirmed_local: bool,
+) -> MysqlResult<()> {
     let row: Option<PluginDeviceInstallationRow> = session
-        .fetch_optional(DEVICE_ROW_QUERY, (installed.id, device_id))
+        .fetch_optional(DEVICE_ROW_QUERY, (installed_id, device_id))
         .await?;
     if let Some(row) = &row
+        && !confirmed_local
         && auto_update_blocked(row, release_id)
     {
         return Ok(());
@@ -605,10 +819,15 @@ where
         // the session's dirty flush and keeps the model defaults.
         let now = Local::now().naive_local();
         flush.push_insert(DesiredInsert {
-            installed_kind_id: installed.id,
+            installed_kind_id: installed_id,
             user_id,
             device_id: device_id.to_string(),
             release_id,
+            actual_release_id: if confirmed_local && state == "installed" {
+                release_id
+            } else {
+                0
+            },
             state: state.to_string(),
             error_code: if state == "failed" {
                 item.as_ref()
@@ -666,8 +885,10 @@ where
     if row.error_code != error_code {
         assigns.push(format!("error_code='{}'", escape_sql(&error_code)));
     }
-    if row.error_message != error_message {
-        assigns.push(format!("error_message='{}'", escape_sql(&error_message)));
+    if let Some(assign) =
+        desired_install_error_message_assignment(&row.error_message, &error_message)
+    {
+        assigns.push(assign);
     }
     if row.attempt_count != attempt_count {
         assigns.push(format!("attempt_count={attempt_count}"));
@@ -738,242 +959,5 @@ fn escape_sql(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use brz_mysql::MysqlError;
-    use serde_json::json;
-
-    #[test]
-    fn false_acks_copy_the_item_arrays_and_failure_message() {
-        let ack = json!({
-            "success": false,
-            "scope": "all",
-            "skills": [],
-            "mcps": [],
-            "errors": [],
-            "plugins": [{
-                "id": 267897,
-                "name": "dingtalk",
-                "status": "failed",
-                "stage": "runtime_metadata",
-                "error_code": "PLUGIN_RUNTIME_METADATA_FAILED",
-                "retryable": false,
-                "error": "path is outside the plugin directory"
-            }]
-        });
-        let result = SyncResult::from_ack("electron-1", &ack);
-        assert!(!result.success);
-        assert_eq!(
-            result.error.as_deref(),
-            Some(
-                "Plugin dingtalk failed during runtime_metadata: path is outside the plugin directory"
-            )
-        );
-        assert_eq!(result.scope, Value::Null);
-        assert_eq!(
-            result.response("replace")["results"][0]["scope"],
-            Value::Null
-        );
-        let item = result.plugins[0].to_value();
-        assert_eq!(item["server_name"], Value::Null);
-        assert_eq!(item["id"], json!(267897));
-    }
-
-    #[test]
-    fn missing_success_is_not_a_rejection() {
-        let result = SyncResult::from_ack("d", &json!({"scope": "plugins"}));
-        assert!(result.success);
-        assert!(result.error.is_none());
-        assert_eq!(result.scope, json!("plugins"));
-    }
-
-    #[test]
-    fn non_object_acks_report_invalid_data() {
-        let result = SyncResult::from_ack("d", &json!("nope"));
-        assert!(!result.success);
-        assert_eq!(
-            result.error.as_deref(),
-            Some("Capability sync RPC returned invalid data")
-        );
-    }
-
-    #[test]
-    fn response_errors_append_the_device_error_entry() {
-        let mut result = SyncResult::from_ack("d", &json!({"success": false, "error": "boom"}));
-        result
-            .errors
-            .push(json!({"device_id": "other", "error": "x"}));
-        let response = result.response("replace");
-        assert_eq!(response["synced"], json!(0));
-        assert_eq!(response["failed"], json!(1));
-        assert_eq!(response["errors"].as_array().unwrap().len(), 2);
-        assert_eq!(response["results"].as_array().unwrap().len(), 1);
-        assert_eq!(response["results"][0]["error"], json!("boom"));
-    }
-
-    #[test]
-    fn deferred_writes_follow_the_unit_of_work_order() {
-        let mut flush = PendingFlush::default();
-        flush.push_update(20, vec!["state='failed'".to_string()]);
-        flush.push_delete(5);
-        flush.push_insert(DesiredInsert {
-            installed_kind_id: 1,
-            user_id: 7,
-            device_id: "d".into(),
-            release_id: 2,
-            state: "pending".into(),
-            error_code: String::new(),
-            error_message: String::new(),
-            attempt_count: 0,
-            now: Local::now().naive_local(),
-        });
-        flush.push_update(10, vec!["state='installed'".to_string()]);
-        flush.writes.sort_by_key(|write| match write {
-            PendingWrite::Update { id, .. } => (0_u8, *id),
-            PendingWrite::Insert(_) => (1, 0),
-            PendingWrite::Delete(id) => (2, *id),
-        });
-        let order: Vec<&str> = flush
-            .writes
-            .iter()
-            .map(|write| match write {
-                PendingWrite::Insert(_) => "insert",
-                PendingWrite::Update { .. } => "update",
-                PendingWrite::Delete(_) => "delete",
-            })
-            .collect();
-        assert_eq!(order, vec!["update", "update", "insert", "delete"]);
-    }
-
-    #[tokio::test]
-    async fn updates_keep_the_source_primary_key_order() {
-        // The installed list order is not the installation primary-key order;
-        // the flush must still emit the smaller id first.
-        let capture = crate::sql_test_support::KindQueryCapture::writing();
-        let mut session = &capture;
-        let guard = FailingGuard::new(usize::MAX);
-        let mut flush = PendingFlush::default();
-        flush.push_update(9, vec!["state='failed'".to_string()]);
-        flush.push_update(2, vec!["state='installed'".to_string()]);
-        flush
-            .flush_with_guard(&mut session, Some(&guard))
-            .await
-            .unwrap();
-        let writes = capture.writes();
-        assert_eq!(writes.len(), 2);
-        assert!(
-            writes[0].sql.contains("id = 2"),
-            "smaller id first: {}",
-            writes[0].sql
-        );
-        assert!(writes[1].sql.contains("id = 9"), "{}", writes[1].sql);
-    }
-
-    /// A guard that fails on the requested call.
-    struct FailingGuard {
-        calls: std::sync::atomic::AtomicUsize,
-        fail_on: usize,
-    }
-
-    impl FailingGuard {
-        fn new(fail_on: usize) -> Self {
-            Self {
-                calls: std::sync::atomic::AtomicUsize::new(0),
-                fail_on,
-            }
-        }
-
-        fn calls(&self) -> usize {
-            self.calls.load(std::sync::atomic::Ordering::SeqCst)
-        }
-    }
-
-    impl crate::device_identity::LeaseCheck for FailingGuard {
-        fn check<'a>(
-            &'a self,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>
-        {
-            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            Box::pin(async move {
-                if call == self.fail_on {
-                    Err(MysqlError::InvalidQuery {
-                        reason: "plugin_write_lease_lost".into(),
-                    })
-                } else {
-                    Ok(())
-                }
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn a_failed_record_flush_guard_emits_no_insert_delete_or_update() {
-        let capture = crate::sql_test_support::KindQueryCapture::writing();
-        let mut session = &capture;
-        let guard = FailingGuard::new(1);
-        let mut flush = PendingFlush::default();
-        flush.push_delete(5);
-        flush.push_update(10, vec!["state='failed'".to_string()]);
-        flush.push_insert(DesiredInsert {
-            installed_kind_id: 1,
-            user_id: 7,
-            device_id: "d".into(),
-            release_id: 2,
-            state: "pending".into(),
-            error_code: String::new(),
-            error_message: String::new(),
-            attempt_count: 0,
-            now: Local::now().naive_local(),
-        });
-        let error = flush
-            .flush_with_guard(&mut session, Some(&guard))
-            .await
-            .unwrap_err();
-        assert!(matches!(error, MysqlError::InvalidQuery { .. }));
-        assert_eq!(guard.calls(), 1, "one ownership check gates the flush");
-        assert!(capture.writes().is_empty(), "a failed guard emits no write");
-    }
-
-    #[tokio::test]
-    async fn an_assigned_record_flush_checks_once_and_emits() {
-        let capture = crate::sql_test_support::KindQueryCapture::writing();
-        let mut session = &capture;
-        let guard = FailingGuard::new(usize::MAX);
-        let mut flush = PendingFlush::default();
-        // An equal-value assignment still marks the session dirty.
-        flush.push_update(10, vec!["state='failed'".to_string()]);
-        flush
-            .flush_with_guard(&mut session, Some(&guard))
-            .await
-            .unwrap();
-        assert_eq!(guard.calls(), 1);
-        assert_eq!(capture.writes().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn an_empty_record_flush_checks_and_emits_nothing() {
-        let capture = crate::sql_test_support::KindQueryCapture::writing();
-        let mut session = &capture;
-        let guard = FailingGuard::new(1);
-        let mut flush = PendingFlush::default();
-        flush
-            .flush_with_guard(&mut session, Some(&guard))
-            .await
-            .unwrap();
-        assert_eq!(guard.calls(), 0);
-        assert!(capture.writes().is_empty());
-    }
-
-    #[test]
-    fn failure_state_uses_the_item_error_code() {
-        let result = SyncResult::from_ack(
-            "d",
-            &json!({"success": false, "plugins": [{"id": 1, "status": "failed", "error": "x"}]}),
-        );
-        let item = result.plugins[0].clone();
-        assert_eq!(
-            device_install_state(&result, Some(&item)),
-            ("failed", Some("x".to_string()))
-        );
-    }
-}
+#[path = "record_sync_result_tests.rs"]
+mod tests;

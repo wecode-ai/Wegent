@@ -10,7 +10,7 @@ import { create as createTar } from 'tar'
 import { describe, expect, test, vi } from 'vitest'
 import {
   CoreDshPluginManager,
-  parseBlockedBuildMatcher,
+  type CoreDshPluginInstallRequest,
   validateCoreDshDevelopmentPlugin,
 } from './core-dsh-plugin-manager.js'
 import { temporaryDirectory, testNodeEnvironment } from './test-helpers.js'
@@ -159,13 +159,13 @@ try {
   await supervisor.stop()
 }
 await rename(${JSON.stringify(observed)}, ${JSON.stringify(join(fixture.root, 'supervisor-observed.json'))})
-const packageManager = new CoreDshPluginManager(${JSON.stringify({
+const packageManager = new CoreDshPluginManager({ ...${JSON.stringify({
             dshHome: packageHome,
             runtimeRoot,
             dshEntry,
             nodeCommand: runtime.environment.WEWORK_NODE_PATH,
             environment: runtime.environment,
-          })})
+          })}, confirmInstall: async () => true })
 const installed = await packageManager.install(${JSON.stringify(pluginRoot)})
 if (!installed.some(plugin => plugin.name === 'deep-runtime-plugin')) throw new Error('Local plugin was not installed')
 const dependency = await readFile(${JSON.stringify(join(packageProfile, 'node_modules', 'deep-import-dependency', 'index.js'))}, 'utf8')
@@ -380,6 +380,67 @@ try {
     await fixture.remove()
   })
 
+  test.each(['cancel', 'unavailable', 'error'] as const)(
+    'never runs pnpm or recovery when native approval is %s',
+    async decision => {
+      const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
+      const confirmInstall =
+        decision === 'unavailable'
+          ? null
+          : vi.fn(async () => {
+              if (decision === 'error') throw new Error('Native window unavailable')
+              return false
+            })
+      const fixture = await createFixture({ runCommand, confirmInstall })
+      try {
+        const before = await fixture.manifest()
+        const manager = fixture.manager()
+        await expect(
+          manager.install('arbitrary-plugin@https://example.test/plugin.tgz')
+        ).rejects.toThrow(decision === 'error' ? 'Native window unavailable' : 'cancelled')
+        await expect(manager.update('dsh-alpha')).rejects.toThrow()
+        expect(await fixture.manifest()).toEqual(before)
+        expect(runCommand).not.toHaveBeenCalled()
+      } finally {
+        await fixture.remove()
+      }
+    }
+  )
+
+  test('waits for a fresh native decision before every update and keeps the queue usable', async () => {
+    const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    let decide!: (allowed: boolean) => void
+    const confirmInstall = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          decide = resolve
+        })
+    )
+    const fixture = await createFixture({ runCommand, confirmInstall })
+    try {
+      const manager = fixture.manager()
+      const first = manager.update('dsh-alpha')
+      await vi.waitFor(() => expect(confirmInstall).toHaveBeenCalledTimes(1))
+      expect(confirmInstall).toHaveBeenLastCalledWith({ action: 'update', spec: 'dsh-alpha@1.0.0' })
+      expect(runCommand).not.toHaveBeenCalled()
+      decide(true)
+      await first
+      runCommand.mockClear()
+      const second = manager.update('dsh-alpha')
+      await vi.waitFor(() => expect(confirmInstall).toHaveBeenCalledTimes(2))
+      expect(runCommand).not.toHaveBeenCalled()
+      const rejected = expect(second).rejects.toThrow('cancelled')
+      decide(false)
+      await rejected
+      expect(runCommand).not.toHaveBeenCalled()
+      expect(await manager.list()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'dsh-alpha' })])
+      )
+    } finally {
+      await fixture.remove()
+    }
+  })
+
   test('runs pnpm from the profile and validates DSH from the runtime root', async () => {
     const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
     const fixture = await createFixture({ runCommand })
@@ -460,6 +521,9 @@ try {
     expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
       '- id: client-hmr\n  disabled: false'
     )
+    expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
+      '- id: hmr\n  disabled: false'
+    )
     expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
     await fixture.remove()
   })
@@ -531,13 +595,25 @@ try {
     await root.remove()
   })
 
-  test('parses only the exact pnpm git build matcher', () => {
-    expect(
-      parseBlockedBuildMatcher(
-        'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\nallowBuilds:\n  "codeload.github.com/o/p/tar.gz/a": true\n'
+  test('never turns a package-manager build rejection into permission to execute package code', async () => {
+    const runCommand = vi.fn(async () => {
+      throw Object.assign(new Error('Build rejected'), {
+        stderr:
+          'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\nallowBuilds:\n  "codeload.github.com/o/p/tar.gz/a": true\n',
+      })
+    })
+    const fixture = await createFixture({ runCommand })
+    try {
+      const path = join(fixture.profileRoot, 'pnpm-workspace.yaml')
+      const before = await readFile(path, 'utf8')
+      await expect(fixture.manager().install('git+https://github.com/o/p.git')).rejects.toThrow(
+        'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED'
       )
-    ).toBe('codeload.github.com/o/p/tar.gz/a')
-    expect(parseBlockedBuildMatcher('allowBuilds:\n  package: true')).toBeNull()
+      expect(runCommand).toHaveBeenCalledTimes(1)
+      expect(await readFile(path, 'utf8')).toBe(before)
+    } finally {
+      await fixture.remove()
+    }
   })
 })
 
@@ -545,6 +621,7 @@ async function createFixture(
   options: {
     environment?: NodeJS.ProcessEnv
     realCommands?: boolean
+    confirmInstall?: ((request: CoreDshPluginInstallRequest) => Promise<boolean>) | null
     runCommand?: (
       command: string,
       args: string[],
@@ -618,6 +695,10 @@ async function createFixture(
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
         environment: testNodeEnvironment(options.environment),
+        confirmInstall:
+          options.confirmInstall === null
+            ? undefined
+            : (options.confirmInstall ?? (async () => true)),
         runCommand: options.realCommands
           ? undefined
           : (options.runCommand ??

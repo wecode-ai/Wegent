@@ -7,9 +7,44 @@ import {
   mergeRuntimeWorkForDevices,
   runtimeWorkContainsTask,
   runtimeWorkForDevices,
+  taskAddress,
+  withRuntimeTaskModelSelection,
 } from './work'
 
 describe('flattenConversations', () => {
+  it('preserves thread routing and the authoritative task model when constructing conversation addresses', () => {
+    const workspace = projectWork('device', 'task').projects[0].deviceWorkspaces[0]
+    const modelSelection = {
+      modelName: 'gpt-6.1-sol',
+      modelType: 'runtime' as const,
+      options: { reasoning: 'xhigh' },
+    }
+    const updated = withRuntimeTaskModelSelection(
+      { projects: [], chats: [workspace], totalTasks: 1 },
+      { deviceId: 'device', taskId: 'task' },
+      modelSelection
+    )
+    const task = updated.chats[0].tasks[0]
+    task.threadId = 'native-thread'
+    task.runtimeHandle = { modelProviderRouting: 'thread', modelSelection: { modelName: 'stale' } }
+    expect(flattenConversations(updated)[0].address).toMatchObject({
+      threadId: 'native-thread',
+      runtimeHandle: { modelProviderRouting: 'thread', modelSelection },
+    })
+    expect(workspace.tasks[0]).not.toHaveProperty('modelSelection')
+  })
+  it('preserves worktree identity from both task and workspace ownership', () => {
+    const workspace = projectWork('device', 'task').projects[0].deviceWorkspaces[0]
+    expect(
+      taskAddress({ ...workspace, worktreeId: 'group-tree' }, workspace.tasks[0]).worktreeId
+    ).toBe('group-tree')
+    expect(
+      taskAddress(
+        { ...workspace, worktreeId: 'group-tree' },
+        { ...workspace.tasks[0], worktreeId: 'task-tree' }
+      ).worktreeId
+    ).toBe('task-tree')
+  })
   it('combines project and standalone chats in update order', () => {
     const work: RuntimeWorkListResponse = {
       totalTasks: 2,
@@ -61,6 +96,7 @@ describe('flattenConversations', () => {
 
     expect(result.map(item => item.address.taskId)).toEqual(['new', 'old'])
     expect(result[1]?.projectName).toBe('Wegent')
+    expect(result[1]?.sourceWorkspacePath).toBe('/work/wegent')
   })
 
   it('uses the lifecycle projection instead of a stale work running flag', () => {
@@ -122,7 +158,7 @@ describe('flattenConversations', () => {
 })
 
 describe('mergeRuntimeWorkForDevices', () => {
-  it('builds the PC-style all-devices view and merges shared projects', () => {
+  it('keeps same-key projects on different state owners isolated', () => {
     const result = mergeRuntimeWorkForDevices(
       {
         'device-1': projectWork('device-1', 'task-1'),
@@ -131,10 +167,15 @@ describe('mergeRuntimeWorkForDevices', () => {
       ['device-1', 'device-2']
     )
 
-    expect(result.projects).toHaveLength(1)
-    expect(result.projects[0]?.deviceWorkspaces.map(workspace => workspace.deviceId)).toEqual([
-      'device-1',
-      'device-2',
+    expect(result.projects).toHaveLength(2)
+    expect(
+      result.projects.map(group => [
+        group.project.stateDeviceId,
+        group.deviceWorkspaces[0]?.deviceId,
+      ])
+    ).toEqual([
+      ['device-1', 'device-1'],
+      ['device-2', 'device-2'],
     ])
     expect(result.totalTasks).toBe(2)
   })

@@ -218,7 +218,7 @@ pub fn resolve_pending(
             Some("fixed") => {
                 return Err(invalid(
                     "RUNNER_ENVIRONMENT_UNAVAILABLE: runner is not authorized by this policy",
-                ))
+                ));
             }
             _ => return Err(invalid("RUNNER_SELECTION_REQUIRED: select an environment")),
         }
@@ -239,7 +239,10 @@ pub fn resolve_pending(
     }
     if let Some(config) = payload.get("runnerPolicy") {
         let model = &payload["runnerRouting"]["model"];
-        if model["source"] == "native" && config["execution_policy"]["mode"] != "fixed" {
+        if model["source"] == "native"
+            && (payload["runnerRouting"]["execution_policy"]["mode"] != "fixed"
+                || config["execution_policy"]["mode"] == "project_pool")
+        {
             return Err(invalid(
                 "RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment",
             ));
@@ -293,9 +296,13 @@ pub fn resolve_pending(
             model_config["runtime_config"] =
                 json!({"codex":{"use_user_config":true,"configured":true}});
         }
+        let (options, reasoning) = native_model_options(payload, selected);
+        if !reasoning.is_empty() {
+            model_config["reasoning"] = Value::Object(reasoning);
+        }
         payload["modelId"] = selected["local_model_id"].clone();
         payload["modelType"] = json!("runtime");
-        payload["modelOptions"] = json!({"runnerModelProvider":selected["provider"]});
+        payload["modelOptions"] = Value::Object(options);
         payload["runnerRouting"]["account_label"] = selected["account_label"].clone();
         model_config
     };
@@ -366,6 +373,53 @@ pub fn resolve_pending(
     Ok(())
 }
 
+fn native_model_options(
+    payload: &Value,
+    selected: &Value,
+) -> (
+    serde_json::Map<String, Value>,
+    serde_json::Map<String, Value>,
+) {
+    let mut options = serde_json::Map::new();
+    for source in [
+        payload.pointer("/modelSelection/options"),
+        payload.get("modelOptions"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_object)
+    {
+        let mut source = source.clone();
+        if let Some(effort) = source.remove("reasoningEffort") {
+            source.entry("reasoning").or_insert(effort);
+        }
+        options.extend(source);
+    }
+    let mut reasoning = serde_json::Map::new();
+    for source in [
+        "/execution_request/model_config/reasoning",
+        "/executionRequest/model_config/reasoning",
+        "/modelConfig/reasoning",
+    ]
+    .into_iter()
+    .filter_map(|path| payload.pointer(path).and_then(Value::as_object))
+    {
+        reasoning.extend(source.clone());
+    }
+    let effort = options
+        .get("reasoning")
+        .and_then(Value::as_str)
+        .or_else(|| reasoning.get("effort").and_then(Value::as_str))
+        .or_else(|| selected["default_reasoning_effort"].as_str())
+        .map(str::to_owned);
+    if let Some(effort) = effort {
+        reasoning.insert("effort".into(), Value::String(effort.clone()));
+        options.insert("reasoning".into(), Value::String(effort));
+    }
+    options.insert("runnerModelProvider".into(), selected["provider"].clone());
+    (options, reasoning)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +441,26 @@ mod tests {
     }
 
     #[test]
+    fn deferred_native_execution_requires_an_explicit_fixed_runner() {
+        let model =
+            json!({"runtime":"codex","provider":"test","model_id":"chosen","source":"native"});
+        let catalog = json!({"models":[{"runtime":"codex","provider":"test","model_id":"chosen","local_model_id":"upstream"}]});
+        let mut payload = json!({"runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"user_select"},"model_policy":{"mode":"user_select"}},"runnerSelection":{"execution_policy":{"mode":"fixed","environment_id":"runner-a"},"model":model}});
+        resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+        assert_eq!(
+            payload["runnerRouting"]["execution_policy"]["mode"],
+            "fixed"
+        );
+        assert!(resolve_pending(&mut payload.clone(), Some(&catalog), "runner-b").is_err());
+        let mut reused = payload.clone();
+        reused["runnerPolicy"]["execution_policy"] = json!({"mode":"project_pool"});
+        assert!(resolve_pending(&mut reused, Some(&catalog), "runner-a").is_err());
+        let mut pooled = payload;
+        pooled["runnerRouting"]["execution_policy"] = json!({"mode":"project_pool"});
+        assert!(resolve_pending(&mut pooled, Some(&catalog), "runner-a").is_err());
+    }
+
+    #[test]
     fn model_identity_and_affinity_are_both_required() {
         let model = json!({"runtime":"codex","provider":"openai","model_id":"test"});
         let payload = json!({"runnerRouting":{"environment_id":"runner-a","model":model}});
@@ -398,5 +472,89 @@ mod tests {
             "runner-a"
         )
         .is_err());
+    }
+
+    #[test]
+    fn native_default_reasoning_reaches_the_request_and_persisted_selection() {
+        let model = json!({"runtime":"codex","provider":"openai","model_id":"selected"});
+        let catalog = json!({"models":[{
+            "runtime":"codex","provider":"openai","model_id":"selected",
+            "local_model_id":"upstream","account_label":"Account",
+            "default_reasoning_effort":"low"
+        }]});
+        let mut payload = json!({
+            "message":"Review", "runnerRouting":{"environment_id":"runner-a","model":model}
+        });
+        resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+        assert_eq!(
+            payload["executionRequest"]["model_config"]["reasoning"]["effort"],
+            "low"
+        );
+        assert_eq!(payload["modelSelection"]["options"]["reasoning"], "low");
+        assert_eq!(payload["runnerRouting"]["model"], model);
+        let before = payload.clone();
+        resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+        assert_eq!(payload, before);
+    }
+
+    #[test]
+    fn native_explicit_reasoning_precedes_catalog_default_and_is_idempotent() {
+        let model = json!({"runtime":"codex","provider":"openai","model_id":"selected"});
+        let catalog = json!({"models":[{
+            "runtime":"codex","provider":"openai","model_id":"selected",
+            "local_model_id":"upstream","default_reasoning_effort":"low"
+        }]});
+        for (input, expected) in [
+            (
+                json!({"modelOptions":{"reasoning":"high","speed":"fast"},"modelConfig":{"reasoning":{"effort":"medium"}}}),
+                "high",
+            ),
+            (json!({"modelOptions":{"reasoningEffort":"high"}}), "high"),
+            (
+                json!({"modelOptions":{"reasoning":"medium","reasoningEffort":"high"}}),
+                "medium",
+            ),
+            (
+                json!({"modelSelection":{"options":{"reasoning":"high"}}}),
+                "high",
+            ),
+            (
+                json!({"modelSelection":{"options":{"reasoning":"high"}},"modelOptions":{"reasoningEffort":"medium"}}),
+                "medium",
+            ),
+            (
+                json!({"modelConfig":{"reasoning":{"effort":"high","summary":"detailed"}}}),
+                "high",
+            ),
+            (
+                json!({"executionRequest":{"model_config":{"reasoning":{"effort":"high"}}}}),
+                "high",
+            ),
+            (
+                json!({"execution_request":{"model_config":{"reasoning":{"effort":"high"}}}}),
+                "high",
+            ),
+        ] {
+            let mut payload = input.clone();
+            payload["runnerRouting"] = json!({"environment_id":"runner-a","model":model});
+            resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+            assert_eq!(payload["modelConfig"]["reasoning"]["effort"], expected);
+            assert_eq!(payload["modelSelection"]["options"]["reasoning"], expected);
+            assert!(payload["modelOptions"].get("reasoningEffort").is_none());
+            for key in ["executionRequest", "execution_request"] {
+                if let Some(request) = payload.get(key) {
+                    assert_eq!(request["model_config"]["reasoning"]["effort"], expected);
+                }
+            }
+            if input["modelOptions"]["speed"].is_string() {
+                assert_eq!(payload["modelOptions"]["speed"], "fast");
+            }
+            if input["modelConfig"]["reasoning"]["summary"].is_string() {
+                assert_eq!(payload["modelConfig"]["reasoning"]["summary"], "detailed");
+            }
+            let before = payload.clone();
+            resolve_pending(&mut payload, Some(&catalog), "runner-a").unwrap();
+            assert_eq!(payload, before);
+        }
     }
 }

@@ -548,6 +548,9 @@ importers:
       dompurify:
         specifier: 3.4.13
         version: 3.4.13
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       katex:
         specifier: 0.16.47
         version: 0.16.47
@@ -627,6 +630,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.4(@types/react@19.2.17)
+      aria-hidden:
+        specifier: 1.2.6
+        version: 1.2.6
       mdast-util-from-markdown:
         specifier: 2.0.3
         version: 2.0.3

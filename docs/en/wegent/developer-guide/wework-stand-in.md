@@ -4,6 +4,24 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+## IM reply callback routing
+
+DingTalk private messages share a persistent stand-in conversation, but each incoming message registers its own reply card. Python registration and Rust Socket.IO forwarding must use the same callback address: `runtime:{device_id}:{task_id}:{sha256(callback_id)}`, with a lowercase hexadecimal digest of the original UTF-8 bytes. Sources without `callback_id` retain the task address without a digest. Progress, final replies and errors must use the same message address. Looking up only the persistent conversation leaves its card at the initial progress state.
+
+`backend-rs/src/socketio/im_callback_redis_tests.rs` uses real Redis to cover interleaved messages, progress and terminal delivery, stale-message rejection, late events and legacy addresses. The existing Backend Rust CI job explicitly runs these protocol integration tests. Only external DingTalk transport is substituted, all identifiers are synthetic, and compatibility with real DingTalk accounts or services remains unverified.
+
+## Cross-conversation search and automatic recall
+
+`search_context` searches readable conversations on the current device using the existing `read_task` native history, pagination, long-message chunks and identity checks. This first stage adds no duplicate message database or external-history backfill. External messages absent from Wework conversations and history on other devices are outside its coverage.
+
+Search visits recent conversations first and matches case-normalized lexical terms and Chinese bigrams. Each call processes one bounded message page or content chunk and returns conversation/message identifiers, timestamps, roles, excerpts and `readArguments` for verification through `read_task`. Follow `nextCursor` with the same query even after an empty page. Incomplete source content remains explicitly marked. This is lexical retrieval, without synonym or cross-channel person resolution guarantees.
+
+Before each actual Codex or Claude model turn, recall searches with the current message, reads at most eight pages within 1.5 seconds and injects at most five evidence excerpts. Initial, continued, queued and restored turns use the same entry point. Previous recall is cleared first; unavailable sources or timeouts produce incomplete coverage, and the model can continue with `search_context`. Evidence is untrusted context, never authorization or proof of current state. Search and delivery revalidate reader authority and source connections; source-bound work retains its original source boundary. Project executions, coordinator batches and memory consolidation do not automatically recall history.
+
+Storage belongs to the execution device: local assistants use local history, while cloud assistants use their executor's history. Recalled evidence also has a 12KB total budget. Existing history snapshots use gzip compression and content-hash deduplication, expire after 24 hours, and are cleaned during writes and history transfers. There is currently no hard total snapshot disk quota. Original conversation retention is unchanged; recall does not automatically delete history, which continues to grow with usage.
+
+Continuation cursors retain the original query, so subsequent calls may supply only `cursor`; an explicitly supplied `query` must match the initial query. Automatic recall emits only this continuation cursor instead of copying the current user request into context again, preventing retrieval metadata from becoming another apparent user request in the native conversation.
+
 ## Persistent Issue collaboration conversations
 
 Project stand-ins reuse one native conversation per user, role, project store, project and Issue.
@@ -86,6 +104,12 @@ Events persist in the selected Executor’s SQLite without creating work or invo
 Settings writes and dispatch serialize per user. Configuration changes cancel undispatched intents and invalidate stale batches; accepted assessment commands retain their original receipt and cannot be automatically replayed under another ID. Batch admission and dispatch revalidate current source, enablement cutoff, assignment, role scope and permission. Temporary cloud failures retain intake; explicit revocation cancels it. User questions and approvals remain in their original conversations and are never answered automatically. Failed or cancelled assessments require an explicit Check now action to reassess unfinished events. Unconfirmed execution links to the original task and blocks automatic replay. Status retains `runtime.stand_in.processing.status`, without global timing controls. The personal Router adds no Backend API.
 
 ### Plugin and host transaction boundary
+
+Scheduling selects executable actions in SQLite and reads this pass's evidence by event ID instead of deserializing all historical actions and events. Failed actions retain their event claims so polling cannot create another dispatch attempt. Existing manual work recovery and explicit assessment checks remain available. Snapshot, commit, event authorization, and action execution stages taking more than 250 milliseconds emit timing diagnostics without message bodies or credentials.
+
+An explicit check can also recover routing that failed before task creation. The host records one retry request and drains the latest failed creation intents for unresolved events in the existing batches of 100, retaining their original IDs and revalidating current authority and native command receipts. A request never retries its own failed result or falls through to older duplicate failures; later failures do not join an earlier request. Inputs held by another action, partially consumed inputs, and foreign-account inputs are not retried. Existing, waiting-user, archived, and uncertain-outcome work retains its original recovery checks.
+
+An independent background job runs retention every minute, outside coordination snapshot requests. New event, action, route, and coordinator-state writes atomically maintain independent `stand_in_history` fields and `stand_in_history_refs` relations. Indexes cover user, type, status, batch, recovery command, and referenced event; an expression index covers resource type and update time. Cleanup reads these fields and relations without parsing historical JSON. Settled actions and unreferenced routes older than seven days can be deleted. Pending and sending actions, the current assessment batch, error recovery commands, the latest failed action for each unresolved event, and referenced evidence remain; arrangement execution actions are excluded. Unreferenced settled events become persistent deduplication markers. Legacy records are not backfilled: events, actions, and routes without indexed facts remain for seven days and are then deleted directly. Eligibility is planned in a WAL read snapshot without holding the writer. If a foreground write invalidates snapshot promotion, maintenance yields without applying stale decisions. Each pass commits at most four chunks of 25 records. Results and the durable continuation cursor commit in the same transaction; a failure rolls back only the current chunk. The 100 ms budget is a scheduling boundary between chunks, allowing an active transaction to finish and logging overruns rather than indefinitely timing out on one slow record. A busy database defers maintenance immediately. Resource types rotate, protected records also advance the cursor, and a completed scan wraps to recheck them. Foreign-key columns used by deletion are indexed to avoid full-table cascade checks. Original work conversations, source messages, arrangement executions, and native command recovery journals are unaffected.
 
 Executor advertises `runtime.coordination-v1`. The plugin calls `runtime.coordination.contexts`, `snapshot`, `commit`, `wake` and `status` through the existing executor-runtime client. Host snapshots bind the current user, device, configuration, wake revision and event revisions. A plugin decision can select only snapshot facts.
 
@@ -390,3 +414,11 @@ Review coverage composes with the existing profile checkpoint, retaining every
 original assertion and sharing its build, startup and model protocol fixtures.
 No separate CI job is added. Screenshots and logs stay in test artifacts rather
 than repository commits.
+
+## Issue assignment wakeup diagnostics
+
+Correlate the Issue and assignment IDs across Python's `Stand-in Issue wakeup staged`, Rust Backend's `Stand-in Issue event page served`, and Executor's `issue_event_queued` and `Stand-in Issue event cursor saved`. The queued event's `intentId` links to `stand-in dispatch reconciliation`; `assignment_already_handled` identifies an already accepted assignment.
+
+`staged` describes a write attempt within the caller's transaction, not a commit. `allocated_sequence` is the sequence allocated for this attempt; a duplicate event can retain its original sequence. A served event page proves query visibility. Executor advances its cursor only after durable local enqueue. Logs contain identities and state, never Issue bodies or credentials.
+
+The current Python creation flow also suppresses wakeups when `notify_assignee=false`, logging `reason=notify_assignee_false`. API tests cover this distinction. An Executor protocol integration test uses simulated Backend event pages and real local persistence to verify enqueue, checkpoints and repeated collection. These diagnostics do not change intake policy or establish the cause of any historical Issue on their own.

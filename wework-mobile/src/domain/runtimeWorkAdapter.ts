@@ -1,3 +1,4 @@
+import { runtimeProjectRefFromWorkspace } from '../../../packages/chat-core/src/runtime-project-metadata'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskSummary,
@@ -88,12 +89,13 @@ export function adaptRuntimeWorkListResponse(
       continue
     }
     const project = {
-      project: {
-        id: stableLocalId(`${deviceId}\0${projectKey}`),
-        key: projectKey,
-        name: label,
+      project: runtimeProjectRefFromWorkspace(workspace, {
+        projectKey,
+        workspacePath,
+        label,
         stateDeviceId: deviceId,
-      },
+        workspaceDeviceId,
+      }),
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,
     }

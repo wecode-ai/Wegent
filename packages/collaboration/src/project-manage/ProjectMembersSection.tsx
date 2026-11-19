@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { RotateCcw } from 'lucide-react'
+
 import type {
   ProjectManageHost,
   ProjectManageMember,
@@ -9,9 +11,10 @@ import type {
   ProjectManageUser,
 } from './types'
 import type { useProjectMembers } from './useProjectMembers'
+import { MemberSearchPicker } from '../controls/MemberSearchPicker'
+import { projectSettingsContentClassName } from './ProjectSettingsPage'
 
-const grid =
-  'grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.8fr)_2.25rem] md:gap-4'
+const grid = 'collaboration-project-member-grid'
 const focus =
   'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 keyboard:focus-visible:ring-offset-2'
 const roles = ['Maintainer', 'Developer', 'Viewer'] as const
@@ -36,7 +39,7 @@ function inheritedSource(
     ? host.translate('todo.project_member_inherited_named', '继承自 {{space}}', {
         space: workspace.name,
       })
-    : host.translate('todo.project_member_inherited_parent', '继承自父空间')
+    : host.translate('todo.project_member_inherited_parent', '继承自父分组')
 }
 
 export function ProjectMembersSection<
@@ -59,8 +62,10 @@ export function ProjectMembersSection<
   onMembershipModeChange(mode: 'inherit' | 'restricted'): void
   className?: string
 }) {
-  const { LockKeyhole, Search, Trash2 } = host.icons
+  const { LockKeyhole, Trash2 } = host.icons
   const {
+    memberPanelRef,
+    memberSearchError,
     members,
     loading,
     loadError,
@@ -86,16 +91,16 @@ export function ProjectMembersSection<
     project.membership_mode === 'restricted'
       ? host.translate(
           'todo.project_membership_restricted_hint',
-          '仅空间管理员自动加入，其他成员需直接邀请。'
+          '仅分组管理员自动加入，其他成员需直接邀请。'
         )
       : host.translate(
           'todo.project_membership_inherit_hint',
-          '空间成员自动获得项目访问权限，空间管理员始终可管理项目。'
+          '分组成员自动获得项目访问权限，分组管理员始终可管理项目。'
         )
 
   return (
-    <section className={className} data-testid="cloud-project-members-panel">
-      <div className="mx-auto max-w-5xl">
+    <section ref={memberPanelRef} className={className} data-testid="cloud-project-members-panel">
+      <div className={projectSettingsContentClassName}>
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -138,63 +143,40 @@ export function ProjectMembersSection<
                   data-testid="cloud-project-member-picker"
                   className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-border bg-background p-3 shadow-lg"
                 >
-                  <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/70 md:min-h-9">
-                    <Search className="h-4 w-4 shrink-0 text-text-muted" />
-                    <input
-                      ref={memberSearchInputRef}
-                      data-testid="cloud-member-search"
-                      value={memberQuery}
-                      onChange={event => setMemberQuery(event.target.value)}
-                      aria-label={host.translate(
-                        'todo.member_search_placeholder',
-                        '搜索用户名或邮箱'
-                      )}
-                      placeholder={host.translate(
-                        'todo.member_search_placeholder',
-                        '搜索用户名或邮箱'
-                      )}
-                      className="min-w-0 flex-1 bg-transparent text-sm outline-none"
-                    />
-                  </label>
-                  <label className="mt-3 flex items-center justify-between gap-2 text-sm text-text-secondary">
-                    <span>{host.translate('todo.member_role', '加入角色')}</span>
-                    <select
-                      data-testid="cloud-member-role"
-                      value={memberRole}
-                      onChange={event => setMemberRole(event.target.value as typeof memberRole)}
-                      className={`min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-8 ${focus}`}
-                    >
-                      {roles.map(role => (
-                        <option key={role} value={role}>
-                          {roleLabel(role, host)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="mt-2 max-h-52 overflow-y-auto">
-                    {memberResults.map(user => (
-                      <button
-                        key={user.id}
-                        type="button"
-                        data-testid={`cloud-member-result-${user.id}`}
-                        disabled={busy}
-                        onClick={() => void addMember(user)}
-                        className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:opacity-40 ${focus}`}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-sm">{user.user_name}</span>
-                        <span className="text-xs text-text-muted">
-                          {savingUserId === user.id
-                            ? host.translate('todo.adding', '添加中…')
-                            : host.translate('common.add', '添加')}
-                        </span>
-                      </button>
-                    ))}
-                    {memberQuery.trim() && !memberResults.length && (
-                      <p className="px-2 py-3 text-sm text-text-muted">
-                        {host.translate('todo.no_search_members', '没有匹配的成员')}
-                      </p>
+                  <MemberSearchPicker
+                    error={memberSearchError}
+                    query={memberQuery}
+                    onQueryChange={setMemberQuery}
+                    users={memberResults}
+                    onSelect={user => void addMember(user)}
+                    placeholder={host.translate(
+                      'todo.member_search_placeholder',
+                      '搜索用户名或邮箱'
                     )}
-                  </div>
+                    emptyLabel={host.translate('todo.no_search_members', '没有匹配的成员')}
+                    addLabel={host.translate('common.add', '添加')}
+                    addingLabel={host.translate('todo.adding', '添加中…')}
+                    inputTestId="cloud-member-search"
+                    resultTestId={id => 'cloud-member-result-' + id}
+                    inputRef={memberSearchInputRef}
+                    savingUserId={savingUserId}
+                  >
+                    <label className="mt-3 flex items-center justify-between gap-2 text-sm text-text-secondary">
+                      <span>{host.translate('todo.member_role', '加入角色')}</span>
+                      <select
+                        data-testid="cloud-member-role"
+                        value={memberRole}
+                        onChange={event => setMemberRole(event.target.value as typeof memberRole)}
+                        className={`min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-8 ${focus}`}
+                      >
+                        {roles.map(role => (
+                          <option key={role} value={role}>
+                            {roleLabel(role, host)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </MemberSearchPicker>
                 </div>
               )}
             </div>
@@ -230,7 +212,7 @@ export function ProjectMembersSection<
               className={`min-h-11 w-full shrink-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60 md:min-h-8 md:w-auto ${focus}`}
             >
               <option value="inherit">
-                {host.translate('todo.project_membership_inherit', '继承空间成员')}
+                {host.translate('todo.project_membership_inherit', '继承分组成员')}
               </option>
               <option value="restricted">
                 {host.translate('todo.project_membership_restricted_short', '仅邀请成员')}
@@ -240,14 +222,14 @@ export function ProjectMembersSection<
         )}
 
         <div
-          className="mt-6"
+          className="collaboration-project-members-table mt-6"
           role="table"
           aria-label={host.translate('todo.project_members', '项目成员')}
           data-testid="cloud-project-members-table"
         >
           <div
             role="row"
-            className={`${grid} hidden border-b border-border px-2 pb-2 text-xs text-text-muted md:grid`}
+            className={`${grid} collaboration-project-member-heading border-b border-border px-2 pb-2 text-xs text-text-muted`}
           >
             <span role="columnheader">{host.translate('todo.project_member', '成员')}</span>
             <span role="columnheader" data-testid="cloud-project-member-capability-heading">
@@ -266,7 +248,7 @@ export function ProjectMembersSection<
               const inheritedAdminOnly = inheritedOnly && member.inherited_role === 'Maintainer'
               const roleReadOnly = member.role === 'Owner' || inheritedAdminOnly || !canManage
               const removeLabel = member.inherited_role
-                ? host.translate('todo.reset_member_role', '恢复 {{name}} 的空间角色', {
+                ? host.translate('todo.reset_member_role', '恢复 {{name}} 的分组角色', {
                     name: member.user_name,
                   })
                 : host.translate('todo.remove_member', '移除 {{name}}', {
@@ -302,7 +284,7 @@ export function ProjectMembersSection<
                   </div>
                   <div role="cell" className="min-w-0">
                     <label>
-                      <span className="mb-1 block text-xs text-text-muted md:sr-only">
+                      <span className="collaboration-project-member-field-label mb-1 block text-xs text-text-secondary">
                         {host.translate('todo.project_member_capability', '职责与能力')}
                       </span>
                       <input
@@ -336,7 +318,7 @@ export function ProjectMembersSection<
                     ) : null}
                     {member.inherited_role && (
                       <p
-                        className="truncate text-xs text-text-muted"
+                        className="break-words text-xs text-text-muted"
                         data-testid={`cloud-project-member-source-${member.user_id}`}
                         title={inheritedSource(member, project, host)}
                       >
@@ -346,7 +328,7 @@ export function ProjectMembersSection<
                       </p>
                     )}
                     {!roleReadOnly && (
-                      <label className="flex items-center gap-2">
+                      <label className="flex flex-col items-start gap-1">
                         {member.inherited_role && (
                           <span className="shrink-0 text-xs text-text-muted">
                             {host.translate('todo.project_member_project_role', '项目角色')}
@@ -362,7 +344,7 @@ export function ProjectMembersSection<
                               event.target.value as Exclude<ProjectManageRole, 'Owner'>
                             )
                           }
-                          className={`min-h-11 min-w-0 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:opacity-40 md:min-h-8 ${focus}`}
+                          className={`min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:opacity-40 md:min-h-8 ${focus}`}
                           aria-label={host.translate(
                             'todo.project_member_role_label',
                             '{{name}} 的项目角色',
@@ -400,10 +382,14 @@ export function ProjectMembersSection<
                             data-testid={`cloud-project-member-remove-${member.user_id}`}
                             disabled={busy}
                             onClick={() => void removeMember(member)}
-                            className={`flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600 disabled:opacity-40 md:h-8 md:w-8 ${focus}`}
+                            className={`flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted disabled:opacity-40 md:h-8 md:w-8 ${member.inherited_role ? 'hover:text-text-primary' : 'hover:text-destructive'} ${focus}`}
                             aria-label={removeLabel}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            {member.inherited_role ? (
+                              <RotateCcw className="h-4 w-4" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
                           </button>
                         ),
                       })}
@@ -453,7 +439,7 @@ export function ProjectMembersSection<
               <p data-testid="cloud-project-members-inheritance-note">
                 {host.translate(
                   'todo.project_member_inherited_hint',
-                  '项目角色可覆盖空间成员或只读成员的继承角色，移除项目角色后恢复继承。空间管理员始终可管理项目。'
+                  '项目角色可覆盖分组成员或只读成员的继承角色，移除项目角色后恢复继承。分组管理员始终可管理项目。'
                 )}
               </p>
             )}

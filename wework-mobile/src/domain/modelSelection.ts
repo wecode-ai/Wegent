@@ -4,13 +4,18 @@ import type {
   ModelSelectionConfig,
   UnifiedModel,
 } from '@/types/runtime'
+import {
+  getControlsForModel,
+  getModelDisplayLabel,
+  getSelectedReasoningOption,
+  normalizeModelOptions,
+} from '../../../packages/collaboration/src/controls/model-ui'
 
 const CLOUD_NAMESPACE = 'weworkCloudModelNamespace'
 const CLOUD_RESOURCE_USER = 'weworkCloudModelResourceUserId'
 const CLOUD_CONTEXT_WINDOW = 'weworkCloudModelContextWindow'
 const CLOUD_MAX_OUTPUT = 'weworkCloudModelMaxOutputTokens'
 const CLOUD_API_FORMAT = 'weworkCloudModelUpstreamApiFormat'
-const STANDARD_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh']
 
 export function selectableModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.filter(model => model.isActive !== false && !model.compatibilityDisabled)
@@ -39,53 +44,28 @@ export function defaultModelOptions(model: UnifiedModel): ModelOptions {
   const options: ModelOptions = {}
   if (modelSupportsSpeed(model)) options.speed = 'standard'
   if (!efforts.length) return options
-  const reasoning = defaultReasoningEffort(model, efforts)
+  const reasoning = getSelectedReasoningOption(model, {})?.value
   if (reasoning) options.reasoning = reasoning
   return options
 }
 
 export function modelLabel(model: UnifiedModel): string {
-  const ui = record(model.config?.ui)
-  const label = stringValue(ui.modelLabel) ?? model.displayName ?? model.modelId ?? model.name
-  const codexMatch = label.match(/^gpt[-\s]+(\d+(?:\.\d+)?)(?:[-\s]+(.+))?$/i)
-  if (!codexMatch) return label
-  const suffix = codexMatch[2]
-    ?.split(/[-\s]+/)
-    .filter(Boolean)
-    .map(word => word[0]?.toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ')
-  return [codexMatch[1], suffix].filter(Boolean).join(' ')
+  return getModelDisplayLabel(model)
 }
 
 export function reasoningEfforts(model: UnifiedModel): string[] {
-  const ui = record(model.config?.ui)
-  const configured = ui.reasoningEfforts ?? ui.supportedReasoningEfforts
-  const efforts = uniqueStrings(configured)
-  const kind = modelKind(model)
-  const isModelInterface = kind === 'model-interface' || kind.startsWith('model-interface:')
-
-  if (Array.isArray(configured) && isModelInterface) return efforts
-  if (efforts.length) return efforts
-  if (
-    kind === 'codex-official' ||
-    kind === 'codex-provider' ||
-    kind.startsWith('codex-provider:') ||
-    isModelInterface ||
-    kind === 'gpt'
-  ) {
-    return STANDARD_REASONING_EFFORTS
-  }
-  return []
+  return (
+    getControlsForModel(model)
+      .find(control => control.id === 'reasoning')
+      ?.options.map(option => option.value) ?? []
+  )
 }
 
 export function resolvedReasoningEffort(
   model: UnifiedModel | null,
   value: string | undefined
 ): string | undefined {
-  if (!model) return undefined
-  const efforts = reasoningEfforts(model)
-  if (value && efforts.includes(value)) return value
-  return defaultReasoningEffort(model, efforts)
+  return getSelectedReasoningOption(model, value ? { reasoning: value } : {})?.value
 }
 
 export function reasoningLabel(value: string | undefined): string {
@@ -95,8 +75,8 @@ export function reasoningLabel(value: string | undefined): string {
     low: '低',
     medium: '中',
     high: '高',
-    xhigh: '超高',
-    max: '最大',
+    xhigh: '极高',
+    max: 'Max',
     ultra: 'Ultra',
   }
   return value ? (labels[value] ?? value) : ''
@@ -109,14 +89,7 @@ export function speedLabel(value: string | undefined): string {
 }
 
 export function modelSupportsSpeed(model: UnifiedModel | null): boolean {
-  if (!model) return false
-  const ui = record(model.config?.ui)
-  const controls = ui.controls ?? ui.supportedControls
-  if (Array.isArray(controls)) return controls.includes('speed')
-  if (!controls || typeof controls !== 'object') return false
-  const speed = (controls as Record<string, unknown>).speed
-  if (typeof speed === 'boolean') return speed
-  return Boolean(speed && typeof speed === 'object' && !Array.isArray(speed))
+  return getControlsForModel(model).some(control => control.id === 'speed')
 }
 
 export function executionFields(
@@ -128,9 +101,15 @@ export function executionFields(
     ...selectedOptions,
     collaborationMode: selectedOptions.collaborationMode ?? 'default',
   }
+  const speed = normalizeModelOptions(model, selectedOptions).speed
+  if (speed) options.speed = speed
+  else delete options.speed
   copyStringConfig(model, options, 'codexProviderId')
   copyStringConfig(model, options, 'codexProviderName')
   copyStringConfig(model, options, 'codexProviderType')
+  if (model.type === 'runtime' && model.runtime?.family === 'codex' && model.runtime.provider) {
+    options.runnerModelProvider = model.runtime.provider
+  }
   if (model.namespace) options[CLOUD_NAMESPACE] = model.namespace
   if (typeof model.resourceUserId === 'number') {
     options[CLOUD_RESOURCE_USER] = String(model.resourceUserId)
@@ -158,12 +137,6 @@ export function continuationSelection(fields: ModelExecutionFields): ModelSelect
 function modelKind(model: UnifiedModel): string {
   const ui = record(model.config?.ui)
   return (stringValue(model.config?.weworkModelKind) ?? stringValue(ui.family) ?? '').toLowerCase()
-}
-
-function defaultReasoningEffort(model: UnifiedModel, efforts: string[]): string | undefined {
-  const configured = stringValue(record(model.config?.ui).defaultReasoningEffort)?.toLowerCase()
-  if (configured && efforts.includes(configured)) return configured
-  return efforts.includes('high') ? 'high' : efforts[0]
 }
 
 function upstreamApiFormat(model: UnifiedModel): string | null {
@@ -218,18 +191,6 @@ function record(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function uniqueStrings(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return Array.from(
-    new Set(
-      value
-        .filter((item): item is string => typeof item === 'string')
-        .map(item => item.trim().toLowerCase())
-        .filter(Boolean)
-    )
-  )
 }
 
 function normalized(value: unknown): string {

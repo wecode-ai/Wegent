@@ -66,7 +66,7 @@ pub(crate) async fn cancel_task(
 /// `get_task_detail` through the shared detail chain; only the status is
 /// consumed, but the source issues every related read before the state gate.
 async fn task_status(state: &AppState, task_id: i64, user_id: i64) -> Result<String, FastApiError> {
-    match build_task_detail(state, task_id, user_id, None).await {
+    match build_task_detail(state, task_id, user_id, None, false).await {
         Ok(outcome) => Ok(outcome.body.status),
         Err(error) => {
             if error.downcast_ref::<TaskNotFound>().is_some() {
@@ -112,6 +112,9 @@ async fn is_chat_shell_task(state: &AppState, task_id: i64) -> Result<bool, Fast
 /// `task_crd.metadata.labels.get("source") == "chat_shell"`, with a missing
 /// document or label block rendering `False`.
 fn is_chat_shell_document(task_json: &Value) -> bool {
+    if task_json["metadata"]["labels"]["managedTransport"] == "chat_shell" {
+        return true;
+    }
     CrdDocument::project(task_json)
         .metadata
         .and_then(|metadata| metadata.labels)
@@ -306,6 +309,9 @@ mod tests {
         assert!(!is_chat_shell_document(
             &json!({"metadata": {"labels": null}})
         ));
+        assert!(is_chat_shell_document(&json!({"metadata":{"labels":{
+            "source":"project_automation","managedTransport":"chat_shell"
+        }}})));
     }
 
     #[test]

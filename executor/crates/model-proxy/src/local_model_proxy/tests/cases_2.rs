@@ -294,6 +294,7 @@ fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
             model_to_commit: Some("wework-gpt-5.6-luna".to_owned()),
             clear_pending_model_switch: false,
         },
+        &Default::default(),
     );
     let repeated_token = register(
         "model-switch-consumed-once",
@@ -330,6 +331,7 @@ fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
             model_to_commit: Some("gpt-5.6-sol".to_owned()),
             clear_pending_model_switch: false,
         },
+        &Default::default(),
     );
     {
         let entries = registry().lock().expect("registry lock");
@@ -339,31 +341,6 @@ fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
 
     unregister(&token);
     unregister(&repeated_token);
-}
-
-#[test]
-fn task_route_recognizes_the_model_selected_for_that_task() {
-    let upstream = LocalModelProxyUpstream {
-        base_url: "https://example.com".to_owned(),
-        request_url: None,
-        api_format: "openai-responses".to_owned(),
-        convert_custom_tools: false,
-        native_tool_search: false,
-        native_namespace_tools: false,
-        api_key: "secret".to_owned(),
-        default_headers: Vec::new(),
-        proxy_url: None,
-        model_id: Some("upstream-sol".to_owned()),
-        routing_model_id: Some("gpt-5.6-sol".to_owned()),
-        codex_request_mode: Default::default(),
-        max_output_tokens: None,
-        model_context_window: None,
-    };
-
-    assert_eq!(
-        stale_requested_model(&upstream, br#"{"model":"gpt-5.6-sol"}"#),
-        None
-    );
 }
 
 #[test]
@@ -646,21 +623,6 @@ fn task_route_rejects_missing_thread_metadata_after_binding() {
     unregister(&token);
 }
 
-#[test]
-fn rewrites_internal_catalog_model_to_real_upstream_model() {
-    let body = serde_json::to_vec(&json!({
-        "model": "wework-custom-user-model",
-        "input": "hello"
-    }))
-    .expect("request body");
-
-    let rewritten = rewrite_request_model(&body, "k3").expect("rewritten request");
-    let request: Value = serde_json::from_slice(&rewritten).expect("request JSON");
-
-    assert_eq!(request["model"], "k3");
-    assert_eq!(request["input"], "hello");
-}
-
 #[tokio::test]
 async fn preserves_non_success_status_and_body() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -894,4 +856,77 @@ async fn harness_route_strips_long_context_suffix_and_normalizes_overflow() {
 
     unregister_harness(&token);
     server.abort();
+}
+
+#[test]
+fn prediction_thread_keeps_inherited_route_and_parent_scope() {
+    let upstream = LocalModelProxyUpstream {
+        base_url: "https://example.com".to_owned(),
+        request_url: None,
+        api_format: "openai-responses".to_owned(),
+        convert_custom_tools: false,
+        native_tool_search: false,
+        native_namespace_tools: false,
+        api_key: "secret".to_owned(),
+        default_headers: Vec::new(),
+        proxy_url: None,
+        model_id: Some("upstream-model".to_owned()),
+        routing_model_id: Some("routing-model".to_owned()),
+        codex_request_mode: Default::default(),
+        max_output_tokens: None,
+        model_context_window: None,
+    };
+    for restored in [false, true] {
+        let scope = format!("prediction-parent-{restored}");
+        let parent_thread = format!("prediction-source-{restored}");
+        let prediction_thread = format!("prediction-child-{restored}");
+        let prepared = register(&format!("prediction-prepared-{restored}"), upstream.clone());
+        let parent = (!restored).then(|| {
+            let token = register(&scope, upstream.clone());
+            bind_thread(&token, &parent_thread).unwrap();
+            token
+        });
+        let inherited = parent.as_deref().unwrap_or(&prepared);
+        if parent.is_some() {
+            let mut entries = registry().lock().unwrap();
+            let route = entries.routes.get_mut(inherited).unwrap();
+            let body =
+                serde_json::to_vec(&json!({"client_metadata": {"thread_id": prediction_thread}}))
+                    .unwrap();
+            assert_eq!(
+                authorize_task_thread(route, &body).unwrap_err().status,
+                StatusCode::CONFLICT
+            );
+        }
+        let retained =
+            bind_prediction_thread(&prepared, &parent_thread, &prediction_thread).unwrap();
+        assert_eq!(retained, inherited);
+        let body =
+            serde_json::to_vec(&json!({"client_metadata": {"thread_id": prediction_thread}}))
+                .unwrap();
+        assert_eq!(bound_thread_token(&body).unwrap(), inherited);
+        {
+            let mut entries = registry().lock().unwrap();
+            let route = entries.routes.get_mut(inherited).unwrap();
+            authorize_task_thread(route, &body).expect("Inherited URL must accept prediction");
+            assert_eq!(
+                authorize_task_thread(
+                    route,
+                    br#"{"client_metadata":{"thread_id":"unrelated-prediction"}}"#
+                )
+                .unwrap_err()
+                .status,
+                StatusCode::CONFLICT
+            );
+            if parent.is_some() {
+                assert_eq!(entries.tokens_by_scope.get(&scope), Some(&retained));
+                assert_eq!(entries.routes.get(inherited).unwrap().active_references, 2);
+            }
+        }
+        unregister(&retained);
+        if let Some(parent) = parent {
+            unregister(&parent);
+        }
+        unregister(&prepared);
+    }
 }

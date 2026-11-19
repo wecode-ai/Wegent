@@ -72,3 +72,14 @@ def test_native_revision_graph_preserves_all_alembic_dependencies() -> None:
         assert path.stem == item["revision"]
         actual[item["revision"]] = item["parents"]
     assert actual == expected
+
+
+def test_newest_reference_revision_is_registered_in_native_assets() -> None:
+    reference_revisions = {
+        path.name.split("_", 1)[0]: path.stem
+        for path in (ASSETS / "reference" / "versions").glob("*.py")
+    }
+    native_revisions = {path.stem for path in (ASSETS / "revisions").glob("*.json")}
+    newest_reference = max(reference_revisions)
+    newest_revision = reference_revisions[newest_reference].split("_")[1]
+    assert newest_revision in native_revisions

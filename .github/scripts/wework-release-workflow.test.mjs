@@ -20,6 +20,74 @@ const workflow = JSON.parse(
 );
 const { jobs } = workflow;
 
+test("native writer observation is opt-in and reaches the shared package runner", () => {
+  const input =
+    workflow.true.workflow_dispatch.inputs.verification_writer_wait_seconds;
+  assert.equal(input.type, "number");
+  assert.equal(input.default, 0);
+  assert.equal(input.required, false);
+  const verification = jobs["verify-upgrades"].steps.find(
+    (step) =>
+      step.name ===
+      "Verify declared upgrade and rollback edges on real release packages",
+  );
+  assert.equal(
+    verification.env.WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS,
+    "${{ inputs.verification_writer_wait_seconds || 0 }}",
+  );
+  assert.match(
+    verification.run,
+    /wework\/scripts\/verify-release-upgrades\.mjs/,
+  );
+});
+
+test("non-publishing artifact builds cannot be cancelled by another release branch queue", () => {
+  assert.match(
+    workflow.concurrency.group,
+    /inputs.build_only && !inputs.publish_release/,
+  );
+  assert.match(workflow.concurrency.group, /github.ref/);
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+});
+
+test("full unpublished source pairs cannot replace a pending formal release", () => {
+  const evaluate = new Function(
+    "inputs",
+    "github",
+    "format",
+    `return ${workflow.concurrency.group.slice(3, -2)}`,
+  );
+  const inputs = {
+    build_only: false,
+    publish_release: false,
+    verification_run_id: "",
+    verification_source_run_id: "",
+    verification_checkpoint: "all",
+  };
+  const github = { workflow: "Wework App", ref: "refs/heads/target" };
+  const format = (pattern, ...values) =>
+    pattern.replace(/\{(\d+)\}/g, (_, index) => values[Number(index)]);
+  const release = evaluate(
+    { ...inputs, publish_release: true },
+    github,
+    format,
+  );
+  const diagnostic = evaluate(
+    { ...inputs, verification_source_run_id: "source-run" },
+    github,
+    format,
+  );
+  assert.notEqual(diagnostic, release);
+  assert.notEqual(
+    diagnostic,
+    evaluate(
+      { ...inputs, verification_source_run_id: "source-run" },
+      { ...github, ref: "refs/heads/other" },
+      format,
+    ),
+  );
+});
+
 function sparseCheckout(t, checkout, trackedOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "wework-upgrade-resolver-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -199,7 +267,6 @@ test("release creation waits for every candidate build and validation", () => {
   const create = names.indexOf("Create or update draft release");
   for (const name of [
     "Download release builds",
-    "Reuse verified arm64 upgrade paths for macOS x64",
     "Generate desktop update manifests",
     "Report completed upgrade duration before publication",
   ])
@@ -232,6 +299,11 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
       ["linux", "x64"],
     ],
   );
+  const native = jobs.build.steps.find(
+    (step) => step.name === "Verify native contracts before packaging",
+  );
+  assert.equal(native.if, undefined);
+  assert.match(native.run, /wework\/scripts\/upgrade-credentials\.test\.mjs/);
   for (const name of [
     "Verify declared upgrade and rollback edges on real release packages",
     "Upload verified release upgrade evidence",
@@ -248,8 +320,9 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
         : platforms,
     );
   }
-  const reuse = jobs.publish.steps.find(
-    (step) => step.name === "Reuse verified arm64 upgrade paths for macOS x64",
+  const reuse = jobs["aggregate-upgrades"].steps.find(
+    (step) =>
+      step.name === "Verify macOS architecture equivalence before publication",
   );
   assert.match(reuse.run, /mirror-macos-upgrade-policy.mjs/);
   assert.equal(
@@ -257,7 +330,10 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     "${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}",
   );
   assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 8);
-  assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 15);
+  assert.equal(
+    jobs["verify-upgrades"]["timeout-minutes"],
+    "${{ matrix.platform == 'macos' && 20 || 15 }}",
+  );
   assert.equal(jobs.build["timeout-minutes"], 90);
   const step = jobs["verify-upgrades"].steps.find(
     (step) =>
@@ -341,7 +417,14 @@ test("upgrade verification only consumes release artifacts and has no signing cr
   assert.match(jobs["prepare-upgrade-inputs"].if, /!cancelled\(\)/);
   assert.match(
     workflow.concurrency.group,
-    /app-update-refresh.*app-update-retry.*!inputs.publish_release/,
+    /inputs.verification_source_run_id != '' && !inputs.publish_release/,
+  );
+  const sourceGuard = jobs["prepare-release"].steps.find(
+    (step) => step.name === "Reject publishing an unpublished source pair",
+  );
+  assert.equal(
+    sourceGuard.if,
+    "inputs.verification_source_run_id != '' && inputs.publish_release",
   );
   assert.ok(
     workflow.true.workflow_dispatch.inputs.verification_checkpoint.options.includes(
@@ -476,4 +559,37 @@ fi
     "rejected",
     "A long ZIP listing must not bypass the gate through SIGPIPE",
   );
+});
+
+test("dry runs certify security boundaries and x64 identities before any publication", () => {
+  const formal = jobs.build.steps.find(
+    (step) => step.name === "Verify formal release package",
+  );
+  assert.match(
+    formal.run,
+    /release-package-startup,component-update,security-boundaries/,
+  );
+  assert.equal(formal.env.WEWORK_E2E_PARALLEL_CHECKPOINTS, "1");
+  const steps = jobs["aggregate-upgrades"].steps;
+  const download = steps.find(
+    (step) => step.name === "Download exact macOS x64 package identity",
+  );
+  assert.equal(
+    download.with["run-id"],
+    "${{ needs.prepare-upgrade-inputs.outputs.run_id }}",
+  );
+  assert.equal(
+    download.with.name,
+    "wework-upgrade-metadata-${{ needs.prepare-upgrade-inputs.outputs.version }}-macos-x64",
+  );
+  const mirror = steps.find(
+    (step) =>
+      step.name === "Verify macOS architecture equivalence before publication",
+  );
+  const upload = steps.find(
+    (step) => step.name === "Upload complete verified upgrade policies",
+  );
+  assert.ok(steps.indexOf(download) < steps.indexOf(mirror));
+  assert.ok(steps.indexOf(mirror) < steps.indexOf(upload));
+  assert.doesNotMatch(jobs["aggregate-upgrades"].if, /publish_release/);
 });

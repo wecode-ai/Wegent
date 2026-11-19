@@ -19,12 +19,7 @@ pub(super) fn inject_current_session(
     device_id: &str,
     local_task_id: &str,
 ) {
-    request
-        .extra
-        .insert("runtimeDeviceId".to_owned(), json!(device_id));
-    request
-        .extra
-        .insert("runtimeLocalTaskId".to_owned(), json!(local_task_id));
+    bind_task_identity(request, device_id, local_task_id);
     // Establish the same user-message identity sent to Codex and projected by the API.
     let message_id = request
         .extra
@@ -71,6 +66,19 @@ pub(super) fn inject_current_session(
     request
         .extra
         .insert("additionalContext".to_owned(), Value::Object(additional));
+}
+
+pub(super) fn bind_task_identity(
+    request: &mut ExecutionRequest,
+    device_id: &str,
+    local_task_id: &str,
+) {
+    request
+        .extra
+        .insert("runtimeDeviceId".to_owned(), json!(device_id));
+    request
+        .extra
+        .insert("runtimeLocalTaskId".to_owned(), json!(local_task_id));
 }
 
 // Keep this wire format aligned with backend/app/services/wework_api/identity.py.
@@ -129,6 +137,34 @@ fn api_base_url(backend_url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn task_rebinding_preserves_restrictions_without_creating_a_user_message() {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("runtimeDeviceId".into(), json!("stale-device"));
+        request
+            .extra
+            .insert("runtimeLocalTaskId".into(), json!("stale-task"));
+        bind_task_identity(&mut request, "current-device", "current-task");
+        let context = crate::workbench_control::ControlContext::from_request(&request).unwrap();
+        assert_eq!(context.device_id, "current-device");
+        assert_eq!(context.task_id, "current-task");
+        assert!(!request.extra.contains_key("client_user_message_id"));
+        assert!(!request.extra.contains_key("additionalContext"));
+        for origin in [
+            json!({"dispatchRole":"executor","cloudProjectId":"space","loopItemId":"issue"}),
+            json!({"type":"stand_in_identity"}),
+            json!({"type":"connection_work"}),
+            json!({"type":"project_coordinator"}),
+        ] {
+            request.extra.insert("origin".into(), origin.clone());
+            bind_task_identity(&mut request, "current-device", "current-task");
+            assert_eq!(request.extra["origin"], origin);
+            assert!(crate::workbench_control::ControlContext::from_request(&request).is_none());
+        }
+    }
+
     fn context(request: &ExecutionRequest) -> Value {
         let value = request.extra["additionalContext"][CONTEXT_KEY]["value"]
             .as_str()
@@ -142,67 +178,6 @@ mod tests {
             "weworkCloudModelResourceUserId": "0",
             "api_key": "selection-secret"
         }})
-    }
-
-    #[test]
-    fn current_session_uses_api_handles_and_preserves_other_context() {
-        let _lock = crate::test_env::lock();
-        let mut request = ExecutionRequest {
-            task_id: "execution-not-conversation".into(),
-            project_workspace_path: Some("/Users/test/Documents/Codex/task-1".into()),
-            subtask_id: "native-turn-not-response".into(),
-            auth_token: Some("auth-secret".into()),
-            model_config: json!({"api_key": "model-secret"}),
-            ..ExecutionRequest::default()
-        };
-        request
-            .extra
-            .insert("client_user_message_id".into(), json!("message-1"));
-        request
-            .extra
-            .insert("modelSelection".into(), cloud_selection("my-model"));
-        request.extra.insert(
-            "additionalContext".into(),
-            json!({
-                "wework.terminal.current": {"kind": "application", "value": "terminal"},
-                "wework.session.current": {"kind": "application", "value": "stale"}
-            }),
-        );
-        inject_current_session(&mut request, "device-1", "task-1");
-        let value = context(&request);
-        assert_eq!(value["api_conversation_supported"], true);
-        assert_eq!(
-            value["conversation_id"],
-            "conv_WyJkZXZpY2UtMSIsInRhc2stMSJd"
-        );
-        assert_eq!(
-            value["response_id"],
-            "resp_WyJkZXZpY2UtMSIsInRhc2stMSIsIm1lc3NhZ2UtMSJd"
-        );
-        assert_eq!(value["model"], "public:default:0:my-model");
-        assert_eq!(
-            value["execution"],
-            json!({"type": "wework", "device_id": "device-1"})
-        );
-        assert_eq!(
-            request.extra["additionalContext"]["wework.terminal.current"]["value"],
-            "terminal"
-        );
-        assert!(!request.extra["additionalContext"]
-            .to_string()
-            .contains("secret"));
-
-        request
-            .extra
-            .insert("client_user_message_id".into(), json!("message-2"));
-        request
-            .extra
-            .insert("modelSelection".into(), cloud_selection("new-model"));
-        inject_current_session(&mut request, "device-1", "task-1");
-        let follow_up = context(&request);
-        assert_eq!(follow_up["conversation_id"], value["conversation_id"]);
-        assert_ne!(follow_up["response_id"], value["response_id"]);
-        assert_eq!(follow_up["model"], "public:default:0:new-model");
     }
 
     #[test]

@@ -165,6 +165,16 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn set_claude_goal(&self, link: &RuntimeTaskLink, payload: &Value) -> Value {
         let current = self.get_claude_goal(link);
+        // A lifecycle mutation must retain the same objective's accounting and budget.
+        let mut update = if payload.get("objective").is_none() {
+            current.clone().unwrap_or_else(|| json!({}))
+        } else {
+            json!({})
+        };
+        if let (Some(update), Some(payload)) = (update.as_object_mut(), payload.as_object()) {
+            update.extend(payload.clone());
+        }
+        let payload = &update;
         let objective = string_field(payload, "objective").or_else(|| {
             current
                 .as_ref()
@@ -299,7 +309,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let (request, model_proxy_token) = match prepare_claude_model_proxy(request) {
+        let (mut request, model_proxy_token) = match prepare_claude_model_proxy(request) {
             Ok(prepared) => prepared,
             Err(message) => {
                 self.fail_local_task_execution_start(
@@ -332,6 +342,7 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
+            handler.recall_stand_in_context(&mut request).await;
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
@@ -360,20 +371,65 @@ impl RuntimeWorkRpcHandler {
                 }
                 return;
             }
-            let _ = sink
-                .send(builder.response_created(Some("ClaudeCode")))
-                .await;
-
-            let authorization = if request
+            let mut authorization = if request
                 .extra
                 .get("origin")
                 .is_some_and(|origin| origin["type"] == "project_assessment")
             {
                 Err("Read-only project assessments require the Codex text-only runtime".into())
             } else {
-                handler.validate_project_coordinator_request(&request).await
+                match handler.validate_project_coordinator_request(&request).await {
+                    Err(error) => Err(error),
+                    Ok(()) => {
+                        match handler
+                            .automatic_input_admission(&local_task_id, &request)
+                            .map(|admit| admit())
+                            .transpose()
+                        {
+                            Err(error) => Err(error),
+                            Ok(_) => {
+                                handler
+                                    .admit_claude_event_goal(&local_task_id, &request)
+                                    .await
+                            }
+                        }
+                    }
+                }
             };
+            if matches!(authorization.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
+            {
+                if let Some(token) = model_proxy_token.as_deref() {
+                    local_model_proxy::unregister_harness(token);
+                }
+                match handler
+                    .defer_automatic_input(&local_task_id, &request, execution_id)
+                    .await
+                {
+                    Ok(true) => {
+                        scheduled_turn_guard.transferred = true;
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(error) => authorization = Err(error.message),
+                }
+            }
+            let _ = sink
+                .send(builder.response_created(Some("ClaudeCode")))
+                .await;
+            let mut lifecycle = if authorization.is_ok() {
+                handler.begin_lifecycle_hooks(&request, &local_task_id, "ClaudeCode")
+            } else {
+                None
+            };
+            if let Some(hooks) = lifecycle.as_mut() {
+                hooks.started(&local_task_id, &request.subtask_id);
+            }
             let outcome = match authorization {
+                Err(message) if message == CODEX_APP_SERVER_TURN_CANCELLED => {
+                    ExecutionOutcome::Cancelled {
+                        message: "cancelled".to_owned(),
+                    }
+                }
                 Err(message) => ExecutionOutcome::Failed { message },
                 Ok(()) => tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {
@@ -386,7 +442,18 @@ impl RuntimeWorkRpcHandler {
                 ) => outcome,
                 },
             };
+            if matches!(outcome, ExecutionOutcome::Failed { .. }) {
+                handler.event_goal_admission_failed(&local_task_id, &request);
+            }
 
+            if let Some(hooks) = lifecycle.as_mut() {
+                if let Some(session_id) = crate::agent_session::saved_executor_session(&request)
+                    .and_then(|session| string_field(&session, "sessionId"))
+                {
+                    hooks.started(&session_id, &request.subtask_id);
+                }
+                hooks.finish(super::hooks::lifecycle_status(&outcome));
+            }
             scheduled_turn_guard.command_outcome =
                 Some(command_journal::CommandState::from_execution(&outcome));
             if let Some(session) = crate::agent_session::saved_executor_session(&request) {
@@ -427,11 +494,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Succeeded,
                         None,
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Succeeded,
                         None,
                         Some(result_content),
@@ -457,11 +526,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::NeedsAttention,
                         Some(stop_reason.clone()),
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::NeedsAttention,
                         Some(stop_reason),
                         Some(String::new()),
@@ -481,11 +552,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Failed,
                         Some(message.clone()),
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Failed,
                         Some(message),
                         None,
@@ -504,11 +577,13 @@ impl RuntimeWorkRpcHandler {
                     if handler.settle_cancelled_local_task_execution(&local_task_id, execution_id) {
                         handler.finish_automation_run(
                             &local_task_id,
+                            &request,
                             AutomationRunStatus::Cancelled,
                             Some(message.clone()),
                         );
                         handler.finish_queue_run(
                             &local_task_id,
+                            &request,
                             AutomationRunStatus::Cancelled,
                             Some(message.clone()),
                             None,
@@ -558,6 +633,10 @@ impl RuntimeWorkRpcHandler {
                 "eventSeq": next_runtime_event_sequence(),
             },
         });
+        super::super::events::apply_runtime_event_conversation_context(
+            &mut payload["payload"],
+            request,
+        );
         if let Some(client_user_message_id) = request
             .extra
             .get("client_user_message_id")

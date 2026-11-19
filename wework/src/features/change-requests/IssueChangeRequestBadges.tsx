@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useIntersectionEvent } from '@wegent/collaboration/dom-events'
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
 import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import { linkedChangeRequestTarget } from '@/api/changeRequests'
 import type { DeviceCommandApi } from '@/api/environment'
@@ -14,6 +15,7 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS } from '@/lib/workbench-device'
+import { observationLabelKey } from '@/features/workbench/resourceObservation'
 
 const visuals: Record<ChangeRequestVisualStatus, Pick<CollaborationIssueBadge, 'icon' | 'tone'>> = {
   draft: { icon: 'git-pull-request', tone: 'neutral' },
@@ -65,25 +67,34 @@ export function IssueChangeRequestBadges({
     .sort()
     .join('\n')
 
-  useEffect(() => {
-    if (!monitor || !lookupEnabled || !urls || !root.current) return
-    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting))
-    observer.observe(root.current)
-    return () => observer.disconnect()
-  }, [lookupEnabled, monitor, urls])
+  const observeVisibility = useCallback(
+    ([entry]: IntersectionObserverEntry[]) => {
+      if (monitor && lookupEnabled && urls) setVisible(entry.isIntersecting)
+    },
+    [monitor, lookupEnabled, urls]
+  )
+  useIntersectionEvent(root, observeVisibility, {
+    enabled: Boolean(monitor && lookupEnabled && urls),
+  })
 
   const active = lookupEnabled && visible
-  useEffect(() => {
-    if (!active || !monitor || !urls) return
-    const release = urls
-      .split('\n')
-      .map(url => monitor.register(linkedChangeRequestTarget(LOCAL_WORKBENCH_DEVICE_ALIAS, url)!))
-    return () => release.forEach(stop => stop())
-  }, [active, monitor, urls])
-
   const subscribe = useCallback(
-    (listener: () => void) => monitor?.subscribe(listener) ?? (() => undefined),
-    [monitor]
+    (listener: () => void) => {
+      const unsubscribe = monitor?.subscribe(listener)
+      const releases =
+        active && monitor && urls
+          ? urls
+              .split('\n')
+              .map(url =>
+                monitor.register(linkedChangeRequestTarget(LOCAL_WORKBENCH_DEVICE_ALIAS, url)!)
+              )
+          : []
+      return () => {
+        unsubscribe?.()
+        releases.forEach(stop => stop())
+      }
+    },
+    [monitor, active, urls]
   )
   const getRevision = useCallback(() => monitor?.getRevision() ?? 0, [monitor])
   useSyncExternalStore(subscribe, getRevision, () => 0)
@@ -95,19 +106,22 @@ export function IssueChangeRequestBadges({
     const request = snapshot?.changeRequest
     if (!request) {
       const provider = target.changeRequestUrl!.includes('/-/merge_requests/') ? 'gitlab' : 'github'
-      const state = snapshot?.lookupState
-      const tooltip = snapshot
-        ? t(
+      const state =
+        snapshot?.observation?.state === 'auth_required' ? 'unauthenticated' : snapshot?.lookupState
+      const loading = !snapshot || snapshot.observation?.state === 'refreshing'
+      const tooltip = loading
+        ? t('todo.issue_pr_loading')
+        : t(
             `workbench.environment_change_request_${state === 'unavailable' || state === 'unauthenticated' ? state : 'error'}_${provider}`
           )
-        : t('todo.issue_pr_loading')
-      return { ...badge, tooltip, icon: snapshot ? badge.icon : 'loader' }
+      return { ...badge, tooltip, icon: loading ? 'loader' : badge.icon }
     }
     const status = changeRequestVisualStatus(request)
     const tooltip = [
       request.title,
       t(`workbench.change_request_status_${status}`),
       snapshot?.stale ? t('workbench.change_request_status_stale') : null,
+      snapshot?.observation ? t(observationLabelKey(snapshot.observation)) : null,
     ]
       .filter(Boolean)
       .join(' · ')

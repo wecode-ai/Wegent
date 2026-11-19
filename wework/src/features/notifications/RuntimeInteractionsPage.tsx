@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { createRuntimeInteractionsPageState } from './runtimeInteractionsPageState'
 import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
@@ -6,10 +8,16 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { NotificationEntitySurface } from './NotificationEntitySurface'
 import { openWeworkScheme } from './schemeEvents'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
-import { issueWaitingSince } from '@wegent/collaboration'
+import { issueWaitingSince, issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import { IssueWaitingTime } from './IssueWaitingTime'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
-import { issueHumanInteraction } from './issueHumanInteractions'
+import { projectIssueAssignedAfter, projectIssueNeedsInput } from './pendingProjectWork'
+import {
+  issueHumanInteraction,
+  issueQuestionIdentity,
+  issueQuestionHandoff,
+  hasRecordedIssueResolution,
+} from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   INTERACTION_SOURCES,
@@ -20,6 +28,7 @@ import { cn } from '@/lib/utils'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
 import { InteractionTime } from './InteractionTime'
+import { InteractionDraftRecovery } from './InteractionDraftRecovery'
 
 interface PendingWorkRow {
   id: string
@@ -32,6 +41,7 @@ interface PendingWorkRow {
   sourceMessageIds?: string[]
   waitingSince?: string | null
   projectItem?: boolean
+  dismissalId?: string
 }
 
 function originalUrl(row: PendingWorkRow): string {
@@ -47,100 +57,114 @@ export function RuntimeInteractionsPage({
 }) {
   const interactions = useRuntimeInteractions()
   const projectIssues = usePendingProjectIssues(active)
-  const refreshInteractions = interactions?.refresh
-  useEffect(() => {
-    if (active) void refreshInteractions?.()
-  }, [active, refreshInteractions])
-  const refreshProjectIssues = projectIssues.refresh
-  const handoffRevision =
-    interactions?.pending
-      .filter(item => item.sharedRequest)
-      .map(item => `${item.id}:${item.sharedRequest?.version}`)
-      .sort()
-      .join('|') ?? ''
-  const previousHandoffRevision = useRef(handoffRevision)
-  useEffect(() => {
-    if (!active || previousHandoffRevision.current === handoffRevision) return
-    previousHandoffRevision.current = handoffRevision
-    void refreshProjectIssues()
-  }, [active, handoffRevision, refreshProjectIssues])
   const discussion = useQuestionDiscussion()
   const { t } = useTranslation('common')
-  const [history, setHistory] = useState(false)
-  const [originalNavigation, setOriginalNavigation] = useState<{ id: string; url: string } | null>(
-    null
-  )
-  const onOriginalUrlChange = useCallback((id: string, url: string) => {
-    setOriginalNavigation(current =>
-      current?.id === id && current.url === url ? current : { id, url }
-    )
-  }, [])
-  const [selected, setSelected] = useState<string | null>(selectedId ?? null)
-  const [showList, setShowList] = useState(!selectedId)
   const twoPanes = useIsDesktop()
-  const [lastTwoPanes, setLastTwoPanes] = useState(twoPanes)
-  const list = useRef<HTMLElement>(null)
-  const listHeading = useRef<HTMLHeadingElement>(null)
-  const heading = useRef<HTMLHeadingElement>(null)
-  const restoreListFocus = useRef(false)
-  const [lastRouteId, setLastRouteId] = useState(selectedId)
   const owner = useId()
-  const registerView = interactions?.registerView
-  const viewed =
-    !history && (twoPanes || !showList)
-      ? selected
-        ? interactions?.pending.find(item => item.id === selected)?.id
-        : interactions?.pending[0]?.id
-      : undefined
-  useEffect(() => {
-    registerView?.(owner, active ? (viewed ?? null) : null)
-    return () => registerView?.(owner, null)
-  }, [active, owner, registerView, viewed])
-  useEffect(() => {
-    if (twoPanes) return
-    if (!showList) heading.current?.focus()
-    else if (restoreListFocus.current) {
-      const selectedRow = list.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
-      const focusTarget = selectedRow ?? listHeading.current
-      focusTarget?.focus()
-      restoreListFocus.current = false
-    }
-  }, [twoPanes, showList, selected, viewed])
-  if (lastTwoPanes !== twoPanes) {
-    setLastTwoPanes(twoPanes)
-    // The desktop detail is already open; preserve it when the window becomes narrow.
-    if (!twoPanes) setShowList(false)
-  }
-  if (lastRouteId !== selectedId) {
-    setLastRouteId(selectedId)
-    setSelected(selectedId ?? null)
-    setHistory(false)
-    setShowList(!selectedId)
-  }
-  const projectRows = projectIssues.items.filter(
-    row =>
-      !row.item.human_requests?.some(
-        request =>
-          (request.status === 'pending' || request.status === 'answering') &&
-          interactions?.history.some(
-            accepted => accepted.id === issueHumanInteraction(request, row.store).id
-          )
-      ) &&
-      !interactions?.pending.some(
-        request =>
-          request.project?.store === row.store &&
-          String(request.project.projectId) === String(row.item.cloud_project_id) &&
-          request.project.issueId === row.item.id
-      )
+  const list = useRef<HTMLElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const [page] = useState(() =>
+    createRuntimeInteractionsPageState(selectedId, twoPanes, interactions)
   )
-  const reportProjectPendingCount = interactions?.reportProjectPendingCount
+  const projectItemId = ({ item, store }: (typeof projectIssues.items)[number]) =>
+    `project-issue:${store}:${item.cloud_project_id}:${item.id}`
+  const projectRequests = (row: (typeof projectIssues.items)[number]) =>
+    pendingIssueHumanRequests(row.item).filter(request =>
+      issueNeedsUser({ ...row.item, human_requests: [request] }, row.userId)
+    )
+  const projectDismissalId = (row: (typeof projectIssues.items)[number]) => {
+    const requests = projectRequests(row)
+    const scope = requests.length
+      ? ':' +
+        JSON.stringify(
+          requests.map(request => [request.id, request.waiting_since ?? request.created_at]).sort()
+        )
+      : ''
+    return `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}${scope}`
+  }
+  const projectItems = projectIssues.items.map(row => {
+    let handledAt: number | undefined
+    const requests = row.item.human_requests?.filter(request => {
+      if (request.status !== 'pending' && request.status !== 'answering') return true
+      const question = issueHumanInteraction(request, row.store)
+      const resolution = interactions?.history.find(entry =>
+        hasRecordedIssueResolution(question, [entry])
+      )
+      if (!resolution) return true
+      handledAt = Math.max(handledAt ?? 0, resolution.answeredAt)
+      return false
+    })
+    return {
+      ...row,
+      item: requests ? { ...row.item, human_requests: requests } : row.item,
+      handledAt,
+    }
+  })
+  const projectRows = projectItems.filter(row => {
+    if (
+      row.handledAt !== undefined &&
+      !pendingIssueHumanRequests(row.item).length &&
+      (!projectIssueAssignedAfter(row.item, row.userId, row.handledAt) ||
+        !projectIssueNeedsInput(row.item, row.userId))
+    )
+      return false
+    if (interactions?.isDismissed?.(projectDismissalId(row))) return false
+    const requests = projectRequests(row)
+    if (
+      requests.length > 0 &&
+      requests.every(request => {
+        const interaction = issueHumanInteraction(request, row.store)
+        return interactions?.isDismissed?.(
+          interaction.id,
+          issueQuestionIdentity(interaction),
+          issueQuestionHandoff(interaction)
+        )
+      })
+    )
+      return false
+    return !interactions?.pending.some(
+      request =>
+        request.project?.store === row.store &&
+        String(request.project.projectId) === String(row.item.cloud_project_id) &&
+        request.project.issueId === row.item.id
+    )
+  })
   const projectCountKnown =
     active && !projectIssues.loading && !Object.values(projectIssues.errors).some(Boolean)
   const projectCount = projectCountKnown ? projectRows.length : null
-  useEffect(() => {
-    reportProjectPendingCount?.(projectCount)
-  }, [projectCount, reportProjectPendingCount])
-  useEffect(() => () => reportProjectPendingCount?.(null), [reportProjectPendingCount])
+  const refreshProjects = projectIssues.refresh
+  const view = page.observe({
+    owner,
+    active,
+    selectedId,
+    twoPanes,
+    interactions,
+    projectCount,
+    refreshProjects,
+  })
+  const {
+    history,
+    selected,
+    showList,
+    viewed,
+    dismissing,
+    dismissFailed,
+    originalNavigation,
+    focusListRequested,
+    focusListVersion,
+  } = useSyncExternalStore(view.subscribe, view.getSnapshot, view.getSnapshot)
+  const { setSelected, setHistory, setShowList } = page
+  const onOriginalUrlChange = useCallback(
+    (id: string, url: string) => page.setOriginalNavigation(id, url),
+    [page]
+  )
+  useFocusRequest(heading, JSON.stringify([twoPanes, showList, selected, viewed]), {
+    enabled: !twoPanes && !showList,
+  })
+  useFocusRequest(list, focusListVersion, {
+    enabled: !twoPanes && showList && focusListRequested,
+    selector: 'button[aria-pressed="true"], :scope:not(:has(button[aria-pressed="true"])) h1',
+  })
   if (!interactions) return null
   const { pending, errors } = interactions
   const loading = interactions.loading || projectIssues.loading
@@ -167,24 +191,64 @@ export function RuntimeInteractionsPage({
               ? item.sharedRequest?.created_at
               : undefined),
         })),
-        ...projectRows.map(({ item, store, userId }) => ({
-          id: `project-issue:${store}:${item.cloud_project_id}:${item.id}`,
-          source: 'project' as const,
-          timestamp: Date.parse(issueWaitingSince(item, userId) ?? item.updated_at),
-          title: item.project_name,
-          question: item.title,
-          originalUrl: weworkIssueScheme(String(item.cloud_project_id), item.id, store),
-          waitingSince: issueWaitingSince(item, userId),
-          projectItem: true,
-        })),
+        ...projectRows.map(projectRow => {
+          const { item, store, userId } = projectRow
+          return {
+            id: projectItemId(projectRow),
+            dismissalId: projectDismissalId(projectRow),
+            source: 'project' as const,
+            timestamp: Date.parse(issueWaitingSince(item, userId) ?? item.updated_at),
+            title: item.project_name,
+            question: item.title,
+            originalUrl: weworkIssueScheme(String(item.cloud_project_id), item.id, store),
+            waitingSince: issueWaitingSince(item, userId),
+            projectItem: true,
+          }
+        }),
       ]
-  const historical = interactions.history.find(item => item.id === selected)
-  const row: PendingWorkRow | undefined = selected
-    ? (rows.find(item => item.id === selected) ??
-      (historical
-        ? { ...historical, source: interactionSource(historical), timestamp: historical.answeredAt }
-        : undefined))
-    : rows[0]
+  const dismissRows = async (entries: PendingWorkRow[]) => {
+    if (!page.beginDismiss()) return
+    const isCurrent = page.capture()
+    try {
+      for (const entry of entries) {
+        if (!isCurrent()) return
+        if (interactions.busy.has(entry.id)) continue
+        const request = pending.find(item => item.id === entry.id)
+        const projectRow = projectRows.find(item => projectItemId(item) === entry.id)
+        const questions = projectRow
+          ? projectRequests(projectRow).map(item => issueHumanInteraction(item, projectRow.store))
+          : []
+        const targets = request
+          ? [request]
+          : questions.length
+            ? questions
+            : [
+                {
+                  id: entry.dismissalId ?? entry.id,
+                  source: entry.source,
+                  title: entry.title,
+                  question: entry.question,
+                  originalUrl: entry.originalUrl,
+                  answeredAt: Date.now(),
+                },
+              ]
+        let failed = false
+        for (const target of targets) {
+          if (!isCurrent()) return
+          try {
+            await interactions.dismiss(target)
+          } catch {
+            failed = true
+            if (isCurrent()) page.failDismiss()
+          }
+        }
+        if (isCurrent() && !failed) setSelected(current => (current === entry.id ? null : current))
+      }
+    } finally {
+      page.finishDismiss()
+    }
+  }
+  const row = selected ? rows.find(item => item.id === selected) : rows[0]
   const liveQuestion = row ? pending.find(item => item.id === row.id && !item.cached) : undefined
   return (
     <main
@@ -199,11 +263,7 @@ export function RuntimeInteractionsPage({
         )}
       >
         <header className="flex min-h-14 flex-wrap items-center gap-1 px-4 py-2">
-          <h1
-            ref={listHeading}
-            tabIndex={-1}
-            className="min-w-0 flex-1 text-base font-medium outline-none"
-          >
+          <h1 tabIndex={-1} className="min-w-0 flex-1 text-base font-medium outline-none">
             {t(history ? 'interactions.history' : 'interactions.title')}{' '}
             <span
               data-testid={history ? 'interactions-history-count' : 'interactions-pending-count'}
@@ -212,6 +272,17 @@ export function RuntimeInteractionsPage({
               {history ? interactions.history.length : pending.length + projectRows.length}
             </span>
           </h1>
+          {!history && (
+            <button
+              type="button"
+              data-testid="interactions-dismiss-all"
+              disabled={dismissing || !rows.length || interactions.busy.size > 0}
+              className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:min-h-8"
+              onClick={() => void dismissRows(rows)}
+            >
+              {t('interactions.dismiss_all')}
+            </button>
+          )}
           <button
             type="button"
             data-testid="interactions-history"
@@ -235,6 +306,12 @@ export function RuntimeInteractionsPage({
           </button>
         </header>
         <div className="flex-1 overflow-y-auto px-2 pb-3">
+          <InteractionDraftRecovery />
+          {dismissFailed && (
+            <p role="alert" className="px-3 py-2 text-sm text-status-error">
+              {t('interactions.dismiss_failed')}
+            </p>
+          )}
           {INTERACTION_SOURCES.map(source => {
             const entries = rows
               .filter(entry => entry.source === source)
@@ -291,24 +368,19 @@ export function RuntimeInteractionsPage({
                         />
                       </span>
                     </button>
-                    {!history &&
-                      !entry.projectItem &&
-                      !pending.find(item => item.id === entry.id)?.sharedRequest && (
-                        <button
-                          type="button"
-                          data-testid="interaction-dismiss"
-                          aria-label={t('interactions.skip')}
-                          title={t('interactions.skip')}
-                          disabled={interactions.busy.has(entry.id)}
-                          className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                          onClick={() => {
-                            const item = pending.find(item => item.id === entry.id)
-                            if (item) void interactions.dismiss(item)
-                          }}
-                        >
-                          <X className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      )}
+                    {!history && (
+                      <button
+                        type="button"
+                        data-testid="interaction-dismiss"
+                        aria-label={t('interactions.skip')}
+                        title={t('interactions.skip')}
+                        disabled={dismissing || interactions.busy.has(entry.id)}
+                        className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                        onClick={() => void dismissRows([entry])}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -323,7 +395,12 @@ export function RuntimeInteractionsPage({
             </p>
           )}
           {Object.entries(errors)
-            .filter(([key]) => !pending.some(request => request.id === key))
+            .filter(
+              ([key]) =>
+                !pending.some(request => request.id === key) &&
+                !interactions.history.some(item => item.id === key) &&
+                !interactions.replyDrafts.some(draft => draft.interaction.id === key)
+            )
             .map(([key, error]) => (
               <p key={key} role="alert" className="px-3 py-2 text-sm text-status-error">
                 {error}
@@ -358,8 +435,7 @@ export function RuntimeInteractionsPage({
             data-testid="interactions-back-to-list"
             className="mx-3 mt-2 flex min-h-11 items-center gap-2 self-start rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
             onClick={() => {
-              restoreListFocus.current = true
-              setShowList(true)
+              page.returnToList()
             }}
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />

@@ -31,6 +31,10 @@ pub struct ChatSessionSetup {
     pub assistant_subtask_id: i64,
     /// The assistant subtask's `message_id` (`message_ids.next_message_id + 1`).
     pub assistant_message_id: i64,
+    /// The user subtask's own `message_id` (`message_ids.next_message_id`).
+    /// The `/chat` `chat:send` ACK names this value; deriving it from the
+    /// assistant id would couple two independent rows.
+    pub user_message_id: i64,
     /// The assistant subtask row's `executor_name` / `executor_namespace`
     /// (`TaskRequestBuilder` copies them onto the execution request).
     pub assistant_executor_name: String,
@@ -70,9 +74,16 @@ pub struct SetupChatSessionInput<'a> {
     /// request session at `openapi_responses.py:522-547`'s position, before
     /// team and model resolution. `None` creates a new Task.
     pub continuation: Option<continuation::Continuation>,
+    /// Subscription-only DB window. None preserves ordinary chat preparation.
+    pub history_window: Option<i64>,
     pub team_id: i64,
     pub bot_ids: &'a [i64],
+    pub create_assistant: bool,
+    pub model_override_type: Option<&'a str>,
+    pub model_options: Option<&'a serde_json::Value>,
     pub input_text: &'a str,
+    pub user_result: Option<&'a serde_json::Value>,
+    pub additional_skills: &'a [serde_json::Value],
     /// The Task CRD template; its `task_id` is replaced with the allocated id.
     pub crd: TaskCrdInput<'a>,
     pub repository: WorkspaceRepository<'a>,
@@ -155,16 +166,24 @@ pub async fn setup_chat_session(
         // `prepare_execution_session`'s `get_task_with_access_check`
         // (`lifecycle.py:287`) re-reads the resumed Task on the request
         // session; its row is what the pending CRD rewrite flushes.
-        let row = store
-            .get_active_task_owned_on(&mut *transaction, continuation.task_id, input.owner_user_id)
-            .await
-            .map_err(internal)?
-            .ok_or_else(|| {
-                FastApiError::detail(
-                    brz_http_server::StatusCode::NOT_FOUND,
-                    format!("Task {} not found", continuation.task_id),
-                )
-            })?;
+        let task_id = continuation.task_id;
+        let owner_user_id = input.owner_user_id;
+        let row = if continuation.is_subscription {
+            store
+                .get_active_states_task_owned_on(&mut *transaction, task_id, owner_user_id)
+                .await
+        } else {
+            store
+                .get_active_task_owned_on(&mut *transaction, task_id, owner_user_id)
+                .await
+        }
+        .map_err(internal)?
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::NOT_FOUND,
+                format!("Task {task_id} not found"),
+            )
+        })?;
         let mut task_json = task_column::<brz_mysql::Json<serde_json::Value>>(&row, "json")
             .map(|json| json.0)
             .unwrap_or(serde_json::Value::Null);
@@ -174,7 +193,10 @@ pub async fn setup_chat_session(
             input.crd.force_override_bot_model,
             input.crd.auto_delete_executor,
         );
-        continuation::mark_pending(&mut task_json, input.crd.updated_at);
+        apply_model_option_labels(&mut task_json, input);
+        if input.create_assistant {
+            continuation::mark_pending(&mut task_json, input.crd.updated_at);
+        }
         let raw_project_id = task_column::<i64>(&row, "project_id").filter(|id| *id > 0);
         let project_id = resumed_project_id(raw_project_id, &task_json);
         let payload = python_json_value(&task_json);
@@ -194,6 +216,7 @@ pub async fn setup_chat_session(
             task_json,
             project_id,
             raw_project_id,
+            task_column::<i64>(&row, "is_active") == Some(2),
         )
         .await;
     }
@@ -211,8 +234,27 @@ pub async fn setup_chat_session(
         ..input.crd
     };
     let task_crd = build_task_crd(&crd_input);
-    let task_json = serde_json::to_value(&task_crd).unwrap_or(serde_json::Value::Null);
-    let rename = Some((task_name(task_id), python_json_value(&task_crd)));
+    let mut task_json = serde_json::to_value(&task_crd).unwrap_or(serde_json::Value::Null);
+    let has_model_options = apply_model_option_labels(&mut task_json, input);
+    let payload = if input.additional_skills.is_empty() && !has_model_options {
+        python_json_value(&task_crd)
+    } else {
+        let labels = &mut task_json["metadata"]["labels"];
+        if !input.additional_skills.is_empty() {
+            let names = input
+                .additional_skills
+                .iter()
+                .filter_map(|reference| reference["name"].as_str())
+                .collect::<Vec<_>>();
+            labels["additionalSkills"] =
+                serde_json::Value::String(python_json_value(&serde_json::json!(names)));
+            labels["requestedSkillRefs"] = serde_json::Value::String(python_json_value(
+                &serde_json::json!(input.additional_skills),
+            ));
+        }
+        python_json_value(&task_json)
+    };
+    let rename = Some((task_name(task_id), payload));
 
     append_subtasks(
         store,
@@ -225,8 +267,30 @@ pub async fn setup_chat_session(
         task_json,
         input.project_id,
         (input.project_id != 0).then_some(input.project_id),
+        false,
     )
     .await
+}
+
+fn apply_model_option_labels(
+    task_json: &mut serde_json::Value,
+    input: &SetupChatSessionInput<'_>,
+) -> bool {
+    let mut changed = false;
+    if let Some(model_type) = input.model_override_type.filter(|value| !value.is_empty()) {
+        task_json["metadata"]["labels"]["forceOverrideBotModelType"] =
+            serde_json::json!(model_type);
+        changed = true;
+    }
+    if let Some(options) = input
+        .model_options
+        .filter(|value| value.as_object().is_some_and(|map| !map.is_empty()))
+    {
+        task_json["metadata"]["labels"]["modelOptions"] =
+            serde_json::json!(python_json_value(options));
+        changed = true;
+    }
+    changed
 }
 
 /// `max(subtasks.message_id)` then `create_assistant_subtask`'s executor
@@ -244,16 +308,30 @@ async fn append_subtasks(
     task_json: serde_json::Value,
     workspace_project_id: i64,
     raw_project_id: Option<i64>,
+    retained_subscription: bool,
 ) -> Result<ChatSessionSetup, FastApiError> {
     // `task_fork_history_resolver.resolve_for_task` (`lifecycle.py:363-370`):
     // `subtask_store.list_by_task_ordered(task_id, owner_user_id)` reads the
     // task's subtasks in `message_id, created_at` order before the next
     // message id is computed. A new task has none.
-    let existing_subtasks = store
-        .list_subtasks_by_task_ordered_on(&mut *transaction, task_id, input.user_id)
-        .await
-        .map_err(internal)?
-        .rows;
+    let history_window = super::subscription_window::resolve_on(
+        &mut *transaction,
+        &task_json,
+        input.user_id,
+        input.history_window,
+        retained_subscription,
+    )
+    .await
+    .map_err(internal)?;
+    let existing_subtasks = load_existing_subtasks(
+        store,
+        &mut *transaction,
+        task_id,
+        input.user_id,
+        history_window,
+    )
+    .await
+    .map_err(internal)?;
     // `resolve_lineage`'s depth-0 read for the created task (qs25): the
     // source's `_lineage_task` reads the current task through the owner guard
     // before it breaks on `fork is None`. It is a distinct business read from
@@ -270,10 +348,14 @@ async fn append_subtasks(
 
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert (qs27/28).
-    let executor = store
-        .resolve_task_executor_on(&mut *transaction, task_id)
-        .await
-        .map_err(internal)?;
+    let executor = if input.create_assistant {
+        store
+            .resolve_task_executor_on(&mut *transaction, task_id)
+            .await
+            .map_err(internal)?
+    } else {
+        Default::default()
+    };
 
     // qs29: `create_new_task`'s `UPDATE tasks SET name, json`, emitted after
     // the executor reads and before the subtask savepoint.
@@ -308,7 +390,8 @@ async fn append_subtasks(
     }
 
     let bot_ids = python_json_value(&serde_json::json!(input.bot_ids));
-    let (user_subtask, assistant_subtask) = subtask_rows(
+    let user_result = input.user_result.map(python_json_value);
+    let (mut user_subtask, assistant_subtask) = subtask_rows(
         input.user_id,
         task_id,
         input.team_id,
@@ -317,18 +400,23 @@ async fn append_subtasks(
         input.completed_at,
         ids,
     );
+    if let Some(result) = user_result.as_deref() {
+        user_subtask.result = result;
+    }
     // `create_assistant_subtask` resolves the executor reference in the same
     // transaction as the insert; `build_execution_request` later reads the
     // assistant subtask's executor fields from the inserted row.
+    let rows = CreateSubtasksRequest {
+        user_subtask,
+        assistant_subtask,
+    };
+    let rows = if input.create_assistant {
+        rows
+    } else {
+        rows.without_assistant()
+    };
     let inserted = store
-        .create_subtasks_with_executor(
-            transaction,
-            &CreateSubtasksRequest {
-                user_subtask,
-                assistant_subtask,
-            },
-            &executor,
-        )
+        .create_subtasks_with_executor(transaction, &rows, &executor)
         .await
         .map_err(internal)?;
 
@@ -340,13 +428,48 @@ async fn append_subtasks(
         workspace_id,
         user_subtask_id: inserted.user_subtask_id,
         assistant_subtask_id: inserted.assistant_subtask_id,
-        assistant_message_id: ids.next_message_id + 1,
+        assistant_message_id: if input.create_assistant {
+            ids.next_message_id + 1
+        } else {
+            0
+        },
+        user_message_id: ids.next_message_id,
         assistant_executor_name: inserted.executor.name,
         assistant_executor_namespace: inserted.executor.namespace,
         assistant_executor_deleted: false,
         assistant_created_at: inserted.assistant_created_at,
         existing_subtasks,
     })
+}
+
+/// Keep subscription preparation bounded without changing ordinary chat reads.
+pub(crate) async fn load_existing_subtasks(
+    store: &dyn TaskStore,
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_id: i64,
+    user_id: i64,
+    history_window: Option<i64>,
+) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+    if let Some(limit) = history_window {
+        store
+            .list_subtasks_history_window_on(
+                sql,
+                task_id,
+                user_id,
+                crate::task_store::SubtaskHistoryWindow {
+                    limit,
+                    before_message_id: None,
+                    summary_checkpoint_only: false,
+                    selection: wegent_task_store::task_store_history::HistorySelection::All,
+                },
+            )
+            .await
+    } else {
+        Ok(store
+            .list_subtasks_by_task_ordered_on(sql, task_id, user_id)
+            .await?
+            .rows)
+    }
 }
 
 /// `setup_chat_session`'s dependency failure: the source propagates the

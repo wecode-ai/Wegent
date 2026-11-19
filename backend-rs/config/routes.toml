@@ -2,6 +2,19 @@
 # are forwarded to the Python backend. Knowledge APIs stay Python-owned;
 # their Rust handlers remain registered without active cutover rules.
 
+[[routes]]
+methods = ["POST"]
+path = "/api/runtime-observations/command"
+[[routes]]
+methods = ["POST"]
+path = "/api/runtime-observations/collector"
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/runtime-observations/command"
+[[routes]]
+methods = ["GET"]
+path = "/api/internal/runtime-observations/accounts"
+
 # Personal Git connections are Rust-owned, including public signature-verified ingress.
 [[routes]]
 methods = ["GET", "POST"]
@@ -121,6 +134,10 @@ path = "/api/v1/workspaces"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/chat-agents"
+
+[[routes]]
+methods = ["DELETE"]
+path = "/api/v1/cloud-projects/:project_id/chat-agents/:agent_id"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/knowledge/documents"
@@ -173,9 +190,16 @@ path = "/api/internal/chat/attachments/:attachment_id/text"
 [[routes]]
 methods = ["GET"]
 path = "/api/devices"
+[[routes]]
+methods = ["GET"]
+path = "/api/devices/runtime-owner"
+
 #[[routes]]
 #methods = ["DELETE"]
 #path = "/api/devices/records/:record_id"
+[[routes]]
+methods = ["DELETE"]
+path = "/api/admin/device-monitor/devices/records/:record_id"
 [[routes]]
 methods = ["GET"]
 path = "/api/users/welcome-config"
@@ -337,6 +361,15 @@ path = "/api/attachments/task/:task_id/all"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/tasks"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assistant-participations"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assistant-participations/:participation_id"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items/:item_id/assistant-participations/backfill"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/loop-items/:item_id/attachments"
@@ -536,6 +569,15 @@ path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/subscription/sse"
+# `GET`/`POST /api/mcp/connectors/sse` — the dynamic connector MCP surface
+# (`mcp::connectors`). Public API ownership stays in Rust; Python keeps only the
+# internal unprefixed alias addressed by `BACKEND_INTERNAL_URL`.
+[[routes]]
+methods = ["GET"]
+path = "/api/mcp/connectors/sse"
+[[routes]]
+methods = ["POST"]
+path = "/api/mcp/connectors/sse"
 # `POST /api/api/mcp/system`: the source's `get_mcp_system_config` advertises
 # the system MCP URL with a doubled `/api` prefix (`BACKEND_INTERNAL_URL` ends
 # in `/api` and `API_PREFIX` prefixes `/api` again), so FastAPI answers the
@@ -602,11 +644,18 @@ path = "/api/auth/wework/refresh"
 # patterns remain in `.traffic-e2e/source-traffic-policy.yaml`.
 
 # `POST /api/connector-runtime/token` — issue a connector-scoped access token
-# (`app/api/endpoints/connector_runtime.py`). The `/tools` and `/call` siblings
-# remain on the Python fallback.
+# (`app/api/endpoints/connector_runtime.py`). `/tools` is also Rust-owned;
+# `/call` remains on the Python fallback.
 [[routes]]
 methods = ["POST"]
 path = "/api/connector-runtime/token"
+
+# `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
+# and probe the upstream (`apps_installed::refresh_endpoint`). The handler and
+# its HTTP contract coverage are Rust-owned; there is no Python copy.
+[[routes]]
+methods = ["POST"]
+path = "/api/connector-apps/:slug/connection/refresh"
 
 # `GET /api/internal/health` — internal chat-storage health probe
 # (`app/api/endpoints/internal/chat_storage.py`).
@@ -1000,6 +1049,27 @@ path = "/api/v1/me/project-coordinator-bindings"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/collaboration-groups" # app/api/endpoints/project_automations.py:39
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-roster"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics/evidence"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-metrics/me"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-dispatches"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-participations/backfill"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-work-items/my-work" # app/api/endpoints/deliveries.py:194
@@ -1061,12 +1131,12 @@ path = "/api/v1/responses/:response_id" # app/api/endpoints/openapi_responses.py
 #[[routes]]
 #methods = ["POST"]
 #path = "/mcp/subscription/sse" # app/mcp_server/server.py:1032
-#[[routes]]
-#methods = ["GET"]
-#path = "/socket.io/" # app/main.py:984
-#[[routes]]
-#methods = ["POST"]
-#path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["GET"]
+path = "/socket.io/" # app/main.py:984
+[[routes]]
+methods = ["POST"]
+path = "/socket.io/" # app/main.py:984
 
 # New APIs implemented directly in Rust.
 [[routes]]
@@ -1116,6 +1186,10 @@ path = "/api/v1/deliveries/:delivery_id"
 methods = ["POST"]
 path = "/api/internal/callback"
 
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/tasks/:task_id/subtasks/:subtask_id/executor-binding"
+
 # Authenticated, platform-specific Wework runtime artifact descriptors.
 [[routes]]
 methods = ["POST"]
@@ -1142,3 +1216,42 @@ path = "/api/v1/loop-items/:item_id/human-requests/:request_id"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/wework-human-requests"
+
+[[routes]]
+methods = ["PUT"]
+path = "/api/im/private-sessions/:session_key/stand-in"
+
+# Account HTTP local plugin execution; independent of Device registration.
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/local-sync"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/local-sync/complete"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/native-auth/exchange"
+
+# First-class independent Issues have no project or space.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/personal-issues"
+[[routes]]
+methods = ["GET", "PATCH", "DELETE"]
+path = "/api/v1/personal-issues/:issue_id"
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/personal-issues/:issue_id/comments"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/project"
+
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/import-local"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/:issue_id/resources/:kind/:resource_id"

@@ -173,11 +173,15 @@ file:/absolute/path/to/copied/ui-extension-demo
 ```
 
 Installation, update, enablement, and removal mutate the managed `wework-core`
-profile. Restart Core DSH after configuration changes. The install flow
+profile. Restart Core DSH after configuration changes. Every install or update first
+requires a native confirmation of the source and execution risk. Cancelling or closing
+the window runs neither package management nor recovery. After approval, the flow
 snapshots the profile, runs the package manager, validates `dsh.bundle.patch`,
 and preflights `dsh --profile wework-core --dump-config`; it restores the
 snapshot on failure. Plugins must not depend on immediate hot activation after
 installation.
+
+The isolated development entry requires the same native source confirmation before creating a child process, linking source, and starting HMR. Cancellation preserves the existing development session; focusing a running session does not install it again.
 
 When copying the Demo:
 

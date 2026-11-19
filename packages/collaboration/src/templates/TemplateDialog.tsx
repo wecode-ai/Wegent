@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { useCallback, useRef, type ReactNode } from 'react'
+import { ArrowLeft, X } from 'lucide-react'
+import { useEscapeKey } from '../markdown/useEscapeKey'
 
 export function TemplateDialog({
   title,
@@ -12,6 +13,7 @@ export function TemplateDialog({
   footer,
   onClose,
   busy = false,
+  embedded = false,
 }: {
   title: string
   description?: string
@@ -20,28 +22,29 @@ export function TemplateDialog({
   footer?: ReactNode
   onClose(): void
   busy?: boolean
+  embedded?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
+  useEscapeKey(
+    () => {
+      if (!busy) onClose()
+    },
+    true,
+    ref
+  )
+  const attachDialog = useCallback((dialog: HTMLDialogElement | null) => {
+    ref.current = dialog
+    if (!dialog) return
     const previous = document.activeElement
-    const dialog = ref.current!
     dialog.showModal()
     return () => {
       dialog.close()
+      ref.current = null
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
     }
   }, [])
-  return (
-    <dialog
-      ref={ref}
-      className="collaboration-template-dialog"
-      aria-label={title}
-      data-testid="collaboration-template-dialog"
-      onCancel={event => {
-        event.preventDefault()
-        if (!busy) onClose()
-      }}
-    >
+  const content = (
+    <>
       <header>
         <div>
           <h2>{title}</h2>
@@ -55,11 +58,34 @@ export function TemplateDialog({
           disabled={busy}
           onClick={onClose}
         >
-          <X aria-hidden="true" />
+          {embedded ? <ArrowLeft aria-hidden="true" /> : <X aria-hidden="true" />}
         </button>
       </header>
       <div className="collaboration-template-dialog-body">{children}</div>
       {footer && <footer>{footer}</footer>}
+    </>
+  )
+  return embedded ? (
+    <section
+      aria-label={title}
+      className="collaboration-template-detail"
+      data-testid="template-detail-inline"
+    >
+      {content}
+    </section>
+  ) : (
+    <dialog
+      ref={attachDialog}
+      className="collaboration-template-dialog"
+      aria-label={title}
+      data-testid="collaboration-template-dialog"
+      onCancel={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!busy) onClose()
+      }}
+    >
+      {content}
     </dialog>
   )
 }

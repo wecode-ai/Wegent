@@ -1,14 +1,6 @@
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
-import {
-  Fragment,
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-} from 'react'
+import { MarkdownLinkScope } from './markdownLinkScope'
+import { Fragment, createContext, memo, useContext, useMemo } from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
 import { Streamdown, defaultRemarkPlugins, type ExtraProps, type StreamdownProps } from 'streamdown'
@@ -21,7 +13,6 @@ import 'katex/dist/katex.min.css'
 import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
 import {
   classifyMarkdownLink,
-  isHtmlFilePath,
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -92,12 +83,13 @@ export interface AssistantMarkdownProps {
   preserveLineBreaks?: boolean
   variant?: 'default' | 'document' | 'process' | 'user'
   sourceLineAnchors?: boolean
-  renderLink?: (href: string, text: string) => ReactNode
+  renderLink?: (href: string, text: string, children?: ReactNode) => ReactNode
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
 }
 
 const MarkdownCustomLinkContext = createContext<AssistantMarkdownProps['renderLink']>(undefined)
+const MarkdownFileOpenContext = createContext<AssistantMarkdownProps['onOpenFile']>(undefined)
 
 const MARKDOWN_HEADING_CLASSES = {
   default: {
@@ -150,7 +142,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   const renderVisualization = renderVisualizationOverride ?? services.renderVisualization
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
   const streamdownMode =
-    variant === 'default' || isStreaming ? ('streaming' as const) : ('static' as const)
+    variant === 'default' || variant === 'process' || isStreaming
+      ? ('streaming' as const)
+      : ('static' as const)
   // Resolve opaque content markers before Streamdown splits paragraphs into
   // independent blocks; a marker may span more than one Markdown paragraph.
   const displayContent = useMemo(
@@ -166,15 +160,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       ),
     [bufferedContent, variant]
   )
+  // Only unfinished annotation syntax depends on the stream lifecycle. Plain text keeps
+  // the same plugin identities so completed blocks retain their parsed trees.
+  const annotationsStreaming =
+    isStreaming && /:(?:codex-file-citation|codex-followup)[[{][^\n}]*$/.test(displayContent)
   const remarkPlugins = useMemo<StreamdownProps['remarkPlugins']>(() => {
     const plugins: NonNullable<StreamdownProps['remarkPlugins']> = [
       ...Object.values(defaultRemarkPlugins),
       remarkMathDelimiters,
     ]
-    if (variant !== 'user') plugins.push([remarkAssistantAnnotations, { isStreaming }])
+    if (variant !== 'user')
+      plugins.push([remarkAssistantAnnotations, { isStreaming: annotationsStreaming }])
     if (preserveLineBreaks) plugins.push(remarkBreaks)
     return plugins
-  }, [variant, isStreaming, preserveLineBreaks])
+  }, [variant, annotationsStreaming, preserveLineBreaks])
   const windowMarkdown = Boolean(services.windowMarkdown) && variant === 'default'
   const contentParts = useMemo(() => {
     const parts =
@@ -195,21 +194,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       }))
     })
   }, [displayContent, windowMarkdown, variant, renderVisualization])
-  const openFileRef = useRef(onOpenFile)
-
-  useEffect(() => {
-    openFileRef.current = onOpenFile
-  }, [onOpenFile])
-
-  const openFile = useCallback((path: string, options?: MarkdownFileOpenOptions) => {
-    if (options) {
-      openFileRef.current?.(path, options)
-      return
-    }
-    openFileRef.current?.(path)
-  }, [])
   const headingClasses = MARKDOWN_HEADING_CLASSES[variant === 'user' ? 'default' : variant]
-  const canOpenFile = Boolean(onOpenFile)
   const components = useMemo(
     () => ({
       h1: ({ children, node }: { children?: ReactNode } & ExtraProps) => (
@@ -367,17 +352,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           )
         }
         if (annotation?.kind === 'file') {
-          return (
-            <AssistantMarkdownLink
-              citation={annotation}
-              onOpenFile={canOpenFile ? openFile : undefined}
-            >
-              {children}
-            </AssistantMarkdownLink>
-          )
+          return <AssistantMarkdownLink citation={annotation}>{children}</AssistantMarkdownLink>
         }
         const text = reactNodeToText(children)
-        const customLink = href ? renderLink?.(href, text) : undefined
+        const customLink = href ? renderLink?.(href, text, children) : undefined
         if (customLink !== undefined) return customLink
         const isComposerLink =
           href &&
@@ -388,11 +366,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         if (isComposerLink) {
           return <ComposerLinkChip payload={{ url: href, label: text }} />
         }
-        return (
-          <AssistantMarkdownLink href={href} onOpenFile={canOpenFile ? openFile : undefined}>
-            {children}
-          </AssistantMarkdownLink>
-        )
+        return <AssistantMarkdownLink href={href}>{children}</AssistantMarkdownLink>
       },
       img: ({ src, alt, node }: { src?: string | Blob; alt?: string } & ExtraProps) => (
         <AssistantMarkdownImage
@@ -402,29 +376,56 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         />
       ),
     }),
-    [headingClasses, openFile, variant, canOpenFile, sourceLineAnchors]
+    [headingClasses, variant, sourceLineAnchors]
   )
 
   return (
     <MarkdownCustomLinkContext.Provider value={renderLink}>
-      <div
-        className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
-      >
-        {contentParts.map((part, index) =>
-          part.kind === 'visualization' ? (
-            <Fragment key={`${part.file}-${index}`}>{renderVisualization?.(part)}</Fragment>
-          ) : part.windowed ? (
-            <WindowedMarkdownChunk
-              key={`markdown-${index}`}
-              chunkIndex={index}
-              content={part.content}
-              eager={isStreaming && (index === 0 || index === contentParts.length - 1)}
-            >
-              <MarkdownStreamingContext.Provider
-                value={isStreaming && index === contentParts.length - 1}
+      <MarkdownFileOpenContext.Provider value={onOpenFile}>
+        <div
+          className={`${variant === 'user' ? 'user-markdown' : variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
+        >
+          {contentParts.map((part, index) =>
+            part.kind === 'visualization' ? (
+              <Fragment key={`${part.file}-${index}`}>{renderVisualization?.(part)}</Fragment>
+            ) : part.windowed ? (
+              <WindowedMarkdownChunk
+                key={`markdown-${index}`}
+                chunkIndex={index}
+                content={part.content}
+                eager={isStreaming && (index === 0 || index === contentParts.length - 1)}
               >
+                <MarkdownStreamingContext.Provider
+                  value={isStreaming && index === contentParts.length - 1}
+                >
+                  <Streamdown
+                    mode={streamdownMode}
+                    parseIncompleteMarkdown={variant === 'default' || isStreaming}
+                    plugins={markdownPlugins}
+                    parseMarkdownIntoBlocksFn={
+                      part.wholeSource ? completeMarkdownSource : undefined
+                    }
+                    isAnimating={false}
+                    controls={false}
+                    linkSafety={{ enabled: false }}
+                    lineNumbers={false}
+                    urlTransform={transformMarkdownUrl}
+                    components={components}
+                    rehypePlugins={tableMarkdownRehypePlugins}
+                    remarkPlugins={remarkPlugins}
+                  >
+                    {prepareAssistantMarkdownContent(
+                      part.content,
+                      isStreaming && index === contentParts.length - 1
+                    )}
+                  </Streamdown>
+                </MarkdownStreamingContext.Provider>
+              </WindowedMarkdownChunk>
+            ) : (
+              <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
                 <Streamdown
                   mode={streamdownMode}
+                  parseIncompleteMarkdown={variant === 'default' || isStreaming}
                   plugins={markdownPlugins}
                   parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
                   isAnimating={false}
@@ -436,36 +437,15 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                   rehypePlugins={tableMarkdownRehypePlugins}
                   remarkPlugins={remarkPlugins}
                 >
-                  {prepareAssistantMarkdownContent(
-                    part.content,
-                    isStreaming && index === contentParts.length - 1
-                  )}
+                  {variant === 'user'
+                    ? part.content
+                    : prepareAssistantMarkdownContent(part.content, isStreaming)}
                 </Streamdown>
               </MarkdownStreamingContext.Provider>
-            </WindowedMarkdownChunk>
-          ) : (
-            <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
-              <Streamdown
-                mode={streamdownMode}
-                plugins={markdownPlugins}
-                parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
-                isAnimating={false}
-                controls={false}
-                linkSafety={{ enabled: false }}
-                lineNumbers={false}
-                urlTransform={transformMarkdownUrl}
-                components={components}
-                rehypePlugins={tableMarkdownRehypePlugins}
-                remarkPlugins={remarkPlugins}
-              >
-                {variant === 'user'
-                  ? part.content
-                  : prepareAssistantMarkdownContent(part.content, isStreaming)}
-              </Streamdown>
-            </MarkdownStreamingContext.Provider>
-          )
-        )}
-      </div>
+            )
+          )}
+        </div>
+      </MarkdownFileOpenContext.Provider>
     </MarkdownCustomLinkContext.Provider>
   )
 }, areAssistantMarkdownPropsEqual)
@@ -656,15 +636,17 @@ function getMarkdownFileIcon(path: string): ReactNode {
 function AssistantMarkdownLink({
   href,
   citation,
-  onOpenFile,
   children,
 }: {
   href?: string
   citation?: AssistantFileCitation
-  onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   children?: ReactNode
 }) {
-  const { openExternalUrl, navigateTo, openHtmlFile, translate } = useMarkdownServices()
+  const onOpenFile = useContext(MarkdownFileOpenContext)
+  const { openExternalUrl, navigateTo, translate } = useMarkdownServices()
+  const linkContent = (
+    <MarkdownLinkScope.Provider value={true}>{children}</MarkdownLinkScope.Provider>
+  )
   const target: MarkdownLinkTarget = citation ?? classifyMarkdownLink(href)
   const icon =
     target.kind === 'file' ? (
@@ -687,7 +669,6 @@ function AssistantMarkdownLink({
 
   if (target.kind === 'file') {
     const filePath = target.path
-    const canOpenWithoutWorkspace = isHtmlFilePath(filePath) && Boolean(openHtmlFile)
     const artifact = citation?.artifact
     const lineLabel =
       artifact?.kind === 'document'
@@ -719,11 +700,8 @@ function AssistantMarkdownLink({
           data-testid="assistant-markdown-link"
           data-citation-purpose={citation?.purpose}
           data-search-excluded={citation ? true : undefined}
-          disabled={!onOpenFile && !canOpenWithoutWorkspace}
+          disabled={!onOpenFile}
           onClick={() => {
-            if (isHtmlFilePath(filePath)) {
-              if (openHtmlFile?.(filePath)) return
-            }
             if (openOptions) {
               onOpenFile?.(filePath, openOptions)
               return
@@ -737,7 +715,7 @@ function AssistantMarkdownLink({
             className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
             data-testid="assistant-markdown-link-label"
           >
-            {children}
+            {linkContent}
           </span>
           {lineLabel ? (
             <span className="shrink-0" data-testid="assistant-markdown-link-line">
@@ -759,7 +737,7 @@ function AssistantMarkdownLink({
         onClick={() => navigateTo?.(target.path)}
       >
         {icon}
-        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{linkContent}</span>
       </button>
     )
   }
@@ -787,7 +765,7 @@ function AssistantMarkdownLink({
         className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
         data-testid="assistant-markdown-link-label"
       >
-        {children}
+        {linkContent}
       </span>
     </a>
   )

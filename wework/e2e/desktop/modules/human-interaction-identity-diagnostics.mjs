@@ -35,6 +35,38 @@ export function interactionTranscriptIdentities(transcript, task) {
   }
 }
 
+export async function readInteractionInboxIdentities(control, page) {
+  const tab = '[data-testid="workspace-tab-select-pending-interactions"]'
+  const countAttributes = [
+    'data-pending-question-count',
+    'data-project-pending-count',
+    'data-project-count-state',
+  ]
+  const [tabSnapshot] = JSON.parse(
+    await control.command('getElementMetrics', tab, {
+      value: JSON.stringify({ attributeNames: countAttributes }),
+    })
+  )
+  const counts = tabSnapshot?.attributes ?? {}
+  const rows = []
+  for (const source of ['task', 'project', 'stand_in']) {
+    const group = `${page} [data-testid="interaction-source-group-${source}"]`
+    const snapshot = JSON.parse(
+      await control.command('getElementMetrics', `${group} [data-testid="interaction-list-item"]`, {
+        value: JSON.stringify({ attributeNames: ['data-interaction-id', 'data-project-issue'] }),
+      })
+    )
+    for (const { attributes } of snapshot) {
+      rows.push({
+        source,
+        id: attributes['data-interaction-id'],
+        projectItem: attributes['data-project-issue'],
+      })
+    }
+  }
+  return { counts, rows }
+}
+
 export async function writeIssueInteractionIdentities({
   control,
   canonical,
@@ -42,31 +74,7 @@ export async function writeIssueInteractionIdentities({
   resultDir,
   timeoutMs,
 }) {
-  const tab = '[data-testid="workspace-tab-select-pending-interactions"]'
-  const counts = {}
-  for (const key of [
-    'data-pending-question-count',
-    'data-project-pending-count',
-    'data-project-count-state',
-  ])
-    counts[key] = await control.command('getAttribute', tab, { value: key })
-  const rows = []
-  for (const source of ['task', 'project', 'stand_in']) {
-    const group = `${page} [data-testid="interaction-source-group-${source}"]`
-    const count = Number(
-      await control.command('getElementCount', `${group} [data-testid="interaction-list-item"]`)
-    )
-    for (let index = 1; index <= count; index++) {
-      const selector = `${group} > div:nth-of-type(${index}) > [data-testid="interaction-list-item"]`
-      rows.push({
-        source,
-        id: await control.command('getAttribute', selector, { value: 'data-interaction-id' }),
-        projectItem: await control.command('getAttribute', selector, {
-          value: 'data-project-issue',
-        }),
-      })
-    }
-  }
+  const { counts, rows } = await readInteractionInboxIdentities(control, page)
   const transcript = await requestExecutor(
     control,
     'runtime.tasks.transcript',

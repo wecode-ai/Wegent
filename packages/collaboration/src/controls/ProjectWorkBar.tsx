@@ -1,3 +1,4 @@
+import { useFocusRequest, useWindowEvent } from '../dom-events'
 import { useCollaborationPortalTheme } from '../theme'
 import {
   Check,
@@ -10,15 +11,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ProjectFolderIcon } from './ProjectFolderIcon'
 import { isCloudDevice } from '@wegent/chat-core/device-selection'
@@ -43,6 +36,7 @@ import {
   isLocalProjectWorkspaceDevice,
 } from './project-work-bar-utils'
 import { useOutsideClick } from '../composer/useOutsideClick'
+import { useEscapeKey } from '../markdown/useEscapeKey'
 
 const PROJECT_MENU_MAX_HEIGHT = 480
 const PROJECT_MENU_LIST_MAX_HEIGHT = 230
@@ -96,6 +90,10 @@ export interface ProjectWorkBarProps {
   buttonClassName?: string
   menuClassName?: string
   emptyLabel?: string
+  selectorLabel?: string
+  menuLabels?: Partial<
+    Record<'search' | 'empty' | 'emptyHint' | 'noResults' | 'clear' | 'addLocal', string>
+  >
   showProjectSelector?: boolean
   // When false, the desktop trigger shows a static folder icon instead of the
   // hover-to-clear button (used when the current project is a default the user
@@ -129,6 +127,8 @@ export function ProjectWorkBar({
   buttonClassName,
   menuClassName,
   emptyLabel,
+  selectorLabel,
+  menuLabels,
   showProjectSelector = true,
   showClearButton = true,
   projectMenuOpenSignal,
@@ -142,8 +142,10 @@ export function ProjectWorkBar({
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
-  const handledProjectMenuOpenSignalRef = useRef<number | undefined>(undefined)
-  const handledExternalMenuOpenSignalRef = useRef<number | undefined>(undefined)
+  const [handledOpenSignals, setHandledOpenSignals] = useState<{
+    project?: number
+    external?: number
+  }>({})
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -165,6 +167,15 @@ export function ProjectWorkBar({
     setProjectQuery('')
     setExternalMenuAnchorElement(null)
   }, [])
+  useEscapeKey(
+    () => {
+      const trigger = externalMenuAnchorElement ?? triggerButtonRef.current
+      closeMenu()
+      trigger?.focus()
+    },
+    open,
+    menuRef
+  )
 
   const availableProjectChoices = useMemo(
     () => resolveRuntimeTaskProjects(projects, runtimeWork),
@@ -297,27 +308,9 @@ export function ProjectWorkBar({
     updateMenuLayout()
   }, [updateMenuLayout])
 
-  useEffect(() => {
-    if (!open) return
-
-    const handleResize = () => {
-      updateMenuLayout()
-    }
-
-    window.addEventListener('resize', handleResize)
-    window.addEventListener('scroll', handleResize, true)
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      window.removeEventListener('scroll', handleResize, true)
-    }
-  }, [open, updateMenuLayout])
-
-  useEffect(() => {
-    if (!open) return
-    if (isMobile) return
-
-    searchInputRef.current?.focus()
-  }, [isMobile, open])
+  useWindowEvent('resize', updateMenuLayout, { enabled: open })
+  useWindowEvent('scroll', updateMenuLayout, { enabled: open, capture: true })
+  useFocusRequest(searchInputRef, undefined, { enabled: open && !isMobile })
 
   const handleSelectDeviceWorkspace = useCallback(
     (projectId: number, workspace: RuntimeDeviceWorkspace) => {
@@ -361,6 +354,7 @@ export function ProjectWorkBar({
   }, [getDeviceForProject, normalizedProjectQuery, runtimeProjectWorkById, sortedProjects])
   const projectWorkTriggerLabel =
     emptyLabel ??
+    selectorLabel ??
     (isMobile
       ? t('workbench.enter_project_work', '进入项目工作')
       : t('workbench.project_select_placeholder', '请选择项目'))
@@ -369,26 +363,26 @@ export function ProjectWorkBar({
     currentProject &&
     pendingProjectWorkspaceProjectId === currentProject.id &&
     !selectedDeviceWorkspace
-  const projectWorkTriggerAriaLabel = currentProject?.name ?? projectWorkTriggerLabel
+  const selectedProjectLabel = currentProject
+    ? [selectorLabel, currentProject.name].filter(Boolean).join(': ')
+    : projectWorkTriggerLabel
+  const projectWorkTriggerAriaLabel = selectedProjectLabel
 
   useOutsideClick(containerRef, open, closeMenu, outsideMenuRefs)
-  useEffect(() => {
-    if (!projectMenuOpenSignal) return
-    if (handledProjectMenuOpenSignalRef.current === projectMenuOpenSignal) return
-
-    handledProjectMenuOpenSignalRef.current = projectMenuOpenSignal
-    setExternalMenuAnchorElement(isMobile ? null : projectMenuAnchorElement)
+  const projectOpenRequested =
+    Boolean(projectMenuOpenSignal) && handledOpenSignals.project !== projectMenuOpenSignal
+  const externalOpenRequested =
+    Boolean(externalMenuOpenSignal) && handledOpenSignals.external !== externalMenuOpenSignal
+  if (projectOpenRequested || externalOpenRequested) {
+    setHandledOpenSignals({
+      project: projectOpenRequested ? projectMenuOpenSignal : handledOpenSignals.project,
+      external: externalOpenRequested ? externalMenuOpenSignal : handledOpenSignals.external,
+    })
+    setExternalMenuAnchorElement(
+      externalOpenRequested || isMobile ? null : projectMenuAnchorElement
+    )
     setOpen(true)
-  }, [isMobile, projectMenuAnchorElement, projectMenuOpenSignal])
-
-  useEffect(() => {
-    if (!externalMenuOpenSignal) return
-    if (handledExternalMenuOpenSignalRef.current === externalMenuOpenSignal) return
-
-    handledExternalMenuOpenSignalRef.current = externalMenuOpenSignal
-    setExternalMenuAnchorElement(null)
-    setOpen(true)
-  }, [externalMenuOpenSignal])
+  }
 
   const handleSelectProject = (projectId: number) => {
     const option = projectWorkspaceOptionByProjectId.get(projectId)
@@ -453,7 +447,7 @@ export function ProjectWorkBar({
       <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
-          <p className="mt-1 truncate text-xs text-text-muted">{subtitle}</p>
+          <p className="mt-1 truncate text-xs text-text-secondary">{subtitle}</p>
         </div>
         <button
           type="button"
@@ -499,12 +493,15 @@ export function ProjectWorkBar({
   return (
     <div
       data-testid="project-work-bar"
-      className={cn('flex min-h-[56px] w-full items-center gap-2 px-6', className)}
+      className={cn(
+        'project-work-bar flex min-h-[56px] w-full min-w-0 flex-wrap items-center gap-2 px-6',
+        className
+      )}
     >
       {showProjectSelector ? (
         <div
           ref={containerRef}
-          className={cn('relative min-w-0', !isMobile && 'max-w-[18rem] shrink')}
+          className={cn('relative min-w-0 max-w-full', !isMobile && 'max-w-[18rem] shrink')}
         >
           {open && isMobile && renderMobileBackdrop(closeMenu)}
           {open && (
@@ -516,6 +513,7 @@ export function ProjectWorkBar({
                 data-mobile={isMobile ? 'true' : undefined}
                 className={cn(
                   portalTheme.className,
+                  'max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11',
                   isMobile
                     ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
                     : cn(
@@ -538,29 +536,28 @@ export function ProjectWorkBar({
               >
                 {isMobile &&
                   renderMobileSheetHeader(
-                    t('workbench.project_sheet_title', '选择项目'),
-                    currentProject?.name ??
-                      emptyLabel ??
-                      t('workbench.enter_project_work', '进入项目工作'),
+                    selectorLabel ?? t('workbench.project_sheet_title', '选择项目'),
+                    selectedProjectLabel,
                     closeMenu
                   )}
                 <div className={cn('flex min-h-0 flex-1 flex-col', isMobile && 'px-5 pb-5')}>
                   <label
                     className={cn(
-                      'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+                      'mb-1.5 flex h-11 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary md:h-9',
                       isMobile && 'h-11 rounded-2xl text-base'
                     )}
                   >
-                    <Search className="h-4 w-4 shrink-0" />
+                    <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span className="sr-only">{t('workbench.search_projects', '搜索项目')}</span>
                     <input
                       ref={searchInputRef}
                       data-testid="project-search-input"
                       type="search"
                       value={projectQuery}
                       onChange={event => setProjectQuery(event.target.value)}
-                      placeholder={t('workbench.search_projects', '搜索项目')}
+                      placeholder={menuLabels?.search ?? t('workbench.search_projects', '搜索项目')}
                       className={cn(
-                        'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                        'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-secondary',
                         isMobile && 'text-base leading-5'
                       )}
                     />
@@ -571,18 +568,20 @@ export function ProjectWorkBar({
                       className="px-4 py-3 text-sm leading-[18px]"
                     >
                       <div className="text-text-secondary">
-                        {t('workbench.no_projects', '暂无项目')}
+                        {menuLabels?.empty ?? t('workbench.no_projects', '暂无项目')}
                       </div>
-                      <div className="mt-1 text-xs leading-4 text-text-muted">
-                        {t('workbench.no_projects_action', '请添加本地项目或远程项目后重试。')}
+                      <div className="mt-1 text-xs leading-4 text-text-secondary">
+                        {menuLabels?.emptyHint ??
+                          t('workbench.no_projects_action', '请添加本地项目或远程项目后重试。')}
                       </div>
                     </div>
                   ) : filteredProjects.length === 0 ? (
                     <div
                       data-testid="project-search-empty"
-                      className="px-4 py-3 text-sm leading-[18px] text-text-muted"
+                      className="px-4 py-3 text-sm leading-[18px] text-text-secondary"
                     >
-                      {t('workbench.project_search_no_results', '没有匹配的项目')}
+                      {menuLabels?.noResults ??
+                        t('workbench.project_search_no_results', '没有匹配的项目')}
                     </div>
                   ) : (
                     <div
@@ -663,7 +662,7 @@ export function ProjectWorkBar({
                                   <span className="truncate text-sm font-normal leading-[18px] text-text-primary">
                                     {project.name}
                                   </span>
-                                  <span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-text-muted">
+                                  <span className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-text-secondary">
                                     <span
                                       data-testid={`project-option-detail-${project.id}`}
                                       className="min-w-0 flex-1 truncate"
@@ -710,7 +709,7 @@ export function ProjectWorkBar({
                                   closeMenu()
                                 }}
                                 className={cn(
-                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted',
+                                  'ml-7 flex h-9 max-md:min-h-11 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted',
                                   isMobile && 'h-11'
                                 )}
                               >
@@ -746,7 +745,7 @@ export function ProjectWorkBar({
                                       handleSelectDeviceWorkspace(project.id, workspace)
                                     }
                                     className={cn(
-                                      'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                                      'ml-7 flex h-9 max-md:min-h-11 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                                       selectable
                                         ? 'text-text-secondary hover:bg-muted'
                                         : 'cursor-not-allowed text-text-muted opacity-60',
@@ -779,7 +778,7 @@ export function ProjectWorkBar({
                                           t('workbench.environment_device_unknown', '未知设备')}
                                     </span>
                                     {!localWorkspace && (
-                                      <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
+                                      <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-secondary">
                                         {workspace.workspacePath}
                                       </span>
                                     )}
@@ -802,11 +801,12 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid="add-local-project-option"
                           onClick={() => handleCreateProject('existing')}
-                          className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          className="flex h-8 max-md:min-h-11 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                         >
                           <FolderPlus className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
-                            {t('workbench.add_local_project', '添加本地项目')}
+                            {menuLabels?.addLocal ??
+                              t('workbench.add_local_project', '添加本地项目')}
                           </span>
                         </button>
                       </div>
@@ -818,11 +818,11 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid="no-project-option"
                           onClick={handleClearProject}
-                          className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          className="flex h-8 max-md:min-h-11 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                         >
                           <FolderX className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
-                            {t('workbench.no_project', '不使用项目')}
+                            {menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
                           </span>
                         </button>
                       </div>
@@ -839,7 +839,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                'flex h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]',
                 open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
                 buttonClassName
               )}
@@ -849,26 +849,26 @@ export function ProjectWorkBar({
               {currentProject ? (
                 <>
                   <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
-                  <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+                  <span className="max-w-[12rem] truncate">{selectedProjectLabel}</span>
                 </>
               ) : (
                 <>
                   <FolderPlus className="h-5 w-5" />
-                  <span className="shrink-0">{projectWorkTriggerLabel}</span>
+                  <span className="min-w-0 truncate">{projectWorkTriggerLabel}</span>
                 </>
               )}
               <ChevronDown className="h-4 w-4" />
             </button>
           ) : currentProject ? (
-            <div className="flex h-8 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary">
+            <div className="flex h-11 w-full min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary md:h-8">
               {showClearButton ? (
                 <button
                   type="button"
                   data-testid="clear-project-button"
                   onClick={handleClearProject}
-                  title={t('workbench.no_project', '不使用项目')}
-                  aria-label={t('workbench.no_project', '不使用项目')}
-                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
+                  title={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
+                  aria-label={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
+                  className="group flex h-8 max-md:min-h-11 w-8 max-md:min-w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
                 >
                   <ProjectFolderIcon
                     project={currentProject}
@@ -877,7 +877,7 @@ export function ProjectWorkBar({
                   <X className="hidden h-4 w-4 group-hover:block" />
                 </button>
               ) : (
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center md:h-8 md:w-8">
                   <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
                 </span>
               )}
@@ -888,14 +888,14 @@ export function ProjectWorkBar({
                 onClick={handleToggleMenu}
                 title={t('workbench.change_project', '更改项目')}
                 className={cn(
-                  'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                  'flex h-11 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8',
                   open && 'bg-background/70 text-text-primary',
                   buttonClassName
                 )}
                 aria-expanded={open}
                 aria-label={projectWorkTriggerAriaLabel}
               >
-                <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+                <span className="max-w-[12rem] truncate">{selectedProjectLabel}</span>
                 {pendingWorkspaceSelection ? (
                   <>
                     <span className="text-text-muted">·</span>
@@ -913,7 +913,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-8 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                'flex h-11 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8',
                 open && 'bg-background/70 text-text-primary',
                 buttonClassName
               )}
@@ -921,7 +921,7 @@ export function ProjectWorkBar({
               aria-label={projectWorkTriggerAriaLabel}
             >
               <FolderPlus className="h-4 w-4" />
-              <span className="shrink-0">{projectWorkTriggerLabel}</span>
+              <span className="min-w-0 truncate">{projectWorkTriggerLabel}</span>
             </button>
           )}
         </div>

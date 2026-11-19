@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { TodoDetailItem, TodoViewState } from './TodoDetailPanel'
+import type { TodoDetailItem, TodoViewState } from './todoViewTypes'
 import { todoStateColors } from './todoStateColors'
 import {
   countActiveTodoFilters,

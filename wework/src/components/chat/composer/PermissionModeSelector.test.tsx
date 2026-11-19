@@ -3,8 +3,35 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { PermissionModeSelector } from './PermissionModeSelector'
+import { PermissionModeSelector as SharedPermissionModeSelector } from '@wegent/collaboration/controls'
+import { createInstance } from 'i18next'
+import enCommon from '@/i18n/locales/en/common.json'
 
 describe('PermissionModeSelector', () => {
+  test('uses English host resources for labels and the full-access confirmation', async () => {
+    const i18n = createInstance()
+    await i18n.init({
+      lng: 'en',
+      ns: 'common',
+      defaultNS: 'common',
+      resources: { en: { common: enCommon } },
+    })
+    const onChange = vi.fn()
+    render(
+      <SharedPermissionModeSelector
+        value="workspace-write"
+        onChange={onChange}
+        translate={(key, fallback) => i18n.t(key, { defaultValue: fallback })}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Permission mode: Workspace' }))
+    expect(screen.getByTestId('permission-mode-read-only')).toHaveTextContent('Read only')
+    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
+    expect(screen.getByRole('dialog', { name: 'Turn on Full access?' })).toBeInTheDocument()
+    expect(screen.getByTestId('full-access-confirm-cancel')).toHaveTextContent('Cancel')
+    fireEvent.click(screen.getByTestId('full-access-confirm-cancel'))
+    expect(onChange).not.toHaveBeenCalled()
+  })
   afterEach(() => {
     vi.useRealTimers()
   })
@@ -43,6 +70,55 @@ describe('PermissionModeSelector', () => {
 
     expect(onChange).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  test('shows all three choices in the first Full access confirmation', () => {
+    const onChange = vi.fn()
+    const onCommandApprovalChange = vi.fn()
+    render(
+      <PermissionModeSelector
+        value="workspace-write"
+        onChange={onChange}
+        onCommandApprovalChange={onCommandApprovalChange}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
+
+    const manual = screen.getByTestId('command-approval-confirm-option-manual')
+    const ai = screen.getByTestId('command-approval-confirm-option-ai')
+    const automatic = screen.getByTestId('command-approval-confirm-option-automatic')
+    expect(manual).toBeChecked()
+    expect(ai).toBeVisible()
+    expect(automatic).toBeVisible()
+
+    fireEvent.click(automatic)
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+    expect(onChange).toHaveBeenCalledWith('full-access', 'automatic')
+    expect(onCommandApprovalChange).not.toHaveBeenCalled()
+  })
+
+  test('allows changing the approval choice inside the automatic execution confirmation', () => {
+    const onCommandApprovalChange = vi.fn()
+    render(
+      <PermissionModeSelector
+        value="full-access"
+        commandApproval="manual"
+        onChange={vi.fn()}
+        onCommandApprovalChange={onCommandApprovalChange}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    fireEvent.click(screen.getByTestId('command-approval-automatic'))
+
+    expect(screen.getByTestId('command-approval-confirm-option-automatic')).toBeChecked()
+    fireEvent.click(screen.getByTestId('command-approval-confirm-option-ai'))
+    expect(onCommandApprovalChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+    expect(onCommandApprovalChange).toHaveBeenCalledWith('ai')
   })
 
   test('traps keyboard focus and restores it to the permission trigger', async () => {

@@ -9,6 +9,21 @@ where
     T: LocalBackendTransport,
     R: TaskRunner,
 {
+    pub(super) fn plugin_auth_changed_handler(&self) -> EventHandler {
+        let connected = self.connection_status.clone();
+        Arc::new(move |payload| {
+            let connected = connected.clone();
+            Box::pin(async move {
+                if connected.load(Ordering::Acquire) {
+                    if let Some(id) = payload["installed_plugin_id"].as_u64().filter(|id| *id > 0) {
+                        crate::plugin_account_auth::broker::request_reconcile(Some(id));
+                    }
+                }
+                None
+            })
+        })
+    }
+
     pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
         let connection_status = Arc::clone(&self.connection_status);
         let connection_epoch = Arc::clone(&self.connection_epoch);
@@ -217,14 +232,25 @@ where
 
     pub(super) fn runtime_rpc_handler(&self) -> EventHandler {
         let runtime_work_handler = self.runtime_work_handler.clone();
+        let config = self.client.config.clone();
+        let remote_task_access = self.client.remote_task_access.clone();
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
+            let config = config.clone();
+            let remote_task_access = remote_task_access.clone();
             Box::pin(async move {
                 let method = payload
                     .get("method")
                     .and_then(Value::as_str)
                     .unwrap_or("<missing>")
                     .to_owned();
+                if config.device_type == "app" {
+                    // Scoped grants are issued by the Backend after validating the caller.
+                    let access_scope = payload.get("appTaskAccessScope").and_then(Value::as_str);
+                    if let Err(error) = remote_task_access.authorize(&method, access_scope) {
+                        return Some(runtime_error_response(error));
+                    }
+                }
                 let request_id = payload
                     .get("request_id")
                     .and_then(Value::as_str)
@@ -249,11 +275,13 @@ where
                         "Runtime work handler is not available",
                     ))
                 };
+                // Successful RPC methods may return an accepted/status projection.
                 let logical_success = response
                     .get("success")
                     .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                    .unwrap_or(true);
                 let logical_error = response.get("error").cloned();
+                let logical_error_code = response.get("code").cloned();
                 let response = encode_runtime_rpc_response(&method, response);
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
@@ -267,6 +295,14 @@ where
                                 .and_then(Value::as_bool)
                                 .unwrap_or(logical_success)
                                 .to_string(),
+                        ),
+                        (
+                            "error_code",
+                            logical_error_code
+                                .as_ref()
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
                         ),
                         (
                             "error",

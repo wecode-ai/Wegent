@@ -410,6 +410,7 @@ export function resolveStandardCloudBoardDrop<
 export interface StandardCloudBoardControllerOptions<
   T extends StandardCloudBoardItem,
 > extends ProjectBoardStateOptions {
+  baseBoardStatusGrouping?: boolean;
   view?: SavedBoardView | null;
   currentUserId?: import("../issueParticipation").IssueParticipationViewer;
   tagFilter?: readonly string[];
@@ -540,7 +541,7 @@ export async function executeStandardCloudBoardMutation<
   return updated;
 }
 
-function resolveStandardCloudBoardGroupMutation<
+export function resolveStandardCloudBoardGroupMutation<
   T extends StandardCloudBoardItem,
 >({
   column,
@@ -747,6 +748,7 @@ export function resolveStandardCloudBoardMutation<
 export function useStandardCloudBoardController<
   T extends StandardCloudBoardItem,
 >({
+  baseBoardStatusGrouping = false,
   createColumns,
   currentParentId: controlledCurrentParentId,
   extensions,
@@ -761,7 +763,11 @@ export function useStandardCloudBoardController<
   tagFilter,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
-  const boardState = useProjectBoardState(stateOptions);
+  const boardState = useProjectBoardState(
+    baseBoardStatusGrouping
+      ? { ...stateOptions, fixedGroupBy: "status" }
+      : stateOptions,
+  );
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null);
   const [activeSourceColumnKey, setActiveSourceColumnKey] = useState<
     string | null

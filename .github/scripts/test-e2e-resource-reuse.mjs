@@ -16,6 +16,66 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
+test("CI package installation preserves distribution repositories and trust", (t) => {
+  const root = resolve(import.meta.dirname, "../..");
+  const installer = readFileSync(
+    join(root, ".github/scripts/install-e2e-apt-packages.sh"),
+    "utf8",
+  );
+  const common = readFileSync(
+    join(root, ".github/scripts/lib/apt-packages.sh"),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    installer,
+    /sources\.list|rewrite_ci_ubuntu_archive|\btee\b/,
+  );
+  assert.doesNotMatch(common, /mirrors\.kernel\.org/);
+  const directory = mkdtempSync(join(tmpdir(), "apt-package-test-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const calls = join(directory, "commands");
+  writeFileSync(
+    join(directory, "apt-get"),
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$APT_TEST_COMMANDS"\n',
+  );
+  writeFileSync(join(directory, "sudo"), '#!/usr/bin/env bash\nexec "$@"\n');
+  for (const command of ["apt-get", "sudo"])
+    chmodSync(join(directory, command), 0o755);
+  const options = {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CI: "true",
+      PATH: directory + ":" + process.env.PATH,
+      APT_TEST_COMMANDS: calls,
+    },
+  };
+  const packages = ["iproute2", "ca-certificates", "openssl"];
+  const result = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    options,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const expected = [
+    "-o APT::Update::Error-Mode=any update",
+    "install --yes --no-install-recommends " + packages.join(" "),
+    "",
+  ].join("\n");
+  assert.equal(readFileSync(calls, "utf8"), expected);
+  const rejected = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    {
+      ...options,
+      env: { ...options.env, CI: "false" },
+    },
+  );
+  assert.notEqual(rejected.status, 0);
+  assert.equal(readFileSync(calls, "utf8"), expected);
+});
+
 test("historical fixtures use the exact GitHub release asset by ID", async () => {
   const requests = [];
   const response = await fetchGithubReleaseAsset({
@@ -284,12 +344,13 @@ fs.writeFileSync('.coverage', 'guard coverage')
     chmodSync(git, 0o755);
     const log = join(directory, "uv.log");
     const run = (step, extra = {}) =>
-      spawnSync("bash", ["-c", step.run], {
+      spawnSync("bash", ["--noprofile", "--norc", "-c", step.run], {
         cwd: backend,
         encoding: "utf8",
         env: {
           ...process.env,
           ...job.env,
+          BASH_ENV: "",
           PATH: `${bin}:${process.env.PATH}`,
           TEST_UV_LOG: log,
           TEST_HEAD: "a".repeat(40),
@@ -471,18 +532,23 @@ test("platform image reuse checks the registry before starting a builder", () =>
       const image = "ghcr.io/example/platform-e2e:content-hash";
       writeFileSync(
         join(root, "docker"),
-        `#!${process.execPath}\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
+        `#!/usr/bin/env node\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
       );
       chmodSync(join(root, "docker"), 0o755);
-      const probe = spawnSync("bash", ["-e", "-c", steps[checkIndex].run], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${root}:${process.env.PATH}`,
-          IMAGE: image,
-          GITHUB_OUTPUT: output,
+      const probe = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", steps[checkIndex].run],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BASH_ENV: "",
+            PATH: `${root}:${process.env.PATH}`,
+            IMAGE: image,
+            GITHUB_OUTPUT: output,
+          },
         },
-      });
+      );
       assert.equal(probe.status, 0, probe.stderr);
       assert.equal(readFileSync(output, "utf8"), `exists=${exists}\n`);
     } finally {
@@ -567,7 +633,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
   assert.equal(
     pnpm.if,
-    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
+    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')",
   );
   assert(
     steps.some(
@@ -576,70 +642,6 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
           "Install Electron for native startup and schema verification" &&
         step.if === pnpm.if,
     ),
-  );
-});
-
-test("Linux native probes restore verified Electron downloads before the official installer", () => {
-  const result = spawnSync(
-    "ruby",
-    [
-      "-ryaml",
-      "-rjson",
-      "-e",
-      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
-      ".github/workflows/wework-e2e.yml",
-      ".github/workflows/test.yml",
-      ".github/actions/prepare-electron-installer-cache/action.yml",
-    ],
-    { encoding: "utf8" },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const { core: steps, unit, action } = JSON.parse(result.stdout);
-  const primeIndex = steps.findIndex(
-    (step) => step.name === "Restore verified Electron installer cache",
-  );
-  const installIndex = steps.findIndex(
-    (step) =>
-      step.name ===
-      "Install Electron for native startup and schema verification",
-  );
-  assert(primeIndex >= 0 && primeIndex < installIndex);
-  const prime = steps[primeIndex];
-  assert.equal(prime.if, steps[installIndex].if);
-  assert.equal(
-    prime.uses,
-    "./.github/actions/prepare-electron-installer-cache",
-  );
-  const unitPrime = unit.find((step) => step.name === prime.name);
-  assert.equal(unitPrime.uses, prime.uses);
-  assert.equal(unitPrime.if, "matrix.shard == 1");
-  assert(
-    unit.indexOf(unitPrime) <
-      unit.findIndex(
-        (step) => step.name === "Prepare Wework Electron dependencies",
-      ),
-  );
-  const commands = action.map((step) => step.run).join("\n");
-  assert(commands.includes("find_missing_apt_packages skopeo umoci"));
-  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
-  assert(
-    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
-  );
-  assert(
-    commands.includes(
-      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
-    ),
-  );
-  const moduleInstall = action.find((step) =>
-    step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
-  );
-  assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
-  assert.equal(
-    steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
-    "true",
-  );
-  assert(
-    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
   );
 });
 
@@ -739,7 +741,7 @@ for (const [mode, expectedStatus, expectedTests] of [
     try {
       const log = join(root, "calls.jsonl");
       const evidence = join(root, "evidence");
-      const stub = `#!${process.execPath}
+      const stub = `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
 const command = path.basename(process.argv[1])
@@ -943,7 +945,7 @@ for (const [mode, expectedStatus, expectedTests] of [
     const root = mkdtempSync(join(tmpdir(), "e2e-resource-reuse-"));
     try {
       const log = join(root, "calls.jsonl");
-      const stub = `#!${process.execPath}
+      const stub = `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
 const command = path.basename(process.argv[1])

@@ -1,7 +1,6 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useCallback } from 'react'
 import type { PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '../PluginManagementRows'
-import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 import {
   findInstalledPluginForMarketplaceItem,
   queueMarketplacePluginTrial,
@@ -12,7 +11,7 @@ export function usePluginInstallActions({
   localPluginApi,
   isUninstalling,
   t,
-  setPluginMarketplaceState,
+  reportCatalogError,
 }: {
   installedPlugins: InstalledPluginItem[]
   isUninstalling: (item: PluginMarketplaceItem) => boolean
@@ -20,7 +19,7 @@ export function usePluginInstallActions({
     rememberMarketplaceSelection: (marketplaceId: string) => void
   }
   t: (key: string, defaultValue: string) => string
-  setPluginMarketplaceState: Dispatch<SetStateAction<PluginMarketplaceState>>
+  reportCatalogError(message: string): void
 }) {
   const beginMarketplacePluginTrial = useCallback(
     (
@@ -37,13 +36,10 @@ export function usePluginInstallActions({
           localPluginApi.rememberMarketplaceSelection(marketplaceId),
       })
       if (!queued) {
-        setPluginMarketplaceState(previous => ({
-          ...previous,
-          error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
-        }))
+        reportCatalogError(t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'))
       }
     },
-    [isUninstalling, localPluginApi, setPluginMarketplaceState, t]
+    [isUninstalling, localPluginApi, reportCatalogError, t]
   )
 
   const tryMarketplacePluginInChat = useCallback(

@@ -1,8 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import type { CollaborationView } from '@wegent/collaboration'
+
+/** Exercise legacy personal grouping only in the owning test context. */
+export async function enableLegacyBoardGrouping(context: BrowserContext): Promise<void> {
+  await context.addInitScript(
+    ({ origin, key }) => {
+      if (location.origin === origin) localStorage.setItem(key, 'false')
+    },
+    {
+      origin: new URL(process.env.E2E_BASE_URL || 'http://localhost:3000').origin,
+      key: 'collab.baseBoardStatusGrouping.v1',
+    }
+  )
+}
 
 export async function dragCollaborationIssue(
   page: Page,
@@ -125,4 +138,14 @@ export async function webApi<T>(
     },
     { requestPath: path, requestInit: init }
   )
+}
+
+/** Open the complete board for stories about other owners and completed work. */
+export async function showAllProjectIssues(page: Page): Promise<void> {
+  const filter = page.getByTestId('project-needs-my-input-filter')
+  await expect(filter).toBeVisible()
+  // Set an explicit choice before reading state that can follow async work.
+  await filter.click()
+  if ((await filter.getAttribute('aria-pressed')) === 'true') await filter.click()
+  await expect(filter).toHaveAttribute('aria-pressed', 'false')
 }

@@ -1,11 +1,13 @@
-import { ArrowUpCircle, Folder, FolderPlus, Loader2, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ArrowUpCircle, Folder, FolderPlus, Loader2, RotateCcw, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
+import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
@@ -197,10 +199,20 @@ function ProjectCreateDialogContent({
   onUpgradeDevice,
 }: ProjectCreateDialogProps) {
   const { t } = useTranslation('common')
+  const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const isEditing = Boolean(project)
   const incomingProjectDevices = useMemo(() => getProjectDevices(devices), [devices])
-  const [deviceSnapshot, setDeviceSnapshot] = useState<DeviceInfo[]>(incomingProjectDevices)
-  const allProjectDevices = deviceSnapshot
+  const [deviceSnapshot, setDeviceSnapshot] = useState({
+    source: incomingProjectDevices,
+    items: incomingProjectDevices,
+  })
+  if (incomingProjectDevices.length > 0 && deviceSnapshot.source !== incomingProjectDevices) {
+    setDeviceSnapshot({
+      source: incomingProjectDevices,
+      items: mergeDialogDevices(deviceSnapshot.items, incomingProjectDevices),
+    })
+  }
+  const allProjectDevices = deviceSnapshot.items
   const existingMappings = useMemo(() => mappingsByDeviceId(deviceWorkspaces), [deviceWorkspaces])
   const [activeDeviceId, setActiveDeviceId] = useState(() =>
     getInitialActiveDeviceId(allProjectDevices, deviceWorkspaces, preferredDeviceId, isEditing)
@@ -213,19 +225,6 @@ function ProjectCreateDialogContent({
   const [workspaceKind, setWorkspaceKind] = useState<ProjectWorkspaceKind>('worktree')
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    if (incomingProjectDevices.length === 0) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setDeviceSnapshot(current => mergeDialogDevices(current, incomingProjectDevices))
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [incomingProjectDevices])
 
   const getDeviceFolder = (deviceId: string) => {
     const draft = folderDrafts[deviceId]
@@ -266,7 +265,7 @@ function ProjectCreateDialogContent({
 
   const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
     if (!submitting) onClose()
-  })
+  }, !cloudRestarts?.isConfirming)
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
@@ -397,10 +396,15 @@ function ProjectCreateDialogContent({
     const folderPath = getDeviceFolder(activeDevice.device_id)
     const canUseDevice = canUseForProjectCreation(activeDevice)
     const belowVersion = isDeviceBelowWeWorkVersion(activeDevice)
+    const isCloud = isCloudDevice(activeDevice)
     const upgradeState = upgradingDevices[activeDevice.device_id]
-    const upgrading = isProjectDeviceUpgradeActive(upgradeState)
-    const canUpgradeDevice = Boolean(
-      onUpgradeDevice && belowVersion && canRequestDeviceUpgrade(activeDevice)
+    const repairing = isCloud
+      ? cloudRestarts?.isRestarting(activeDevice)
+      : isProjectDeviceUpgradeActive(upgradeState)
+    const canRepairDevice = Boolean(
+      (isCloud ? cloudRestarts : onUpgradeDevice) &&
+      belowVersion &&
+      canRequestDeviceUpgrade(activeDevice)
     )
 
     return (
@@ -435,8 +439,9 @@ function ProjectCreateDialogContent({
                 <p className="font-medium">
                   {belowVersion
                     ? t(
-                        'workbench.project_directory_upgrade_device_hint',
-                        '升级当前设备后可选择目录'
+                        isCloud
+                          ? 'workbench.project_directory_restart_device_hint'
+                          : 'workbench.project_directory_upgrade_device_hint'
                       )
                     : t(
                         'workbench.project_directory_unavailable_device_hint',
@@ -455,27 +460,36 @@ function ProjectCreateDialogContent({
                     : getDeviceTabStatus(activeDevice, false)}
                 </p>
               </div>
-              {canUpgradeDevice && (
+              {canRepairDevice && (
                 <button
                   type="button"
-                  data-testid={`upgrade-project-device-${activeDevice.device_id}`}
-                  disabled={submitting || upgrading}
-                  onClick={() => void onUpgradeDevice?.(activeDevice.device_id)}
-                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-background px-2 text-xs font-medium text-warning hover:bg-warning/10 disabled:opacity-50 wework:border-amber-500/30 wework:text-amber-700 wework:hover:bg-amber-500/10 wework:dark:text-amber-300"
+                  data-testid={`${isCloud ? 'restart' : 'upgrade'}-project-device-${activeDevice.device_id}`}
+                  disabled={submitting || repairing}
+                  onClick={() =>
+                    isCloud
+                      ? cloudRestarts?.requestRestart([activeDevice])
+                      : void onUpgradeDevice?.(activeDevice.device_id)
+                  }
+                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-background px-2 text-xs font-medium text-warning hover:bg-warning/10 disabled:opacity-50 wework:border-amber-500/30 wework:text-amber-700 wework:hover:bg-amber-500/10 wework:dark:text-amber-300${isCloud ? ' min-h-11 min-w-11 md:min-h-0 md:min-w-0' : ''}`}
                 >
-                  {upgrading ? (
+                  {repairing ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : isCloud ? (
+                    <RotateCcw className="h-3.5 w-3.5" />
                   ) : (
                     <ArrowUpCircle className="h-3.5 w-3.5" />
                   )}
-                  {upgrading
-                    ? (upgradeState?.message ?? t('workbench.device_status_checking', '检查中'))
-                    : t('workbench.device_status_upgrade_action', '升级')}
+                  {isCloud
+                    ? t('workbench.connection_restart_action')
+                    : repairing
+                      ? (upgradeState?.message ?? t('workbench.device_status_checking', '检查中'))
+                      : t('workbench.device_status_upgrade_action', '升级')}
                 </button>
               )}
             </div>
           </div>
         )}
+        {isCloud && <CloudDeviceRestartProgress device={activeDevice} />}
 
         {showWorkspaceKindSelect && (
           <div className="mt-3 grid grid-cols-2 gap-2">
@@ -553,10 +567,16 @@ function ProjectCreateDialogContent({
       return t('workbench.project_device_status_offline', '离线')
     }
     if (isDeviceBelowWeWorkVersion(device)) {
-      return t('workbench.project_device_upgrade_required_short', '需升级')
+      return t(
+        isCloudDevice(device)
+          ? 'workbench.project_device_version_incompatible'
+          : 'workbench.project_device_upgrade_required_short'
+      )
     }
     return t('workbench.project_device_status_unavailable', '不可用')
   }
+
+  if (cloudRestarts?.isConfirming) return null
 
   return createPortal(
     <div

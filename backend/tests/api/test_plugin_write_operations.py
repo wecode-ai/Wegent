@@ -6,8 +6,10 @@ import json
 import time
 import zipfile
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -34,6 +36,7 @@ from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.services import plugin_device_sync
 from app.services import plugin_write_coordination as coordination
+from app.services import plugin_write_operations
 from app.services.builtin_plugin_registry import BUILTIN_PLUGIN_OWNER_ID
 from app.services.device import plugin_change_sync
 from app.services.device_service import device_service
@@ -50,6 +53,26 @@ PLUGIN_KEY = "write-regression-plugin"
 LEGACY_KEY = "write-regression-legacy"
 ENTRIES = ("marketplace", "builtin", "legacy", "release", "state")
 FAULT_CODES = ("plugin_write_busy", "plugin_write_unavailable")
+
+
+@pytest.fixture
+def plugin_retry_clock(monkeypatch):
+    """Exercise the production retry budget without sleeping wall seconds."""
+    clock = SimpleNamespace(now=0.0)
+
+    def backoff(delay):
+        assert 0 < delay <= 20
+        clock.now += delay
+
+    monkeypatch.setattr(
+        plugin_write_operations,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: clock.now,
+            sleep=backoff,
+        ),
+    )
+    return clock
 
 
 def plugin_archive() -> bytes:
@@ -247,7 +270,9 @@ def plugin_requests(tmp_path, monkeypatch):
     async def current_sync(**_kwargs):
         remote_calls.append("recovery")
         with sessions() as db:
-            return device_result(db, report_plugins=True)
+            return device_result(db, report_plugins=True).model_copy(
+                update={"acknowledged": True}
+            )
 
     async def changed_sync(*, user_id, device_id, installed_plugin_ids):
         assert user_id == user.id
@@ -357,6 +382,80 @@ def test_normal_account_write_materializes_the_device(plugin_requests, entry):
     assert context.targeted_calls == [account.id]
 
 
+@pytest.mark.parametrize("stale_identity", ["legacy_plugin_id", "missing_plugin_id"])
+def test_marketplace_install_reactivates_kind_by_canonical_name(
+    plugin_requests, stale_identity
+):
+    context = plugin_requests
+    with context.sessions() as db:
+        plugin = db.get(Plugin, context.plugin_id)
+        release = db.get(PluginRelease, context.release_id)
+        assert plugin is not None
+        assert release is not None
+        kind_name = plugin_marketplace_service._kind_name(
+            plugin.catalog_namespace, plugin.slug
+        )
+        payload = plugin_marketplace_service._installed_payload(plugin, release)
+        spec = payload["spec"]
+        spec["revision"] = 7
+        spec["enabled"] = False
+        spec["componentStates"] = {"review": False}
+        if stale_identity == "legacy_plugin_id":
+            spec["pluginId"] = plugin.id + 1000
+            spec["source"]["catalogItemId"] = str(plugin.id + 1000)
+        else:
+            spec.pop("pluginId")
+            spec["source"].pop("catalogItemId", None)
+        stale = Kind(
+            user_id=context.user_id,
+            kind="InstalledPlugin",
+            name=kind_name,
+            namespace="default",
+            json=payload,
+            is_active=False,
+        )
+        db.add(stale)
+        db.commit()
+        stale_id = stale.id
+
+    with context.sessions.kw["bind"].begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX uniq_user_kind_name_namespace "
+            "ON kinds (user_id, kind, name, namespace)"
+        )
+
+    response = context.write("marketplace")
+
+    assert response.status_code == 200, response.text
+    account = context.account()
+    assert account is not None
+    assert account.id == stale_id
+    assert account.json["spec"]["revision"] == 8
+    assert account.json["spec"]["pluginId"] == context.plugin_id
+    assert account.json["spec"]["releaseId"] == context.release_id
+    assert account.json["spec"]["source"]["catalogItemId"] == str(context.plugin_id)
+    assert account.json["spec"]["enabled"] is True
+    assert account.json["spec"]["componentStates"] == {}
+    marketplace = context.client.get(f"/plugins/marketplace/{context.plugin_id}")
+    assert marketplace.status_code == 200, marketplace.text
+    installed_item = marketplace.json()
+    assert installed_item["installed"] is True
+    assert installed_item["installedPluginId"] == stale_id
+    assert context.targeted_calls == [stale_id]
+    assert context.remote_calls == ["plugin"]
+    assert len(context.background_tasks) == 1
+    with context.sessions() as db:
+        device = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(user_id=context.user_id, installed_kind_id=stale_id)
+            .one()
+        )
+        assert device.state == "installed"
+        assert device.actual_release_id == context.release_id
+    context.run_background()
+    assert context.targeted_calls == [stale_id]
+
+
 def test_uploaded_plugin_update_targets_the_changed_plugin(plugin_requests):
     context = plugin_requests
     with context.sessions() as db:
@@ -416,8 +515,20 @@ def test_coordination_failure_before_account_commit_is_fail_closed(
         monkeypatch.setattr(coordination, "_redis_client", unavailable)
     else:
         redis = coordination._redis_client()
+        from app.services.plugin_write_identity import marketplace_write_name
+
+        with context.sessions() as db:
+            name = (
+                previous.name
+                if previous is not None
+                else (
+                    installed_plugin_service._safe_kind_name(LEGACY_KEY)
+                    if entry == "legacy"
+                    else marketplace_write_name(db, context.user_id, context.plugin_id)
+                )
+            )
         with redis.mutex:
-            redis.values[f"wegent:plugin-write:{context.user_id}"] = (
+            redis.values[f"wegent:plugin-write:{context.user_id}:{name}"] = (
                 "another-owner",
                 time.monotonic() + 30,
             )
@@ -444,7 +555,7 @@ def test_coordination_failure_before_account_commit_is_fail_closed(
 )
 @pytest.mark.parametrize("code", FAULT_CODES)
 def test_device_coordination_failure_preserves_account_commit_and_recovers(
-    plugin_requests, monkeypatch, entry, stage, device_id, code
+    plugin_requests, monkeypatch, plugin_retry_clock, entry, stage, device_id, code
 ):
     context = plugin_requests
     if entry in {"release", "state"}:
@@ -478,7 +589,12 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
 
         assert response.status_code == 200, response.text
         assert len(context.background_tasks) == 1
-    assert observed == [stage]
+    if stage == "prepare" and code == "plugin_write_busy":
+        assert len(observed) > 1
+        assert set(observed) == {stage}
+        assert plugin_retry_clock.now == 20
+    else:
+        assert observed == [stage]
     deferred.assert_called_once()
     assert deferred.call_args.args[0].code == code
     assert deferred.call_args.kwargs["stage"] == stage
@@ -512,7 +628,12 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
             assert len(devices) == 1
             assert devices[0].state == "installed"
             assert devices[0].actual_release_id == account.json["spec"]["releaseId"]
-    assert assert_account_write(context, entry).json == account.json
+    recovered_account = assert_account_write(context, entry)
+    before, after = deepcopy(account.json), deepcopy(recovered_account.json)
+    before_fence = before["spec"].pop("writeRevision", 0)
+    after_fence = after["spec"].pop("writeRevision", 0)
+    assert after_fence >= before_fence
+    assert after == before
 
 
 @pytest.mark.parametrize(
@@ -646,13 +767,23 @@ def test_background_coordination_failure_preserves_account_and_recovery(
 
     assert f"Plugin change remains pending: user_id={context.user_id}" in caplog.text
     deferred.assert_not_called()
-    assert assert_account_write(context, entry).json == account.json
+    recovered_account = assert_account_write(context, entry)
+    before, after = deepcopy(account.json), deepcopy(recovered_account.json)
+    before_fence = before["spec"].pop("writeRevision", 0)
+    after_fence = after["spec"].pop("writeRevision", 0)
+    assert after_fence >= before_fence
+    assert after == before
     recovered = context.client.post(
         "/plugins/installed/sync-device", params={"device_id": DEVICE_ID}
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["sync"]["success"] is True
-    assert assert_account_write(context, entry).json == account.json
+    recovered_account = assert_account_write(context, entry)
+    before, after = deepcopy(account.json), deepcopy(recovered_account.json)
+    before_fence = before["spec"].pop("writeRevision", 0)
+    after_fence = after["spec"].pop("writeRevision", 0)
+    assert after_fence >= before_fence
+    assert after == before
 
 
 @pytest.mark.parametrize("superseded_attempts", [1, 3])

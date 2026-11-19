@@ -1,0 +1,573 @@
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { useIndependentIssuePage } from './useIndependentIssuePage'
+import { IndependentIssueList } from './IndependentIssueList'
+import { PersonalIssueList } from './PersonalIssueList'
+import { PersonalIssueErrors } from './PersonalIssueErrors'
+import {
+  useCallback,
+  useId,
+  useMemo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { ArrowLeft, Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceMyWorkItem,
+  WorkspaceTaskBinding,
+  WorkspaceRuntimeTaskAddress,
+} from '@wegent/collaboration'
+import {
+  issueNeedsUser,
+  pendingIssueHumanRequests,
+  IssueDetailDraftProvider,
+} from '@wegent/collaboration'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useIsDesktop } from '@/hooks/useIsDesktop'
+import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
+import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
+import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
+
+export interface PersonalHomeIssueDetailContext {
+  presentation?: 'drawer'
+  issue: WorkspaceMyWorkItem
+  project: CollaborationProject
+  active: boolean
+  onUpdated(issue: WorkspaceMyWorkItem): void
+  onOpenIssue(issue: CollaborationIssue): void
+  onClose?(): void
+  onExpandedChange?(expanded: boolean): void
+  detailExpanded?: boolean
+  onDetailExpandedChange?(expanded: boolean): void
+  onOpenInProject?(): void
+  taskRequest?: {
+    key: string
+    binding?: WorkspaceTaskBinding
+    address?: WorkspaceRuntimeTaskAddress
+  }
+}
+
+export interface PersonalHomeCollaborationWork {
+  pendingIssues: WorkspaceMyWorkItem[]
+  onOpenIssue(issue: WorkspaceMyWorkItem): void
+}
+
+const issueTabId = (project: CollaborationProject, issue: WorkspaceMyWorkItem) =>
+  `${project.project_store}:${project.id}:${issue.id}`
+
+export function WeworkPersonalHome({
+  active = true,
+  entryRequestKey,
+  userId,
+  localUserIds,
+  projects,
+  sources,
+  draftScope = sources,
+  createIssue,
+  renderIssueDetail,
+  conversation,
+  createdIssue,
+  onCreatedIssueHandled,
+}: {
+  active?: boolean
+  entryRequestKey?: number
+  userId: number
+  localUserIds?: readonly (string | number)[]
+  projects: CollaborationProject[]
+  sources: SharedWorkspaceApi[]
+  draftScope?: unknown
+  createIssue: ReactNode
+  createdIssue?: {
+    key: string
+    issue: WorkspaceMyWorkItem
+    project: CollaborationProject
+    task?: WorkspaceRuntimeTaskAddress
+  }
+  onCreatedIssueHandled?(key: string): void
+  renderIssueDetail(context: PersonalHomeIssueDetailContext): ReactNode
+  conversation(active: boolean, work: PersonalHomeCollaborationWork): ReactNode
+}) {
+  const { t } = useTranslation('common')
+  const isDesktop = useIsDesktop(1024)
+  const panelId = useId()
+  const composerRegion = useRef<HTMLDivElement>(null)
+  const composerFocusTarget = useMemo(
+    () => ({
+      get current() {
+        const region = composerRegion.current
+        const taskMode = region?.querySelector(
+          '[data-testid="personal-home-new-issue"][aria-selected="true"]'
+        )
+        return (
+          region?.querySelector<HTMLElement>(
+            taskMode
+              ? '[data-testid="personal-home-task-content"]'
+              : '[data-testid="collaboration-home-issue-content"]'
+          ) ?? null
+        )
+      },
+    }),
+    []
+  )
+  const focusComposer = useCallback(
+    () => composerFocusTarget.current?.focus(),
+    [composerFocusTarget]
+  )
+  useFocusRequest(composerFocusTarget, entryRequestKey, { enabled: Boolean(entryRequestKey) })
+  const [showCompleted, setShowCompleted] = useState(false)
+  const [assignedOnly, setAssignedOnly] = useState(true)
+  const [order, setOrder] = useState<PersonalHomeIssueOrder>('attention')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const sidebarVisible = !isDesktop || !sidebarCollapsed
+  const [issueTabs, setIssueTabs] = useState<
+    Array<{
+      id: string
+      issue: WorkspaceMyWorkItem
+      project: CollaborationProject
+      taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
+    }>
+  >([])
+  const [activeTab, setActiveTab] = useState('stand-in')
+  const viewport = useRef<HTMLDivElement>(null)
+  const sidebar = useRef<HTMLElement>(null)
+  const [workspaceFocus, setWorkspaceFocus] = useState<{
+    target: 'detail' | 'list'
+    captureList?: boolean
+  } | null>(null)
+  const handledWorkspaceFocus = useRef<typeof workspaceFocus>(null)
+  const listPosition = useRef(0)
+  const returnFocus = useRef<HTMLElement | null>(null)
+  const [detailExpanded, setDetailExpanded] = useState(false)
+  const [expandedTabs, setExpandedTabs] = useState<ReadonlySet<string>>(new Set())
+  const tabsViewport = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    revealWorkspaceTab(tabsViewport.current)
+  }, [activeTab, issueTabs.length])
+  useLayoutEffect(() => {
+    const root = viewport.current
+    const panel = sidebar.current
+    if (!workspaceFocus || handledWorkspaceFocus.current === workspaceFocus) return
+    handledWorkspaceFocus.current = workspaceFocus
+    if (isDesktop || !root || !panel) return
+    if (workspaceFocus.target === 'detail') {
+      if (workspaceFocus.captureList) {
+        listPosition.current = root.scrollTop
+        returnFocus.current = root.querySelector<HTMLElement>('[aria-current="true"] button')
+      }
+      root.scrollTop += panel.getBoundingClientRect().top - root.getBoundingClientRect().top
+      panel
+        .querySelector<HTMLElement>('[role="tabpanel"]:not([inert])')
+        ?.focus({ preventScroll: true })
+    } else {
+      root.scrollTop = listPosition.current
+      const list = composerRegion.current?.closest('main')
+      const target = returnFocus.current?.isConnected ? returnFocus.current : list
+      target?.focus({ preventScroll: true })
+    }
+  }, [workspaceFocus, isDesktop])
+  const independent = useIndependentIssuePage(
+    assignedOnly ? 'assigned' : 'participating',
+    showCompleted,
+    active,
+    false,
+    order
+  )
+  const state = usePersonalHomeIssues(
+    sources,
+    active,
+    assignedOnly,
+    showCompleted,
+    localUserIds ?? [userId],
+    order,
+    undefined,
+    createdIssue ? { key: createdIssue.key, onHandled: onCreatedIssueHandled } : undefined
+  )
+  const openIssue = (
+    issue: CollaborationIssue,
+    taskRequest?: PersonalHomeIssueDetailContext['taskRequest'],
+    captureList = false
+  ) => {
+    const project = projects.find(project => project.id === issue.cloud_project_id)
+    if (!project) return
+    const summary: WorkspaceMyWorkItem = {
+      project_name: project.name,
+      project_key: project.project_key,
+      has_active_task: false,
+      ...issue,
+    }
+    const id = issueTabId(project, summary)
+    setIssueTabs(tabs =>
+      tabs.some(tab => tab.id === id)
+        ? tabs.map(tab => (tab.id === id && taskRequest ? { ...tab, taskRequest } : tab))
+        : [{ id, issue: summary, project, taskRequest }]
+    )
+    setExpandedTabs(current => (current.has(id) ? current : new Set()))
+    setSidebarCollapsed(false)
+    setWorkspaceFocus({ target: 'detail', captureList })
+    setActiveTab(id)
+  }
+  const [handledCreation, setHandledCreation] = useState<string>()
+  const [recentCreation, setRecentCreation] = useState<{
+    issueId: WorkspaceMyWorkItem['id']
+    projectId: WorkspaceMyWorkItem['cloud_project_id']
+    assignedOnly: boolean
+    order: PersonalHomeIssueOrder
+  }>()
+  const [detailScope, setDetailScope] = useState({ userId, sources })
+  if (
+    detailScope.userId !== userId ||
+    detailScope.sources.length !== sources.length ||
+    detailScope.sources.some((source, index) => source !== sources[index])
+  ) {
+    setDetailScope({ userId, sources })
+    setIssueTabs([])
+    setWorkspaceFocus(null)
+    setActiveTab('stand-in')
+    setExpandedTabs(new Set())
+    setRecentCreation(undefined)
+  }
+  if (createdIssue && createdIssue.key !== handledCreation) {
+    setWorkspaceFocus({ target: 'detail', captureList: true })
+    setSidebarCollapsed(false)
+    setHandledCreation(createdIssue.key)
+    const ownIds =
+      createdIssue.project.project_store === 'local'
+        ? (localUserIds ?? [userId])
+        : [createdIssue.project.current_user_id ?? userId]
+    const scope =
+      assignedOnly && ownIds.some(id => String(id) === String(createdIssue.issue.assignee_user_id))
+    setAssignedOnly(scope)
+    setRecentCreation({
+      issueId: createdIssue.issue.id,
+      projectId: createdIssue.issue.cloud_project_id,
+      assignedOnly: scope,
+      order,
+    })
+    const id = issueTabId(createdIssue.project, createdIssue.issue)
+    setIssueTabs([
+      {
+        id,
+        issue: createdIssue.issue,
+        project: createdIssue.project,
+        taskRequest: createdIssue.task
+          ? { key: createdIssue.key, address: createdIssue.task }
+          : undefined,
+      },
+    ])
+    setExpandedTabs(new Set())
+    setActiveTab(id)
+  }
+  const closeIssue = (id: string) => {
+    const index = issueTabs.findIndex(tab => tab.id === id)
+    const remaining = issueTabs.filter(tab => tab.id !== id)
+    setIssueTabs(remaining)
+    if (activeTab === id) {
+      const next = remaining[Math.max(0, index - 1)]?.id ?? 'stand-in'
+      setActiveTab(next)
+      setWorkspaceFocus({ target: next === 'stand-in' ? 'list' : 'detail' })
+    }
+  }
+  const firstUse = !projects.length && !independent.context?.api
+  return (
+    <IssueDetailDraftProvider key={userId} scope={draftScope}>
+      <div
+        ref={viewport}
+        className="isolate flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
+        data-testid="personal-home"
+      >
+        <main
+          tabIndex={-1}
+          aria-busy={state.loading}
+          data-testid="personal-home-items-region"
+          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto"
+        >
+          <div className="w-full max-w-6xl">
+            <header className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-heading-md font-medium">{t('personalHome.title')}</h1>
+                <p className="mt-2 text-base text-text-secondary">{t('personalHome.subtitle')}</p>
+              </div>
+              <button
+                type="button"
+                data-testid="personal-home-toggle-sidebar"
+                aria-expanded={!sidebarCollapsed}
+                aria-controls={`${panelId}-sidebar`}
+                onClick={() => setSidebarCollapsed(value => !value)}
+                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] lg:inline-flex"
+              >
+                {sidebarCollapsed ? (
+                  <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
+                ) : (
+                  <PanelRightClose aria-hidden="true" className="h-4 w-4" />
+                )}
+                {t(sidebarCollapsed ? 'personalHome.showSidebar' : 'personalHome.hideSidebar')}
+              </button>
+            </header>
+            <div ref={composerRegion} className="mb-5" data-testid="personal-home-create">
+              {createIssue}
+            </div>
+            <div
+              hidden={firstUse}
+              className={
+                firstUse ? 'hidden' : 'mb-3 flex flex-wrap items-center justify-between gap-3'
+              }
+            >
+              <div
+                role="group"
+                aria-label={t('personalHome.issueScope')}
+                className="flex min-w-0 flex-wrap items-center gap-1"
+              >
+                {[
+                  { value: true, label: 'assigned' },
+                  { value: false, label: 'participating' },
+                ].map(option => (
+                  <button
+                    type="button"
+                    key={option.label}
+                    data-testid={`personal-home-scope-${option.label}`}
+                    aria-pressed={assignedOnly === option.value}
+                    onClick={() => setAssignedOnly(option.value)}
+                    className={`min-h-11 rounded-md px-3 text-base md:min-h-8 ${assignedOnly === option.value ? 'bg-muted font-medium text-text-primary' : 'text-text-secondary hover:bg-muted'}`}
+                  >
+                    {t(`personalHome.${option.label}`)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <select
+                  aria-label={t('personalHome.sort')}
+                  data-testid="personal-home-sort"
+                  className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+                  value={order}
+                  onChange={event => setOrder(event.target.value as PersonalHomeIssueOrder)}
+                >
+                  {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
+                    <option key={value} value={value}>
+                      {t(`personalHome.sort_${value}`)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label={t('personalHome.filter')}
+                  data-testid="personal-home-filter"
+                  className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
+                  value={showCompleted ? 'all' : 'open'}
+                  onChange={event => setShowCompleted(event.target.value === 'all')}
+                >
+                  <option value="open">{t('personalHome.open')}</option>
+                  <option value="all">{t('personalHome.all')}</option>
+                </select>
+              </div>
+            </div>
+            <PersonalIssueErrors projects={state} independent={independent} />
+            <IndependentIssueList state={independent} hideWhenEmpty />
+            <PersonalIssueList
+              hideEmpty={
+                firstUse ||
+                independent.loading ||
+                Boolean(independent.error) ||
+                independent.items.length > 0
+              }
+              emptyState={
+                <div data-testid="personal-home-empty" className="py-6">
+                  <p className="text-base text-text-secondary">
+                    {t(
+                      assignedOnly
+                        ? 'personalHome.emptyAssigned'
+                        : showCompleted
+                          ? 'personalHome.emptyParticipation'
+                          : 'personalHome.emptyUnfinished'
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    data-testid="personal-home-empty-action"
+                    className="mt-2 min-h-11 rounded-md px-2 text-sm text-text-primary hover:bg-muted md:min-h-8"
+                    onClick={() => {
+                      if (assignedOnly || !showCompleted) {
+                        setAssignedOnly(false)
+                        setShowCompleted(true)
+                      } else {
+                        focusComposer()
+                      }
+                    }}
+                  >
+                    {t(
+                      assignedOnly || !showCompleted
+                        ? 'personalHome.viewAllParticipation'
+                        : 'personalHome.startWriting'
+                    )}
+                  </button>
+                </div>
+              }
+              recentIssue={
+                recentCreation &&
+                recentCreation.assignedOnly === assignedOnly &&
+                recentCreation.order === order
+                  ? issueTabs.find(
+                      tab =>
+                        tab.issue.id === recentCreation.issueId &&
+                        tab.issue.cloud_project_id === recentCreation.projectId
+                    )?.issue
+                  : undefined
+              }
+              order={order}
+              userId={userId}
+              localUserIds={localUserIds}
+              state={state}
+              projects={projects}
+              showCompleted={showCompleted}
+              assignedOnly={assignedOnly}
+              onOpenIssue={issue => openIssue(issue, undefined, true)}
+              selectedIssue={issueTabs.find(tab => tab.id === activeTab)?.issue}
+              active={active}
+              onOpenTask={(issue, binding) =>
+                openIssue(issue, { key: crypto.randomUUID(), binding }, true)
+              }
+            />
+            {state.hasMore && (
+              <button
+                type="button"
+                data-testid="personal-home-load-more"
+                disabled={state.loading}
+                onClick={() => void state.loadMore()}
+                className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+              >
+                {t('personalHome.loadMore')}
+              </button>
+            )}
+          </div>
+        </main>
+        <aside
+          ref={sidebar}
+          id={`${panelId}-sidebar`}
+          aria-label={t('personalHome.standIn')}
+          className={`flex ${!isDesktop && activeTab !== 'stand-in' ? 'min-h-full' : 'min-h-96'} min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${sidebarCollapsed ? 'lg:hidden' : ''} ${detailExpanded || expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : activeTab === 'stand-in' ? 'lg:w-80 xl:w-96' : 'lg:w-96 xl:w-[28rem]'}`}
+          data-testid="personal-home-stand-in"
+        >
+          {!isDesktop && activeTab !== 'stand-in' && (
+            <button
+              type="button"
+              data-testid="personal-home-back-to-issues"
+              onClick={() => {
+                setWorkspaceFocus({ target: 'list' })
+                setActiveTab('stand-in')
+              }}
+              className="flex min-h-11 items-center gap-2 border-b border-border px-3 text-sm text-text-secondary hover:bg-muted"
+            >
+              <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              {t('personalHome.backToIssues')}
+            </button>
+          )}
+          <header
+            ref={tabsViewport}
+            role="tablist"
+            aria-label={t('personalHome.workspaceTabs')}
+            data-testid="personal-home-tabs"
+            className="flex h-12 min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 lg:h-10 lg:min-h-10"
+          >
+            <WorkspaceTitleTab
+              id={`${panelId}-stand-in-tab`}
+              controls={`${panelId}-stand-in-panel`}
+              testId="personal-home-tab-stand-in"
+              active={activeTab === 'stand-in'}
+              label={t('personalHome.standInTab')}
+              icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
+              onSelect={() => {
+                setWorkspaceFocus(null)
+                setActiveTab('stand-in')
+              }}
+            />
+            {issueTabs.map(tab => (
+              <WorkspaceTitleTab
+                id={`${panelId}-${tab.id}-tab`}
+                controls={`${panelId}-${tab.id}-panel`}
+                key={tab.id}
+                testId={`personal-home-tab-${tab.issue.id}`}
+                active={activeTab === tab.id}
+                label={tab.issue.title}
+                title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
+                icon={<Circle aria-hidden="true" className="h-4 w-4" />}
+                onSelect={() => {
+                  setWorkspaceFocus(null)
+                  setActiveTab(tab.id)
+                }}
+                onClose={() => closeIssue(tab.id)}
+              />
+            ))}
+          </header>
+          <div
+            id={`${panelId}-stand-in-panel`}
+            role="tabpanel"
+            aria-labelledby={`${panelId}-stand-in-tab`}
+            aria-label={t('personalHome.standInTab')}
+            className={activeTab === 'stand-in' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+            inert={activeTab !== 'stand-in'}
+          >
+            {conversation(active && sidebarVisible && activeTab === 'stand-in', {
+              pendingIssues: state.items.flatMap(item => {
+                const project = projects.find(project => project.id === item.cloud_project_id)
+                if (
+                  !project ||
+                  item.archived_at ||
+                  ['completed', 'cancelled'].includes(item.status)
+                )
+                  return []
+                const viewer =
+                  project.project_store === 'local'
+                    ? (localUserIds ?? [userId])
+                    : (project.current_user_id ?? userId)
+                const requests = pendingIssueHumanRequests(item).filter(request =>
+                  issueNeedsUser({ ...item, human_requests: [request] }, viewer)
+                )
+                return requests.length ? [{ ...item, human_requests: requests }] : []
+              }),
+              onOpenIssue: openIssue,
+            })}
+          </div>
+          {issueTabs.map(tab => (
+            <div
+              id={`${panelId}-${tab.id}-panel`}
+              key={tab.id}
+              role="tabpanel"
+              aria-labelledby={`${panelId}-${tab.id}-tab`}
+              aria-label={tab.issue.title}
+              tabIndex={-1}
+              className={activeTab === tab.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+              inert={activeTab !== tab.id}
+            >
+              {renderIssueDetail({
+                issue: tab.issue,
+                project: tab.project,
+                active: active && sidebarVisible && activeTab === tab.id,
+                taskRequest: tab.taskRequest,
+                detailExpanded,
+                onDetailExpandedChange: setDetailExpanded,
+                onClose: () => closeIssue(tab.id),
+                onExpandedChange: expanded =>
+                  setExpandedTabs(current => {
+                    if (current.has(tab.id) === expanded) return current
+                    const next = new Set(current)
+                    if (expanded) next.add(tab.id)
+                    else next.delete(tab.id)
+                    return next
+                  }),
+                onOpenIssue: openIssue,
+                onUpdated: issue => {
+                  state.replaceIssue(issue)
+                  setIssueTabs(tabs =>
+                    tabs.map(current => (current.id === tab.id ? { ...current, issue } : current))
+                  )
+                },
+              })}
+            </div>
+          ))}
+        </aside>
+      </div>
+    </IssueDetailDraftProvider>
+  )
+}

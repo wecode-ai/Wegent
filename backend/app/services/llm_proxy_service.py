@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.user import User
 from app.services import model_credential_service
+from app.services.adapters.public_model import is_public_model_allowed_for_user
 from app.services.chat.config.model_resolver import extract_and_process_model_config
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.group_permission import get_user_groups
 from app.services.wework_model_config import (
     positive_token_limit,
@@ -388,6 +390,7 @@ def _validate_model_access(
         )
 
 
+@execution_resource_scope()
 def resolve_llm_proxy_model_config(
     db: Session,
     current_user: User,
@@ -426,6 +429,16 @@ def resolve_llm_proxy_model_config(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
+        )
+    # `_validate_model_access` only proves the requested identity shape. The
+    # public `allowedUsers` whitelist lives on the row, so the gateway applies
+    # it before reading credentials or forwarding a request.
+    if model_type == "public" and not is_public_model_allowed_for_user(
+        kind.json, current_user.user_name
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cloud model access denied",
         )
     model_spec = kind.json.get("spec", {})
     try:

@@ -91,7 +91,7 @@ def _unambiguous_device(matches: list[Kind]) -> Kind | None:
     return None
 
 
-def _resolve_device_alias(devices: list[Kind], device_id: str) -> Kind | None:
+def resolve_device_alias(devices: list[Kind], device_id: str) -> Kind | None:
     """Apply the same installation identity rules to one owned device snapshot."""
     submitted = device_id.strip()
     if not submitted:
@@ -134,8 +134,24 @@ def resolve_owned_device_alias(
     record_id = record_id_from_route(submitted)
     if record_id is not None:
         device = query.filter_by(id=record_id).one_or_none()
-        return _resolve_device_alias([device] if device is not None else [], submitted)
-    return _resolve_device_alias(query.all(), submitted)
+        return resolve_device_alias([device] if device is not None else [], submitted)
+    return resolve_device_alias(query.all(), submitted)
+
+
+def active_device_connection(
+    db: Session, user_id: int, route_id: str, runtime_instance_id: str | None
+) -> bool:
+    """Look up a connected installation by its transport route and Runtime."""
+    query = _owned_devices_query(db, user_id)
+    record_id = record_id_from_route(route_id)
+    if record_id is not None:
+        query = query.filter_by(id=record_id)
+    return any(
+        device_connection_route_id(device) == route_id
+        and (device.json.get("spec", {}).get("runtimeInstanceId") or None)
+        == (runtime_instance_id or None)
+        for device in query.all()
+    )
 
 
 def owned_device_aliases(db: Session, *, user_id: int, device_id: str) -> set[str]:
@@ -143,11 +159,11 @@ def owned_device_aliases(db: Session, *, user_id: int, device_id: str) -> set[st
 
     aliases = {device_id}
     devices = _owned_devices_query(db, user_id).all()
-    device = _resolve_device_alias(devices, device_id)
+    device = resolve_device_alias(devices, device_id)
     if device is None:
         return aliases
     for alias in device_identity_ids(device):
-        resolved = _resolve_device_alias(devices, alias)
+        resolved = resolve_device_alias(devices, alias)
         if resolved is not None and resolved.id == device.id:
             aliases.add(alias)
     return aliases
@@ -180,6 +196,33 @@ def lock_device_owner(db: Session, user_id: int) -> None:
         )
     else:
         db.query(User.id).filter(User.id == user_id).with_for_update().first()
+
+
+def lock_online_device_for_binding(
+    db: Session, user_id: int, device_id: str
+) -> str | None:
+    """Hold the owner lock through the caller's executor binding commit."""
+    from app.core.cache import cache_manager
+
+    lock_device_owner(db, user_id)
+    devices = _owned_devices_query(db, user_id)
+    record_id = record_id_from_route(device_id)
+    if record_id is not None:
+        devices = devices.filter_by(id=record_id)
+    rows = devices.all()
+    exact = [
+        device for device in rows if device_connection_route_id(device) == device_id
+    ]
+    if len(exact) > 1:
+        return None
+    device = exact[0] if exact else resolve_device_alias(rows, device_id)
+    if device is None:
+        return None
+    route_id = device_connection_route_id(device)
+    online = cache_manager.get_sync_or_raise(f"device:online:{user_id}:{route_id}")
+    return (
+        route_id if matching_online_info(device.json.get("spec", {}), online) else None
+    )
 
 
 def validate_persistent_runtime_instance_id(

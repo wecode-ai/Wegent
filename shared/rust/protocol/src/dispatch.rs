@@ -26,7 +26,7 @@ use serde_json::{Map, Value};
 pub struct DispatchPayload {
     pub model: String,
     pub stream: bool,
-    pub input: String,
+    pub input: Value,
     pub instructions: String,
     /// `tools=tools if tools else None`: the source passes an empty tool set
     /// as `None`, which the OpenAI client serializes as JSON `null` rather
@@ -48,7 +48,7 @@ impl DispatchPayload {
         Self {
             model: String::new(),
             stream: false,
-            input: String::new(),
+            input: Value::String(String::new()),
             instructions: String::new(),
             tools: None,
             background: None,
@@ -247,6 +247,26 @@ pub struct ExecutionRequest {
     pub is_group_chat: bool,
     pub history_limit: Option<i64>,
     pub stateless: bool,
+
+    // Device-dispatch carriers for `ExecutionRequest.to_dict`. They are not
+    // part of this struct's wire shape, so chat-shell/SSE request bodies are
+    // unchanged; only `device_execution_payload` renders them.
+    #[serde(skip)]
+    pub device_project_id: i64,
+    #[serde(skip)]
+    pub device_task_mode: String,
+    #[serde(skip)]
+    pub device_timezone: String,
+    #[serde(skip)]
+    pub device_contexts: Vec<Value>,
+    #[serde(skip)]
+    pub device_extra_tools: Vec<Value>,
+    #[serde(skip)]
+    pub device_project_plugin_ids: Vec<String>,
+    #[serde(skip)]
+    pub device_runtime_workspace_roots: Vec<String>,
+    #[serde(skip)]
+    pub device_skills: Vec<Value>,
 }
 
 impl Default for ExecutionRequest {
@@ -329,7 +349,198 @@ impl Default for ExecutionRequest {
             is_group_chat: false,
             history_limit: None,
             stateless: false,
+            device_project_id: 0,
+            device_task_mode: String::new(),
+            device_timezone: DEVICE_TIMEZONE.to_string(),
+            device_contexts: Vec::new(),
+            device_extra_tools: Vec::new(),
+            device_project_plugin_ids: Vec::new(),
+            device_runtime_workspace_roots: Vec::new(),
+            device_skills: Vec::new(),
         }
+    }
+}
+
+/// `ExecutionRequest.timezone`'s contract default (`shared/models/execution.py`).
+pub(crate) const DEVICE_TIMEZONE: &str = "Asia/Shanghai";
+
+/// The canonical `ExecutionRequest.to_dict` field order
+/// (`shared/models/execution.py`), which is also the recorded
+/// `task:execute` data order.
+const DEVICE_EXECUTION_KEYS: [&str; 106] = [
+    "task_id",
+    "subtask_id",
+    "subtask_next_id",
+    "team_id",
+    "team_name",
+    "team_namespace",
+    "team_owner",
+    "subtask_title",
+    "task_title",
+    "user",
+    "user_id",
+    "user_name",
+    "bot",
+    "bot_name",
+    "bot_namespace",
+    "model_config",
+    "system_prompt",
+    "prompt",
+    "kb_meta_prompt",
+    "enable_tools",
+    "enable_web_search",
+    "enable_clarification",
+    "enable_deep_thinking",
+    "enable_tool_output_guard",
+    "search_engine",
+    "skill_names",
+    "skill_configs",
+    "preload_skills",
+    "user_selected_skills",
+    "skills",
+    "skill_refs",
+    "preload_skill_refs",
+    "mcp_servers",
+    "knowledge_base_ids",
+    "document_ids",
+    "knowledge_base_scopes",
+    "external_knowledge_refs",
+    "selected_knowledge_prompt",
+    "provider_native_knowledge",
+    "is_user_selected_kb",
+    "kb_tool_access_mode",
+    "workspace",
+    "project_id",
+    "standalone_chat_workspace",
+    "workspace_source",
+    "project_workspace_path",
+    "execution_target_type",
+    "device_id",
+    "runtime_project_key",
+    "runtime_project_name",
+    "runtime_workspace_roots",
+    "project_plugin_ids",
+    "git_domain",
+    "git_repo",
+    "git_repo_id",
+    "branch_name",
+    "git_url",
+    "git_auth_transport",
+    "message_id",
+    "user_message_id",
+    "user_subtask_id",
+    "is_group_chat",
+    "history_limit",
+    "stateless",
+    "new_session",
+    "ephemeral",
+    "fork_runtime",
+    "inherited_sessions",
+    "legacy_session_bindings",
+    "collaboration_model",
+    "mode",
+    "request_id",
+    "client_user_message_id",
+    "contexts",
+    "history",
+    "interactive_form_answer",
+    "auth_token",
+    "skill_identity_token",
+    "backend_url",
+    "attachments",
+    "is_subscription",
+    "system_mcp_config",
+    "task_data",
+    "extra_tools",
+    "timezone",
+    "status",
+    "progress",
+    "type",
+    "task_mode",
+    "executor_name",
+    "executor_namespace",
+    "executor_image",
+    "executor_type",
+    "callback_url",
+    "validation_params",
+    "sandbox_metadata",
+    "runtime_permission_profile",
+    "runtime_executable_path",
+    "claude_permission_mode",
+    "cloud_project_id",
+    "origin",
+    "reasoning_config",
+    "skip_git_clone",
+    "created_at",
+    "updated_at",
+    "trace_context",
+];
+
+/// `ExecutionRequest.to_dict` for the device execution path: the canonical
+/// field order and every field, including the ones this struct does not
+/// serialize. Only the device dispatch uses this view.
+#[must_use]
+pub fn device_execution_payload(request: &ExecutionRequest, device_id: &str) -> Value {
+    let mut serialized = match serde_json::to_value(request) {
+        Ok(Value::Object(object)) => object,
+        _ => Map::new(),
+    };
+    let mut payload = Map::new();
+    for key in DEVICE_EXECUTION_KEYS {
+        let value = match key {
+            "device_id" => Value::String(device_id.to_string()),
+            "project_id" => Value::from(request.device_project_id),
+            "reasoning_config" => request
+                .model_config
+                .get("reasoning")
+                .cloned()
+                .unwrap_or(Value::Null),
+            "task_mode" => Value::String(request.device_task_mode.clone()),
+            "timezone" => Value::String(request.device_timezone.clone()),
+            "contexts" => Value::Array(request.device_contexts.clone()),
+            "extra_tools" => Value::Array(request.device_extra_tools.clone()),
+            "project_plugin_ids" => Value::Array(
+                request
+                    .device_project_plugin_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+            "runtime_workspace_roots" => Value::Array(
+                request
+                    .device_runtime_workspace_roots
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+            "skills" => Value::Array(request.device_skills.clone()),
+            _ => serialized
+                .remove(key)
+                .unwrap_or_else(|| canonical_default(key)),
+        };
+        payload.insert(key.to_string(), value);
+    }
+    Value::Object(payload)
+}
+
+/// The Source contract's default for a canonical field the struct omits.
+fn canonical_default(key: &str) -> Value {
+    match key {
+        "standalone_chat_workspace" | "ephemeral" | "skip_git_clone" => Value::Bool(false),
+        "executor_name" | "executor_namespace" => Value::String(String::new()),
+        "team_owner" => Value::Object(Map::new()),
+        "contexts"
+        | "history"
+        | "attachments"
+        | "extra_tools"
+        | "skills"
+        | "inherited_sessions"
+        | "legacy_session_bindings"
+        | "runtime_workspace_roots"
+        | "project_plugin_ids" => Value::Array(Vec::new()),
+        _ => Value::Null,
     }
 }
 
@@ -351,16 +562,13 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
         request.prompt.clone()
     } else {
         let mut messages = request.history.clone();
-        if !matches!(&request.prompt, Value::String(text) if text.is_empty()) {
+        if !request.prompt.as_str().is_some_and(str::is_empty)
+            && !request.prompt.as_array().is_some_and(Vec::is_empty)
+        {
             messages.push(serde_json::json!({"role": "user", "content": request.prompt}));
         }
         Value::Array(messages)
     };
-    let prompt_text = match &input {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    };
-
     let tools = if request.mcp_servers.is_empty() {
         None
     } else {
@@ -582,7 +790,7 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
     DispatchPayload {
         model,
         stream,
-        input: prompt_text,
+        input,
         instructions: request.system_prompt.clone(),
         tools,
         // Only the executor-manager dispatch carries `background=true`; the
@@ -647,7 +855,7 @@ mod tests {
         let payload = DispatchPayload {
             model: "qwen3.7-plus".to_string(),
             stream: false,
-            input: "prompt".to_string(),
+            input: json!("prompt"),
             instructions: "system".to_string(),
             tools: Some(vec![json!({"type": "mcp"})]),
             background: Some(true),
@@ -712,6 +920,25 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(metadata_keys, METADATA_KEY_ORDER);
+    }
+
+    #[test]
+    fn assemble_preserves_vision_blocks_on_the_wire_with_or_without_history() {
+        let prompt = json!([
+            {"type": "input_image", "image_url": "data:image/png;base64,eA=="},
+            {"type": "input_text", "text": "Describe the image"},
+        ]);
+        let mut request = ExecutionRequest {
+            prompt: prompt.clone(),
+            ..ExecutionRequest::default()
+        };
+        let wire = serde_json::to_value(assemble(&request, true, false)).unwrap();
+        assert_eq!(wire["input"], prompt);
+
+        request.history = vec![json!({"role": "assistant", "content": "prior reply"})];
+        let wire = serde_json::to_value(assemble(&request, true, false)).unwrap();
+        assert_eq!(wire["input"][0], request.history[0]);
+        assert_eq!(wire["input"][1], json!({"role": "user", "content": prompt}));
     }
 
     #[test]
@@ -810,5 +1037,46 @@ mod tests {
         assert_eq!(MODEL_CONFIG_KEY_ORDER[0], "api_key");
         assert_eq!(MODEL_CONFIG_KEY_ORDER[13], "supports_developer_role");
         assert_eq!(MODEL_CONFIG_KEY_ORDER[17], "reasoning");
+    }
+    #[test]
+    fn the_device_payload_matches_the_canonical_contract_order() {
+        let request = ExecutionRequest {
+            task_id: 21_577_915_845_411,
+            subtask_id: 21_577_915_845_414,
+            model_config: serde_json::json!({
+                "reasoning": {"thinking": {"type": "adaptive"}},
+            }),
+            device_task_mode: "chat".to_string(),
+            ..ExecutionRequest::default()
+        };
+        let payload = device_execution_payload(&request, "socket-recording-ebfb47d1-49a");
+        let object = payload.as_object().expect("object");
+        let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        assert_eq!(keys, DEVICE_EXECUTION_KEYS.to_vec());
+        assert_eq!(
+            object["device_id"],
+            Value::String("socket-recording-ebfb47d1-49a".to_string())
+        );
+        assert_eq!(object["project_id"], Value::from(0));
+        assert_eq!(object["task_mode"], Value::String("chat".to_string()));
+        assert_eq!(
+            object["timezone"],
+            Value::String("Asia/Shanghai".to_string())
+        );
+        assert_eq!(
+            object["reasoning_config"],
+            serde_json::json!({"thinking": {"type": "adaptive"}})
+        );
+        for key in [
+            "contexts",
+            "extra_tools",
+            "project_plugin_ids",
+            "runtime_workspace_roots",
+            "skills",
+        ] {
+            assert_eq!(object[key], serde_json::json!([]), "{key}");
+        }
+        assert_eq!(object["ephemeral"], Value::Bool(false));
+        assert_eq!(object["status"], Value::Null);
     }
 }

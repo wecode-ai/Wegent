@@ -1,12 +1,20 @@
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
-import { Folder, Plus } from 'lucide-react'
+import { ChevronDown, Folder } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
 import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
-import { TagEditor } from '@wegent/collaboration'
+import { TagEditor, createTagDraft, type TagDraftStore } from '@wegent/collaboration'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
+import { useImperativeHandle, useState, useSyncExternalStore, type Ref } from 'react'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+
+export interface StandInProjectNavigationHandle extends AutomationNavigationHandle {
+  requestLeave(action: (discarded?: boolean) => void): void
+}
 
 /** Edit project intake scope, exclusions and handling policies for an independent stand-in. */
 export function StandInConnections({
@@ -16,6 +24,8 @@ export function StandInConnections({
   onChange,
   disabled,
   focusedProjectId,
+  ref: navigationRef,
+  tagDraft: providedTagDraft,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -23,8 +33,25 @@ export function StandInConnections({
   onChange(role: StandInRole): void
   disabled: boolean
   focusedProjectId?: string
+  ref?: Ref<StandInProjectNavigationHandle>
+  tagDraft?: TagDraftStore
 }) {
   const { t } = useTranslation('common')
+  const [ownedTagDraft] = useState(createTagDraft)
+  const tagDraft = providedTagDraft ?? ownedTagDraft
+  const tagDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
+  const [discard, setDiscard] = useState(false)
+  const [draftVersion, setDraftVersion] = useState(0)
+  const navigation = useStandInPanelNavigation(tagDraftDirty, disabled, () => setDiscard(true))
+  useImperativeHandle(navigationRef, () => ({
+    requestLeave(action) {
+      navigation.requestLeave(() => action(tagDraftDirty))
+    },
+  }))
   const source = role.collaboration
   const setSource = (patch: Partial<typeof source>) =>
     onChange({ ...role, collaboration: { ...source, ...patch } })
@@ -53,21 +80,21 @@ export function StandInConnections({
         title={t('standIn.personal.collaboration')}
         description={t('standIn.workspace.project_connection_help')}
       />
-      <label className="flex min-h-9 items-center justify-between gap-3 text-sm">
+      <label className="flex min-h-11 items-center justify-between gap-3 text-sm md:min-h-9">
         <span>{t('standIn.workspace.receive_project_items')}</span>
         <SettingsSwitch
           data-testid="stand-in-source-collaboration"
           checked={source.enabled}
           disabled={disabled}
-          onCheckedChange={enabled => setSource({ enabled })}
+          onCheckedChange={enabled => navigation.requestLeave(() => setSource({ enabled }))}
           aria-label={t('standIn.personal.collaboration')}
         />
       </label>
-      <fieldset disabled={disabled || !source.enabled} className="space-y-4">
+      <fieldset disabled={disabled || !source.enabled} className="min-w-0 max-w-full space-y-4">
         <legend className="mb-2 text-sm font-medium">
           {t('standIn.workspace.connection_scope')}
         </legend>
-        <label className="flex items-start gap-3">
+        <label className="flex min-h-11 items-start gap-3 md:min-h-9">
           <input
             type="checkbox"
             className="mt-1 accent-text-primary"
@@ -78,13 +105,13 @@ export function StandInConnections({
           />
           <span>
             {t('standIn.personal.all_projects')}
-            <span className="mt-1 block text-xs text-text-muted">
+            <span className="mt-1 block text-xs text-text-secondary">
               {t('standIn.personal.all_projects_help')}
             </span>
           </span>
         </label>
         <div
-          className="max-h-64 overflow-y-auto divide-y divide-border/50"
+          className="min-w-0 max-w-full max-h-64 overflow-y-auto divide-y divide-border/50"
           data-testid="stand-in-source-projects"
         >
           {/* Remote all-project scope uses that Executor's catalog, not this computer's. */}
@@ -98,9 +125,9 @@ export function StandInConnections({
             .map(project => (
               <div
                 key={`${project.project_store}:${project.id}`}
-                className={`flex min-h-11 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
+                className={`flex min-h-11 min-w-0 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
               >
-                <label className="flex min-w-0 flex-1 items-center gap-3">
+                <label className="flex min-h-11 min-w-0 flex-1 items-center gap-3 md:min-h-9">
                   <input
                     type="checkbox"
                     className="accent-text-primary"
@@ -115,8 +142,8 @@ export function StandInConnections({
                     }
                     onChange={event => toggleProject(project, event.target.checked)}
                   />
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  <span className="text-xs text-text-muted">
+                  <span className="min-w-0 flex-1 break-words">{project.name}</span>
+                  <span className="shrink-0 text-xs text-text-secondary">
                     {t(
                       project.project_store === 'local'
                         ? 'standIn.personal.local'
@@ -127,7 +154,7 @@ export function StandInConnections({
               </div>
             ))}
           {!projects.length && (
-            <p className="py-3 text-text-muted">
+            <p className="py-3 text-text-secondary">
               {t(
                 source.allProjects
                   ? 'standIn.workspace.connection_projects_empty_all'
@@ -137,20 +164,31 @@ export function StandInConnections({
           )}
         </div>
         <details
-          className="border-t border-border pt-3"
+          className="group border-t border-border pt-3"
           open={source.tags.length ? true : undefined}
         >
           <summary
-            className="flex min-h-9 cursor-pointer items-center gap-2 text-text-secondary"
+            className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
             data-testid="stand-in-source-tags-toggle"
           >
-            <Plus className="h-4 w-4" />
-            {t('standIn.personal.limit_tags')}
+            <span className="min-w-0 flex-1 font-medium">{t('standIn.personal.limit_tags')}</span>
+            <span className="rounded-md border border-border bg-background px-2 py-1">
+              <span className="group-open:hidden">{t('standIn.workspace.processing_edit')}</span>
+              <span className="hidden group-open:inline">
+                {t('standIn.workspace.processing_hide')}
+              </span>
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className="h-4 w-4 text-text-secondary group-open:rotate-180"
+            />
           </summary>
           <div className="mt-2 rounded-md border border-border p-2">
             <TagEditor
+              key={draftVersion}
               tags={source.tags}
               onChange={tags => setSource({ tags })}
+              draftStore={tagDraft}
               disabled={disabled}
               suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
               placeholder={t('standIn.personal.add_tag')}
@@ -159,9 +197,20 @@ export function StandInConnections({
               testIdPrefix="stand-in-connection-tags"
             />
           </div>
-          <p className="mt-2 text-xs text-text-muted">{t('standIn.personal.limit_tags_help')}</p>
+          <p className="mt-2 text-xs text-text-secondary">
+            {t('standIn.personal.limit_tags_help')}
+          </p>
         </details>
       </fieldset>
+      {tagDraftDirty && (
+        <p
+          role="status"
+          className="text-sm text-text-secondary"
+          data-testid="stand-in-project-tags-draft-help"
+        >
+          {t('standIn.workspace.tag_draft_help')}
+        </p>
+      )}
       <StandInProcessingSettings
         disabled={disabled}
         sessionScope="issue"
@@ -191,6 +240,26 @@ export function StandInConnections({
                 }),
             })),
         ]}
+      />
+      <ConfirmDialog
+        open={discard}
+        title={t('standIn.personal.discard_help')}
+        description={t('standIn.personal.discard_description')}
+        cancelLabel={t('standIn.personal.keep_editing')}
+        confirmLabel={t('standIn.personal.discard')}
+        confirmTestId="stand-in-project-tags-discard"
+        cancelTestId="stand-in-project-tags-keep-editing"
+        destructive
+        onClose={() => {
+          navigation.cancelLeave()
+          setDiscard(false)
+        }}
+        onConfirm={() => {
+          setDiscard(false)
+          tagDraft.set('')
+          setDraftVersion(value => value + 1)
+          navigation.confirmLeave(() => {})
+        }}
       />
     </div>
   )

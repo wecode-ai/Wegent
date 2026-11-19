@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useClock } from '@wegent/collaboration/clock'
 
 const SIDEBAR_TIME_REFRESH_INTERVAL_MS = 60_000
 
@@ -20,14 +20,6 @@ export function formatRelativeSidebarTime(value?: string | number, nowMs = Date.
   return `${Math.floor(days / 7)}w`
 }
 
-export function useSidebarRelativeTimeRefresh() {
-  const [, setRefreshTick] = useState(0)
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setRefreshTick(tick => tick + 1)
-    }, SIDEBAR_TIME_REFRESH_INTERVAL_MS)
-
-    return () => window.clearInterval(timer)
-  }, [])
+export function useSidebarRelativeTimeRefresh(enabled = true) {
+  return useClock(enabled, { resolutionMs: SIDEBAR_TIME_REFRESH_INTERVAL_MS })
 }

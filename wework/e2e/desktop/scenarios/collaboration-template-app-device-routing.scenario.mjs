@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
+import { confirmProjectTemplateConfiguration } from '../modules/project-create-template-navigation.mjs'
 import { readFile } from 'node:fs/promises'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { openDirectProjectCreation } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationSpaces,
+  openDirectProjectCreation,
+} from '../modules/workspace-flows.mjs'
+import { verifyProjectAgentEditing } from '../modules/project-agent-editing.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -102,6 +107,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      await expandCollaborationSpaces(control, CONTENT)
       const workspaceTree = scoped(`[data-testid="collaboration-workspace-tree-${workspace.id}"]`)
       await control.command('waitFor', workspaceTree, { timeoutMs: workbenchReadyTimeoutMs })
       await control.command('click', `${workspaceTree} .collaboration-workspace-identity`)
@@ -113,7 +119,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: PROJECT_NAME,
       })
       await control.command('click', scoped('[data-testid="project-create-choose-template"]'))
-      const picker = `${dialog} [data-testid="collaboration-template-dialog"]`
+      const picker = `${dialog} [data-testid="project-create-template-catalog"]`
       await control.command('waitFor', picker, { timeoutMs: uiTimeoutMs })
       await control.command('click', `${picker} [data-testid="template-tab-mine"]`)
       await control.command('waitFor', `${picker} [data-testid="template-details-${templateId}"]`, {
@@ -125,6 +131,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', `${picker} [data-testid="template-use"]`)
       await control.command('waitFor', picker, { visible: false, timeoutMs: uiTimeoutMs })
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('waitFor', scoped('[data-testid="project-create-template-section"]'), {
         text: TEMPLATE_DISPLAY_NAME,
         timeoutMs: uiTimeoutMs,
@@ -168,11 +175,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         )
         assert.equal(created.length, 1, `Missing bundled Agent ${definition.name}`)
         assert.equal(created[0].systemPrompt ?? created[0].system_prompt, definition.systemPrompt)
-        assert.deepEqual(created[0].executionPolicy ?? created[0].execution_policy, {
-          mode: 'fixed',
-          environment_id: String(appDevice.id),
-        })
-        assert.equal((created[0].modelPolicy ?? created[0].model_policy)?.mode, 'fixed')
+        const execution = created[0].executionPolicy ?? created[0].execution_policy
+        const model = created[0].modelPolicy ?? created[0].model_policy
+        assert.equal(execution.mode, 'user_select')
+        assert.equal(execution.environment_id ?? null, null)
+        assert.equal(model.mode, 'user_select')
+        assert.equal(model.model ?? null, null)
       }
 
       const groups = (await request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`))
@@ -192,7 +200,47 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         projectEnvironments.items.some(item => item.device_id === appDevice.id),
         'The APP device must be authorized on the created project'
       )
+      const rules = await request(`/api/v1/cloud-projects/${project.id}/automations`)
+      assert.ok(rules.length > 0 && rules.every(rule => !rule.enabled))
+      // The fixture's execution/recovery stories configure a real authorized target explicitly.
+      await environment.waitForRunnerCatalog(appDevice.id)
+      const catalog = await request(
+        `/api/v1/resources/execution-environments?project_id=${project.id}`
+      )
+      const native = catalog
+        .find(item => item.id === String(appDevice.id))
+        ?.models.find(model => model.runtime === 'codex' && model.is_default)
+      assert.ok(native, 'The destination APP must publish its actual Codex model')
+      for (const agent of agents) {
+        Object.assign(
+          agent,
+          await request(`/api/v1/cloud-projects/${project.id}/chat-agents/${agent.id}`, {
+            method: 'PATCH',
+            body: {
+              version: agent.version,
+              execution_policy: { mode: 'fixed', environment_id: String(appDevice.id) },
+              model_policy: {
+                mode: 'fixed',
+                model: {
+                  runtime: native.runtime,
+                  provider: native.provider,
+                  model_id: native.model_id,
+                  source: native.source,
+                },
+              },
+            },
+          })
+        )
+        assert.equal(agent.executionPolicy.environment_id, String(appDevice.id))
+        assert.equal(agent.modelPolicy.model.model_id, native.model_id)
+      }
+      for (const rule of rules)
+        await request(`/api/v1/cloud-projects/${project.id}/automations/${rule.id}`, {
+          method: 'PATCH',
+          body: { version: rule.version, enabled: true },
+        })
       await captureScreenshot(control, 'template-app-device-routing-created.png', CONTENT)
+      await verifyProjectAgentEditing(control, CONTENT, project, agents[0], request)
     },
   }
 }

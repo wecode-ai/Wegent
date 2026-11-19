@@ -89,29 +89,18 @@ pub(super) async fn resolve_online_route(
 /// Source `supports_plugin_delta`: resolve the route and inspect the advertised
 /// plugin-sync protocol.
 ///
-/// The versioned (`PluginSyncState`) protocol is not ported; a device that
-/// advertises it still receives the legacy payload and a diagnostic warning so
-/// Replay can surface the difference instead of silently changing the shape.
+/// A device that advertises `runtime_features.pluginSync.protocolVersion = 2`
+/// receives the versioned snapshot; every other device keeps the legacy
+/// desired-state payload.
 pub(super) async fn supports_plugin_delta(state: &AppState, user_id: i64, device_id: &str) -> bool {
-    let route = match resolve_online_route(state, user_id, device_id).await {
-        Ok(OnlineRouteResolution::Ready(route)) => route,
-        Ok(OnlineRouteResolution::Unavailable(_)) => return false,
-        Err(_) => return false,
-    };
-    let version = route
-        .online
-        .get("runtime_features")
-        .and_then(|features| features.get("pluginSync"))
-        .and_then(|sync| sync.get("protocolVersion"))
-        .and_then(Value::as_i64);
-    if version == Some(2) {
-        tracing::warn!(
-            user_id,
-            device_id,
-            "device advertises plugin sync v2; the versioned protocol is not implemented"
-        );
+    match resolve_online_route(state, user_id, device_id).await {
+        Ok(OnlineRouteResolution::Ready(route)) => {
+            super::plugin_sync_protocol::supports_plugin_sync_v2(
+                route.online.get("runtime_features"),
+            )
+        }
+        Ok(OnlineRouteResolution::Unavailable(_)) | Err(_) => false,
     }
-    false
 }
 
 /// Source `runtime_route.runtime_device_route_id`.

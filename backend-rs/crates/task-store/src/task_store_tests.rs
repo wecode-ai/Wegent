@@ -381,6 +381,65 @@ struct LineageRecorder {
     calls: std::sync::Mutex<Vec<(crate::request_sql::RouteKey, String, usize)>>,
 }
 
+#[tokio::test]
+async fn bounded_history_uses_owned_task_route_and_skips_disabled_reads() {
+    use crate::task_store_history::{HistorySelection, SubtaskHistoryWindow};
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::default());
+    let mut sql = LineageRecorder::default();
+    for limit in [0, -1, 20] {
+        assert!(
+            store
+                .list_subtasks_history_window_on(
+                    &mut sql,
+                    42,
+                    7,
+                    SubtaskHistoryWindow {
+                        limit,
+                        before_message_id: Some(30),
+                        summary_checkpoint_only: false,
+                        selection: HistorySelection::All,
+                    },
+                )
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let calls = sql.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (route, statement, count) = &calls[0];
+    assert_eq!(*route, crate::request_sql::RouteKey::Task(42));
+    assert_eq!(*count, 5);
+    assert!(statement.starts_with(
+        "SELECT /*+ NO_MERGE(history_candidates) */ id, message_id, created_at FROM ("
+    ));
+    assert!(statement.contains("SELECT id FROM tasks WHERE id = ? AND user_id = ?"));
+    assert!(statement.ends_with("ORDER BY message_id DESC, created_at DESC, id DESC LIMIT ?"));
+    assert!(!statement.contains("result"));
+}
+
+#[tokio::test]
+async fn selected_history_payloads_recheck_owner_and_use_the_same_handle() {
+    let store = DefaultTaskStore::new(crate::sql_test_support::KindQueryCapture::default());
+    let mut sql = LineageRecorder::default();
+    store
+        .load_subtask_history_payloads_on(&mut sql, 42, 7, &[])
+        .await
+        .unwrap();
+    store
+        .load_subtask_history_payloads_on(&mut sql, 42, 7, &[101, 102])
+        .await
+        .unwrap();
+    let calls = sql.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (route, statement, count) = &calls[0];
+    assert_eq!(*route, crate::request_sql::RouteKey::Task(42));
+    assert_eq!(*count, 5);
+    assert!(statement.contains("WHERE id IN (?, ?) AND subtasks.task_id = ?"));
+    assert!(statement.contains("SELECT id FROM tasks WHERE id = ? AND user_id = ?"));
+    assert!(!statement.contains("ORDER BY"));
+}
+
 #[async_trait::async_trait]
 impl crate::request_sql::RequestSql for LineageRecorder {
     async fn execute_statement(
@@ -443,7 +502,10 @@ async fn active_task_owned_on_uses_the_request_handle_and_the_owner_guard() {
         calls[0].0,
         crate::request_sql::RouteKey::Task(893_078_319_907_087)
     );
-    assert_eq!(calls[0].1, active_task_owned_statement(TASKS_TABLE));
+    assert_eq!(
+        calls[0].1,
+        crate::task_store_statements::active_task_owned_labeled_statement(TASKS_TABLE)
+    );
     assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
 }
 
@@ -493,7 +555,7 @@ async fn lineage_task_read_uses_the_request_handle_and_the_owner_guard() {
     );
     assert_eq!(
         calls[0].1,
-        crate::task_store_statements::owner_matches_task_id_statement(TASKS_TABLE)
+        crate::task_store_statements::owner_matches_task_id_labeled_statement(TASKS_TABLE)
     );
     assert_eq!(calls[0].2, 2, "binds (task_id, owner_user_id)");
 }
@@ -519,7 +581,7 @@ async fn refresh_task_on_is_a_plain_primary_key_read() {
     assert!(
         !calls
             .iter()
-            .any(|(_, sql, _)| sql == &owner_matches_task_id_statement(TASKS_TABLE)),
+            .any(|(_, sql, _)| sql == &owner_matches_task_id_labeled_statement(TASKS_TABLE)),
         "no owner probe may accompany the refresh: {calls:?}"
     );
 }

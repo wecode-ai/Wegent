@@ -1,10 +1,11 @@
+import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
+import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
 } from '@/features/model-settings/providerModelConfiguration'
-import { rendererCrashStore } from './rendererCrashStore'
 import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
@@ -12,7 +13,7 @@ import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
-import { readElementVisibility } from './element-visibility'
+import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -43,14 +44,18 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import { composeDesktopInput } from './input-composition'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
-import { getPlatform } from '@/lib/platform'
 import { decodeDesktopControlImage } from './desktop-control-image'
 import {
   getNativeTerminalDiagnostics,
   recordNativeTerminalKey,
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
-import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
+import { fillNativeEditor } from './native-editor-fill'
+import {
+  createNativeKeyObservation,
+  readNativeTerminalViewport,
+  waitForNativeTerminalPageUp,
+} from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getRuntimeStreamDiagnostics,
@@ -93,6 +98,7 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
@@ -136,9 +142,11 @@ import { nextConnectorSyncRevision } from '@/features/cloud-connection/connector
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { saveTelemetryConsent } from '@/telemetry/sessionConsent'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
+  E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
   E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
@@ -315,6 +323,7 @@ export interface WeworkAutomationBridge {
   isDesktop: () => boolean
   getRuntimeConfig: () => ReturnType<typeof getRuntimeConfig>
   getRoute: () => string
+  getControlDiagnostics: typeof getDesktopControlDiagnostics
   navigate: (path: string) => string
   waitForTestId: (testId: string, options?: { timeoutMs?: number }) => Promise<boolean>
   queryTestIds: (prefix?: string) => string[]
@@ -411,18 +420,20 @@ function reloadMainWindowLocalStorageInput(
 
 async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string>(
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
     `(localStorage.setItem(${JSON.stringify(input.key)}, ${JSON.stringify(input.value)}), ` +
-      `localStorage.getItem(${JSON.stringify(input.key)}))`,
-    input.label
+      `localStorage.getItem(${JSON.stringify(input.key)}))`
   )
 }
 
 async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string | null>(
-    `localStorage.getItem(${JSON.stringify(input.key)})`,
-    input.label
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `localStorage.getItem(${JSON.stringify(input.key)})`
   )
 }
 
@@ -557,6 +568,7 @@ function createBridge(): WeworkAutomationBridge {
     isDesktop: isElectronRuntime,
     getRuntimeConfig,
     getRoute: () => stripAppBasePath(window.location.pathname),
+    getControlDiagnostics: getDesktopControlDiagnostics,
     navigate: path => {
       const appPath = normalizeAppPath(path)
       const nextPath = joinAppPath(getRuntimeConfig().appBasePath, appPath)
@@ -760,6 +772,8 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  // Startup assets can fill the default buffer before a failure snapshot is requested.
+  performance.setResourceTimingBufferSize(10_000)
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
     installLocalHarnessDiagnostics()
@@ -819,7 +833,8 @@ function desktopControlElementText(selector: string, visible = false): string {
 function desktopControlElementMetrics(
   selector: string,
   includeText = false,
-  attributeNames: readonly string[] = []
+  attributeNames: readonly string[] = [],
+  includeSelection = false
 ): string {
   const elements = findDesktopControlElements(selector)
   return JSON.stringify(
@@ -855,6 +870,7 @@ function desktopControlElementMetrics(
         viewportWidth: window.innerWidth,
         width: rect.width,
         ...readElementVisibility(element),
+        ...(includeSelection ? { selection: readSelectionVisibility(element) } : {}),
       }
     })
   )
@@ -1365,7 +1381,7 @@ async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
   phase: 'press' | 'down' | 'up' = 'press',
-  measurement?: { selector: string }
+  measurement?: { selector: string; timeoutMs?: number }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   recordNativeTerminalKey('focus-requested', key, findDesktopControlElements(selector)[0] ?? null)
@@ -1421,12 +1437,19 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return observation && viewportTarget
-    ? JSON.stringify({
-        viewportBefore: observation.result(),
-        viewportAfter: readNativeTerminalViewport(viewportTarget),
-      })
-    : (desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? '')
+  if (!observation || !viewportTarget)
+    return desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? ''
+  const viewportBefore = observation.result()
+  // Native key delivery can precede xterm's asynchronous scroll notification.
+  const viewportAfter =
+    key === 'Shift+PageUp'
+      ? await waitForNativeTerminalPageUp(
+          viewportTarget,
+          viewportBefore,
+          startedAt + (measurement?.timeoutMs ?? 10_000)
+        )
+      : readNativeTerminalViewport(viewportTarget)
+  return JSON.stringify({ viewportBefore, viewportAfter })
 }
 
 let activeDesktopControlPointer: {
@@ -1757,7 +1780,7 @@ async function waitForDesktopControlElement(
       } else {
         matchedAt = null
       }
-      await waitForDesktopControlTick()
+      await waitForDomChange(document)
       continue
     }
 
@@ -1777,7 +1800,7 @@ async function waitForDesktopControlElement(
     } else {
       matchedAt = null
     }
-    await waitForDesktopControlTick()
+    await waitForDomChange(document)
   }
 
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
@@ -1800,7 +1823,11 @@ async function waitForDesktopControlElement(
   )
 }
 
-export async function fillDesktopControlElement(element: HTMLElement, value: string) {
+export async function fillDesktopControlElement(
+  element: HTMLElement,
+  value: string,
+  commandId?: string
+) {
   element.focus()
 
   const ownValueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
@@ -1818,30 +1845,7 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
     ownValueSetter.call(element, value)
     return
   } else if (element.isContentEditable) {
-    const windowLabel = getDesktopWindowLabel()
-    await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
-      windowLabel,
-    })
-    element.focus()
-    const pressKey = (key: string) =>
-      sendNativeKeyAndWait(element, 'press', () =>
-        invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase: 'press', focus: false })
-      )
-    // Native editors own their selection state as well as the rendered DOM.
-    await pressKey(`${getPlatform() === 'mac' ? 'Meta' : 'Control'}+A`)
-    if (!value) {
-      await pressKey('Backspace')
-      return
-    }
-    const lines = value.replace(/\r\n?/g, '\n').split('\n')
-    for (const [index, line] of lines.entries()) {
-      if (index > 0) {
-        await pressKey('Enter')
-      }
-      if (!line) continue
-      await invokeDesktopHost('e2e.insertText', { windowLabel, text: line })
-      await waitForDesktopControlTick()
-    }
+    await fillNativeEditor(element, value, waitForDesktopControlTick, commandId)
     return
   } else {
     const selection = window.getSelection()
@@ -2180,9 +2184,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
-    case 'crashRenderer':
-      rendererCrashStore.trigger()
-      return 'Renderer crash requested'
+    case 'verifyConnectorAuthorizationIsolation':
+      await verifyConnectorAuthorizationIsolation(command.value ?? '')
+      return 'true'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
     case 'getDocumentVisibility':
@@ -2254,7 +2258,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const property = command.value?.trim()
       if (!property) throw new Error('getComputedStyleValue requires a CSS property')
-      return getComputedStyle(element).getPropertyValue(property).trim()
+      const pseudo = command.target
+      if (pseudo !== undefined && pseudo !== '::before' && pseudo !== '::after')
+        throw new Error('getComputedStyleValue target must be ::before or ::after')
+      return getComputedStyle(element, pseudo).getPropertyValue(property).trim()
     }
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
@@ -2391,13 +2398,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         apiBaseUrl: string
         connectorToken: string
         expiresAtMs: number
+        syncRevision?: number
       }
       return JSON.stringify(
         await requestLocalExecutor('runtime.connectors.configure', {
           apiBaseUrl: input.apiBaseUrl,
           connectorToken: input.connectorToken,
           expiresAtMs: input.expiresAtMs,
-          syncRevision: nextConnectorSyncRevision(),
+          syncRevision: input.syncRevision ?? nextConnectorSyncRevision(),
         })
       )
     }
@@ -2421,13 +2429,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
       return ''
     }
+    case 'getDroppedRuntimeEventCounts': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY]?: Record<string, number>
+      }
+      return JSON.stringify(root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ?? {})
+    }
     case 'holdLocalExecutorRequests': {
-      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+      const { method, phase, maxHeldCount } = JSON.parse(command.value ?? '{}') as {
         method?: string
         phase?: 'before-dispatch' | 'after-response'
+        maxHeldCount?: number
       }
       if (!method) throw new Error('holdLocalExecutorRequests requires a method')
-      holdLocalExecutorRequestsForE2E(method, phase)
+      if (maxHeldCount !== undefined && (!Number.isSafeInteger(maxHeldCount) || maxHeldCount < 1)) {
+        throw new Error('maxHeldCount must be a positive integer')
+      }
+      holdLocalExecutorRequestsForE2E(method, phase, maxHeldCount)
       return ''
     }
     case 'awaitLocalExecutorRequestHold':
@@ -2774,6 +2792,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(updated.localHarnesses)
     }
+    case 'getAppPreferences':
+      return JSON.stringify(await getAppPreferences())
+    case 'setTelemetryConsent': {
+      const { enabled, expectedRevision } = JSON.parse(command.value ?? '{}') as {
+        enabled: boolean
+        expectedRevision: number
+      }
+      return JSON.stringify(await saveTelemetryConsent(enabled, expectedRevision))
+    }
     case 'setAppPreferences': {
       const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch
       const preferences = await updateAppPreferences(patch)
@@ -2867,6 +2894,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
       return ''
+    case 'blurMainWindow':
+      await invokeDesktopHost('e2e.blurMainWindow')
+      return ''
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),
@@ -2874,6 +2904,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         phase: 'press',
       })
       return ''
+    case 'setStartupSplashSize': {
+      const nextSize = JSON.parse(command.value ?? '{}') as { width?: number; height?: number }
+      if (
+        !Number.isFinite(nextSize.width) ||
+        !Number.isFinite(nextSize.height) ||
+        Number(nextSize.width) <= 0 ||
+        Number(nextSize.height) <= 0
+      ) {
+        throw new Error('setStartupSplashSize requires positive width and height')
+      }
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.setStartupSplashSize', {
+          width: Number(nextSize.width),
+          height: Number(nextSize.height),
+        })
+      )
+    }
     case 'setMainWindowSize': {
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
@@ -2992,6 +3039,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         includeText?: boolean
         attributeNames?: string[]
         waitForMatch?: boolean
+        includeSelection?: boolean
       }
       if (
         options.attributeNames !== undefined &&
@@ -3003,7 +3051,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         desktopControlElementMetrics(
           command.selector,
           options.includeText === true,
-          options.attributeNames ?? []
+          options.attributeNames ?? [],
+          options.includeSelection === true
         )
       return options.waitForMatch === true
         ? waitForDesktopControlElement(command, snapshot)
@@ -3248,6 +3297,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'expandProcessingSummaries':
       return expandDesktopProcessingSummaries()
     case 'scrollIntoViewAsUser': {
+      startConversationDiagnosticCapture()
       const elements = findDesktopControlElements(command.selector)
       const element = command.text
         ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
@@ -3553,7 +3603,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      await fillDesktopControlElement(element, command.value ?? '')
+      await fillDesktopControlElement(element, command.value ?? '', command.id)
       return element.textContent?.trim() ?? ''
     }
     case 'composeInput': {
@@ -3584,12 +3634,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
-      performance.setResourceTimingBufferSize(10_000)
+      if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
           invokeDesktopHost(capability)
         ),
+        issueDrawers: collectIssueDrawerDiagnostics(),
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
@@ -3659,7 +3710,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('Plugin image timing diagnostics require an absolute image path')
       }
-      performance.setResourceTimingBufferSize(10_000)
       const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
       return JSON.stringify(
         completed
@@ -3918,7 +3968,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         command.selector,
         command.key ?? '',
         'press',
-        command.target ? { selector: command.target } : undefined
+        command.target ? { selector: command.target, timeoutMs: command.timeoutMs } : undefined
       )
     }
     case 'nativeKeyDownOnly': {
@@ -3941,7 +3991,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const form = element instanceof HTMLFormElement ? element : element.closest('form')
       if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
       if (command.value !== undefined) {
-        await fillDesktopControlElement(element, command.value)
+        await fillDesktopControlElement(element, command.value, command.id)
       }
       form.requestSubmit()
       return ''

@@ -4,61 +4,14 @@
 
 use super::*;
 
-#[tokio::test]
-async fn native_continuation_retains_capacity_after_local_control_finishes() {
-    for clear_during_turn in [false, true] {
-        let (handler, root, _) = setup("native-capacity-after-local-control");
-        handler
-            .turn_scheduler
-            .lock()
-            .unwrap()
-            .active_task_ids
-            .insert("task-1".into(), RuntimeTaskKind::Personal);
-        let execution = start_test_execution(&handler, "task-1");
-        handler.route_codex_notification(notification("turn/started", "turn-1"));
-        if !clear_during_turn {
-            handler.route_codex_notification(notification("turn/completed", "turn-1"));
-        }
-        assert!(handler.finish_local_task_execution("task-1", execution));
-        handler.finish_scheduled_turn("task-1").await;
-        assert!(handler.native_task_holds_capacity("task-1"));
-        assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
-        assert!(!handler.is_active_local_task("task-1"));
+#[path = "goal_recovery_tests.rs"]
+mod goal_recovery_tests;
 
-        handler.route_codex_notification(json!({"method":"thread/goal/cleared",
-            "params":{"threadId":"thread-1"}}));
-        if clear_during_turn {
-            assert!(handler.native_task_holds_capacity("task-1"));
-        } else {
-            // A new native turn can overtake asynchronous release of the old one.
-            handler.store.update_task(
-                "task-1",
-                crate::runtime_work::lifecycle::begin_native_request,
-            );
-            tokio::task::yield_now().await;
-            assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
-            handler.route_codex_notification(notification("turn/started", "turn-2"));
-        }
-        handler.route_codex_notification(notification(
-            "turn/completed",
-            if clear_during_turn {
-                "turn-1"
-            } else {
-                "turn-2"
-            },
-        ));
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while handler.get_runtime_capacity().await.unwrap()["active"] != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        let operation = handler.turn_queue_operation.lock().await;
-        drop(operation);
-        let _ = fs::remove_dir_all(root);
-    }
-}
+#[path = "native_capacity_tests.rs"]
+mod native_capacity_tests;
+
+#[path = "retry_routing_tests.rs"]
+mod retry_routing_tests;
 
 #[test]
 fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit() {
@@ -241,6 +194,8 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
                 turn_id: "turn-1".into(),
             }),
             Ok(crate::agents::CodexAppServerTurn {
+                quota_recovery: None,
+                error_type: None,
                 thread_id: "thread-1".into(),
                 outcome,
                 response_item_id: None,
@@ -589,6 +544,48 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
     assert!(handler.remove_queued_turn("task-1").await.unwrap());
     assert!(handler.finish_local_task_execution("task-1", execution));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn continuation_admission_observes_a_turn_that_settled_during_preparation() {
+    let (handler, root, request) = setup("continuation-admission-after-drain");
+    handler
+        .store
+        .update_task("task-1", |link| link.goal_status = None);
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+    let execution = start_test_execution(&handler, "task-1");
+    assert!(handler.is_busy_local_task("task-1"));
+
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    let mut terminal = notification("turn/completed", "turn-1");
+    terminal["params"]["turn"]["status"] = json!("failed");
+    handler.route_codex_notification(terminal);
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    handler.finish_scheduled_turn("task-1").await;
+    assert!(!handler.is_busy_local_task("task-1"));
+
+    handler
+        .submit_continuation(SpawnTurnRequest {
+            task_kind: None,
+            local_task_id: "task-1".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: Some("thread-1".into()),
+            initial_thread_goal: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(handler.queued_local_task_position("task-1"), None);
     let _ = fs::remove_dir_all(root);
 }
 

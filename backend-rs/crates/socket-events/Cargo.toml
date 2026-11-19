@@ -15,3 +15,4 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 wegent-backend-config = { path = "../config" }
+wegent-python-compat = { path = "../python-compat" }

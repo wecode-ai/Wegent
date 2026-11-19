@@ -11,6 +11,32 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         task_id: &str,
     ) -> Result<(), String> {
+        if let Some(info) = request.extra.get("automation_info") {
+            if let (Some(id), Some(run_id)) =
+                (info["automationId"].as_str(), info["runId"].as_str())
+            {
+                if let Some(automation) = self.automation_store.get(id) {
+                    if let Some(run) = self
+                        .automation_store
+                        .list_runs(Some(id))
+                        .into_iter()
+                        .find(|run| run.id == run_id)
+                    {
+                        if !self.automation_store.allow_dispatch(
+                            &automation,
+                            &run,
+                            chrono::Utc::now(),
+                        )? {
+                            self.emit_automation_runs_changed(id, run_id);
+                            return Err(
+                                "Scheduled execution is not allowed by the China workday calendar"
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let Some(schedule) = request.extra.get("standInSchedule") else {
             return Ok(());
         };
@@ -30,6 +56,14 @@ impl RuntimeWorkRpcHandler {
             .automation_store
             .get(id)
             .ok_or("The arrangement was cancelled before starting")?;
+        if schedule["manual"] != true
+            && !wegent_automation::scheduled_dispatch_allowed(
+                &current.schedule,
+                chrono::Utc::now(),
+            )?
+        {
+            return Err("Scheduled execution skipped on a China non-workday".into());
+        }
         if json!(current.version) != schedule["version"]
             || (!current.enabled
                 && schedule["manual"] != true
@@ -91,9 +125,12 @@ impl RuntimeWorkRpcHandler {
     ) {
         let schedule = &request.extra["standInSchedule"];
         if let Some(run) = schedule["runId"].as_str() {
-            let _ = self
-                .automation_store
-                .mark_needs_attention(run, error.clone());
+            let _ = self.automation_store.settle_coordinated_run(
+                run,
+                AutomationRunStatus::NeedsAttention,
+                None,
+                Some(error.clone()),
+            );
         }
         if let (Some(id), Some(run)) = (schedule["id"].as_str(), schedule["runId"].as_str()) {
             self.emit_automation_runs_changed(id, run);
@@ -124,8 +161,11 @@ impl RuntimeWorkRpcHandler {
         };
         if name == "list_schedules" {
             return Ok(
-                json!({"items": self.automation_store.list().into_iter().filter(owned).map(|a| json!({"id":a.id,"name":a.name,"schedule":a.schedule,"timezone":a.timezone,"enabled":a.enabled,"nextRunAt":a.next_run_at,"lastRunAt":a.last_run_at})).collect::<Vec<_>>()}),
+                json!({"items": self.automation_store.list().into_iter().filter(owned).map(|a| json!({"id":a.id,"version":a.version,"name":a.name,"message":a.prompt,"schedule":a.schedule,"timezone":a.timezone,"enabled":a.enabled,"nextRunAt":a.next_run_at,"lastRunAt":a.last_run_at})).collect::<Vec<_>>()}),
             );
+        }
+        if name == "update_schedule" {
+            return self.update_stand_in_schedule(identity, args).await;
         }
         if name == "cancel_schedule" {
             let id = required(args, "scheduleId")?;
@@ -138,6 +178,85 @@ impl RuntimeWorkRpcHandler {
             return self.delete_automation(json!({"automationId":id})).await;
         }
         self.create_stand_in_schedule(identity, args).await
+    }
+
+    async fn update_stand_in_schedule(
+        &self,
+        identity: &StandInMcpIdentity,
+        args: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let id = required(args, "scheduleId")?;
+        let automation = self
+            .automation_store
+            .get(id)
+            .filter(|automation| {
+                automation.task_request["standInOwner"]["userId"] == identity.user
+                    && automation.task_request["standInCalendar"].is_object()
+            })
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "permission_denied",
+                    "Arrangement does not belong to this user",
+                )
+            })?;
+        let version = args["version"].as_u64().ok_or_else(|| {
+            AppIpcError::new("bad_request", "The version from list_schedules is required")
+        })?;
+        let mut value = serde_json::to_value(automation)
+            .map_err(|_| AppIpcError::new("invalid_configuration", "Invalid arrangement"))?;
+        value["version"] = json!(version);
+        let fields = [
+            "title",
+            "message",
+            "at",
+            "cron",
+            "workdayOnly",
+            "timezone",
+            "enabled",
+        ];
+        if !fields.iter().any(|field| args.get(*field).is_some()) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "At least one arrangement field is required",
+            ));
+        }
+        for (input, field, request_field) in
+            [("title", "name", "title"), ("message", "prompt", "message")]
+        {
+            if args.get(input).is_some() {
+                let text = required(args, input)?;
+                value[field] = json!(text);
+                value["taskRequest"][request_field] = json!(text);
+            }
+        }
+        if args.get("at").is_some() || args.get("cron").is_some() {
+            let mut trigger = args.clone();
+            if trigger.get("workdayOnly").is_none() && trigger.get("at").is_none() {
+                trigger["workdayOnly"] = value["schedule"]
+                    .get("workdayOnly")
+                    .cloned()
+                    .unwrap_or(json!(false));
+            }
+            value["schedule"] = schedule_from_args(&trigger)?;
+        } else if let Some(filter) = args.get("workdayOnly") {
+            if !filter.is_boolean() || value["schedule"]["type"] != "cron" {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    "workdayOnly requires a recurring cron schedule and a boolean",
+                ));
+            }
+            value["schedule"]["workdayOnly"] = filter.clone();
+        }
+        if args.get("timezone").is_some() {
+            value["timezone"] = json!(required(args, "timezone")?);
+        }
+        if let Some(enabled) = args.get("enabled") {
+            if !enabled.is_boolean() {
+                return Err(AppIpcError::new("bad_request", "enabled must be a boolean"));
+            }
+            value["enabled"] = enabled.clone();
+        }
+        self.update_automation(value).await
     }
 
     async fn create_stand_in_schedule(
@@ -158,20 +277,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(automation) = self.automation_store.get(&id) {
             return Ok(json!({"automation":automation,"alreadyExists":true}));
         }
-        let schedule = if let Some(at) = args["at"].as_str() {
-            let at = chrono::DateTime::parse_from_rfc3339(at).map_err(|_| {
-                AppIpcError::new("bad_request", "A future RFC3339 timestamp is required")
-            })?;
-            if at <= chrono::Utc::now() || args["cron"].is_string() {
-                return Err(AppIpcError::new(
-                    "bad_request",
-                    "Choose one future time or a recurring schedule",
-                ));
-            }
-            json!({"type":"one_time","execute_at":at.to_rfc3339()})
-        } else {
-            json!({"type":"cron","expression":required(args,"cron")?})
-        };
+        let schedule = schedule_from_args(args)?;
         if args.get("taskId").is_some() {
             return Err(AppIpcError::new("bad_request", "Calendar events inherit connection settings and cannot select an execution conversation"));
         }
@@ -240,7 +346,12 @@ impl RuntimeWorkRpcHandler {
         if memory_review {
             payload["origin"]["memoryReview"] = json!(true);
         }
-        let mut prepared = self.prepare_stand_in_execution(payload, &config).await?;
+        let mut prepared = if memory_review {
+            self.prepare_background_stand_in_execution(payload, &config)
+                .await?
+        } else {
+            self.prepare_stand_in_execution(payload, &config).await?
+        };
         if review || memory_review {
             let invalid = || AppIpcError::new("bad_request", "Invalid review execution context");
             let request = prepared["executionRequest"]
@@ -326,9 +437,286 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn schedule_from_args(args: &Value) -> Result<Value, AppIpcError> {
+    for key in ["at", "cron"] {
+        if args.get(key).is_some() {
+            required(args, key)?;
+        }
+    }
+    Ok(if let Some(at) = args["at"].as_str() {
+        let at = chrono::DateTime::parse_from_rfc3339(at).map_err(|_| {
+            AppIpcError::new("bad_request", "A future RFC3339 timestamp is required")
+        })?;
+        if at <= chrono::Utc::now() || args["cron"].is_string() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Choose one future time or a recurring schedule",
+            ));
+        }
+        json!({"type":"one_time","execute_at":at.to_rfc3339()})
+    } else {
+        let workday_only = args
+            .get("workdayOnly")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "workdayOnly must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+        json!({"type":"cron","expression":required(args,"cron")?,"workdayOnly":workday_only})
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn owner() -> StandInMcpIdentity {
+        StandInMcpIdentity {
+            task_id: "primary-chat".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            ask_before_act: true,
+            coordinator_batch: None,
+            project: None,
+            review: false,
+            memory_review: false,
+            readonly_worker: false,
+        }
+    }
+
+    async fn daily(handler: &RuntimeWorkRpcHandler) -> Value {
+        handler
+            .create_stand_in_schedule(
+                &owner(),
+                &json!({
+                    "requestId":"daily", "title":"Daily report", "message":"Summarize progress",
+                    "cron":"0 18 * * *", "timezone":"Asia/Shanghai", "workdayOnly":true
+                }),
+            )
+            .await
+            .unwrap()["automation"]
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn update_schedule_preserves_identity_history_and_omitted_fields() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let before = daily(&handler).await;
+        let id = before["id"].as_str().unwrap();
+        handler.automation_store.start_manual_run(id).unwrap();
+        let history = handler.automation_store.list_runs(Some(id));
+        let listed = handler
+            .stand_in_schedule_operation(&owner(), "list_schedules", &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(listed["items"][0]["version"], before["version"]);
+        assert_eq!(listed["items"][0]["message"], before["prompt"]);
+        let after = handler.stand_in_schedule_operation(&owner(), "update_schedule", &json!({
+            "scheduleId":id, "version":before["version"],
+            "message":"Summarize progress; include owner, collaborator, waiting time and next step"
+        })).await.unwrap()["automation"].clone();
+        for key in [
+            "id",
+            "createdAt",
+            "name",
+            "schedule",
+            "timezone",
+            "enabled",
+            "conversationMode",
+            "taskPayload",
+            "notificationPolicy",
+        ] {
+            assert_eq!(after[key], before[key], "{key}");
+        }
+        assert_eq!(after["version"], before["version"].as_u64().unwrap() + 1);
+        assert_eq!(after["taskRequest"]["message"], after["prompt"]);
+        assert_eq!(
+            after["taskRequest"]["standInOwner"],
+            before["taskRequest"]["standInOwner"]
+        );
+        assert_eq!(
+            after["taskRequest"]["standInCalendar"],
+            before["taskRequest"]["standInCalendar"]
+        );
+        assert_eq!(handler.automation_store.list().len(), 1);
+        assert_eq!(
+            serde_json::to_value(handler.automation_store.list_runs(Some(id))).unwrap(),
+            serde_json::to_value(history).unwrap()
+        );
+        let reopened = crate::runtime_work::automations::AutomationStore::new(
+            root.path().join("automations.json"),
+        );
+        assert_eq!(
+            serde_json::to_value(reopened.get(id).unwrap()).unwrap(),
+            after
+        );
+        let error = handler
+            .stand_in_schedule_operation(
+                &owner(),
+                "update_schedule",
+                &json!({
+                    "scheduleId":id,"version":before["version"],"message":"Stale overwrite"
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "conflict");
+        assert_eq!(
+            serde_json::to_value(handler.automation_store.get(id).unwrap()).unwrap(),
+            after
+        );
+    }
+
+    #[tokio::test]
+    async fn update_schedule_changes_trigger_without_resuming_a_paused_arrangement() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let before = daily(&handler).await;
+        let id = before["id"].as_str().unwrap();
+        let paused = handler.automation_store.toggle(id, false).unwrap();
+        let after = handler.stand_in_schedule_operation(&owner(), "update_schedule", &json!({
+            "scheduleId":id,"version":paused.version,"cron":"0 19 * * *", "title":"Evening report"
+        })).await.unwrap()["automation"].clone();
+        assert_eq!(
+            after["schedule"],
+            json!({"type":"cron","expression":"0 19 * * *","workdayOnly":true})
+        );
+        assert_eq!(after["enabled"], false);
+        assert_eq!(after["nextRunAt"], Value::Null);
+        assert_eq!(after["taskRequest"]["title"], "Evening report");
+        let once = handler.stand_in_schedule_operation(&owner(), "update_schedule", &json!({
+            "scheduleId":id,"version":after["version"],"at":"2099-01-01T00:00:00Z", "enabled":true
+        })).await.unwrap()["automation"].clone();
+        assert_eq!(once["schedule"]["type"], "one_time");
+        assert!(once["nextRunAt"].is_string());
+        assert_eq!(handler.automation_store.list().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn invalid_or_unauthorized_updates_leave_the_arrangement_intact() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let before = daily(&handler).await;
+        let id = before["id"].as_str().unwrap();
+        for patch in [
+            json!({}),
+            json!({"message":""}),
+            json!({"cron":"invalid"}),
+            json!({"timezone":"invalid"}),
+            json!({"enabled":"true"}),
+            json!({"workdayOnly":"true"}),
+            json!({"at":"2000-01-01T00:00:00Z"}),
+            json!({"at":null}),
+            json!({"at":"2099-01-01T00:00:00Z","cron":"0 18 * * *"}),
+            json!({"message":"changed","version":null}),
+        ] {
+            let mut args = json!({"scheduleId":id,"version":before["version"]});
+            args.as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            let error = handler
+                .stand_in_schedule_operation(&owner(), "update_schedule", &args)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "bad_request", "{args}");
+            assert_eq!(
+                serde_json::to_value(handler.automation_store.get(id).unwrap()).unwrap(),
+                before
+            );
+        }
+        let mut other = owner();
+        other.user = 8;
+        let error = handler
+            .stand_in_schedule_operation(
+                &other,
+                "update_schedule",
+                &json!({
+                    "scheduleId":id,"version":before["version"],"message":"Hijack"
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "permission_denied");
+        let mut ordinary = handler.automation_store.get(id).unwrap();
+        ordinary.id = "ordinary".into();
+        ordinary
+            .task_request
+            .as_object_mut()
+            .unwrap()
+            .remove("standInCalendar");
+        handler.automation_store.create(ordinary).unwrap();
+        let error = handler
+            .stand_in_schedule_operation(
+                &owner(),
+                "update_schedule",
+                &json!({
+                    "scheduleId":"ordinary","version":1,"message":"Hijack"
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "permission_denied");
+    }
+
+    #[tokio::test]
+    async fn chat_schedule_preserves_explicit_workday_filter_and_defaults_old_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let identity = StandInMcpIdentity {
+            task_id: "primary-chat".into(),
+            user: 7,
+            device: "mac".into(),
+            role: Some("@primary".into()),
+            work: None,
+            ask_before_act: true,
+            coordinator_batch: None,
+            project: None,
+            review: false,
+            memory_review: false,
+            readonly_worker: false,
+        };
+        for filtered in [false, true] {
+            let mut args = json!({"requestId":format!("filtered-{filtered}"),"title":"Review","message":"Review outstanding items","cron":"0 9 * * *","timezone":"Asia/Shanghai"});
+            if filtered {
+                args["workdayOnly"] = json!(true);
+            }
+            let saved = handler
+                .create_stand_in_schedule(&identity, &args)
+                .await
+                .unwrap();
+            assert_eq!(
+                saved["automation"]["schedule"].get("workdayOnly"),
+                filtered.then_some(&json!(true))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_review_rejects_a_non_codex_primary_model_before_creating_work() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = fixture(root.path());
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store.materialize_implicit_primary(7, "mac").unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["primary"]["model"] =
+            json!({"runtime":"claude_code","provider":"claude","model_id":"chosen"});
+        let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let entry = crate::runtime_work::automations::memory_review(7, "mac").unwrap();
+
+        let error = handler
+            .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "model_unavailable");
+        assert!(handler.local_task_links(true).is_empty());
+        assert_eq!(store.personal_stand_in(7, "mac").unwrap(), settings);
+    }
 
     #[tokio::test]
     async fn chat_created_calendar_events_use_connection_routing_and_reject_execution_targets() {

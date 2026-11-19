@@ -1,3 +1,4 @@
+import { createStandInImConnectionsStory } from '../modules/stand-in-im-connections.mjs'
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import {
   openCollaborationNotifications,
@@ -19,6 +20,8 @@ import {
 import {
   assistantMessage,
   createSse,
+  handleEmptyReplyPrediction,
+  handleModelMaintenanceRequest,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -26,7 +29,7 @@ import {
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身通知-${process.pid}`
+const PROJECT = `助理通知-${process.pid}`
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
@@ -55,13 +58,17 @@ export function createDesktopScenario({
   captureScreenshot,
   workspacePath,
 }) {
+  const imStory = createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot })
   const failureRegression = createStandInFailureRegression()
   const subscriptionRegression = createSubscriptionConfigRegression()
   let followUpResponse
   let userId
   return {
+    appEnvironment: { WEWORK_E2E_BACKGROUND_WINDOW: '0' },
     requiresCloudEnvironment: true,
-    async prepareCloud({ backendUrl, authToken }) {
+    async prepareCloud(environment) {
+      await imStory.prepareCloud(environment)
+      const { backendUrl, authToken } = environment
       const response = await fetch(`${backendUrl}/api/users/me`, {
         headers: { Authorization: `Bearer ${authToken}` },
       })
@@ -69,6 +76,9 @@ export function createDesktopScenario({
       const user = await response.json()
       assert.ok(Number.isInteger(user.id) && user.id > 0)
       userId = user.id
+    },
+    setCloudEnvironment(environment) {
+      imStory.setCloudEnvironment(environment)
     },
     prepareApp: subscriptionRegression.prepareApp,
     attachServer: subscriptionRegression.attachServer,
@@ -80,6 +90,8 @@ export function createDesktopScenario({
       )
         return false
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      if (handleModelMaintenanceRequest(body, response)) return true
       subscriptionRegression.acceptsModelRequest(request, url, body)
       if (failureRegression.handleHttp(body, response)) return true
       const id = `notification-${Date.now()}`
@@ -96,6 +108,7 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
+      await imStory.verify(control)
       assert.ok(userId, 'The scenario must use its authenticated backend identity')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -117,7 +130,7 @@ export function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '在通知内继续处理分身任务', assignee_user_id: userId },
+          todo: { title: '在通知内继续处理助理任务', assignee_user_id: userId },
         },
         uiTimeoutMs
       )
@@ -155,10 +168,10 @@ export function createDesktopScenario({
       })
       await assertInboxReady(control)
       const notificationRow = selector(`wework-notification-${id}`)
-      await control.command('waitFor', notificationRow, { text: '分身处理' })
+      await control.command('waitFor', notificationRow, { text: '助理处理' })
       const rowText = await control.command('getText', notificationRow)
-      assert.ok(rowText.includes('在通知内继续处理分身任务'))
-      assert.ok(!rowText.includes('我的分身'), 'Handling must preserve the original title')
+      assert.ok(rowText.includes('在通知内继续处理助理任务'))
+      assert.ok(!rowText.includes('我的助理'), 'Handling must preserve the original title')
       assert.equal(
         await control.command('getElementCount', selector(`wework-notification-${id}-body`)),
         '0',
@@ -174,7 +187,7 @@ export function createDesktopScenario({
       )
       await control.command('click', notificationRow)
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`, {
-        text: '在通知内继续处理分身任务',
+        text: '在通知内继续处理助理任务',
       })
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
       await control.command('activateSystemNotification', 'body', {
@@ -283,13 +296,16 @@ export function createDesktopScenario({
             'getValueWhenReady',
             `${CONTENT} [data-testid="cloud-todo-detail-title"]`
           ),
-          '在通知内继续处理分身任务',
+          '在通知内继续处理助理任务',
           'Every notification hit target must open the original Issue'
         )
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
           text: issue.id,
         })
         await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
+          visible: false,
+        })
       }
       await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
@@ -301,7 +317,7 @@ export function createDesktopScenario({
           'getValueWhenReady',
           `${CONTENT} [data-testid="cloud-todo-detail-title"]`
         ),
-        '在通知内继续处理分身任务'
+        '在通知内继续处理助理任务'
       )
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
       await verifyIssueAssignmentReceipts(

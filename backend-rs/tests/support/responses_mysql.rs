@@ -5,8 +5,9 @@
 //! Disposable MySQL fixture shared by the base-table and routed-store regressions.
 
 use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlService, MysqlServiceOptions};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use wegent_backend_rs::task_store::TaskStore;
+use wegent_backend_test_support::unique_database_name;
 
 pub const LARGE_RESULT_BYTES: usize = 20 * 1024 * 1024;
 pub const LONG_CONVERSATION_ROWS: usize = 65_536;
@@ -30,11 +31,7 @@ impl Fixture {
             MysqlService::connect(&format!("mysql://root@{address}/mysql?ssl-mode=disabled"))
                 .await
                 .unwrap();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let database = format!("responses_json_{}_{unique}", std::process::id());
+        let database = unique_database_name("responses_json");
         admin
             .execute(format!("CREATE DATABASE {database}"), ())
             .await
@@ -63,11 +60,11 @@ impl Fixture {
             .execute(
                 format!(
                     "CREATE TABLE {table} (
-                id BIGINT PRIMARY KEY, user_id INT NOT NULL, task_id BIGINT NOT NULL,
+                id BIGINT PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, task_id BIGINT NOT NULL,
                 team_id BIGINT DEFAULT 0, title VARCHAR(100) DEFAULT '',
                 bot_ids JSON, role VARCHAR(20) DEFAULT 'ASSISTANT',
                 executor_namespace VARCHAR(100) DEFAULT '',
-                executor_name VARCHAR(100) DEFAULT '', executor_deleted_at DATETIME,
+                executor_name VARCHAR(100) DEFAULT '', executor_deleted_at TINYINT DEFAULT 0,
                 prompt TEXT, message_id BIGINT, parent_id BIGINT DEFAULT 0,
                 status VARCHAR(20) DEFAULT 'COMPLETED', progress INT DEFAULT 100,
                 result JSON, error_message TEXT,
@@ -79,6 +76,17 @@ impl Fixture {
             ) ENGINE=InnoDB"
                 ),
                 (),
+            )
+            .await
+            .unwrap();
+    }
+
+    pub async fn seed_running_subtask(&self, task_id: i64, subtask_id: i64, user_id: i32) {
+        self.create_subtasks_table("subtasks").await;
+        self.mysql
+            .execute(
+                "INSERT INTO subtasks (id,user_id,task_id,message_id,status,progress)                  VALUES (?,?,?,1,'RUNNING',0)",
+                (subtask_id, user_id, task_id),
             )
             .await
             .unwrap();

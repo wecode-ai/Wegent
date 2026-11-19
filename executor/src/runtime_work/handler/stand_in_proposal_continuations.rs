@@ -2,7 +2,7 @@
 use super::*;
 use crate::task_runtime::mcp::StandInMcpIdentity;
 
-const OWNER: &str = "standInOwnerRequest";
+pub(super) const OWNER: &str = "standInOwnerRequest";
 const EXPECTED: &str = "standInExpectedOwnerRequest";
 
 #[cfg(test)]
@@ -14,6 +14,32 @@ fn denied() -> AppIpcError {
         "owner_request_changed",
         "The original owner request is no longer current",
     )
+}
+
+fn merge_owner_state(left: &Value, right: &Value) -> Option<Value> {
+    let mut left_identity = left.as_object()?.clone();
+    let mut right_identity = right.as_object()?.clone();
+    let left_cancelled = left_identity.remove("cancelled")?.as_bool()?;
+    let right_cancelled = right_identity.remove("cancelled")?.as_bool()?;
+    if left_identity != right_identity {
+        return None;
+    }
+    let mut owner = left.clone();
+    owner["cancelled"] = json!(left_cancelled || right_cancelled);
+    Some(owner)
+}
+
+fn project_owner_state(current: &Value, incoming: &Value) -> Option<Value> {
+    let incoming_revision = incoming["revision"].as_u64()?;
+    incoming["cancelled"].as_bool()?;
+    if current.is_null() {
+        return Some(incoming.clone());
+    }
+    match current["revision"].as_u64()?.cmp(&incoming_revision) {
+        std::cmp::Ordering::Less => Some(incoming.clone()),
+        std::cmp::Ordering::Equal => merge_owner_state(current, incoming),
+        std::cmp::Ordering::Greater => None,
+    }
 }
 
 impl RuntimeWorkRpcHandler {
@@ -56,9 +82,10 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(|value| value["revision"] == revision);
         let first = current.next()?;
-        if current.any(|value| value != first) {
-            return None;
-        }
+        let first = merge_owner_state(&first, &first)?;
+        let first = current.try_fold(first, |owner, candidate| {
+            merge_owner_state(&owner, &candidate)
+        })?;
         (first["taskId"] == task && first["deviceId"] == self.device_id).then_some(first)
     }
 
@@ -83,7 +110,14 @@ impl RuntimeWorkRpcHandler {
         let role = origin["standInId"].as_str();
         if origin["userId"] != user
             || origin["deviceId"] != self.device_id
-            || task != super::stand_in_conversations::conversation_task_id(user, role)
+            || super::stand_in_conversations::scoped_conversation_task_id(
+                user,
+                role,
+                &origin["conversationScope"],
+            )
+            .ok()
+            .as_deref()
+                != Some(task)
         {
             return Err(denied());
         }
@@ -111,10 +145,8 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn record_stand_in_owner_admission(&self, task: &str, owner: &Value) {
         self.store.update_task(task, |link| {
-            if link.runtime_handle[OWNER]["revision"].as_u64().unwrap_or(0)
-                < owner["revision"].as_u64().unwrap_or(0)
-            {
-                link.runtime_handle[OWNER] = owner.clone();
+            if let Some(projected) = project_owner_state(&link.runtime_handle[OWNER], owner) {
+                link.runtime_handle[OWNER] = projected;
             }
         });
     }
@@ -138,11 +170,14 @@ impl RuntimeWorkRpcHandler {
         let Some(user) = origin["userId"].as_i64().filter(|id| *id >= 0) else {
             return;
         };
-        if task
-            != super::stand_in_conversations::conversation_task_id(
-                user,
-                origin["standInId"].as_str(),
-            )
+        if super::stand_in_conversations::scoped_conversation_task_id(
+            user,
+            origin["standInId"].as_str(),
+            &origin["conversationScope"],
+        )
+        .ok()
+        .as_deref()
+            != Some(task.as_str())
         {
             return;
         }
@@ -159,14 +194,33 @@ impl RuntimeWorkRpcHandler {
         payload["commandId"] = json!(format!("stand-in-owner-input:{id}"));
     }
 
-    pub(super) fn invalidate_stand_in_owner_request(&self, task: &str) {
-        if let Some(mut current) = self.current_stand_in_owner_request(task) {
-            current["revision"] = json!(current["revision"].as_u64().unwrap() + 1);
-            current["id"] = json!(uuid::Uuid::new_v4().to_string());
-            current["cancelled"] = json!(true);
-            self.store
-                .update_task(task, |link| link.runtime_handle[OWNER] = current);
+    pub(super) fn invalidate_stand_in_owner_request(&self, task: &str) -> Result<(), AppIpcError> {
+        if let Some(current) = self.current_stand_in_owner_request(task) {
+            self.cancel_stand_in_owner_request(task, &current)?;
         }
+        Ok(())
+    }
+
+    pub(super) fn cancel_stand_in_owner_request(
+        &self,
+        task: &str,
+        expected: &Value,
+    ) -> Result<(), AppIpcError> {
+        let mut cancelled = merge_owner_state(expected, expected).ok_or_else(denied)?;
+        cancelled["cancelled"] = json!(true);
+        self.store
+            .try_update_task(task, |link| {
+                if let Some(projected) =
+                    project_owner_state(&link.runtime_handle[OWNER], &cancelled)
+                {
+                    link.runtime_handle[OWNER] = projected;
+                }
+            })
+            .map_err(|error| {
+                AppIpcError::new("owner_request_persistence_failed", error.to_string())
+            })?
+            .ok_or_else(denied)?;
+        Ok(())
     }
 
     pub(super) fn stand_in_owner_request_matches(
@@ -185,12 +239,14 @@ impl RuntimeWorkRpcHandler {
         identity: &StandInMcpIdentity,
         args: &Value,
     ) -> Result<Value, AppIpcError> {
-        let task = super::stand_in_conversations::conversation_task_id(
-            identity.user,
-            identity.role.as_deref(),
-        );
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
+        let task = super::stand_in_conversations::scoped_conversation_task_id(
+            identity.user,
+            identity.role.as_deref(),
+            &origin["conversationScope"],
+        )
+        .map_err(|_| denied())?;
         if identity.task_id != task
             || identity.device != self.device_id
             || identity.work.is_some()

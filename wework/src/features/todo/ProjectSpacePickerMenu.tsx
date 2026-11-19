@@ -1,5 +1,6 @@
 import { Check, Folder, LayoutDashboard, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
 import { createPortal } from 'react-dom'
 import type { CloudProject } from '@/api/deliveries'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
@@ -39,6 +40,7 @@ export function ProjectSpacePickerMenu({
   const titleId = useId()
   const [query, setQuery] = useState('')
   const [groupKey, setGroupKey] = useState<string | null>(null)
+  const [groupByWorkspace, setGroupByWorkspace] = useState(false)
   const [order, setOrder] = useState<ProjectSpacePickerOrder>('name-asc')
   const [activeKey, setActiveKey] = useState(project ? projectKey(project) : '')
   const outsideRefs = useMemo(() => [menuRef], [])
@@ -53,8 +55,13 @@ export function ProjectSpacePickerMenu({
   const cloudLabel = t('workbench.project_picker_cloud', '云端项目')
   const locale = i18n.resolvedLanguage ?? i18n.language
   const entries = useMemo(
-    () => projectSpacePickerEntries(projects, { local: localLabel, cloud: cloudLabel }),
-    [cloudLabel, localLabel, projects]
+    () =>
+      projectSpacePickerEntries(
+        projects,
+        { local: localLabel, cloud: cloudLabel },
+        groupByWorkspace ? 'workspace' : 'storage'
+      ),
+    [cloudLabel, localLabel, projects, groupByWorkspace]
   )
   const groups = useMemo(
     () =>
@@ -78,19 +85,12 @@ export function ProjectSpacePickerMenu({
     visible.findIndex(entry => entry.key === activeKey)
   )
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
-    return () => {
-      window.cancelAnimationFrame(frame)
-    }
-  }, [triggerRef])
-
-  useEffect(() => {
-    // Follow user navigation, not project array refreshes from the workbench.
-    menuRef.current
-      ?.querySelector<HTMLElement>('[data-active="true"]')
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [activeKey, groupKey, order, query])
+  useFocusRequest(inputRef, triggerRef, { animationFrame: true })
+  useScrollRequest(
+    menuRef,
+    '[data-active="true"]',
+    JSON.stringify([activeKey, groupKey, order, query])
+  )
 
   const choose = (option: CloudProject) => {
     close()
@@ -159,7 +159,7 @@ export function ProjectSpacePickerMenu({
                   choose(visible[activeIndex].project)
                 }
               }}
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-secondary"
             />
             {query ? (
               <button
@@ -198,42 +198,70 @@ export function ProjectSpacePickerMenu({
       </header>
       <div className="flex h-80 min-h-0">
         <nav
-          aria-label={t('workbench.project_picker_space', '所属空间')}
+          aria-label={
+            groupByWorkspace
+              ? t('workbench.project_picker_space')
+              : t('workbench.project_picker_projects')
+          }
           className="w-40 shrink-0 overflow-y-auto border-r border-border p-1 max-md:w-28"
         >
-          <div className="px-2 py-1 text-xs text-text-muted">
-            {t('workbench.project_picker_space', '所属空间')}
+          <div className="px-2 py-1 text-xs text-text-secondary">
+            {groupByWorkspace
+              ? t('workbench.project_picker_space')
+              : t('workbench.project_picker_projects')}
           </div>
-          {[{ key: null, label: t('workbench.project_picker_all', '全部空间') }, ...groups].map(
-            group => (
-              <button
-                key={group.key ?? 'all'}
-                type="button"
-                data-testid="project-space-picker-group"
-                data-group-key={group.key ?? 'all'}
-                aria-pressed={groupKey === group.key}
-                aria-label={group.label}
-                title={group.label}
-                onClick={() => selectGroup(group.key)}
-                className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 max-md:h-11  wework:keyboard:focus-visible:ring-blue-500/70 ${groupKey === group.key ? 'bg-muted font-medium' : ''}`}
-              >
-                {group.key === null ? (
-                  <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
-                ) : (
-                  <Folder className="h-4 w-4 shrink-0" aria-hidden="true" />
-                )}
-                <span className="min-w-0 flex-1 truncate">{group.label}</span>
-                <span className="text-xs tabular-nums text-text-muted">
-                  {group.key === null
-                    ? matching.length
-                    : matching.filter(entry => entry.group.key === group.key).length}
-                </span>
-              </button>
-            )
-          )}
+          {[
+            {
+              key: null,
+              label: groupByWorkspace
+                ? t('workbench.project_picker_all')
+                : t('workbench.project_picker_all_projects'),
+            },
+            ...groups,
+          ].map(group => (
+            <button
+              key={group.key ?? 'all'}
+              type="button"
+              data-testid="project-space-picker-group"
+              data-group-key={group.key ?? 'all'}
+              aria-pressed={groupKey === group.key}
+              aria-label={group.label}
+              title={group.label}
+              onClick={() => selectGroup(group.key)}
+              className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 max-md:h-11  wework:keyboard:focus-visible:ring-blue-500/70 ${groupKey === group.key ? 'bg-muted font-medium' : ''}`}
+            >
+              {group.key === null ? (
+                <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <Folder className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )}
+              <span className="min-w-0 flex-1 truncate">{group.label}</span>
+              <span className="text-xs tabular-nums text-text-secondary">
+                {group.key === null
+                  ? matching.length
+                  : matching.filter(entry => entry.group.key === group.key).length}
+              </span>
+            </button>
+          ))}
+          <button
+            type="button"
+            data-testid="project-space-picker-toggle-workspaces"
+            aria-pressed={groupByWorkspace}
+            onClick={() => {
+              setGroupByWorkspace(value => !value)
+              selectGroup(null)
+            }}
+            className="mt-2 min-h-9 w-full rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted max-md:min-h-11"
+          >
+            {t(
+              groupByWorkspace
+                ? 'workbench.project_picker_by_location'
+                : 'workbench.project_picker_by_workspace'
+            )}
+          </button>
         </nav>
         <div className="flex min-w-0 flex-1 flex-col px-1">
-          <div className="shrink-0 px-2 py-1 text-xs text-text-muted">
+          <div className="shrink-0 px-2 py-1 text-xs text-text-secondary">
             {t('workbench.project_picker_projects', '项目')}
           </div>
           <div
@@ -272,11 +300,11 @@ export function ProjectSpacePickerMenu({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">{option.name}</span>
-                    <span className="block truncate text-xs text-text-muted">
+                    <span className="block truncate text-xs text-text-secondary">
                       {option.project_key}
                     </span>
                   </span>
-                  <span className="max-w-28 truncate text-xs text-text-muted max-md:max-w-16">
+                  <span className="max-w-28 truncate text-xs text-text-secondary max-md:max-w-16">
                     {group.label}
                   </span>
                   <span className="h-4 w-4 shrink-0">
@@ -290,7 +318,7 @@ export function ProjectSpacePickerMenu({
             <div
               role="status"
               data-testid="project-space-picker-empty"
-              className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-text-muted"
+              className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-text-secondary"
             >
               {t('workbench.project_picker_empty', '没有匹配的项目，试试其他关键词或空间')}
             </div>
@@ -312,7 +340,7 @@ export function ProjectSpacePickerMenu({
             {t('workbench.clear_extra_project_space', '不加入其他项目空间')}
           </button>
         ) : null}
-        <span className="ml-auto pr-2 text-xs text-text-muted max-md:hidden">
+        <span className="ml-auto pr-2 text-xs text-text-secondary max-md:hidden">
           {t('workbench.project_picker_keys', '↑↓ 选择 · Enter 确认 · Esc 关闭')}
         </span>
       </footer>

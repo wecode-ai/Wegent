@@ -66,6 +66,14 @@ function fixture() {
     isOptionsLocked: false,
     attachmentSelection: { attachments: [], resetAttachments: vi.fn() },
     modelSelection: { models: [], selectedModel: null, selectedModelOptions: {} },
+    resolveRuntimeTaskModelSelection: () => ({
+      selectionResolved: false,
+      selectionReady: false,
+      taskSelection: null,
+      selectedModel: null,
+      activeModel: null,
+      selectedModelOptions: {},
+    }),
     skillSelection: { selectedSkills: [] },
     refreshWorkLists: refresh,
   }

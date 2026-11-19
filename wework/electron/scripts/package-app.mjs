@@ -53,7 +53,7 @@ await run(
   electronRoot
 )
 await Promise.all(
-  ['scripts', 'src', 'pnpm-workspace.yaml', 'tsconfig.json', 'vitest.config.ts'].map(path =>
+  ['scripts', 'src', 'test', 'pnpm-workspace.yaml', 'tsconfig.json', 'vitest.config.ts'].map(path =>
     rm(join(staging, path), { recursive: true, force: true })
   )
 )
@@ -72,6 +72,7 @@ await writeFile(
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
+      optionalDependencies: sourcePackage.optionalDependencies,
       ...builderConfig.extraMetadata,
     },
     null,
@@ -130,6 +131,10 @@ try {
         updaterCacheDirName: `${identity.packageName.toLowerCase()}-updater`,
       })
     )
+    await builderConfig.afterPack({
+      appOutDir: application,
+      electronPlatformName: process.platform,
+    })
   }
 
   if (process.platform === 'darwin') {

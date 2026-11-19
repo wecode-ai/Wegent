@@ -160,6 +160,7 @@ export interface InstalledPlugin {
     sourcePayload?: Record<string, unknown> | null
   }
   status: {
+    localExecution?: { state: 'installed'; releaseId: number | null }
     state: string
     devices?: Array<{
       deviceId: string

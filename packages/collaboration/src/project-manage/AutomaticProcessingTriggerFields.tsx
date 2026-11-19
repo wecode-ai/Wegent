@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CalendarClock, ChevronDown } from 'lucide-react'
+import { useCallback, useRef } from 'react'
+import { WorkdayOnlyField } from './WorkdayOnlyField'
 
 import type { AutomationEventType } from '../automation/types'
 import type { CollaborationTranslate } from '../i18n'
@@ -24,6 +26,7 @@ import type {
 } from './automaticProcessing'
 
 interface AutomaticProcessingTriggerFieldsProps {
+  cronError?: string
   draft: AutomaticProcessingDraft
   updateDraft(patch: Partial<AutomaticProcessingDraft>): void
   selectTrigger(trigger: TriggerKind): void
@@ -31,11 +34,14 @@ interface AutomaticProcessingTriggerFieldsProps {
   translate: CollaborationTranslate
   hooks: WorkspaceIncomingHook[]
   hooksLoading: boolean
+  hooksError: string
   hasIncomingHooks: boolean
+  refreshHooks(): void
   statuses: CollaborationStatus[]
 }
 
 export function AutomaticProcessingTriggerFields({
+  cronError,
   draft,
   updateDraft,
   selectTrigger,
@@ -43,27 +49,38 @@ export function AutomaticProcessingTriggerFields({
   translate,
   hooks,
   hooksLoading,
+  hooksError,
   hasIncomingHooks,
+  refreshHooks,
   statuses,
 }: AutomaticProcessingTriggerFieldsProps) {
+  const cronInput = useRef<HTMLInputElement>(null)
+  const attachCronDetails = useCallback(
+    (details: HTMLDetailsElement | null) => {
+      if (!details || !cronError) return
+      details.open = true
+      cronInput.current?.focus()
+      cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
+    },
+    [cronError]
+  )
   const schedule = parseSchedule(draft.cronExpression)
   const selectedHook = hooks.find(hook => hook.id === draft.hookId)
   const externalEventTypes = selectedHook ? eventTypesForHook(selectedHook) : []
 
   return (
     <>
-      <fieldset className="grid grid-cols-2 gap-2" data-testid="automatic-processing-trigger">
+      <fieldset className="flex flex-wrap gap-2" data-testid="automatic-processing-trigger">
         <legend className="mb-2 text-sm font-medium text-text-primary">
           {translate('todo.when', '当发生')}
         </legend>
         {TRIGGER_OPTIONS.filter(option => option.kind !== 'external' || hasIncomingHooks).map(
           (option, index) => {
             const selected = draft.trigger === option.kind
-            const Icon = option.icon
             const localeIndex = locale === 'zh-CN' ? 0 : 1
             return (
               <label
-                className={`!flex min-h-[68px] cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                className={`!flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-focus md:min-h-9 ${
                   selected ? 'automatic-processing-selected' : 'border-border hover:bg-muted/60'
                 }`}
                 key={option.kind}
@@ -71,18 +88,12 @@ export function AutomaticProcessingTriggerFields({
                 <input
                   autoFocus={index === 0}
                   checked={selected}
-                  className="sr-only"
+                  className="h-4 w-4 accent-current"
                   data-testid={`automatic-processing-trigger-${option.kind}`}
                   name="automatic-processing-trigger"
                   onChange={() => selectTrigger(option.kind)}
                   type="radio"
                   value={option.kind}
-                />
-                <Icon
-                  aria-hidden="true"
-                  className={`mt-0.5 h-4 w-4 shrink-0 ${
-                    selected ? 'automatic-processing-selected-icon' : 'text-text-secondary'
-                  }`}
                 />
                 <span className="min-w-0">
                   <strong className="block text-sm font-medium text-text-primary">
@@ -90,20 +101,20 @@ export function AutomaticProcessingTriggerFields({
                       ? translate('todo.trigger_status_changed', option.title[localeIndex])
                       : option.title[localeIndex]}
                   </strong>
-                  <span className="mt-0.5 block text-xs leading-5 text-text-secondary">
-                    {option.kind === 'status_changed'
-                      ? translate(
-                          'todo.trigger_status_changed_description',
-                          option.description[localeIndex]
-                        )
-                      : option.description[localeIndex]}
-                  </span>
                 </span>
               </label>
             )
           }
         )}
       </fieldset>
+
+      <p className="text-sm leading-5 text-text-secondary" aria-live="polite">
+        {
+          TRIGGER_OPTIONS.find(option => option.kind === draft.trigger)?.description[
+            locale === 'zh-CN' ? 0 : 1
+          ]
+        }
+      </p>
 
       {draft.trigger !== 'created' ? (
         <div className="divide-y divide-border overflow-hidden rounded-xl border border-border px-4">
@@ -113,13 +124,13 @@ export function AutomaticProcessingTriggerFields({
                 className="w-14 shrink-0 font-medium text-text-primary"
                 htmlFor="automatic-processing-tag"
               >
-                {translate('todo.matching_tag', 'Tag')}
+                {translate('todo.matching_tag', '标签')}
               </label>
               <input
                 className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
                 data-testid="automatic-processing-tag"
                 id="automatic-processing-tag"
-                placeholder={translate('todo.matching_tag_placeholder', '输入需要匹配的 Tag')}
+                placeholder={translate('todo.matching_tag_placeholder', '输入需要匹配的标签')}
                 value={draft.tag}
                 onChange={event => updateDraft({ tag: event.target.value })}
               />
@@ -148,7 +159,10 @@ export function AutomaticProcessingTriggerFields({
                   updateDraft(
                     value === '__entered_processing__'
                       ? { statuses: [], statusTransition: 'entered_processing' }
-                      : { statuses: value ? [value] : [], statusTransition: 'any' }
+                      : {
+                          statuses: value ? [value] : [],
+                          statusTransition: 'any',
+                        }
                   )
                 }}
               >
@@ -202,7 +216,10 @@ export function AutomaticProcessingTriggerFields({
                   >
                     <option value="daily">{translate('todo.schedule_daily', '每天')}</option>
                     <option value="weekdays">
-                      {translate('todo.schedule_weekdays', '每个工作日')}
+                      {translate(
+                        'todo.schedule_weekdays',
+                        locale === 'zh-CN' ? '周一至周五' : 'Monday–Friday'
+                      )}
                     </option>
                     <option value="weekly">{translate('todo.schedule_weekly', '每周')}</option>
                     {schedule.frequency === 'custom' ? (
@@ -263,13 +280,32 @@ export function AutomaticProcessingTriggerFields({
                 </label>
               ) : null}
 
+              <WorkdayOnlyField
+                checked={draft.workdayOnly}
+                onChange={workdayOnly => updateDraft({ workdayOnly })}
+                label={translate(
+                  'todo.automation_workday_only',
+                  locale === 'zh-CN'
+                    ? '仅中国大陆法定工作日执行'
+                    : 'Run only on mainland China statutory workdays'
+                )}
+                description={translate(
+                  'todo.automation_workday_only_hint',
+                  locale === 'zh-CN'
+                    ? '按北京时间日期跳过法定休息日，包含补班周末。选择“每天”可覆盖全部补班日；其他重复规则仍限制执行日期。'
+                    : 'Uses Beijing dates, excludes statutory days off and includes make-up working weekends. Choose Daily to include every make-up workday; other recurrence rules still limit dates.'
+                )}
+                testId="automatic-processing-workday-only"
+              />
+
               <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-sm text-text-secondary">
                 <CalendarClock aria-hidden="true" className="h-4 w-4 shrink-0" />
-                <span>{scheduleLabel(draft.cronExpression, locale)}</span>
-                <span className="ml-auto text-xs text-text-muted">Asia/Shanghai</span>
+                <span>{scheduleLabel(draft.cronExpression, locale, draft.workdayOnly)}</span>
+                <span className="ml-auto text-xs text-text-muted">{draft.timezone}</span>
               </div>
 
               <details
+                ref={attachCronDetails}
                 className="group rounded-lg border border-border bg-background"
                 data-testid="automatic-processing-cron-advanced"
               >
@@ -288,6 +324,9 @@ export function AutomaticProcessingTriggerFields({
                     {translate('todo.schedule_expression', 'Cron 表达式')}
                   </label>
                   <input
+                    ref={cronInput}
+                    aria-invalid={cronError ? true : undefined}
+                    aria-describedby={cronError ? 'automatic-processing-cron-error' : undefined}
                     className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none keyboard:focus:border-focus"
                     data-testid="automatic-processing-cron"
                     id="automatic-processing-cron"
@@ -299,6 +338,15 @@ export function AutomaticProcessingTriggerFields({
                       })
                     }
                   />
+                  {cronError ? (
+                    <p
+                      id="automatic-processing-cron-error"
+                      className="collaboration-alert"
+                      role="alert"
+                    >
+                      {cronError}
+                    </p>
+                  ) : null}
                   <p className="text-xs text-text-muted">
                     {translate(
                       'todo.schedule_cron_help',
@@ -312,6 +360,55 @@ export function AutomaticProcessingTriggerFields({
 
           {draft.trigger === 'external' ? (
             <>
+              {hooksError ? (
+                <div
+                  className="space-y-2 rounded-md border border-destructive/30 p-3 text-sm text-destructive"
+                  role="alert"
+                  title={hooksError}
+                >
+                  <p>{translate('todo.event_sources_load_failed', '读取事件来源失败，请重试。')}</p>
+                  <button
+                    type="button"
+                    className="collaboration-link-button"
+                    data-testid="automatic-processing-hooks-retry"
+                    onClick={refreshHooks}
+                  >
+                    {translate('todo.event_sources_refresh', '刷新来源')}
+                  </button>
+                </div>
+              ) : !hooksLoading && hooks.length === 0 ? (
+                <div
+                  className="space-y-2 rounded-md border border-border p-3 text-sm text-text-secondary"
+                  role="status"
+                  data-testid="automatic-processing-hooks-empty"
+                >
+                  <p>
+                    {translate(
+                      'todo.event_sources_empty',
+                      '当前项目尚未接入事件来源。请由项目管理员完成来源接入，再刷新列表。'
+                    )}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <a
+                      className="collaboration-link-button"
+                      data-testid="automatic-processing-hooks-help"
+                      href={`https://github.com/wecode-ai/Wegent/blob/main/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/wework/workbench.md#${locale === 'zh-CN' ? '从外部系统创建-issue' : 'create-issues-from-external-systems'}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {translate('todo.event_sources_setup_help', '查看接入说明')}
+                    </a>
+                    <button
+                      type="button"
+                      className="collaboration-link-button"
+                      data-testid="automatic-processing-hooks-refresh"
+                      onClick={refreshHooks}
+                    >
+                      {translate('todo.event_sources_refresh', '刷新来源')}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
                 <label
                   className="w-14 shrink-0 font-medium text-text-primary"
@@ -323,7 +420,7 @@ export function AutomaticProcessingTriggerFields({
                   className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
                   data-testid="automatic-processing-hook"
                   id="automatic-processing-hook"
-                  disabled={hooksLoading}
+                  disabled={hooksLoading || hooks.length === 0}
                   value={draft.hookId}
                   onChange={event => {
                     const hook = hooks.find(candidate => candidate.id === event.target.value)
@@ -356,7 +453,7 @@ export function AutomaticProcessingTriggerFields({
                   className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
                   data-testid="automatic-processing-event"
                   id="automatic-processing-event"
-                  disabled={hooksLoading}
+                  disabled={hooksLoading || !draft.hookId}
                   value={draft.eventType}
                   onChange={event =>
                     updateDraft({

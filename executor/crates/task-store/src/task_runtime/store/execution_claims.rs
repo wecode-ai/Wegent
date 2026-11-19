@@ -87,9 +87,25 @@ impl LocalTaskStore {
                 .collect::<Result<HashSet<_>, _>>()?;
             scopes
         };
-        let Some((candidate_id, _)) = candidates.into_iter().find(|(_, execution_scope)| {
-            execution_scope.is_empty() || !occupied_scopes.contains(execution_scope)
-        }) else {
+        let mut selected = None;
+        for (id, scope) in candidates {
+            if !scope.is_empty() && occupied_scopes.contains(&scope) {
+                continue;
+            }
+            let pending = execution_row(&connection, id)?;
+            if !super::local_automation::enforce_execution_workday(
+                &connection,
+                &pending,
+                Utc::now(),
+            )? {
+                continue;
+            }
+            selected = Some(id);
+            break;
+        }
+        let Some(candidate_id) = selected else {
+            drop(statement);
+            connection.commit()?;
             return Ok(None);
         };
         let now = now();
@@ -105,6 +121,18 @@ impl LocalTaskStore {
                 .and_then(Value::as_str)
                 .is_some_and(|bound| bound != runtime_device_id);
         let mut payload = local_execution_runtime_payload(&pending);
+        let previous = issue
+            .metadata
+            .pointer("/runner_binding/environment_id")
+            .and_then(Value::as_str);
+        let recovery_from = super::runner_recovery::expected_binding(&payload);
+        let recovery = conflict
+            && previous.is_some()
+            && recovery_from == previous
+            && !payload["automation_run_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+            && super::runner_recovery::available_on(&connection, &issue.id, candidate_id)?;
         let project = get_item_from(&connection, &pending.cloud_project_id, "project")?;
         if project.is_none() {
             drop(statement);
@@ -116,7 +144,8 @@ impl LocalTaskStore {
         let resume_conflict = payload["resumeEnvironmentId"]
             .as_str()
             .is_some_and(|bound| bound != runtime_device_id);
-        let validation = if conflict || resume_conflict {
+        let continuation = payload["resumeEnvironmentId"].as_str() == Some(runtime_device_id);
+        let validation = if (conflict && !recovery && !continuation) || resume_conflict {
             Err(TaskRuntimeError::Invalid(
                 "ISSUE_RUNNER_CONFLICT: Issue is bound to another runner".into(),
             ))
@@ -169,8 +198,8 @@ impl LocalTaskStore {
             "UPDATE loop_items
              SET metadata=json_set(COALESCE(metadata, '{}'), '$.runner_binding',
                  json_object('environment_id', ?1))
-             WHERE id=?2 AND json_extract(metadata, '$.runner_binding') IS NULL",
-            params![runtime_device_id, issue.id],
+             WHERE id=?2 AND (json_extract(metadata, '$.runner_binding') IS NULL OR ?3)",
+            params![runtime_device_id, issue.id, recovery && !continuation],
         )?;
         connection.commit()?;
         drop(guard);
@@ -245,6 +274,10 @@ impl LocalTaskStore {
             return Ok(None);
         }
         project_coordination_commands::authorize_execution_on(&connection, &current)?;
+        if !super::local_automation::enforce_execution_workday(&connection, &current, Utc::now())? {
+            connection.commit()?;
+            return Ok(None);
+        }
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions
@@ -343,6 +376,12 @@ impl LocalTaskStore {
         &self,
         runtime_task_id: &str,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        if self
+            .execution_by_runtime_task_id(runtime_task_id)?
+            .is_none()
+        {
+            return Ok(None);
+        }
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let timestamp = now();

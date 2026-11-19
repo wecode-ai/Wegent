@@ -6,6 +6,8 @@ import { fetchLocalRuntimeJson } from './runtime-request.mjs'
 import { createVisualizationFixtureWriteCommand } from './visualization-fixture-command.mjs'
 import { selectWorkbenchTheme } from './appearance-theme.mjs'
 import { withTimeout, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
+import { toolOutputText } from './response-protocol.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   COMPOSER_SELECTOR,
@@ -25,6 +27,7 @@ import {
 const PROMPT = 'WEWORK_INTERACTIVE_VISUALIZATION_PROTOCOL'
 const TITLE = 'Interactive interest calculator'
 const CALL_ID = 'wework-interactive-visualization-write'
+const SKILL_CALL_ID = 'wework-interactive-visualization-skill'
 const FILE_WRITTEN = 'WEWORK_INTERACTIVE_VISUALIZATION_FILE_WRITTEN'
 const FRAME = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="codex-inline-visualization-frame"][title="${TITLE}"]`
 const HTML = `<section>
@@ -92,6 +95,7 @@ export function createInteractiveVisualizationChecks({
   const directory = join(workspacePath, 'outputs', 'visualizations', 'interactive-e2e')
   const file = join(directory, 'interest-calculator.html')
   let stage = 'initial'
+  let skillPath
 
   async function frameAction(control, action, selector, value) {
     const origin = await control.command('getLocationOrigin', 'body')
@@ -128,7 +132,13 @@ export function createInteractiveVisualizationChecks({
     async handleModelRequest(body, response, id) {
       if (
         !latestModelInputText(body).includes(PROMPT) &&
-        !(stage === 'awaiting-tool-output' && requestContainsToolOutputForCall(body, CALL_ID))
+        !(
+          ['awaiting-skill-output', 'awaiting-tool-output'].includes(stage) &&
+          requestContainsToolOutputForCall(
+            body,
+            stage === 'awaiting-skill-output' ? SKILL_CALL_ID : CALL_ID
+          )
+        )
       )
         return false
       if (stage === 'initial') {
@@ -138,11 +148,41 @@ export function createInteractiveVisualizationChecks({
           .map(content => content?.text ?? '')
           .join('\n')
         assert.ok(
-          developerInstructions.includes('Wework inline visualizations:'),
-          'The real model request did not receive the visualization capability instructions'
+          developerInstructions.includes('Wework host workflows:') &&
+            developerInstructions.includes('relevant skill'),
+          'The real model request did not receive progressive host skill routing'
         )
         assert.ok(
-          developerInstructions.includes('visualize'),
+          JSON.stringify(body.input).includes('wework-runtime:visualize'),
+          'The real model request did not advertise the visualization skill'
+        )
+        const encodedPath = Buffer.from(skillPath, 'utf8').toString('base64')
+        const tool = selectShellTool(
+          body,
+          workspacePath,
+          `node -e "const fs=require('node:fs');console.log(fs.readFileSync(Buffer.from(process.argv[1],'base64').toString('utf8'),'utf8'))" ${encodedPath}`,
+          10_000
+        )
+        stage = 'awaiting-skill-output'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(id),
+            ...selectedToolCall(SKILL_CALL_ID, tool),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
+
+      if (stage === 'awaiting-skill-output') {
+        const instructions = toolOutputText(body, SKILL_CALL_ID)
+        assert.ok(
+          instructions?.includes('Wework inline visualizations:'),
+          'The real skill read did not return the visualization capability instructions'
+        )
+        assert.ok(
+          instructions.includes('visualize'),
           'The visualization instructions did not teach the supported content-reference protocol'
         )
         const tool = selectShellTool(
@@ -187,6 +227,21 @@ export function createInteractiveVisualizationChecks({
 
     async verify(control) {
       await openNewChatWithE2EModel(control, uiTimeoutMs)
+      const catalog = await requestExecutor(
+        control,
+        'runtime.codex.app_server.request',
+        { method: 'skills/list', params: { cwds: [workspacePath], forceReload: false } },
+        uiTimeoutMs
+      )
+      const skills = catalog.data
+        .flatMap(entry => entry.skills)
+        .filter(skill => skill.name === 'wework-runtime:visualize' && skill.enabled)
+      assert.equal(
+        skills.length,
+        1,
+        'The native catalog must expose one enabled visualization skill'
+      )
+      skillPath = skills[0].path
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
       await control.command(
         'waitFor',

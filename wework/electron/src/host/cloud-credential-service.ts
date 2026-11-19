@@ -1,6 +1,8 @@
 import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { systemSecretProtection, type SecretProtection } from './secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 const CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS = 30_000
 
@@ -77,7 +79,8 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly request?: typeof fetch
+    private readonly request?: typeof fetch,
+    private readonly protection: SecretProtection = systemSecretProtection
   ) {}
 
   /**
@@ -183,7 +186,7 @@ export class CloudCredentialService {
       } else {
         this.candidate = null
         this.activeRevision += 1
-        await rm(this.path(), { force: true })
+        await this.removeCredential()
       }
     })
   }
@@ -254,7 +257,68 @@ export class CloudCredentialService {
     this.candidate = null
     this.activeRevision += 1
     return this.serial(async () => {
-      await rm(this.path(), { force: true })
+      await this.removeCredential()
+    })
+  }
+
+  /** Native-only result: pass directly to Executor, never to a renderer. */
+  pluginNativeSession(
+    apiBaseUrl: string,
+    accountToken: string
+  ): Promise<{
+    backend_url: string
+    account_token: string
+    native_token: string
+    expires_at: number
+  } | null> {
+    const revision = this.activeRevision
+    return this.serial(async () => {
+      const base = normalizeApiBaseUrl(apiBaseUrl)
+      const credential = await this.readCredential()
+      this.requireActiveRevision(revision)
+      if (!credential || credential.apiBaseUrl !== base || !credential.ownerUserId)
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Desktop plugin credentials unavailable'
+        )
+      const ownerResponse = await this.requestWithTimeout(`${base}/users/me`, {
+        headers: { Authorization: `Bearer ${accountToken}` },
+      })
+      const owner = await responseJson(ownerResponse)
+      if (!ownerResponse.ok || owner.id !== credential.ownerUserId)
+        throw new CloudCredentialError('cloud_auth_expired', 'Plugin account owner changed')
+      const endpoint = `${base}/plugins/native-auth/exchange`
+      const response = await this.requestWithTimeout(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'session',
+          data: {
+            refresh_token: credential.refreshToken,
+            proof: createDeviceProof(
+              credential.privateKey,
+              credential.publicKey,
+              credential.refreshToken,
+              '/api/plugins/native-auth/exchange'
+            ),
+          },
+        }),
+      })
+      this.requireActiveRevision(revision)
+      if (response.status === 404) return null
+      const result = await responseJson(response)
+      if (!response.ok) throw requestError(response.status, result)
+      if (result.protocolVersion !== 1 || result.account_id !== credential.ownerUserId)
+        throw new CloudCredentialError('request_failed', 'Invalid plugin authorization response')
+      const expiresAt = numberValue(result.expires_at, 'plugin session expiry')
+      if (expiresAt <= Math.floor(Date.now() / 1000))
+        throw new CloudCredentialError('cloud_auth_expired', 'Plugin authorization expired')
+      return {
+        backend_url: base.replace(/\/api$/, ''),
+        account_token: accountToken,
+        native_token: requiredString(result.native_token, 'native plugin token'),
+        expires_at: expiresAt,
+      }
     })
   }
 
@@ -273,8 +337,34 @@ export class CloudCredentialService {
 
   private async readCredential(): Promise<StoredCloudCredential | null> {
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      return normalizeStoredCredential(value)
+      let envelope = await this.readEnvelope()
+      const importing = envelope === null
+      if (importing) {
+        envelope = await this.readEnvelope(join(this.dataDirectory, 'cloud-credentials.json'))
+      } else if (envelope?.version !== 3) {
+        throw new CloudCredentialError('credentials_unavailable', 'Invalid protected storage')
+      }
+      if (!envelope) {
+        await this.writeCredential(null, () => {})
+        return null
+      }
+      const decrypted =
+        envelope.version === 3 && envelope.ciphertext !== null
+          ? await this.protection.decrypt(envelope.ciphertext ?? '')
+          : null
+      const value =
+        envelope.version === 3 ? (decrypted ? JSON.parse(decrypted.result) : null) : envelope
+      const credential = normalizeStoredCredential(value)
+      if (value !== null && !credential) {
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Cloud credential format is invalid'
+        )
+      }
+      if (importing || decrypted?.shouldReEncrypt) {
+        await this.writeCredential(credential, () => {})
+      }
+      return credential
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw error
@@ -282,19 +372,50 @@ export class CloudCredentialService {
   }
 
   private async writeCredential(
-    credential: StoredCloudCredential,
+    credential: StoredCloudCredential | null,
     beforeRename: () => void
   ): Promise<void> {
     const path = this.path()
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${process.pid}.tmp`
     try {
-      await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
+      const ciphertext =
+        credential === null ? null : await this.protection.encrypt(JSON.stringify(credential))
+      await writeFile(temporary, `${JSON.stringify({ version: 3, ciphertext })}\n`, { mode: 0o600 })
       beforeRename()
       await rename(temporary, path)
     } finally {
       await rm(temporary, { force: true })
     }
+  }
+
+  private async readEnvelope(
+    path = this.path()
+  ): Promise<{ version?: number; ciphertext?: string | null } | null> {
+    try {
+      const envelope = JSON.parse(await readFile(path, 'utf8'))
+      if (
+        !envelope ||
+        ![2, 3].includes(envelope.version) ||
+        (envelope.version === 3 &&
+          envelope.ciphertext !== null &&
+          typeof envelope.ciphertext !== 'string')
+      ) {
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Cloud credential format is invalid'
+        )
+      }
+      return envelope
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  private async removeCredential(): Promise<void> {
+    // A tombstone prevents a later launch from importing a signed-out legacy credential.
+    await this.writeCredential(null, () => {})
   }
 
   private async bindCredentialOwner(
@@ -332,7 +453,7 @@ export class CloudCredentialService {
   }
 
   private path(): string {
-    return join(this.dataDirectory, 'cloud-credentials.json')
+    return join(protectedCredentialDirectory(this.dataDirectory), 'cloud-credentials.json')
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

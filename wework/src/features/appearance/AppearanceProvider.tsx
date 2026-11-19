@@ -1,3 +1,5 @@
+import { useWorkerPool } from '@pierre/diffs/react'
+import type { useCodeTheme } from './useCodeTheme'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   applyAppearance,
@@ -13,7 +15,12 @@ import {
   readStoredAppearance,
   writeStoredAppearance,
 } from './storage'
-import type { AppearanceConfig, AppearanceUpdate, ResolvedAppearanceMode } from './types'
+import type {
+  AppearanceConfig,
+  AppearanceUpdate,
+  AppearanceMode,
+  ResolvedAppearanceMode,
+} from './types'
 import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 import {
@@ -23,6 +30,18 @@ import {
   type AppPreferences,
 } from '@/desktop/appPreferences'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { useDshClientContext } from '@/features/dsh-runtime/DshClientContext'
+
+interface DshThemeService {
+  getTheme(): { preference: AppearanceMode }
+  setTheme(mode: AppearanceMode): void
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'theme/change'(): void
+  }
+}
 
 function getInitialState(): {
   appearance: AppearanceConfig
@@ -44,6 +63,25 @@ export function AppearanceProvider({
   persist?: boolean
 }) {
   const [state, setState] = useState(getInitialState)
+  const context = useDshClientContext()
+  const mode = state.appearance.mode
+  useEffect(() => {
+    if (!context) return
+    const synchronize = () => {
+      try {
+        const theme = context.get('theme') as DshThemeService | undefined
+        if (theme && theme.getTheme().preference !== mode) theme.setTheme(mode)
+      } catch (error) {
+        console.error('[Wework] Failed to synchronize DSH appearance:', error)
+      }
+    }
+    // Durable SDK settings can arrive after the host preference was applied.
+    const dispose = context.on('theme/change', synchronize)
+    synchronize()
+    return () => {
+      dispose()
+    }
+  }, [context, mode])
 
   useEffect(() => {
     applyAppearance(state.appearance, state.resolvedMode)
@@ -228,4 +266,15 @@ export function AppearanceProvider({
   )
 
   return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>
+}
+
+export function CodeAppearanceSync({ theme }: { theme: ReturnType<typeof useCodeTheme> }) {
+  const pool = useWorkerPool()
+  useEffect(() => {
+    // Pierre reads provider options only on mount; update its existing pool in place.
+    void pool?.setRenderOptions({ theme }).catch(error => {
+      console.error('[Wework] Failed to update the code theme:', error)
+    })
+  }, [pool, theme])
+  return null
 }

@@ -34,6 +34,7 @@ from app.schemas.task import (
 )
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
 from app.services.task_status import (
@@ -480,6 +481,7 @@ class TaskOperationsMixin:
             "apiVersion": "agent.wecode.io/v1",
         }
 
+    @execution_resource_scope()
     def _get_team_for_new_task(
         self, db: Session, obj_in: TaskCreate, user: User
     ) -> Optional[Kind]:
@@ -1263,6 +1265,29 @@ class TaskOperationsMixin:
         background_task_runner: Optional[Callable],
     ) -> Dict[str, Any]:
         """Cancel a Chat Shell task."""
+        from app.services.chat.operations.cancel import (
+            finalize_stuck_cancellation,
+            publish_task_cancelled_events,
+            update_task_on_cancel,
+        )
+
+        task = task_stores.task_store.get_by_id_for_update(
+            db, task_id=task_id, owner_user_id=user_id
+        )
+        if not task or task.is_active != TaskResource.STATE_ACTIVE:
+            raise HTTPException(status_code=404, detail="Task not found")
+        status = (task.json.get("status") or {}).get("status")
+        if status == "PENDING":
+            # A queued turn or a paused pipeline can have no running stream.
+            finalized = finalize_stuck_cancellation(db, task_id=task_id)
+            await publish_task_cancelled_events(task_id, finalized, user_id)
+            return {"message": "Chat stopped successfully", "status": "CANCELLED"}
+        if status in ("COMPLETED", "FAILED", "CANCELLED", "DELETE"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task is already {status.lower()}, cannot cancel",
+            )
+
         running_subtask = task_stores.subtask_store.get_running_assistant_for_user(
             db, task_id=task_id, user_id=user_id
         )
@@ -1279,22 +1304,8 @@ class TaskOperationsMixin:
                 completed_at=datetime.now(),
                 error_message="",
             )
+            update_task_on_cancel(db, task)
             db.commit()
-
-            try:
-                self.update_task(
-                    db=db,
-                    task_id=task_id,
-                    obj_in=TaskUpdate(status="CANCELLED"),
-                    user_id=user_id,
-                )
-                logger.info(
-                    f"Chat Shell task {task_id} cancelled and marked as CANCELLED"
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to update Chat Shell task {task_id} status: {str(e)}"
-                )
             return {"message": "Chat stopped successfully", "status": "CANCELLED"}
         else:
             try:

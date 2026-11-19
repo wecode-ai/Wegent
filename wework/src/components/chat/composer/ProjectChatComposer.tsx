@@ -60,6 +60,8 @@ interface ProjectChatComposerProps {
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   submitLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -150,6 +152,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       nativeEmptyCaret,
       submitButtonTestId,
       submitLabel,
+      showSubmitButton,
+      showAttachmentActions,
       models,
       selectedModel,
       activeModel,
@@ -318,6 +322,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             projectWorkBar ??
             (showProjectWorkBar && projectWork && (
               <ProjectWorkBar
+                selectorLabel={projectWork.projectSelectorLabel}
+                menuLabels={projectWork.projectMenuLabels}
                 projects={projectWork.projects}
                 devices={projectWork.devices}
                 runtimeWork={projectWork.runtimeWork}
@@ -405,8 +411,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               canSend={toolbarProps.canSend}
               sendButtonTestId={submitButtonTestId}
               sendButtonLabel={submitLabel}
-              showSubmitButton={presentation !== 'configuration'}
-              showAttachmentActions={presentation !== 'configuration'}
+              showSubmitButton={showSubmitButton ?? presentation !== 'configuration'}
+              showAttachmentActions={showAttachmentActions ?? presentation !== 'configuration'}
               disabled={disabled}
               showPluginPicker={showPluginPicker}
               pluginPickerIconOnly={pluginPickerIconOnly}

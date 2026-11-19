@@ -19,6 +19,7 @@ import {
 import { createWorkbenchDeviceResolver, type WorkbenchDeviceResolver } from '@/lib/workbench-device'
 import {
   normalizeRuntimeTaskSummary,
+  mergeRuntimeTaskSnapshotMetadata,
   shouldReplaceRuntimeTaskProjection,
 } from './runtimeTaskLifecycle/projection'
 
@@ -38,7 +39,17 @@ export function mergeRuntimeWorkLists(
     canonicalizer
   )
   const mergedChats = mergeRuntimeWorkspaces(primaryWork.chats, secondaryWork.chats, canonicalizer)
-  const { projects, chats } = dedupeRuntimeTaskProjections(mergedProjects, mergedChats)
+  const primaryPinStates = indexPrimaryPinStates(primaryWork, canonicalizer)
+  const deduped = dedupeRuntimeTaskProjections(mergedProjects, mergedChats)
+  const projects = deduped.projects.map(project => {
+    const deviceWorkspaces = applyPrimaryPinStates(project.deviceWorkspaces, primaryPinStates)
+    return {
+      ...project,
+      deviceWorkspaces,
+      totalTasks: countWorkspaceTasks(deviceWorkspaces),
+    }
+  })
+  const chats = applyPrimaryPinStates(deduped.chats, primaryPinStates)
   const totalTasks =
     projects.reduce((total, project) => total + countWorkspaceTasks(project.deviceWorkspaces), 0) +
     countWorkspaceTasks(chats)
@@ -352,7 +363,12 @@ function mergeRuntimeTasks(
     const candidate = normalizeRuntimeTaskSummary(task)
     const current = tasks.get(candidate.taskId)
     if (!current || shouldReplaceRuntimeTaskProjection(current, candidate)) {
-      tasks.set(candidate.taskId, candidate)
+      tasks.set(
+        candidate.taskId,
+        current ? mergeRuntimeTaskSnapshotMetadata(candidate, current) : candidate
+      )
+    } else {
+      tasks.set(candidate.taskId, mergeRuntimeTaskSnapshotMetadata(current, candidate))
     }
   }
 
@@ -360,6 +376,63 @@ function mergeRuntimeTasks(
   secondaryTasks.forEach(upsertTask)
 
   return Array.from(tasks.values())
+}
+
+function indexPrimaryPinStates(
+  primaryWork: RuntimeWorkListResponse,
+  devices: WorkbenchDeviceResolver
+): Map<string, RuntimeTaskSummary> {
+  const states = new Map<string, RuntimeTaskSummary>()
+  const addWorkspace = (workspace: RuntimeDeviceWorkspace) => {
+    const canonicalWorkspace = canonicalizeRuntimeWorkspace(workspace, devices)
+    canonicalWorkspace.tasks.forEach(task => {
+      runtimeTaskProjectionAliases(canonicalWorkspace, task).forEach(alias => {
+        if (!states.has(alias)) states.set(alias, task)
+      })
+    })
+  }
+
+  primaryWork.projects.forEach(project => project.deviceWorkspaces.forEach(addWorkspace))
+  primaryWork.chats.forEach(addWorkspace)
+  return states
+}
+
+function applyPrimaryPinStates(
+  workspaces: RuntimeDeviceWorkspace[],
+  primaryPinStates: Map<string, RuntimeTaskSummary>
+): RuntimeDeviceWorkspace[] {
+  return workspaces.map(workspace => {
+    let changed = false
+    const tasks = workspace.tasks.map(task => {
+      const primaryTask = [...runtimeTaskProjectionAliases(workspace, task)]
+        .map(alias => primaryPinStates.get(alias))
+        .find((candidate): candidate is RuntimeTaskSummary => Boolean(candidate))
+      if (!primaryTask) return task
+      const nextTask = preservePrimaryPinState(primaryTask, task)
+      changed ||= nextTask !== task
+      return nextTask
+    })
+    return changed ? { ...workspace, tasks } : workspace
+  })
+}
+
+function preservePrimaryPinState(
+  primaryTask: RuntimeTaskSummary,
+  selectedTask: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  if (typeof primaryTask.pinned !== 'boolean') return selectedTask
+
+  const task = { ...selectedTask, pinned: primaryTask.pinned }
+  if (primaryTask.pinned && primaryTask.pinnedOrder != null) {
+    task.pinnedOrder = primaryTask.pinnedOrder
+  } else if (primaryTask.pinned && selectedTask.pinned && selectedTask.pinnedOrder != null) {
+    // An optimistic pin has no order until the executor confirms it. Keep the
+    // selected snapshot's confirmed order instead of making the row jump.
+    task.pinnedOrder = selectedTask.pinnedOrder
+  } else {
+    delete task.pinnedOrder
+  }
+  return task
 }
 
 interface RuntimeTaskProjection {
@@ -374,6 +447,7 @@ function dedupeRuntimeTaskProjections(
 ): Pick<RuntimeWorkListResponse, 'projects' | 'chats'> {
   const winners = new Set<RuntimeTaskProjection>()
   const winnersByAlias = new Map<string, RuntimeTaskProjection>()
+  const metadata = new Map<RuntimeTaskSummary, RuntimeTaskSummary>()
   const workspaces = [...projects.flatMap(project => project.deviceWorkspaces), ...chats]
 
   workspaces.forEach(workspace => {
@@ -385,9 +459,19 @@ function dedupeRuntimeTaskProjections(
           .filter((projection): projection is RuntimeTaskProjection => Boolean(projection))
       )
       const candidate = { workspace, task, aliases }
-      const winner = [...matches, candidate].reduce((current, projection) =>
-        shouldReplaceRuntimeTaskProjection(current.task, projection.task) ? projection : current
-      )
+      const winner = [...matches, candidate].reduce((current, projection) => {
+        const replace = shouldReplaceRuntimeTaskProjection(current.task, projection.task)
+        const winner = replace ? projection : current
+        const other = replace ? current : projection
+        metadata.set(
+          winner.task,
+          mergeRuntimeTaskSnapshotMetadata(
+            metadata.get(winner.task) ?? winner.task,
+            metadata.get(other.task) ?? other.task
+          )
+        )
+        return winner
+      })
       const mergedAliases = new Set([
         ...aliases,
         ...[...matches].flatMap(projection => [...projection.aliases]),
@@ -403,8 +487,13 @@ function dedupeRuntimeTaskProjections(
   const winningTasks = new Set([...winners].map(projection => projection.task))
   const retainWinningTasks = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace | null => {
     const inputTaskCount = workspace.tasks.length
-    const tasks = workspace.tasks.filter(task => winningTasks.has(task))
-    const filteredWorkspace = tasks.length === inputTaskCount ? workspace : { ...workspace, tasks }
+    const tasks = workspace.tasks
+      .filter(task => winningTasks.has(task))
+      .map(task => metadata.get(task) ?? task)
+    const unchanged =
+      tasks.length === inputTaskCount &&
+      tasks.every((task, index) => task === workspace.tasks[index])
+    const filteredWorkspace = unchanged ? workspace : { ...workspace, tasks }
     return shouldKeepRuntimeWorkspace(filteredWorkspace, inputTaskCount) ? filteredWorkspace : null
   }
   const dedupedProjects = projects

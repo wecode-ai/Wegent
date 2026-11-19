@@ -1,12 +1,253 @@
 import { describe, expect, it } from 'vitest'
 
 import { appendDelta, chatReducer, type RuntimeStreamEvent } from './chatReducer'
+import { projectMobileRuntimeTranscript } from './runtimeTranscript'
+import { hydrateRuntimeTranscript } from './runtimeTranscriptHydration'
+import type { Attachment } from '@/types/runtime'
+
+const attachment: Attachment = {
+  id: 17,
+  filename: 'report.png',
+  file_size: 120,
+  mime_type: 'image/png',
+  status: 'ready',
+  file_extension: 'png',
+  created_at: '2026-11-14T10:00:00Z',
+  workspace_file: { device_id: 'storage-device', workspace_path: '/worktree', path: 'report.png' },
+  image_width: 320,
+  image_height: 180,
+  ui_group_id: 'artifact',
+  ui_group_role: 'primary',
+  ui_kind: 'appshot',
+}
 
 function stream(state: ReturnType<typeof chatReducer>, event: RuntimeStreamEvent) {
   return chatReducer(state, { type: 'stream', event })
 }
 
 describe('chatReducer', () => {
+  it('preserves canonical diff identity and bytes on transcript summaries and blocks', () => {
+    const source = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact',
+      device_id: 'storage',
+      workspace_path: '/original',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'a.ts',
+          change_type: 'created' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      diff: 'diff --git a/a.ts b/a.ts\n+hello',
+    }
+    const [message] = chatReducer([], {
+      type: 'replace',
+      messages: [
+        {
+          id: 'assistant',
+          role: 'assistant',
+          content: '',
+          subtaskId: 'turn',
+          blocks: [{ id: 'changes', type: 'file_changes', file_changes: source, status: 'done' }],
+        },
+      ],
+    })
+    expect(message.fileChanges?.source).toMatchObject(source)
+    expect(message.blocks?.[0]).toMatchObject({ fileChanges: { source } })
+    const streamed = stream([], {
+      name: 'response.completed',
+      payload: { subtaskId: 'turn', data: { file_changes: source } },
+    })
+    expect(streamed[0].fileChanges?.source).toMatchObject(source)
+  })
+  it('keeps complete attachment metadata through canonical projection and message hydration', () => {
+    const transcript = projectMobileRuntimeTranscript({
+      taskId: 'task',
+      workspacePath: '/worktree',
+      runtime: 'codex',
+      messages: [],
+      runtimeTurns: [],
+      turns: [
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [
+            {
+              id: 'input',
+              type: 'user_message',
+              message: {
+                id: 'provider-user',
+                clientUserMessageId: 'user',
+                role: 'user',
+                content: 'Inspect',
+                attachments: [attachment],
+              },
+            },
+          ],
+        },
+      ],
+    })
+    const [message] = chatReducer([], { type: 'replace', messages: transcript.messages })
+    expect(message.id).toBe('user')
+    expect(message.attachments).toEqual([attachment])
+  })
+
+  it('retains optimistic attachments when confirmation and reconnect omit optional metadata', () => {
+    const optimistic = chatReducer([], {
+      type: 'optimistic-user',
+      id: 'user',
+      content: 'Inspect',
+      createdAt: 10,
+      attachments: [attachment],
+    })
+    const delivered = chatReducer(optimistic, { type: 'user-delivered', id: 'user' })
+    expect(delivered[0]).toMatchObject({ attachments: [attachment], pendingDelivery: false })
+    const result = hydrateRuntimeTranscript(
+      delivered,
+      {
+        taskId: 'task',
+        workspacePath: '/worktree',
+        runtime: 'codex',
+        messages: [
+          { id: 'provider-user', clientUserMessageId: 'user', role: 'user', content: 'Inspect' },
+        ],
+      },
+      [],
+      true
+    )
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0].attachments).toEqual([attachment])
+  })
+
+  it('accepts authoritative attachment updates and explicit removal without reviving old attachments', () => {
+    const original = chatReducer([], {
+      type: 'replace',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [attachment] }],
+    })
+    const updated = { ...attachment, filename: 'renamed.png', image_width: 640 }
+    const merged = chatReducer(original, {
+      type: 'merge-latest',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [updated] }],
+    })
+    expect(merged[0].attachments).toEqual([updated])
+    const removed = chatReducer(merged, {
+      type: 'merge-latest',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [] }],
+    })
+    const prepended = chatReducer(removed, {
+      type: 'prepend',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [attachment] }],
+    })
+    expect(prepended[0].attachments).toEqual([])
+  })
+
+  it('does not lose attachments at an overlapping pagination boundary', () => {
+    const current = chatReducer([], {
+      type: 'replace',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect' }],
+    })
+    const prepended = chatReducer(current, {
+      type: 'prepend',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [attachment] }],
+    })
+    expect(prepended).toHaveLength(1)
+    expect(prepended[0].attachments).toEqual([attachment])
+  })
+
+  it('joins a streamed reply to its canonical reconnect snapshot without duplicating it', () => {
+    const previous = stream([], {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn-1', data: { itemId: 'reply', delta: 'Hel', offset: 0 } },
+    })
+    const transcript = projectMobileRuntimeTranscript({
+      taskId: 'task-1',
+      workspacePath: '/work',
+      runtime: 'codex',
+      messages: [],
+      runtimeTurns: [],
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'inProgress',
+          items: [{ id: 'reply', type: 'assistant_text', content: 'Hel' }],
+        },
+      ],
+    })
+    const result = hydrateRuntimeTranscript(
+      previous,
+      transcript,
+      [
+        {
+          type: 'stream',
+          event: {
+            name: 'response.output_text.delta',
+            payload: { subtaskId: 'turn-1', data: { itemId: 'reply', delta: 'lo', offset: 3 } },
+          },
+        },
+      ],
+      true
+    )
+    expect(result.resetPagination).toBe(false)
+    expect(result.messages).toMatchObject([
+      {
+        id: previous[0].id,
+        subtaskId: 'turn-1',
+        content: 'Hello',
+        textItems: [{ id: 'reply', content: 'Hello' }],
+        status: 'streaming',
+      },
+    ])
+  })
+
+  it('continues the latest guidance view while late tool updates retain their original owner', () => {
+    const transcript = projectMobileRuntimeTranscript({
+      taskId: 'task-1',
+      workspacePath: '/work',
+      runtime: 'codex',
+      messages: [],
+      runtimeTurns: [],
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'inProgress',
+          items: [
+            { id: 'before', type: 'assistant_text', content: 'Inspect' },
+            {
+              id: 'command',
+              type: 'block',
+              block: { id: 'command', type: 'tool', tool_name: 'bash', status: 'pending' },
+            },
+            {
+              id: 'guide',
+              type: 'user_message',
+              message: { id: 'guide', role: 'user', content: 'Fix it', runtimeGuidance: true },
+            },
+            { id: 'after', type: 'assistant_text', content: 'Fi' },
+          ],
+        },
+      ],
+    })
+    const initial = chatReducer([], { type: 'replace', messages: transcript.messages })
+    const continued = stream(initial, {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn-1', data: { itemId: 'after', delta: 'xed', offset: 2 } },
+    })
+    const result = stream(continued, {
+      name: 'response.block.updated',
+      payload: { subtaskId: 'turn-1', data: { blockId: 'command', updates: { status: 'done' } } },
+    })
+    expect(result.map(message => message.content)).toEqual(['Inspect', 'Fix it', 'Fixed'])
+    expect(result[0].blocks?.find(block => block.id === 'command')?.status).toBe('done')
+    expect(result[2].blocks?.some(block => block.id === 'command')).toBe(false)
+  })
+
   it('hydrates canonical transcript identity, blocks, status, errors and timestamps', () => {
     const result = chatReducer([], {
       type: 'replace',
@@ -45,32 +286,6 @@ describe('chatReducer', () => {
       status: 'completed',
       blocks: [{ id: 'tool-1', type: 'tool', toolName: 'bash', status: 'done' }],
     })
-  })
-
-  it('hides injected application context from historical and optimistic user messages', () => {
-    const runtimeContent = [
-      '<application_context>',
-      '[cloudCollaboration]',
-      'Current task: WORK-567',
-      '</application_context>',
-      '',
-      '本地启动后无法流式输出',
-    ].join('\n')
-    const historical = chatReducer([], {
-      type: 'replace',
-      messages: [{ id: 'user-history', role: 'user', content: runtimeContent }],
-    })
-    const optimistic = chatReducer(historical, {
-      type: 'optimistic-user',
-      id: 'user-live',
-      content: runtimeContent,
-      createdAt: 1788099302000,
-    })
-
-    expect(optimistic.map(message => message.content)).toEqual([
-      '本地启动后无法流式输出',
-      '本地启动后无法流式输出',
-    ])
   })
 
   it('prepends an older transcript page without duplicating boundary messages', () => {
@@ -168,7 +383,7 @@ describe('chatReducer', () => {
     })
 
     expect(reasoning[0]).toMatchObject({
-      id: 'assistant-turn-1',
+      id: 'runtime-view:turn-1:assistant',
       streamingThinkingContent: '分析',
       status: 'streaming',
       blocks: [{ type: 'thinking', content: '分析' }],
@@ -237,6 +452,131 @@ describe('chatReducer', () => {
       { id: 'call-1', type: 'tool', toolName: 'bash', status: 'pending' },
     ])
     expect(completed[0]?.blocks?.[1]).toMatchObject({ status: 'done', toolOutput: 'ok' })
+  })
+
+  it('reconciles streamed commentary and its completed block before the next tool (phone trace)', () => {
+    const text = '检查🙂当前会话'
+    let state = stream([], {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn', data: { item_id: 'message', delta: text } },
+    })
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'message',
+            type: 'text',
+            content: text,
+            status: 'done',
+            process_item_id: 'message',
+          },
+        },
+      },
+    })
+    expect(state[0].content).toBe('')
+    expect(state[0].textItems).toBeUndefined()
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'tool',
+            type: 'tool',
+            tool_name: 'exec_command',
+            status: 'pending',
+          },
+        },
+      },
+    })
+    expect(state[0].blocks?.map(block => block.id)).toEqual(['message', 'tool'])
+    expect(state[0].blocks?.filter(block => block.type === 'text')).toMatchObject([
+      { id: 'message', content: text },
+    ])
+  })
+
+  it('preserves provider identities across tool boundaries and updates late snapshots in place', () => {
+    let state = stream([], {
+      name: 'response.output_text.delta',
+      payload: {
+        subtaskId: 'turn',
+        data: { item_id: 'first', delta: '重复🙂', offset: 100, block_offset: 0 },
+      },
+    })
+    state = stream(state, {
+      name: 'response.output_item.added',
+      payload: { subtaskId: 'turn', data: { item: { id: 'tool', type: 'shell_call' } } },
+    })
+    state = stream(state, {
+      name: 'response.output_text.delta',
+      payload: {
+        subtaskId: 'turn',
+        data: { item_id: 'first', delta: '🙂', offset: 103, block_offset: 2 },
+      },
+    })
+    expect(state[0].blocks?.[0]).toMatchObject({ content: '重复🙂' })
+    state = stream(state, {
+      name: 'response.output_text.done',
+      payload: { subtaskId: 'turn', data: { item_id: 'first', text: '修正🙂' } },
+    })
+    expect(state[0].content).toBe('')
+    expect(state[0].blocks?.map(block => block.id)).toEqual(['first', 'tool'])
+    expect(state[0].blocks?.[0]).toMatchObject({ content: '修正🙂' })
+    state = stream(state, {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn', data: { item_id: 'second', delta: '修正🙂', block_offset: 0 } },
+    })
+    expect(state[0].content).toBe('修正🙂')
+    expect(state[0].textItems).toMatchObject([{ id: 'second', content: '修正🙂' }])
+  })
+
+  it('keeps different items with identical text and accepts rewritten snapshots under the original ID', () => {
+    let state: ReturnType<typeof chatReducer> = []
+    for (const item_id of ['first', 'second'])
+      state = stream(state, {
+        name: 'response.output_text.delta',
+        payload: { subtaskId: 'turn', data: { item_id, delta: '相同内容' } },
+      })
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'first',
+            type: 'text',
+            content: '修订后的第一段',
+            status: 'done',
+          },
+        },
+      },
+    })
+    expect(state[0].content).toBe('')
+    expect(state[0].blocks).toMatchObject([
+      { id: 'first', content: '修订后的第一段' },
+      { id: 'second', content: '相同内容' },
+    ])
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'first',
+            type: 'text',
+            content: '相同内容',
+            status: 'done',
+          },
+        },
+      },
+    })
+    expect(state[0].blocks?.map(block => block.id)).toEqual(['first', 'second'])
+    expect(state[0].blocks?.map(block => ('content' in block ? block.content : ''))).toEqual([
+      '相同内容',
+      '相同内容',
+    ])
   })
 
   it('applies response block creation and incremental updates', () => {

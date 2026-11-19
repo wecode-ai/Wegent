@@ -10,7 +10,6 @@ import {
   openPlugin,
   pluginApi,
   testId,
-  uninstallInUi,
   until,
 } from './plugin-regression-fixture.mjs'
 
@@ -81,7 +80,10 @@ export async function verifyPluginReinstallStatus({
   let held
   apiProxy.pauseDeviceDelivery(true)
   try {
-    await uninstallInUi(control, item)
+    // Account intent may commit while its device cleanup remains held.
+    // Reopen the catalog from the chat fixture so its account read observes that intent.
+    await pluginApi(cloud, `/plugins/installed/${item.installedId}`, 'DELETE')
+    await openPlugin(control, item)
     await assertInstallButton(control, item)
     assert.equal(await accountPlugin(cloud, slug), undefined)
     const removedRuntime = await materializedPlugin(executorHome, item.installedId)

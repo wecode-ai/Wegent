@@ -1,3 +1,4 @@
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
 import {
   ArrowUp,
   Camera,
@@ -22,7 +23,6 @@ import { ComposerErrorBanner } from '@wegent/collaboration/composer'
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -64,7 +64,9 @@ import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import { useComposerDrawing } from './useComposerDrawing'
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 
@@ -81,6 +83,8 @@ interface CompactChatComposerProps {
   placeholder: string
   inputTestId?: string
   submitButtonTestId?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   attachments?: Attachment[]
   codeComments?: CodeCommentContext[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
@@ -136,6 +140,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       placeholder,
       inputTestId,
       submitButtonTestId = 'send-message-button',
+      showSubmitButton = true,
+      showAttachmentActions = true,
       attachments = [],
       codeComments = [],
       uploadingFiles = new Map(),
@@ -189,8 +195,14 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const fullscreenInputRef = useRef<HTMLElement>(null)
     const [contextSheetOpen, setContextSheetOpen] = useState(false)
     const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
-    const [canExpandInput, setCanExpandInput] = useState(false)
-    const [hasText, setHasText] = useState(value.trim().length > 0)
+    const geometry = useElementGeometry([textareaRef])
+    const [textState, setTextState] = useState({
+      external: value,
+      hasText: value.trim().length > 0,
+    })
+    if (textState.external !== value)
+      setTextState({ external: value, hasText: value.trim().length > 0 })
+    const hasText = textState.hasText
     const [phraseError, setPhraseError] = useState<string | null>(null)
 
     useImperativeHandle(
@@ -253,15 +265,9 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       !submitDisabled
     const explicitLineCount = value.split('\n').length
 
-    useEffect(() => {
-      // Sync local hasText with external value changes (e.g. clear after submit).
-
-      setHasText(value.trim().length > 0)
-    }, [value])
-
     const handleComposerChange = useCallback(
       (nextValue: string) => {
-        setHasText(nextValue.trim().length > 0)
+        setTextState(current => ({ ...current, hasText: nextValue.trim().length > 0 }))
         onChange(nextValue)
       },
       [onChange]
@@ -320,15 +326,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onSetPlanMode?.()
     }
 
-    useEffect(() => {
-      const textarea = textareaRef.current
-      if (!textarea) {
-        setCanExpandInput(explicitLineCount > 4)
-        return
-      }
-
-      setCanExpandInput(explicitLineCount > 4 || textarea.scrollHeight > 124)
-    }, [explicitLineCount, textareaRef, value])
+    const canExpandInput = explicitLineCount > 4 || (geometry?.elements[0]?.scrollHeight ?? 0) > 124
 
     const renderModelSelector = (control: ReturnType<typeof useComposerModelSelector>) => (
       <ModelSelector
@@ -430,17 +428,19 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             }
           }}
         >
-          <button
-            type="button"
-            data-testid="add-context-button"
-            onClick={() => !disabled && setContextSheetOpen(true)}
-            disabled={disabled}
-            className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[26px] border border-border bg-background p-0 text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.08)] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            aria-expanded={contextSheetOpen}
-            aria-label={t('workbench.add_context', '添加上下文')}
-          >
-            <Plus className="h-6 w-6" />
-          </button>
+          {showAttachmentActions && (
+            <button
+              type="button"
+              data-testid="add-context-button"
+              onClick={() => !disabled && setContextSheetOpen(true)}
+              disabled={disabled}
+              className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[26px] border border-border bg-background p-0 text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.08)] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              aria-expanded={contextSheetOpen}
+              aria-label={t('workbench.add_context', '添加上下文')}
+            >
+              <Plus className="h-6 w-6" />
+            </button>
+          )}
           <QuickPhraseMenu
             compact
             disabled={disabled}
@@ -512,85 +512,88 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 <Maximize2 className="h-4 w-4" />
               </button>
             )}
-            {isStreaming && !canSend ? (
-              <button
-                type="button"
-                data-testid="pause-response-button"
-                onClick={onPause}
-                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background hover:bg-text-primary/90"
-                aria-label={t('workbench.pause_response', '暂停回复')}
-              >
-                <Square className="h-4 w-4 fill-current" />
-              </button>
-            ) : isStreaming && canSend ? (
-              <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
+            {showSubmitButton &&
+              (isStreaming && !canSend ? (
+                <button
+                  type="button"
+                  data-testid="pause-response-button"
+                  onClick={onPause}
+                  className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background hover:bg-text-primary/90"
+                  aria-label={t('workbench.pause_response', '暂停回复')}
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                </button>
+              ) : isStreaming && canSend ? (
+                <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
+                  <button
+                    type="submit"
+                    data-testid={submitButtonTestId}
+                    className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
+                    aria-label={primaryBusyLabel}
+                  >
+                    <ArrowUp className="h-5 w-5" />
+                  </button>
+                  <ActionMenu
+                    ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+                    testId="send-mode-menu-button"
+                    icon={ChevronDown}
+                    triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
+                    items={[
+                      {
+                        label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                        icon: Clock3,
+                        testId: 'send-after-turn-option',
+                        onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
+                        shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
+                      },
+                      {
+                        label:
+                          modelChangePending && activeModelLabel
+                            ? t(
+                                'workbench.guide_current_turn_with_model',
+                                'Guide current response · {{model}}',
+                                { model: activeModelLabel }
+                              )
+                            : t('workbench.guide_current_turn', '引导当前回复'),
+                        icon: CornerDownRight,
+                        testId: 'guide-current-turn-option',
+                        onSelect: () =>
+                          onSubmit(composerRef.current?.getValue() ?? value, {
+                            guideWhenBusy: true,
+                          }),
+                        shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
+                      },
+                      {
+                        label:
+                          modelChangePending && selectedModelLabel
+                            ? t(
+                                'workbench.interrupt_and_send_with_model',
+                                'Interrupt and use {{model}}',
+                                { model: selectedModelLabel }
+                              )
+                            : t('workbench.interrupt_and_send', '打断并立即发送'),
+                        icon: Zap,
+                        testId: 'interrupt-and-send-option',
+                        onSelect: () =>
+                          onSubmit(composerRef.current?.getValue() ?? value, {
+                            interruptWhenBusy: true,
+                          }),
+                        shortcut: 'Command+Shift+Enter',
+                      },
+                    ]}
+                  />
+                </div>
+              ) : (
                 <button
                   type="submit"
                   data-testid={submitButtonTestId}
-                  className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
-                  aria-label={primaryBusyLabel}
+                  disabled={!canSend}
+                  className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background disabled:bg-text-muted"
+                  aria-label={t('workbench.send_message', '发送消息')}
                 >
                   <ArrowUp className="h-5 w-5" />
                 </button>
-                <ActionMenu
-                  ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
-                  testId="send-mode-menu-button"
-                  icon={ChevronDown}
-                  triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
-                  items={[
-                    {
-                      label: t('workbench.send_after_turn', '当前回复结束后发送'),
-                      icon: Clock3,
-                      testId: 'send-after-turn-option',
-                      onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
-                      shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
-                    },
-                    {
-                      label:
-                        modelChangePending && activeModelLabel
-                          ? t(
-                              'workbench.guide_current_turn_with_model',
-                              'Guide current response · {{model}}',
-                              { model: activeModelLabel }
-                            )
-                          : t('workbench.guide_current_turn', '引导当前回复'),
-                      icon: CornerDownRight,
-                      testId: 'guide-current-turn-option',
-                      onSelect: () =>
-                        onSubmit(composerRef.current?.getValue() ?? value, { guideWhenBusy: true }),
-                      shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
-                    },
-                    {
-                      label:
-                        modelChangePending && selectedModelLabel
-                          ? t(
-                              'workbench.interrupt_and_send_with_model',
-                              'Interrupt and use {{model}}',
-                              { model: selectedModelLabel }
-                            )
-                          : t('workbench.interrupt_and_send', '打断并立即发送'),
-                      icon: Zap,
-                      testId: 'interrupt-and-send-option',
-                      onSelect: () =>
-                        onSubmit(composerRef.current?.getValue() ?? value, {
-                          interruptWhenBusy: true,
-                        }),
-                      shortcut: 'Command+Shift+Enter',
-                    },
-                  ]}
-                />
-              </div>
-            ) : (
-              <button
-                type="submit"
-                data-testid={submitButtonTestId}
-                disabled={!canSend}
-                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background disabled:bg-text-muted"
-                aria-label={t('workbench.send_message', '发送消息')}
-              >
-                <ArrowUp className="h-5 w-5" />
-              </button>
-            )}
+              ))}
           </div>
         </form>
         {contextSheetOpen && (
@@ -670,8 +673,15 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   </span>
                   <PermissionModeSelector
                     value={runtimePermissionMode(selectedModelOptions)}
+                    commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
+                    onCommandApprovalChange={mode =>
+                      onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
+                    }
                     disabled={disabled}
-                    onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+                    onChange={(mode, approval) => {
+                      if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+                      onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                    }}
                   />
                 </div>
               ) : null}

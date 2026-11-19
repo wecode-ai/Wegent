@@ -1,0 +1,43 @@
+{
+  "upstream": {
+    "repository": "https://github.com/OpenMinis/ish-arm64.git",
+    "revision": "0fd17a135e78b7a0cf08a4f5831217bbb76ed22f"
+  },
+  "patch": {
+    "path": "patches/ish-wework-mobile-compat.patch",
+    "sha256": "e2bf87b44613951046d4cb3226632e48f27d46a099416f1ffa9e891cba75418b"
+  },
+  "licenses": [
+    {
+      "path": "native/licenses/ISH-LICENSE.md",
+      "sha256": "300e62ce6fafbee38b072ab7daf8d64bd57042d81e09d3b4c58af26bcabddab1",
+      "upstreamPath": "LICENSE.md"
+    },
+    {
+      "path": "native/licenses/ISH-LICENSE.IOS",
+      "sha256": "37708e19d5ea72c1491926ce6d33ae33ab746609b772a4f1b1657a809f835958",
+      "upstreamPath": "LICENSE.IOS"
+    },
+    {
+      "path": "native/licenses/GPL-3.0.txt",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    }
+  ],
+  "build": {
+    "guest_arch": "arm64",
+    "engine": "asbestos",
+    "kernel": "ish",
+    "jit": true,
+    "jit_emit": false
+  },
+  "probeRootfs": {
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.0-aarch64.tar.gz",
+    "sha256": "f31202c4070c4ef7de9e157e1bd01cb4da3a2150035d74ea5372c5e86f1efac1"
+  },
+  "codex": {
+    "version": "0.167.0",
+    "target": "aarch64-unknown-linux-musl",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.167.0-linux-arm64.tgz",
+    "sha256": "e24d7b6f0af5695a36c04692c3a79672bdadebcac7c44005259cb3cad36ac40e"
+  }
+}

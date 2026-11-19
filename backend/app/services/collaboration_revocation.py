@@ -17,6 +17,7 @@ from app.services.collaboration_permissions import (
     PermissionDecision,
     collaboration_permission_service,
 )
+from app.services.execution_permission_scope import execution_resource_scope
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -145,17 +146,16 @@ def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
     if not device_id:
         return True
     from app.services.device.identity import resolve_owned_device_alias
-    from app.services.runner_routing import execution_environment_ids
+    from app.services.runner_routing import execution_device_authorized
 
     runner = resolve_owned_device_alias(
         db, user_id=execution.executor_owner_user_id, device_id=device_id
     )
-    return runner is not None and runner.id in execution_environment_ids(
-        db, execution.cloud_project_id, execution.agent_id
-    )
+    return runner is not None and execution_device_authorized(db, execution, runner)
 
 
 @trace_sync("collaboration.execution_permission", "backend.collaboration")
+@execution_resource_scope()
 def execution_permission(
     db: Session, execution: LoopItemExecution
 ) -> PermissionDecision:

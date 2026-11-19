@@ -44,9 +44,20 @@ function catalogRestartCompleted(log) {
     if (!finished.endsWith(' ok=true')) continue
     const interval = pending.slice(0, finishedAt)
     const processStart = interval.indexOf('codex shared app-server process starting ')
+    const prepared = interval.indexOf('codex router model catalog prepared ')
+    const processId = /codex shared app-server process starting process_id=(\d+)/.exec(
+      interval
+    )?.[1]
+    const fileLoaded =
+      prepared >= 0 &&
+      prepared < processStart &&
+      processId &&
+      new RegExp(
+        `codex shared app-server process initialized process_id=${processId}(?:\\s|$)`
+      ).test(interval.slice(processStart))
     if (
       processStart >= 0 &&
-      interval.indexOf('codex router model catalog served ', processStart) >= 0
+      (fileLoaded || interval.indexOf('codex router model catalog served ', processStart) >= 0)
     ) {
       return true
     }
@@ -69,7 +80,8 @@ export async function waitForCatalogRestart(control, executorLogPath, fromOffset
       confirmed = true
     }
     const log = (await readFile(executorLogPath, 'utf8')).slice(fromOffset)
-    if (!confirmation && catalogRestartCompleted(log)) {
+    const editorOpen = snapshot.testIds.includes('codex-catalog-editor-dialog')
+    if (!confirmation && !editorOpen && catalogRestartCompleted(log)) {
       return
     }
     await new Promise(resolve => setTimeout(resolve, 100))

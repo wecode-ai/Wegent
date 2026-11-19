@@ -4,8 +4,10 @@ import { watch, type FSWatcher } from 'node:fs'
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  authorizeCoreDshPluginInstall,
   validateCoreDshDevelopmentPlugin,
   type CoreDshDevelopmentPlugin,
+  type CoreDshPluginInstallRequest,
 } from './core-dsh-plugin-manager.js'
 import { RotatingLog } from './rotating-log.js'
 import { terminateProcessTree } from './runtime-supervisor.js'
@@ -69,10 +71,12 @@ const PLUGIN_DEVELOPMENT_APPEARANCE_MODES = new Set(['light', 'dark', 'system'])
 const PLUGIN_DEVELOPMENT_LANGUAGES = new Set(['system', 'zh-CN', 'en'])
 
 export interface PluginDevelopmentManagerOptions {
+  bundledComponentDirectory?: string
   command: string
   args: string[]
   environment: NodeJS.ProcessEnv
   userDataDirectory: string
+  confirmInstall?: (request: CoreDshPluginInstallRequest) => Promise<boolean>
   watch?: typeof watch
   onStateChanged?: (session: PluginDevelopmentSession) => void
   onProjectClassificationChanged?: (classification: PluginDevelopmentProjectClassification) => void
@@ -277,6 +281,11 @@ export class PluginDevelopmentManager {
       await this.command('focus')
       return this.session
     }
+    // The public development entry can execute linked source just like installation.
+    await authorizeCoreDshPluginInstall(
+      { action: 'install', spec: `link:${plugin.sourceRoot}` },
+      this.options.confirmInstall
+    )
     await this.stop()
 
     const id = pluginDevelopmentId(plugin.sourceRoot)
@@ -292,7 +301,8 @@ export class PluginDevelopmentManager {
       plugin,
       id,
       userDataDirectory,
-      statePath
+      statePath,
+      this.options.bundledComponentDirectory
     )
     const log = new RotatingLog({ path: join(logDirectory, 'wework-plugin-development.log') })
     const child = spawn(
@@ -602,12 +612,14 @@ export function pluginDevelopmentEnvironment(
   plugin: CoreDshDevelopmentPlugin,
   id: string,
   userDataDirectory: string,
-  statePath: string
+  statePath: string,
+  bundledComponents?: string
 ): NodeJS.ProcessEnv {
   const e2eControlUrl = base.WEWORK_E2E_CONTROL_URL?.trim()
   const e2eControlToken = base.WEWORK_E2E_CONTROL_TOKEN?.trim()
   const e2eEnabled = base.WEWORK_PLUGIN_DEVELOPMENT_E2E === '1' && Boolean(e2eControlUrl)
   const environment = { ...base }
+  delete environment.WEWORK_COMPONENT_DATA_DIRECTORY
   delete environment.ELECTRON_RUN_AS_NODE
   delete environment.CODEX_HOME
   delete environment.WEGENT_CODEX_HOME
@@ -638,6 +650,7 @@ export function pluginDevelopmentEnvironment(
           WEWORK_PARENT_PYTHON_DOWNLOADS_TOKEN: base.WEWORK_PYTHON_RUNTIME_TOKEN,
         }
       : {}),
+    ...(bundledComponents ? { WEWORK_BUNDLED_COMPONENT_DIRECTORY: bundledComponents } : {}),
     WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
     ...(e2eEnabled
       ? {

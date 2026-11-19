@@ -1,3 +1,5 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
+import { useOutsideClick } from '@wegent/collaboration/composer/useOutsideClick'
 import {
   CircleCheck,
   CircleDot,
@@ -9,7 +11,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
@@ -21,6 +23,8 @@ import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types/environment'
+import type { ResourceObservation } from '@/features/workbench/resourceObservation'
+import { ResourceObservationStatus } from './ResourceObservationStatus'
 
 interface ChangeRequestStatusGlyphConfig {
   mainClassName: string
@@ -32,6 +36,7 @@ interface ChangeRequestStatusGlyphConfig {
 interface ChangeRequestStatusSnapshot {
   changeRequest: ChangeRequest | null
   stale?: boolean
+  observation?: ResourceObservation
 }
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
@@ -174,32 +179,16 @@ export function ChangeRequestStatusIcon({
     gap: 4,
   })
 
-  useEffect(() => {
-    if (!open) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (
-        !(event.target instanceof Node) ||
-        rootRef.current?.contains(event.target) ||
-        popoverRef.current?.contains(event.target)
-      ) {
-        return
-      }
-      setOpen(false)
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+  useOutsideClick(rootRef, open, () => setOpen(false), [popoverRef])
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       setOpen(false)
       triggerRef.current?.focus()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+    },
+    { enabled: open }
+  )
 
   if (!changeRequest) return null
   const status = changeRequestVisualStatus(changeRequest)
@@ -247,6 +236,11 @@ export function ChangeRequestStatusIcon({
                 {changeRequest.number} · {changeRequest.title}
               </span>
               <span className="mt-1 block text-xs text-text-secondary">{label}</span>
+              {snapshot?.observation && (
+                <span className="mt-1 block">
+                  <ResourceObservationStatus observation={snapshot.observation} />
+                </span>
+              )}
               {changeRequest.mergeQueueReason ? (
                 <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
                   {changeRequest.mergeQueueReason}

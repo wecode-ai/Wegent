@@ -34,6 +34,8 @@ pub struct AppState {
     /// application whose deployment keeps placeholder Git credentials registers
     /// its own implementation before route construction.
     pub user_git_info_mask: Arc<dyn crate::user_profile::UserGitInfoMasker>,
+    /// Deployment patch applied to the execution request's `user` object.
+    pub user_info_extension: Arc<dyn crate::user_profile::UserInfoExtension>,
     pub media_policy: Arc<dyn crate::media_policy::MediaPolicy>,
     /// `_stream_external_attachment`: the registered external media playback
     /// resolvers and their relay. The public default resolves nothing.
@@ -118,6 +120,9 @@ pub struct AppState {
     /// configured cloud store projects cached Runtime features registers its
     /// own implementation before route construction.
     pub cloud_runtime_features: Arc<dyn crate::devices::CloudRuntimeFeatures>,
+    pub cloud_device_destroyer: Option<Arc<dyn crate::cloud_device_deletion::CloudDeviceDestroyer>>,
+    /// Whether the Device store allows only one record per owner and App name.
+    pub unique_app_device_names: bool,
     /// `executor_version_service`: the cached executor version every device
     /// listing reads, plus the process-owned background refresh its cache miss
     /// starts. Built with the process Redis service at startup.

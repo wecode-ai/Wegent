@@ -1,3 +1,4 @@
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from './workbenchServices'
 import {
@@ -26,11 +27,20 @@ const coordinator: Coordinator = {
   unsubscribe: null,
 }
 
+export interface RuntimeConversationStreamRegistration {
+  (): void
+  update(
+    chatStream: WorkbenchServices['chatStream'],
+    handlers: RuntimeConversationStreamHandlers,
+    active: boolean
+  ): void
+}
+
 export function registerRuntimeConversationStream(
   chatStream: WorkbenchServices['chatStream'],
   handlers: RuntimeConversationStreamHandlers,
   active: boolean
-): () => void {
+): RuntimeConversationStreamRegistration {
   const token = Symbol('runtime-conversation-stream-registration')
   coordinator.registrations.set(token, {
     active,
@@ -39,10 +49,27 @@ export function registerRuntimeConversationStream(
     order: coordinator.nextOrder++,
   })
   ensureSubscription()
-  return () => {
+  logCoordinatorStage('registered')
+  const unregister = () => {
     coordinator.registrations.delete(token)
     ensureSubscription()
+    logCoordinatorStage('unregistered')
   }
+  return Object.assign(unregister, {
+    update(
+      nextStream: WorkbenchServices['chatStream'],
+      nextHandlers: RuntimeConversationStreamHandlers,
+      nextActive: boolean
+    ) {
+      const registration = coordinator.registrations.get(token)
+      if (!registration) return
+      registration.chatStream = nextStream
+      registration.handlers = nextHandlers
+      registration.active = nextActive
+      // Metadata updates retain both provider order and the existing parser subscription.
+      ensureSubscription()
+    },
+  })
 }
 
 function ensureSubscription(): void {
@@ -96,7 +123,10 @@ function createDelegatingHandlers(coordinator: Coordinator): ChatStreamHandlers 
       activeHandlers(coordinator)?.onAssistantFirstToken?.(...args),
     onAssistantResponseSize: (...args) =>
       activeHandlers(coordinator)?.onAssistantResponseSize?.(...args),
-    onAssistantSettled: (...args) => activeHandlers(coordinator)?.onAssistantSettled?.(...args),
+    onAssistantSettled: (...args) => {
+      logCoordinatorStage('assistant-settled', { taskId: args[0].taskId, turnId: args[1] })
+      activeHandlers(coordinator)?.onAssistantSettled?.(...args)
+    },
     onContextUsageUpdated: (...args) =>
       activeHandlers(coordinator)?.onContextUsageUpdated?.(...args),
     onSubagentActivity: (...args) => activeHandlers(coordinator)?.onSubagentActivity?.(...args),
@@ -110,5 +140,18 @@ function createDelegatingHandlers(coordinator: Coordinator): ChatStreamHandlers 
     onRuntimePlanUpdated: (...args) => activeHandlers(coordinator)?.onRuntimePlanUpdated?.(...args),
     onRuntimeTransportReplaced: (...args) =>
       activeHandlers(coordinator)?.onRuntimeTransportReplaced?.(...args),
+  })
+}
+
+function logCoordinatorStage(action: string, details: Record<string, unknown> = {}): void {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+  logRuntimeTaskCreateStage('runtime-stream-owner', {
+    action,
+    registrations: coordinator.registrations.size,
+    activeRegistrations: [...coordinator.registrations.values()].filter(entry => entry.active)
+      .length,
+    sourceOrder: preferredRegistration()?.order ?? null,
+    subscribed: coordinator.unsubscribe !== null,
+    ...details,
   })
 }

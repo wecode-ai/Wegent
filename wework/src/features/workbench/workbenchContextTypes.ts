@@ -1,10 +1,11 @@
+import type { HarnessAppLaunchRequest } from '@/features/harness-apps/harnessAppLaunchActor'
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { PersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import type {
   Attachment,
-  BindRuntimeTaskIMSessionsResponse,
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
   CreateGitWorkspaceProjectRequest,
@@ -79,6 +80,10 @@ import type { WorkbenchServices } from './workbenchServices'
 
 export type ProjectMutationOptions = {
   refreshWorkLists?: boolean
+}
+
+export interface WorkbenchSelectionOptions {
+  navigate?: boolean
 }
 
 export type ArchiveRuntimeTaskOptions = {
@@ -184,6 +189,7 @@ export interface CreateProjectRuntimeTaskOptions {
 }
 
 export interface RuntimePaneActionOptions {
+  pendingClientUserMessageId?: string
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
@@ -199,9 +205,14 @@ export interface RuntimePaneGuidanceResult {
 }
 
 export interface RuntimeTaskModelSelectionControls {
+  /** Whether the conversation's persisted selection has been loaded, even when it has none. */
+  selectionResolved: boolean
+  /** Whether the resolved selection can be used to send, i.e. its model is available. */
+  selectionReady: boolean
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null
+  supportsModelProviderSwitch?: boolean
   selectedModelOptions: ModelOptions
 }
 
@@ -217,12 +228,15 @@ export interface WorkbenchContextValue {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
+    supportsModelProviderSwitch?: boolean
     selectedModelOptions: ModelOptions
+    selectionRevision?: number
     modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
     isModelSelectionReady: boolean
@@ -246,14 +260,6 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
-    continueInNewConversation?: (
-      model: UnifiedModel,
-      options?: ModelOptions,
-      source?: {
-        address?: RuntimeTaskAddress
-        draft?: string
-      }
-    ) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
@@ -279,6 +285,7 @@ export interface WorkbenchContextValue {
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
+    captureAttachmentsForScope: (scope: string) => Attachment[]
     handleFileSelect: (files: File | File[]) => Promise<void>
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
@@ -300,9 +307,13 @@ export interface WorkbenchContextValue {
   setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
-  selectProject: (projectId: number | null) => void
-  selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
-  selectStandaloneDevice: (deviceId: string | null) => void
+  selectProject: (projectId: number | null, options?: WorkbenchSelectionOptions) => void
+  selectProjectWorkspace: (
+    projectId: number,
+    deviceWorkspaceId: number | null,
+    options?: WorkbenchSelectionOptions
+  ) => void
+  selectStandaloneDevice: (deviceId: string | null, options?: WorkbenchSelectionOptions) => void
   openStandaloneWorkspace: (
     deviceId: string,
     workspacePath: string,
@@ -361,10 +372,6 @@ export interface WorkbenchContextValue {
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
-  bindRuntimeTaskToImSessions: (
-    address: RuntimeTaskAddress,
-    sessionKeys: string[]
-  ) => Promise<BindRuntimeTaskIMSessionsResponse>
   getImNotificationSettings: () => Promise<RuntimeIMNotificationSettingsResponse>
   updateGlobalImNotification: (
     data: RuntimeGlobalIMNotificationUpdateRequest
@@ -525,6 +532,9 @@ export type WorkbenchPaneContextValue = Omit<
 }
 
 export interface WorkbenchProviderProps {
+  appshotReceiver?: { onOpenWework(): void }
+  taskRouteActive?: boolean
+  harnessAppLaunch?: HarnessAppLaunchRequest
   children: ReactNode
   user: User
   services?: WorkbenchServices

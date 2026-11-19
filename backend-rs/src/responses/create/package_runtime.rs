@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The embedded Python Chat Shell uses the existing engine SSE protocol.
+//! Internal Python runtime addresses and credentials.
 
 const RUNTIME_PATH: &str = "/_runtime/chat-shell";
+const IMAGE_PATH: &str = "/v1/image-execution";
 
 pub(crate) fn base_url() -> String {
     let origin = crate::config::env_or_dotenv("WEGENT_PYTHON_UPSTREAM_URL")
@@ -15,16 +16,28 @@ pub(crate) fn is_target(url: &str) -> bool {
     matches_origin(url, &base_url())
 }
 
+pub(crate) fn image_url() -> String {
+    format!("{}{IMAGE_PATH}", base_url())
+}
+
+pub(crate) fn is_image_target(url: &str) -> bool {
+    matches_image_target(url, &base_url())
+}
+
+fn matches_image_target(url: &str, base: &str) -> bool {
+    url == format!("{base}{IMAGE_PATH}")
+}
+
 fn matches_origin(url: &str, base: &str) -> bool {
     url.trim_end_matches('/') == base.trim_end_matches('/')
         || url == format!("{}/v1/responses", base.trim_end_matches('/'))
 }
 
 pub(crate) fn authorize(request: brz_http::RequestBuilder, url: &str) -> brz_http::RequestBuilder {
-    let package = is_target(url);
-    let token =
-        package.then(|| crate::config::env_or_dotenv("INTERNAL_SERVICE_TOKEN").unwrap_or_default());
-    authorize_target(request, package, token.as_deref().unwrap_or_default())
+    let internal = is_target(url) || is_image_target(url);
+    let token = internal
+        .then(|| crate::config::env_or_dotenv("INTERNAL_SERVICE_TOKEN").unwrap_or_default());
+    authorize_target(request, internal, token.as_deref().unwrap_or_default())
 }
 
 fn authorize_target(
@@ -53,6 +66,11 @@ mod tests {
         let base = "http://python:8004/_runtime/chat-shell";
         assert!(matches_origin(base, base));
         assert!(matches_origin(&format!("{base}/v1/responses"), base));
+        assert!(matches_image_target(&format!("{base}{IMAGE_PATH}"), base));
+        assert!(!matches_image_target(
+            "http://untrusted:8004/_runtime/chat-shell/v1/image-execution",
+            base
+        ));
         for url in [
             "http://untrusted:8004/_runtime/chat-shell/v1/responses",
             "http://python:8004/_runtime/chat-shell-other/v1/responses",

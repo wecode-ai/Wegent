@@ -3,13 +3,15 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopRelease, ReleaseActivation } from './runtime/release-store.js'
 
+const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+
 const startup = vi.hoisted(() => ({
   roots: [] as string[],
   metadata: {} as { weworkExecutorNamespace?: string; version?: string },
-  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease>,
+  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease> | null,
   activation: null as Partial<ReleaseActivation> | null,
   bridgeHandoff: vi.fn(),
-  showErrorBox: vi.fn(),
+  showRecovery: vi.fn(),
   bridge: null as string | null,
   macosRollback: null as string | null,
   legacyUserData: null as string | null,
@@ -21,6 +23,26 @@ const startup = vi.hoisted(() => ({
   enterInstalled: vi.fn(),
   rollback: vi.fn(),
   restoreData: vi.fn(),
+  acquireStartup: vi.fn(),
+  releaseStartup: vi.fn(),
+  afterStopReady: vi.fn(),
+  afterStopPrepare: vi.fn(),
+  markers: {} as Record<string, string>,
+  restoreConsent: vi.fn(),
+  exit: vi.fn(),
+}))
+
+vi.mock('./runtime/release-startup-owner.js', () => ({
+  acquireReleaseStartup: startup.acquireStartup,
+}))
+
+vi.mock('./runtime/release-after-stop.js', () => ({
+  assertReleaseAfterStopReady: startup.afterStopReady,
+  prepareReleaseAfterStop: startup.afterStopPrepare,
+}))
+
+vi.mock('./host/startup-recovery-window.js', () => ({
+  showStartupRecovery: startup.showRecovery,
 }))
 
 vi.mock('./runtime/release-snapshot.js', () => ({ restoreReleaseData: startup.restoreData }))
@@ -33,14 +55,15 @@ vi.mock('electron', () => ({
   app: {
     isPackaged: true,
     getPath: () => startup.home,
+    getLocale: () => 'en',
     on: vi.fn(),
     removeListener: vi.fn(),
     whenReady: startup.ready,
     relaunch: startup.relaunch,
-    exit: vi.fn(),
+    exit: startup.exit,
     setActivationPolicy: vi.fn(),
   },
-  dialog: { showErrorBox: startup.showErrorBox },
+  dialog: { showMessageBox: startup.restoreConsent },
 }))
 
 vi.mock('node:fs', () => ({ existsSync: () => true }))
@@ -55,32 +78,48 @@ vi.mock('node:fs/promises', () => ({
     path.replace(join('legacy', 'releases'), join('user-data', 'releases')),
 }))
 
-vi.mock('./runtime/release-store.js', () => ({
-  optionalText: async (path: string) =>
-    basename(path) === 'bridge'
-      ? startup.bridge
-      : basename(path) === 'macos-rollback'
-        ? startup.macosRollback
-        : null,
-  ReleaseStore: class {
-    constructor(root: string) {
-      startup.roots.push(root)
-    }
+vi.mock('./runtime/release-store.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('./runtime/release-store.js')>()
+  return {
+    ...actual,
+    atomicReleaseWrite: async (path: string, value: string) => {
+      startup.markers[basename(path)] = value
+    },
+    optionalText: async (path: string) =>
+      startup.markers[basename(path)] ??
+      (basename(path) === 'bridge'
+        ? startup.bridge
+        : basename(path) === 'macos-rollback'
+          ? startup.macosRollback
+          : null),
+    ReleaseStore: class {
+      constructor(readonly root: string) {
+        startup.roots.push(root)
+      }
 
-    async active() {
-      if (startup.historyError) throw startup.historyError
-      return startup.activeRelease
-    }
-    async activation() {
-      return startup.activation
-    }
-    async rollback() {
-      return startup.rollback()
-    }
-  },
-}))
+      async isSlotExecutable(executable: string) {
+        return actual.ReleaseStore.prototype.isSlotExecutable.call(this as never, executable)
+      }
+
+      async active() {
+        if (startup.historyError) throw startup.historyError
+        return startup.activeRelease
+      }
+      async activation() {
+        return startup.activation
+      }
+      async rollback() {
+        return startup.rollback()
+      }
+    },
+  }
+})
 
 beforeEach(() => {
+  Object.defineProperty(process, 'resourcesPath', {
+    value: join(tmpdir(), 'wework-bootstrap-resources'),
+    configurable: true,
+  })
   vi.resetModules()
   vi.doMock('./main.js', () => {
     startup.main()
@@ -95,8 +134,15 @@ beforeEach(() => {
   startup.enterInstalled.mockReset()
   startup.rollback.mockReset()
   startup.restoreData.mockReset()
+  startup.releaseStartup.mockReset().mockResolvedValue(undefined)
+  startup.acquireStartup.mockReset().mockResolvedValue(startup.releaseStartup)
+  startup.afterStopReady.mockReset().mockResolvedValue(undefined)
+  startup.afterStopPrepare.mockReset().mockResolvedValue(undefined)
+  startup.markers = {}
+  startup.restoreConsent.mockReset().mockResolvedValue({ response: 0 })
+  startup.exit.mockReset()
   startup.bridgeHandoff.mockReset().mockImplementation(async () => startup.legacyUserData)
-  startup.showErrorBox.mockClear()
+  startup.showRecovery.mockReset().mockResolvedValue(undefined)
   startup.bridge = null
   startup.macosRollback = null
   startup.legacyUserData = null
@@ -106,9 +152,11 @@ beforeEach(() => {
   vi.stubEnv('HOME', startup.home)
   vi.stubEnv('WEGENT_WORKBENCH_HOME', '')
   vi.stubEnv('WEWORK_USER_DATA_DIR', '')
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '')
   vi.stubEnv('WEWORK_RELEASE_ROOT', '')
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
   vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
+  vi.stubEnv('WEWORK_STARTUP_RECOVERY', '')
   for (const name of [
     'WEWORK_HARNESS_RUNTIME_ROOT',
     'WEWORK_ACTIVE_RELEASE_ID',
@@ -117,7 +165,116 @@ beforeEach(() => {
     vi.stubEnv(name, '')
 })
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  if (resourcesPathDescriptor)
+    Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
+  else Reflect.deleteProperty(process, 'resourcesPath')
+})
+
+test('a renamed development bundle opens the application without a release launcher', async () => {
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '1')
+  startup.acquireStartup.mockRejectedValue(new Error('spawn wework-launcher ENOENT'))
+
+  await import('./bootstrap.js')
+
+  expect(startup.main).toHaveBeenCalledOnce()
+  expect(startup.roots).toEqual([])
+  expect(startup.afterStopPrepare).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
+  expect(startup.acquireStartup).not.toHaveBeenCalled()
+})
+
+test('a concurrent recovery entry waits before reading or restoring the shared transaction', async () => {
+  let grant!: (release: () => Promise<void>) => void
+  startup.acquireStartup.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        grant = resolve
+      })
+  )
+  startup.activation = { token: 'rollback', rollbackRequested: true }
+  const loading = import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.acquireStartup).toHaveBeenCalledOnce())
+  expect(startup.roots).toHaveLength(0)
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.releaseStartup).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
+  grant(startup.releaseStartup)
+  await loading
+  expect(startup.roots).toHaveLength(1)
+})
+
+test('startup ownership failure cannot open application data', async () => {
+  startup.acquireStartup.mockRejectedValue(new Error('Native startup lock failed'))
+  await import('./bootstrap.js')
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.showRecovery).toHaveBeenCalledWith(new Error('Native startup lock failed'))
+})
+
+test('lost startup ownership terminates data routing and relaunches isolated recovery', async () => {
+  await import('./bootstrap.js')
+  const lost = startup.acquireStartup.mock.calls[0]?.[2] as (error: Error) => void
+  lost(new Error('Native release startup lock was lost'))
+  expect(process.env.WEWORK_STARTUP_RECOVERY).toBe('Native release startup lock was lost')
+  expect(startup.relaunch).toHaveBeenCalledWith({ args: expect.any(Array) })
+  expect(startup.exit).toHaveBeenCalledWith(1)
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+})
+
+test('ordinary startup releases transaction ownership before entering the main application', async () => {
+  startup.activation = null
+  startup.activeRelease = null
+  startup.main.mockImplementationOnce(() => {
+    expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  })
+  await import('./bootstrap.js')
+  expect(startup.main).toHaveBeenCalledOnce()
+  expect(startup.releaseStartup).toHaveBeenCalledOnce()
+})
+
+test('routing errors release transaction ownership before opening recovery', async () => {
+  startup.bridge = join(startup.home, 'missing-bridge')
+  startup.bridgeHandoff.mockRejectedValue(new Error('Cannot resolve healthy bridge'))
+  startup.showRecovery.mockImplementationOnce(async () => {
+    expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  })
+  await import('./bootstrap.js')
+  expect(startup.showRecovery).toHaveBeenCalledWith(new Error('Cannot resolve healthy bridge'))
+  expect(startup.main).not.toHaveBeenCalled()
+})
+
+test('failed ownership release cannot enter the main application', async () => {
+  startup.activation = null
+  startup.activeRelease = null
+  startup.releaseStartup.mockRejectedValue(new Error('Native startup lock was lost'))
+  await import('./bootstrap.js')
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  expect(startup.showRecovery).toHaveBeenCalledWith(new Error('Native startup lock was lost'))
+})
+
+test('a native launcher failure opens recovery without loading release records or main', async () => {
+  vi.stubEnv('WEWORK_STARTUP_RECOVERY', 'Selected program is unavailable')
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await import('./bootstrap.js')
+    expect(startup.showRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Selected program is unavailable' })
+    )
+    expect(startup.roots).toEqual([])
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(process.env.WEWORK_STARTUP_RECOVERY).toBeUndefined()
+  } finally {
+    diagnostic.mockRestore()
+  }
+})
 
 test.each(['default', 'com.example.wework'])(
   'reads pending activation from the migrated %s userData directory',
@@ -128,7 +285,7 @@ test.each(['default', 'com.example.wework'])(
 
     await import('./bootstrap.js')
 
-    expect(startup.showErrorBox).not.toHaveBeenCalled()
+    expect(startup.showRecovery).not.toHaveBeenCalled()
     expect(startup.roots).toEqual([root])
   }
 )
@@ -140,7 +297,7 @@ test('keeps an explicit isolated userData directory as the release store owner',
 
   await import('./bootstrap.js')
 
-  expect(startup.showErrorBox).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
   expect(startup.roots).toEqual([join(isolated, 'releases')])
 })
 
@@ -150,7 +307,7 @@ test('accepts the physical release store handed off by a repaired legacy launche
 
   await import('./bootstrap.js')
 
-  expect(startup.showErrorBox).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
   expect(startup.roots).toEqual([join(startup.home, 'user-data/releases')])
 })
 
@@ -160,9 +317,10 @@ test('rejects a handoff to a different physical release store', async () => {
   const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
   try {
     await import('./bootstrap.js')
-    expect(startup.showErrorBox).toHaveBeenCalledWith(
-      'Wework',
-      'Release root does not match the application data directory'
+    expect(startup.showRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Release root does not match the application data directory',
+      })
     )
     expect(startup.roots).toEqual([join(startup.home, 'user-data/releases')])
   } finally {
@@ -180,7 +338,7 @@ test('passes the owned userData directory before relaunching a legacy recovery b
   await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalled())
   expect(process.env.WEWORK_USER_DATA_DIR).toBe(startup.legacyUserData)
   expect(process.env.WEWORK_RELEASE_ROOT).toBe(join(startup.legacyUserData, 'releases'))
-  expect(startup.showErrorBox).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
 })
 
 test.each(['pending', 'rollback-selected'])(
@@ -196,7 +354,7 @@ test.each(['pending', 'rollback-selected'])(
     }
     startup.activation = { token: 'trial', to: 'selected', from: 'source' }
     await import('./bootstrap.js')
-    expect(startup.showErrorBox).not.toHaveBeenCalled()
+    expect(startup.showRecovery).not.toHaveBeenCalled()
     expect(startup.bridgeHandoff).not.toHaveBeenCalled()
     expect(startup.ready).toHaveBeenCalledOnce()
   }
@@ -221,7 +379,179 @@ test('hands the selected legacy host its physical userData before native launch'
   )
   expect(process.env.WEWORK_USER_DATA_DIR).toBe(startup.legacyUserData)
   expect(process.env.WEWORK_RELEASE_ROOT).toBe(join(startup.legacyUserData, 'releases'))
-  expect(startup.showErrorBox).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
+})
+
+test.each([
+  'ordinary',
+  'activation',
+  'rollback',
+  'supervised',
+  'recovery',
+  'different-path',
+  'versioned-slot',
+  'same-version',
+] as const)('Windows in-place replacement respects %s launch ownership', async mode => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  startup.metadata.version = '2.0.0'
+  startup.activeRelease = {
+    id: mode === 'versioned-slot' ? 'downloaded-source' : 'installed-source',
+    version: mode === 'same-version' ? '2.0.0' : '1.0.0',
+    executable:
+      mode === 'different-path' ? join(startup.home, 'other/WeWork.exe') : process.execPath,
+  }
+  startup.activation =
+    mode === 'activation' || mode === 'rollback'
+      ? { token: 'trial', from: 'source', to: 'target', rollbackRequested: mode === 'rollback' }
+      : null
+  if (mode === 'supervised') vi.stubEnv('WEWORK_RELEASE_SUPERVISED', 'installed-source')
+  if (mode === 'recovery') vi.stubEnv('WEWORK_RELEASE_RECOVERY', 'trial')
+  try {
+    await import('./bootstrap.js')
+
+    if (mode === 'ordinary') {
+      expect(startup.main).toHaveBeenCalledOnce()
+      expect(startup.ready).not.toHaveBeenCalled()
+      expect(startup.showRecovery).not.toHaveBeenCalled()
+      expect(process.env.WEWORK_ACTIVE_RELEASE_ID).toBe('')
+      expect(process.env.WEWORK_HARNESS_RUNTIME_ROOT).toBe('')
+    } else {
+      expect(startup.main).not.toHaveBeenCalled()
+      if (mode === 'supervised') {
+        expect(startup.showRecovery).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'The installed host does not match the selected release version',
+          })
+        )
+      } else {
+        expect(startup.ready).toHaveBeenCalledOnce()
+        expect(startup.showRecovery).not.toHaveBeenCalled()
+      }
+    }
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+    diagnostic.mockRestore()
+  }
+})
+
+test('the bridge waits for stopped preparation before granting a launcher any health budget', async () => {
+  startup.bridge = process.execPath
+  startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+  startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+  startup.ready.mockResolvedValue(undefined)
+  let finish!: () => void
+  startup.afterStopPrepare.mockImplementationOnce(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+  )
+  await import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.afterStopPrepare).toHaveBeenCalledOnce())
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
+  finish()
+  await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
+})
+
+test.each([false, true])(
+  'stopped preparation uses the runtime Home with explicit Codex override=%s',
+  async explicitCodex => {
+    startup.bridge = process.execPath
+    startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+    startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+    startup.ready.mockResolvedValue(undefined)
+    const executorHome = join(startup.home, 'custom-executor')
+    const codexHome = explicitCodex
+      ? join(startup.home, 'explicit-codex')
+      : join(executorHome, 'codex')
+    vi.stubEnv('WEGENT_EXECUTOR_HOME', executorHome)
+    vi.stubEnv('WEGENT_CODEX_HOME', explicitCodex ? codexHome : '')
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.afterStopPrepare).toHaveBeenCalledOnce())
+    expect(startup.afterStopPrepare).toHaveBeenCalledWith(
+      expect.anything(),
+      startup.activeRelease,
+      startup.legacyUserData,
+      expect.objectContaining({ codexHome })
+    )
+  }
+)
+
+test('a supervised target cannot open data or recover Goals without its stopped-preparation receipt', async () => {
+  startup.activeRelease = { id: 'target', version: '1.1.0', executable: process.execPath }
+  startup.metadata.version = '1.1.0'
+  vi.stubEnv('WEWORK_RELEASE_SUPERVISED', 'target')
+  startup.afterStopReady.mockRejectedValue(new Error('bridge receipt missing'))
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await import('./bootstrap.js')
+    expect(startup.showRecovery).toHaveBeenCalledWith(new Error('bridge receipt missing'))
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.enterInstalled).not.toHaveBeenCalled()
+  } finally {
+    diagnostic.mockRestore()
+  }
+})
+
+test.each([false, true])(
+  'stopped-preparation failure reuses rollback, requiring restore consent only for incompatible data (%s)',
+  async incompatible => {
+    startup.bridge = process.execPath
+    startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+    startup.activation = {
+      token: 'trial',
+      to: 'target',
+      from: 'source',
+      restoreRequired: incompatible,
+      snapshot: 'original-snapshot',
+    }
+    startup.legacyUserData = join(startup.home, '.wegent/workbench/wework/default/user-data')
+    startup.ready.mockResolvedValue(undefined)
+    startup.restoreConsent.mockResolvedValue({ response: 1 })
+    startup.afterStopPrepare.mockImplementationOnce(async () => {
+      startup.markers['data-opened'] = 'trial'
+      throw new Error('stopped preparation interrupted')
+    })
+    startup.rollback.mockImplementation(async () => {
+      startup.activeRelease = { id: 'source', executable: process.execPath }
+      startup.activation = null
+    })
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.relaunch).toHaveBeenCalledOnce())
+    expect(startup.rollback).toHaveBeenCalledOnce()
+    expect(startup.restoreConsent).toHaveBeenCalledTimes(incompatible ? 1 : 0)
+    expect(startup.restoreData).toHaveBeenCalledTimes(incompatible ? 1 : 0)
+    expect(startup.main).not.toHaveBeenCalled()
+    expect(startup.showRecovery).not.toHaveBeenCalled()
+  }
+)
+
+test('declining incompatible stopped-preparation recovery never restores or starts either runtime', async () => {
+  startup.bridge = process.execPath
+  startup.activeRelease = { id: 'target', executable: join(startup.home, 'target/WeWork') }
+  startup.activation = {
+    token: 'trial',
+    to: 'target',
+    from: 'source',
+    restoreRequired: true,
+    snapshot: 'original-snapshot',
+  }
+  startup.ready.mockResolvedValue(undefined)
+  startup.afterStopPrepare.mockImplementationOnce(async () => {
+    startup.markers['data-opened'] = 'trial'
+    throw new Error('stopped preparation interrupted')
+  })
+  await import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.showRecovery).toHaveBeenCalledOnce())
+  expect(startup.exit).not.toHaveBeenCalled()
+  expect(startup.restoreConsent).toHaveBeenCalledOnce()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
 })
 
 if (process.platform === 'darwin') {
@@ -332,7 +662,7 @@ if (process.platform === 'darwin') {
           startup.relaunch.mock.invocationCallOrder[0]!
         )
         expect(startup.main).not.toHaveBeenCalled()
-        expect(startup.showErrorBox).not.toHaveBeenCalled()
+        expect(startup.showRecovery).not.toHaveBeenCalled()
       } finally {
         if (original) Object.defineProperty(process, 'resourcesPath', original)
         else Reflect.deleteProperty(process, 'resourcesPath')
@@ -351,7 +681,7 @@ if (process.platform === 'darwin') {
 
     expect(startup.main).toHaveBeenCalledOnce()
     expect(startup.relaunch).not.toHaveBeenCalled()
-    expect(startup.showErrorBox).not.toHaveBeenCalled()
+    expect(startup.showRecovery).not.toHaveBeenCalled()
     expect(startup.enterInstalled).not.toHaveBeenCalled()
   })
 
@@ -362,7 +692,7 @@ if (process.platform === 'darwin') {
     try {
       await import('./bootstrap.js')
       expect(startup.main).toHaveBeenCalledOnce()
-      expect(startup.showErrorBox).not.toHaveBeenCalled()
+      expect(startup.showRecovery).not.toHaveBeenCalled()
     } finally {
       warning.mockRestore()
     }
@@ -409,7 +739,7 @@ if (process.platform === 'darwin') {
       })
       expect(process.env.WEWORK_USER_DATA_DIR).toBe(startup.legacyUserData)
       expect(process.env.WEWORK_RELEASE_ROOT).toBe(join(startup.legacyUserData, 'releases'))
-      expect(startup.showErrorBox).not.toHaveBeenCalled()
+      expect(startup.showRecovery).not.toHaveBeenCalled()
     } finally {
       if (original) Object.defineProperty(process, 'resourcesPath', original)
       else Reflect.deleteProperty(process, 'resourcesPath')

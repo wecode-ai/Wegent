@@ -53,6 +53,30 @@ async function chooseMilestone(testId: string, value: string) {
 }
 
 describe('Milestones', () => {
+  it('shares controlled selection without copying props or emitting effects', async () => {
+    const client = api()
+    const onFilterChange = vi.fn()
+    const renderIssues = vi.fn(() => null)
+    const props = {
+      api: client,
+      project,
+      issues: [],
+      locale: 'en' as const,
+      renderIssues,
+      onFilterChange,
+    }
+    const view = render(<MilestonesPage {...props} filter={{ milestoneId: milestone.id }} />)
+    await screen.findByTestId('milestones-back')
+    expect(onFilterChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('milestones-back'))
+    expect(onFilterChange).toHaveBeenCalledExactlyOnceWith(null)
+    expect(screen.getByTestId('milestones-back')).toBeInTheDocument()
+    onFilterChange.mockClear()
+    view.rerender(<MilestonesPage {...props} filter={{ milestoneId: null }} />)
+    const item = await screen.findByTestId(`milestone-open-${milestone.id}`)
+    fireEvent.click(item)
+    expect(onFilterChange).toHaveBeenCalledExactlyOnceWith(milestone.id)
+  })
   it('keeps a named icon and selected text for the compact board filter', async () => {
     const client = api()
     const onChange = vi.fn()

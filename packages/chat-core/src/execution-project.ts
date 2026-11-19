@@ -32,6 +32,7 @@ export interface ProjectConfig {
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
@@ -53,6 +54,7 @@ export interface DeviceInfo {
   app_device_id?: string | null
   socket_device_id?: string | null
   runtime_instance_id?: string | null
+  cloud_config?: { sandboxId?: string }
   runtime_routes?: DeviceRuntimeRoute[]
   runtime_features?: RuntimeFeatureSet | null
 }
@@ -125,6 +127,8 @@ export interface RuntimeProjectEditingCapability {
 
 export interface RuntimeFeatureSet {
   schemaVersion: number
+  connectionEvents?: { protocolVersion: number } | null
+  remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
   interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null
   projectEditing?: RuntimeProjectEditingCapability | null

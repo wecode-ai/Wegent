@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type {
   createQuickPhrasePreferencesStore,
@@ -23,20 +23,15 @@ export function BrowserQuickPhraseMenu({
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const [manage, setManage] = useState(false)
   const portalTheme = useCollaborationPortalTheme()
-  const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    if (!store.getSnapshot().loaded) void store.load()
-  }, [store])
-  useEffect(() => {
-    if (!manage) return
-    const dialog = dialogRef.current
+  const attachDialog = useCallback((dialog: HTMLDialogElement | null) => {
+    if (!dialog) return
     const previous = document.activeElement as HTMLElement | null
-    dialog?.showModal()
+    dialog.showModal()
     return () => {
-      dialog?.close()
+      dialog.close()
       previous?.focus()
     }
-  }, [manage])
+  }, [])
   return (
     <>
       <QuickPhraseMenu
@@ -68,7 +63,7 @@ export function BrowserQuickPhraseMenu({
         createPortal(
           <dialog
             {...portalTheme}
-            ref={dialogRef}
+            ref={attachDialog}
             aria-label={t('workbench.quick_phrases')}
             data-testid="quick-phrase-preferences-dialog"
             onCancel={() => setManage(false)}

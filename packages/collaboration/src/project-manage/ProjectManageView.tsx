@@ -1,24 +1,27 @@
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type SetStateAction,
 } from 'react'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import { ProjectProviderSection, ProjectTagsSection } from './ProjectManageSections'
 import { ProjectMembersSection } from './ProjectMembersSection'
-import { useProjectMembers } from './useProjectMembers'
+import { requestFailureMessage } from '../controls/requestFailure'
 import {
-  createVersionMutationQueue,
-  type VersionMutationQueue,
-} from '../versionMutationQueue'
+  projectSettingsContentClassName,
+  projectSettingsPageClassName,
+} from './ProjectSettingsPage'
+import { useProjectMembers } from './useProjectMembers'
+import { createVersionMutationQueue, type VersionMutationQueue } from '../versionMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
 import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
 import { hasTooManyTags, isTagNameTooLong } from '../tagging'
@@ -54,6 +57,16 @@ function initialDisplay(
   )
 }
 
+const EMPTY_ITEMS: never[] = []
+const cleanDirtyState = () => ({
+  tags: false,
+  display: false,
+  statuses: false,
+  visibility: false,
+  providerRepository: false,
+  providerToken: false,
+})
+
 export function ProjectManageView<
   Project extends ProjectManageProject,
   Member extends ProjectManageMember,
@@ -86,28 +99,34 @@ export function ProjectManageView<
 }) {
   const { GitBranch, LockKeyhole } = host.icons
   const [error, setError] = useState<string | null>(null)
-  const [itemResult, setItemResult] = useState<{
-    projectId: string
-    items: Item[]
-  }>({
-    projectId: project.id,
-    items: [],
-  })
-  const items = useMemo(
-    () => (itemResult.projectId === project.id ? itemResult.items : []),
-    [itemResult, project.id]
+  const catalogResource = useMemo(
+    () =>
+      createAsyncResource<Item[]>(
+        'project-tag-items:' + project.id,
+        async () => (await api.listItems(project.id)).items,
+        { refreshOnSubscribe: true }
+      ),
+    [api, project.id]
   )
+  const [tagLoadRevision, setTagLoadRevision] = useState(0)
+  const [tagCatalogProjectId, setTagCatalogProjectId] = useState<string | null>(null)
+  const subscribeCatalog = useCallback(
+    (listener: () => void) => catalogResource.subscribe(listener, tagLoadRevision),
+    [catalogResource, tagLoadRevision]
+  )
+  const tagSnapshot = useSyncExternalStore(
+    tagCatalogProjectId === project.id && (section === 'all' || section === 'overview')
+      ? subscribeCatalog
+      : subscribeIdleResource,
+    catalogResource.getSnapshot,
+    catalogResource.getSnapshot
+  )
+  const items = tagSnapshot.data ?? EMPTY_ITEMS
   const setItems = useCallback(
     (next: SetStateAction<Item[]>) => {
-      setItemResult(current => ({
-        projectId: project.id,
-        items:
-          typeof next === 'function'
-            ? next(current.projectId === project.id ? current.items : [])
-            : next,
-      }))
+      catalogResource.update(current => (typeof next === 'function' ? next(current ?? []) : next))
     },
-    [project.id]
+    [catalogResource]
   )
   const [tags, setTags] = useState(project.tags ?? [])
   const [display, setDisplay] = useState(() => initialDisplay(project, boardCardDisplay))
@@ -129,13 +148,6 @@ export function ProjectManageView<
   const [renamingTag, setRenamingTag] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [tagBusy, setTagBusy] = useState(false)
-  const [tagCatalogProjectId, setTagCatalogProjectId] = useState<string | null>(null)
-  const [tagLoadRevision, setTagLoadRevision] = useState(0)
-  const [tagLoadState, setTagLoadState] = useState<{
-    projectId: string
-    error: string | null
-    loading: boolean
-  } | null>(null)
   const [displayBusy, setDisplayBusy] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [visibilityBusy, setVisibilityBusy] = useState(false)
@@ -160,94 +172,75 @@ export function ProjectManageView<
   const [providerToken, setProviderToken] = useState('')
   const [providerBusy, setProviderBusy] = useState(false)
   const [providerSaved, setProviderSaved] = useState(false)
-  const synchronizedProjectIdRef = useRef(project.id)
-  const synchronizedProjectVersionRef = useRef(project.version)
+  const [synchronizedVersion, setSynchronizedVersion] = useState(project.version)
+  const [dirty, setDirty] = useState(cleanDirtyState)
   const [savedProjectScope, setSavedProjectScope] = useState<{
+    api: typeof api
     projectId: string
     mutationQueue: VersionMutationQueue<Project>
   }>(() => ({
+    api,
     projectId: project.id,
     mutationQueue: createVersionMutationQueue(project.version),
   }))
   let projectScope = savedProjectScope
-  if (savedProjectScope.projectId !== project.id) {
+  if (savedProjectScope.projectId !== project.id || savedProjectScope.api !== api) {
     projectScope = {
+      api,
       projectId: project.id,
       mutationQueue: createVersionMutationQueue(project.version),
     }
     setSavedProjectScope(projectScope)
+    setSynchronizedVersion(project.version)
+    setDirty(cleanDirtyState())
+    setTags(project.tags ?? [])
+    setDisplay(initialDisplay(project, boardCardDisplay))
+    setStatuses(project.board_config?.statuses ?? [])
+    setVisibility(project.visibility ?? 'private')
+    setPublicAccessRole(project.public_access?.role ?? 'Viewer')
+    setDefaultIssueSecurity(project.default_issue_security ?? 'open')
+    setProviderRepository(repositoryAddress(project))
+    setProviderToken('')
+    setProviderBusy(false)
+    setProviderSaved(false)
+    setError(null)
+    setTagComposerOpen(false)
+    setNewTag('')
+    setRenamingTag(null)
+    setRenameValue('')
+    setTagBusy(false)
+    setTagCatalogProjectId(null)
+    setDisplayBusy(false)
+    setStatusBusy(false)
+    setVisibilityBusy(false)
   }
   const projectScopeRef = useRef(projectScope)
   useLayoutEffect(() => {
     projectScopeRef.current = projectScope
   }, [projectScope])
-  const dirtyRef = useRef({
-    tags: false,
-    display: false,
-    statuses: false,
-    visibility: false,
-    providerRepository: false,
-    providerToken: false,
-  })
-
-  useEffect(() => {
-    const projectChanged = synchronizedProjectIdRef.current !== project.id
-    synchronizedProjectIdRef.current = project.id
-    if (!projectChanged) projectScopeRef.current.mutationQueue.synchronize(project.version)
-
-    if (projectChanged) {
-      synchronizedProjectVersionRef.current = project.version
-      dirtyRef.current = {
-        tags: false,
-        display: false,
-        statuses: false,
-        visibility: false,
-        providerRepository: false,
-        providerToken: false,
-      }
-      setTags(project.tags ?? [])
-      setDisplay(initialDisplay(project, boardCardDisplay))
-      setStatuses(project.board_config?.statuses ?? [])
-      setVisibility(project.visibility ?? 'private')
-      setPublicAccessRole(project.public_access?.role ?? 'Viewer')
-      setDefaultIssueSecurity(project.default_issue_security ?? 'open')
-      setProviderRepository(repositoryAddress(project))
-      setProviderToken('')
-      setProviderBusy(false)
-      setProviderSaved(false)
-      setError(null)
-      setTagComposerOpen(false)
-      setNewTag('')
-      setRenamingTag(null)
-      setRenameValue('')
-      setTagBusy(false)
-      setTagCatalogProjectId(null)
-      setTagLoadState(null)
-      setDisplayBusy(false)
-      setStatusBusy(false)
-      setVisibilityBusy(false)
-      return
-    }
-
-    const serverVersionChanged = synchronizedProjectVersionRef.current !== project.version
-    synchronizedProjectVersionRef.current = project.version
-    if (!serverVersionChanged) return
-
-    if (!dirtyRef.current.tags) setTags(project.tags ?? [])
-    if (!dirtyRef.current.display) setDisplay(initialDisplay(project, boardCardDisplay))
-    if (!dirtyRef.current.statuses) setStatuses(project.board_config?.statuses ?? [])
-    if (!dirtyRef.current.visibility) {
+  useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => projectScope.mutationQueue.subscribe(listener, project.version),
+      [projectScope, project.version]
+    ),
+    projectScope.mutationQueue.getSnapshot,
+    projectScope.mutationQueue.getSnapshot
+  )
+  if (synchronizedVersion !== project.version) {
+    setSynchronizedVersion(project.version)
+    if (!dirty.tags) setTags(project.tags ?? [])
+    if (!dirty.display) setDisplay(initialDisplay(project, boardCardDisplay))
+    if (!dirty.statuses) setStatuses(project.board_config?.statuses ?? [])
+    if (!dirty.visibility) {
       setVisibility(project.visibility ?? 'private')
       setPublicAccessRole(project.public_access?.role ?? 'Viewer')
       setDefaultIssueSecurity(project.default_issue_security ?? 'open')
     }
-    if (!dirtyRef.current.providerRepository) {
-      setProviderRepository(repositoryAddress(project))
-    }
-    if (!dirtyRef.current.providerToken) {
-      setProviderToken('')
-    }
-  }, [boardCardDisplay, project])
+    if (!dirty.providerRepository) setProviderRepository(repositoryAddress(project))
+    if (!dirty.providerToken) setProviderToken('')
+  }
+  const markDirty = (key: keyof typeof dirty, value: boolean) =>
+    setDirty(current => ({ ...current, [key]: value }))
 
   const reportError = useCallback((cause: unknown, fallback: string) => {
     setError(cause instanceof Error ? cause.message : fallback)
@@ -269,29 +262,13 @@ export function ProjectManageView<
   })
 
   const tagLoadFailed = host.translate('todo.load_tag_catalog_failed', '加载标签目录失败')
-  useEffect(() => {
-    if (tagCatalogProjectId !== project.id || (section !== 'all' && section !== 'overview')) return
-    let active = true
-    setTagLoadState({ projectId: project.id, loading: true, error: null })
-    void api.listItems(project.id).then(
-      response => {
-        if (!active) return
-        setItems(response.items)
-        setTagLoadState({ projectId: project.id, loading: false, error: null })
-      },
-      cause => {
-        if (!active) return
-        setTagLoadState({
-          projectId: project.id,
-          loading: false,
-          error: cause instanceof Error ? cause.message : tagLoadFailed,
-        })
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, project.id, section, setItems, tagCatalogProjectId, tagLoadFailed, tagLoadRevision])
+  const tagLoadState = {
+    loading: tagSnapshot.status === 'idle' || tagSnapshot.status === 'loading',
+    error:
+      tagSnapshot.status === 'error'
+        ? requestFailureMessage(tagSnapshot.error, tagLoadFailed)
+        : null,
+  }
 
   const allTags = useMemo(
     () => collectProjectTags({ tags, board_views: project.board_views }, items),
@@ -331,7 +308,7 @@ export function ProjectManageView<
     if (visibilityBusy || visibility === next) return
     const scope = projectScopeRef.current
     const previous = visibility
-    dirtyRef.current.visibility = true
+    markDirty('visibility', true)
     setVisibility(next)
     setVisibilityBusy(true)
     try {
@@ -339,12 +316,12 @@ export function ProjectManageView<
       if (projectScopeRef.current !== scope) return
       setVisibility(updated.visibility ?? next)
       setPublicAccessRole(updated.public_access?.role ?? 'Viewer')
-      dirtyRef.current.visibility = false
+      markDirty('visibility', false)
       host.trackCompleted('update')
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
-      dirtyRef.current.visibility = false
+      markDirty('visibility', false)
       setVisibility(previous)
       reportError(cause, host.translate('todo.update_visibility_failed', '更新项目权限失败'))
     } finally {
@@ -361,7 +338,7 @@ export function ProjectManageView<
     if (visibilityBusy) return
     const scope = projectScopeRef.current
     setVisibilityBusy(true)
-    dirtyRef.current.visibility = true
+    markDirty('visibility', true)
     try {
       const updated = await updateProject(values, scope)
       if (projectScopeRef.current !== scope) return
@@ -373,7 +350,7 @@ export function ProjectManageView<
       reportError(cause, host.translate('todo.update_visibility_failed', '更新项目权限失败'))
     } finally {
       if (projectScopeRef.current === scope) {
-        dirtyRef.current.visibility = false
+        markDirty('visibility', false)
         setVisibilityBusy(false)
       }
     }
@@ -384,7 +361,7 @@ export function ProjectManageView<
     const scope = projectScopeRef.current
     const previous = display
     const next = { ...display, [key]: checked }
-    dirtyRef.current.display = true
+    markDirty('display', true)
     setDisplay(next)
     setDisplayBusy(true)
     try {
@@ -400,12 +377,12 @@ export function ProjectManageView<
         scope
       )
       if (projectScopeRef.current !== scope) return
-      dirtyRef.current.display = false
+      markDirty('display', false)
       host.trackCompleted('update')
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
-      dirtyRef.current.display = false
+      markDirty('display', false)
       setDisplay(previous)
       reportError(cause, host.translate('todo.save_card_display_failed', '保存卡片显示设置失败'))
     } finally {
@@ -417,7 +394,7 @@ export function ProjectManageView<
     if (statusBusy) return
     const scope = projectScopeRef.current
     const previous = statuses
-    dirtyRef.current.statuses = true
+    markDirty('statuses', true)
     setStatuses(next)
     setStatusBusy(true)
     try {
@@ -434,12 +411,12 @@ export function ProjectManageView<
       )
       if (projectScopeRef.current !== scope) return
       setStatuses(updated.board_config?.statuses ?? next)
-      dirtyRef.current.statuses = false
+      markDirty('statuses', false)
       host.trackCompleted('update')
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       host.trackFailed()
-      dirtyRef.current.statuses = false
+      markDirty('statuses', false)
       setStatuses(previous)
       reportError(cause, host.translate('todo.save_statuses_failed', '保存状态设置失败'))
     } finally {
@@ -452,7 +429,7 @@ export function ProjectManageView<
     scope: typeof projectScope,
     boardViews?: ProjectManageUpdate['board_views']
   ) {
-    dirtyRef.current.tags = true
+    markDirty('tags', true)
     try {
       const updated = await updateProject(
         { tags: next, ...(boardViews ? { board_views: boardViews } : {}) },
@@ -461,7 +438,7 @@ export function ProjectManageView<
       if (projectScopeRef.current !== scope) return
       setTags(updated.tags ?? next)
     } finally {
-      if (projectScopeRef.current === scope) dirtyRef.current.tags = false
+      if (projectScopeRef.current === scope) markDirty('tags', false)
     }
   }
 
@@ -493,7 +470,7 @@ export function ProjectManageView<
 
   async function changeTag(source: string, target: string | null, scope: typeof projectScope) {
     setError(null)
-    dirtyRef.current.tags = true
+    markDirty('tags', true)
     try {
       const updated = await updateProject({ tag_change: { source, target } }, scope)
       if (projectScopeRef.current !== scope) return
@@ -510,7 +487,7 @@ export function ProjectManageView<
       )
       setTagLoadRevision(current => current + 1)
     } finally {
-      if (projectScopeRef.current === scope) dirtyRef.current.tags = false
+      if (projectScopeRef.current === scope) markDirty('tags', false)
     }
   }
 
@@ -594,8 +571,8 @@ export function ProjectManageView<
       if (projectScopeRef.current !== scope) return
       setProviderRepository(repositoryAddress(updated))
       setProviderToken('')
-      dirtyRef.current.providerRepository = false
-      dirtyRef.current.providerToken = false
+      markDirty('providerRepository', false)
+      markDirty('providerToken', false)
       setProviderSaved(true)
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
@@ -606,18 +583,18 @@ export function ProjectManageView<
   }
 
   return (
-    <div className={embedded ? 'min-h-0' : 'min-h-0 flex-1 overflow-y-auto px-8 py-7'}>
-      <div className={embedded ? '' : 'mx-auto max-w-[900px]'}>
+    <div className={embedded ? 'min-h-0' : projectSettingsPageClassName}>
+      <div className={embedded ? '' : projectSettingsContentClassName}>
         {!embedded && section !== 'members' ? (
-          <header className="pb-7">
-            <h1 className="text-heading-lg font-semibold">
+          <header className="pb-6">
+            <h1 className="heading-base text-text-primary">
               {section === 'agents'
                 ? host.translate('todo.project_agents', '智能体')
                 : section === 'board'
                   ? host.translate('todo.board_settings', '看板设置')
                   : host.translate('todo.project_basic_information', '基本信息')}
             </h1>
-            <p className="mt-1 text-sm text-text-muted">
+            <p className="mt-1 text-sm text-text-secondary">
               {section === 'agents'
                 ? host.translate(
                     'todo.project_agents_description',
@@ -637,8 +614,8 @@ export function ProjectManageView<
         ) : null}
 
         {(section === 'all' || section === 'overview') && (
-          <section className="border-t border-border py-6">
-            <h2 className="text-heading-md font-semibold">
+          <section className="pb-6">
+            <h2 className="text-base font-medium">
               {host.translate('todo.project_information', '项目信息')}
             </h2>
             <dl className="mt-4 grid gap-4 rounded-xl bg-muted px-4 py-4 sm:grid-cols-2">
@@ -669,16 +646,18 @@ export function ProjectManageView<
 
         {(section === 'all' || section === 'overview') && (
           <section className="border-t border-border py-6">
-            <h2 className="text-heading-md font-semibold">
+            <h2 className="text-base font-medium">
               {host.translate('todo.project_access', '项目访问范围')}
             </h2>
-            <p className="mt-1 text-sm text-text-muted">
+            <p className="mt-1 text-sm text-text-secondary">
               {host.translate(
                 'todo.project_access_description',
                 '决定谁能进入项目，以及普通用户可以看到哪些任务。'
               )}
             </p>
             <div
+              role="group"
+              aria-label={host.translate('todo.project_access', '项目访问范围')}
               className={classNames(
                 'mt-4 grid gap-1 rounded-lg bg-muted p-1',
                 'max-w-md grid-cols-2'
@@ -688,19 +667,20 @@ export function ProjectManageView<
                 <button
                   key={value}
                   type="button"
+                  aria-pressed={visibility === value}
                   data-testid={`cloud-project-manage-visibility-${value.replace('_', '-')}`}
                   disabled={visibilityBusy}
                   onClick={() => void saveVisibility(value)}
                   className={classNames(
-                    'h-8 rounded-md text-xs',
-                    visibility === value ? 'bg-background shadow-sm' : 'text-text-muted'
+                    'min-h-11 rounded-md px-3 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 md:min-h-8',
+                    visibility === value ? 'bg-background shadow-sm' : 'text-text-secondary'
                   )}
                 >
                   {visibilityLabels[value]}
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-sm text-text-muted">{visibilityDescriptions[visibility]}</p>
+            <p className="mt-2 text-sm text-text-secondary">{visibilityDescriptions[visibility]}</p>
             {visibility === 'public' && (
               <label className="mt-4 flex items-center justify-between gap-3 text-sm">
                 <span>{host.translate('todo.public_access_role', '所有登录用户的角色')}</span>
@@ -749,85 +729,81 @@ export function ProjectManageView<
           </section>
         )}
 
-        <ProjectMembersSection
-          project={project}
-          host={host}
-          controller={memberController}
-          canManage={canManageMembers}
-          membershipModeBusy={visibilityBusy}
-          onMembershipModeChange={mode => void saveAccessSettings({ membership_mode: mode })}
-          className={
-            section === 'all' || section === 'members'
-              ? embedded
-                ? ''
-                : 'border-t border-border py-6'
-              : 'hidden'
-          }
-        />
+        {(section === 'all' || section === 'members') && (
+          <ProjectMembersSection
+            project={project}
+            host={host}
+            controller={memberController}
+            canManage={canManageMembers}
+            membershipModeBusy={visibilityBusy}
+            onMembershipModeChange={mode => void saveAccessSettings({ membership_mode: mode })}
+            className={embedded ? '' : 'border-t border-border py-6'}
+          />
+        )}
 
-        <details
-          key={project.id}
-          className={
-            section === 'all' || section === 'overview' ? 'border-t border-border py-6' : 'hidden'
-          }
-          data-testid="cloud-project-manage-tags"
-          onToggle={event => {
-            if (event.currentTarget.open) setTagCatalogProjectId(project.id)
-          }}
-        >
-          <summary
-            className="cursor-pointer text-heading-md font-semibold"
-            data-testid="cloud-project-manage-tags-toggle"
+        {(section === 'all' || section === 'overview') && (
+          <details
+            key={project.id}
+            className="border-t border-border py-6"
+            data-testid="cloud-project-manage-tags"
+            onToggle={event => {
+              if (event.currentTarget.open) setTagCatalogProjectId(project.id)
+            }}
           >
-            <h2 className="inline text-heading-md font-semibold">
-              {host.translate('todo.project_tags', '标签')}
-            </h2>
-          </summary>
-          {tagCatalogProjectId === project.id &&
-            (tagLoadState?.projectId !== project.id || tagLoadState.loading ? (
-              <p
-                role="status"
-                data-testid="cloud-project-manage-tags-loading"
-                className="mt-3 text-sm text-text-muted"
-              >
-                {host.translate('common.loading', '正在加载…')}
-              </p>
-            ) : tagLoadState.error ? (
-              <div
-                role="alert"
-                data-testid="cloud-project-manage-tags-error"
-                className="mt-3 text-sm text-text-primary"
-              >
-                {tagLoadState.error}
-                <button
-                  type="button"
-                  className="ml-2 underline"
-                  data-testid="cloud-project-manage-tags-retry"
-                  onClick={() => setTagLoadRevision(revision => revision + 1)}
+            <summary
+              className="cursor-pointer text-heading-md font-semibold"
+              data-testid="cloud-project-manage-tags-toggle"
+            >
+              <h2 className="inline text-heading-md font-semibold">
+                {host.translate('todo.project_tags', '标签')}
+              </h2>
+            </summary>
+            {tagCatalogProjectId === project.id &&
+              (tagLoadState.loading ? (
+                <p
+                  role="status"
+                  data-testid="cloud-project-manage-tags-loading"
+                  className="mt-3 text-sm text-text-muted"
                 >
-                  {host.translate('common.retry', '重试')}
-                </button>
-              </div>
-            ) : (
-              <ProjectTagsSection
-                host={host}
-                className="mt-3"
-                allTags={allTags}
-                renamingTag={renamingTag}
-                renameValue={renameValue}
-                tagComposerOpen={tagComposerOpen}
-                newTag={newTag}
-                tagBusy={tagBusy}
-                setTagComposerOpen={setTagComposerOpen}
-                setNewTag={setNewTag}
-                setRenamingTag={setRenamingTag}
-                setRenameValue={setRenameValue}
-                createTag={createTag}
-                renameTag={renameTag}
-                deleteTag={deleteTag}
-              />
-            ))}
-        </details>
+                  {host.translate('common.loading', '正在加载…')}
+                </p>
+              ) : tagLoadState.error ? (
+                <div
+                  role="alert"
+                  data-testid="cloud-project-manage-tags-error"
+                  className="mt-3 text-sm text-text-primary"
+                >
+                  {tagLoadState.error}
+                  <button
+                    type="button"
+                    className="ml-2 underline"
+                    data-testid="cloud-project-manage-tags-retry"
+                    onClick={() => setTagLoadRevision(revision => revision + 1)}
+                  >
+                    {host.translate('common.retry', '重试')}
+                  </button>
+                </div>
+              ) : (
+                <ProjectTagsSection
+                  host={host}
+                  className="mt-3"
+                  allTags={allTags}
+                  renamingTag={renamingTag}
+                  renameValue={renameValue}
+                  tagComposerOpen={tagComposerOpen}
+                  newTag={newTag}
+                  tagBusy={tagBusy}
+                  setTagComposerOpen={setTagComposerOpen}
+                  setNewTag={setNewTag}
+                  setRenamingTag={setRenamingTag}
+                  setRenameValue={setRenameValue}
+                  createTag={createTag}
+                  renameTag={renameTag}
+                  deleteTag={deleteTag}
+                />
+              ))}
+          </details>
+        )}
 
         {(section === 'all' || section === providerSettingsSection) && (
           <ProjectProviderSection
@@ -854,7 +830,7 @@ export function ProjectManageView<
                   value={providerRepository}
                   onChange={event => {
                     setProviderRepository(event.target.value)
-                    dirtyRef.current.providerRepository = true
+                    markDirty('providerRepository', true)
                     setProviderSaved(false)
                   }}
                   className="min-w-0 flex-1 bg-transparent text-sm outline-none"
@@ -869,7 +845,7 @@ export function ProjectManageView<
                   value={providerToken}
                   onChange={event => {
                     setProviderToken(event.target.value)
-                    dirtyRef.current.providerToken = true
+                    markDirty('providerToken', true)
                     setProviderSaved(false)
                   }}
                   className="min-w-0 flex-1 bg-transparent text-sm outline-none"

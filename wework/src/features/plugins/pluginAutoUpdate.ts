@@ -42,6 +42,7 @@ interface PluginAutoUpdateDependencies {
 }
 
 interface CurrentDevicePluginAutoUpdateDependencies {
+  localSync?: boolean
   signal?: AbortSignal
   listLocalInstalledPlugins: () => Promise<{ deviceId?: string; partial?: boolean }>
   listMarketplacePlugins: (deviceId: string) => Promise<PluginMarketplaceListResponse>
@@ -193,6 +194,7 @@ async function runPluginAutoUpdatePass({
  * sync even after the account installation already advanced.
  */
 export async function runCurrentDevicePluginAutoUpdate({
+  localSync = false,
   signal,
   listLocalInstalledPlugins,
   listMarketplacePlugins,
@@ -200,11 +202,16 @@ export async function runCurrentDevicePluginAutoUpdate({
   syncPlugin,
   syncDevice,
 }: CurrentDevicePluginAutoUpdateDependencies): Promise<CurrentDevicePluginAutoUpdateResult | null> {
-  const local = await listLocalInstalledPlugins()
+  const local: { deviceId?: string; partial?: boolean } = localSync
+    ? {}
+    : await listLocalInstalledPlugins()
   const deviceId = local.deviceId?.trim() ?? ''
-  if (!deviceId) return null
+  if (!localSync && !deviceId) return null
 
-  const finishDeviceSync = await acquirePluginDeviceSync(deviceId, signal, 'auto-update')
+  // The Native coordinator serializes account-scoped HTTP execution itself.
+  const finishDeviceSync = localSync
+    ? () => undefined
+    : await acquirePluginDeviceSync(deviceId, signal, 'auto-update')
 
   try {
     if (local.partial) {

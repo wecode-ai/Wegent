@@ -3,10 +3,12 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
+import { withNativePluginDecision } from '../modules/native-plugin-approval.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
 import { verifyStandInEventVersions } from '../modules/stand-in-event-versions.mjs'
 import { createProjectVersionStory } from '../modules/stand-in-project-version-story.mjs'
+import { createSourceArchiveRegression } from '../modules/stand-in-source-archive.mjs'
 import {
   verifyStandInResourceScopes,
   verifyStandInCalendarPolicy,
@@ -23,7 +25,7 @@ const ASSISTANCE = {
   confirmBefore: ['Changing a record requires native authorization'],
 }
 
-export function createDesktopScenario(options) {
+export function createDesktopScenario(options, { versionedEventTypes = [] } = {}) {
   const {
     resultDir,
     electronUserDataDirectory,
@@ -32,6 +34,7 @@ export function createDesktopScenario(options) {
     workbenchReadyTimeoutMs,
   } = options
   const story = createProjectVersionStory(options, PROVIDER)
+  const archiveRegression = createSourceArchiveRegression(options, PROVIDER)
   const root = join(resultDir, 'connection-marketplace')
   const source = join(root, 'source')
   const records = join(resultDir, 'records.json')
@@ -43,12 +46,17 @@ export function createDesktopScenario(options) {
     rpc(control, 'runtime.codex.app_server.request', { method, params })
   async function host(control, capability, params) {
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ capability, params }),
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
+    const invoke = () =>
+      fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ capability, params }),
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+    const response =
+      capability === 'runtime.installCoreDshPlugin'
+        ? await withNativePluginDecision(control, invoke)
+        : await invoke()
     const result = await response.json()
     assert.equal(result.ok, true, JSON.stringify(result.error))
     return result.result
@@ -56,6 +64,7 @@ export function createDesktopScenario(options) {
   return {
     reviewApproval: story.model.reviewApproval,
     async handleHttp(req, _response, url) {
+      if (archiveRegression.active) return archiveRegression.handleHttp(req, _response, url)
       if (story.model.active) return story.model.handleHttp(req, _response, url)
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname))
         modelRequests++
@@ -126,8 +135,8 @@ export function createDesktopScenario(options) {
                   resourceKinds: ['record'],
                   allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
-                  eventTypes: ['record.received'],
-                  versionedEventTypes: ['record.received'],
+                  eventTypes: ['record.received', 'message.received', ...versionedEventTypes],
+                  versionedEventTypes: ['record.received', ...versionedEventTypes],
                   assistance: ASSISTANCE,
                 },
               ],
@@ -210,7 +219,7 @@ export function createDesktopScenario(options) {
       )
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
       const readyCount = control.readyCount
-      await host(control, 'runtime.restartCoreDsh', {})
+      await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(readyCount),
         workbenchReadyTimeoutMs,
@@ -235,7 +244,7 @@ export function createDesktopScenario(options) {
       })
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: true })
       const storyReadyCount = control.readyCount
-      await host(control, 'runtime.restartCoreDsh', {})
+      await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(storyReadyCount),
         workbenchReadyTimeoutMs,
@@ -249,6 +258,11 @@ export function createDesktopScenario(options) {
       let storyFailure
       try {
         await story.verify(control, (method, params) => rpc(control, method, params), records)
+        await archiveRegression.verify(
+          control,
+          (method, params) => rpc(control, method, params),
+          records
+        )
       } catch (error) {
         storyFailure = error
         throw error
@@ -256,7 +270,7 @@ export function createDesktopScenario(options) {
         try {
           await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
           const cleanupReadyCount = control.readyCount
-          await host(control, 'runtime.restartCoreDsh', {})
+          await control.command('restartCoreDsh', 'body')
           await withTimeout(
             control.awaitReadyAfter(cleanupReadyCount),
             workbenchReadyTimeoutMs,

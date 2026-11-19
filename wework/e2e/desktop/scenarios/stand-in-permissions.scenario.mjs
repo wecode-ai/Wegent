@@ -2,7 +2,7 @@ import { editProjectSource, openProjectStandIn } from '../modules/stand-in-flows
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { revealCollaborationSidebarElement, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   collaborationProjectViewSelector,
   selectCollaborationProjectView,
@@ -63,9 +63,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    await expandCollaborationWorkspace(
+    await revealCollaborationSidebarElement(
       control,
-      `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
+      `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
     )
     await control.command(
       'clickWhenEnabled',
@@ -106,7 +106,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         '/v1/workspaces',
         'POST',
         {
-          name: `分身继承权限 ${process.pid}`,
+          name: `助理继承权限 ${process.pid}`,
         },
         201
       )
@@ -115,7 +115,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         `/v1/workspaces/${workspace.id}/projects`,
         'POST',
         {
-          name: `分身继承权限项目 ${process.pid}`,
+          name: `助理继承权限项目 ${process.pid}`,
         },
         201
       )

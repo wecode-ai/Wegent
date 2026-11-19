@@ -4,6 +4,7 @@
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from executor_manager.routers import routers
@@ -214,3 +215,32 @@ async def test_callback_route_skips_otel_body_capture(mocker):
     assert result is response
     request.body.assert_not_awaited()
     log_body.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_callback_failure_does_not_clear_running_task(mocker):
+    event = {
+        "event_type": "response.completed",
+        "task_id": 42,
+        "subtask_id": 7,
+        "validation_id": "validation-1",
+    }
+    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    upstream = httpx.Response(503, json={"detail": "Database unavailable"})
+    context = mocker.MagicMock()
+    context.__aenter__.return_value.post = mocker.AsyncMock(return_value=upstream)
+    mocker.patch.object(routers, "traced_async_client", return_value=context)
+    update_validation = mocker.patch.object(
+        routers, "_update_validation_status_from_callback"
+    )
+    get_tracker = mocker.patch(
+        "executor_manager.services.task_heartbeat_manager.get_running_task_tracker"
+    )
+
+    response = await routers.callback_handler(event, request)
+
+    assert response.status_code == 503
+    assert response.body == upstream.content
+    assert response.headers["content-type"] == "application/json"
+    update_validation.assert_not_awaited()
+    get_tracker.assert_not_called()

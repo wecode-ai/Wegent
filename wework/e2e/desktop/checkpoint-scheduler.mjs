@@ -2,9 +2,13 @@
 // renderer. Run them alone so Chromium's network service stays stable on the
 // four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
 export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
-  'background-terminals',
   'release-package-startup',
+  // Native development approval starts a second complete Electron/Core runtime.
+  'security-boundaries',
   'collaboration-issue-task-discovery',
+  // Its strict latency budget must observe the product rather than four
+  // unrelated Electron workloads saturating the CI runner.
+  'runtime-load-performance',
   // Its partial-inventory guard must run through the real system-idle scheduler.
   // Parallel Electron workloads keep CPU pressure above the production limit.
   'plugin-uninstall-lost-response',
@@ -19,13 +23,19 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   )
 }
 
-// These fixtures were starting their databases and Backends when the Python
-// descriptor request hit its 200ms deadline. Keep each separate from Python
-// on Linux Core while letting them overlap with one another and other work.
-const PYTHON_RUNTIME_STARTUP_PEERS = ['collaboration-shared-core', 'collaboration-templates']
+// Database and Backend startup in these fixtures can delay the 200ms Python
+// descriptor request used by Python setup and plugin development. Keep these
+// fixtures separate from both checkpoints on Linux Core.
+const PYTHON_RUNTIME_STARTUP_PEERS = [
+  'collaboration-shared-core',
+  'collaboration-templates',
+  'collaboration-template-app-device-routing',
+]
 
 export function linuxCoreCheckpointResources(checkpoint) {
-  if (checkpoint === 'python-runtime') return PYTHON_RUNTIME_STARTUP_PEERS
+  if (checkpoint === 'python-runtime' || checkpoint === 'plugin-development') {
+    return PYTHON_RUNTIME_STARTUP_PEERS
+  }
   return PYTHON_RUNTIME_STARTUP_PEERS.includes(checkpoint) ? [checkpoint] : []
 }
 

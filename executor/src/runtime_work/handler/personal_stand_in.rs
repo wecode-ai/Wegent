@@ -190,7 +190,7 @@ impl RuntimeWorkRpcHandler {
             Ok(saved)
         } else {
             store
-                .personal_stand_in(user, &self.device_id)
+                .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
     }
@@ -235,6 +235,9 @@ impl RuntimeWorkRpcHandler {
         }
         let count = identities.len();
         for (index, identity) in identities.iter_mut().enumerate() {
+            if !self.stand_in_role_runs_here(identity) {
+                continue;
+            }
             let id = if has_primary && index + 1 == count {
                 json!("@primary")
             } else {
@@ -318,4 +321,111 @@ pub(super) fn matching_personal_roles<'a>(configs: &'a [Value], issue: &Value) -
                 })
         })
         .collect()
+}
+
+pub(super) fn automatic_assignment_roles<'a>(
+    configs: &'a [Value],
+    issue: &Value,
+) -> Vec<&'a Value> {
+    matching_personal_roles(configs, issue)
+        .into_iter()
+        .filter(|role| dispatch_authorizes_role(role, issue))
+        // One automatic assignment selects one role; explicit role dispatch is separate.
+        .min_by_key(|role| {
+            if role["tags"].as_array().is_some_and(|tags| !tags.is_empty()) {
+                0
+            } else {
+                1
+            }
+        })
+        .into_iter()
+        .collect()
+}
+
+fn dispatch_authorizes_role(role: &Value, issue: &Value) -> bool {
+    let metadata = &issue["metadata"];
+    let policy = metadata.get("assistant_autonomy_policy");
+    if policy
+        .and_then(|value| value.get("automatic"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    if policy
+        .and_then(|value| value.get("ask_before_act"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return false;
+    }
+    let Some(endpoint) = metadata
+        .get("assistant_endpoint_ref")
+        .and_then(Value::as_str)
+    else {
+        return true;
+    };
+    endpoint
+        .rsplit_once(':')
+        .map(|(_, role_id)| role["id"].as_str() == Some(role_id))
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod automatic_role_selection_tests {
+    use super::*;
+
+    #[test]
+    fn one_assignment_selects_one_role_with_specific_tags_before_general_roles() {
+        let roles = vec![
+            json!({"id":"general"}),
+            json!({"id":"review","tags":["review"]}),
+            json!({"id":"second","tags":["review"]}),
+        ];
+        assert_eq!(
+            automatic_assignment_roles(&roles, &json!({"tags":["review"]}))[0]["id"],
+            "review"
+        );
+        assert_eq!(automatic_assignment_roles(&roles, &json!({})).len(), 1);
+        assert_eq!(
+            automatic_assignment_roles(&roles, &json!({}))[0]["id"],
+            "general"
+        );
+        assert!(automatic_assignment_roles(&roles[1..], &json!({"tags":["other"]})).is_empty());
+    }
+
+    #[test]
+    fn dispatch_limits_automatic_intake_to_the_authorized_roster_endpoint_and_policy() {
+        let roles = vec![json!({"id":"review"}), json!({"id":"general"})];
+        let issue = json!({
+            "metadata": {
+                "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": true, "ask_before_act": false}
+            }
+        });
+        assert_eq!(
+            automatic_assignment_roles(&roles, &issue)[0]["id"],
+            "review"
+        );
+        assert!(automatic_assignment_roles(
+            &roles,
+            &json!({
+                "metadata": {
+                    "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": false, "ask_before_act": false}
+                }
+            })
+        )
+        .is_empty());
+        assert!(automatic_assignment_roles(
+            &roles,
+            &json!({
+                "metadata": {
+                    "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": true, "ask_before_act": true}
+                }
+            })
+        )
+        .is_empty());
+    }
 }

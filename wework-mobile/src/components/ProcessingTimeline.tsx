@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { ActivityIndicator, Image, Pressable, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 
@@ -23,41 +23,78 @@ import type {
   ChatToolBlock,
 } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { ErrorNotice } from './errors/ErrorNotice'
+import { isRequestUserInputBlock, requestUserInputPayloadKey } from '@/domain/requestUserInput'
+import { RequestUserInputCard, type RequestUserInputHandlers } from './RequestUserInputCard'
+import { useMobileFilePreview } from './files/FilePreviewContext'
+import { useAutomaticCollapse } from './useConversationReading'
 
-export function ProcessingTimeline({ message }: { message: ChatMessage }) {
-  const segments = buildMessageDisplaySegments(message.blocks, message.content)
-  const rows = segments.flatMap(segment => segment.rows)
-  const images = generatedImagesFromBlocks(message.blocks)
+interface UserInputPresentation extends RequestUserInputHandlers {
+  pendingInputKeys?: ReadonlySet<string>
+}
+
+export function ProcessingTimeline({
+  message,
+  ...userInput
+}: { message: ChatMessage } & UserInputPresentation) {
+  // Only an exact duplicate of the visible reply changes processing rows.
+  // Other reply deltas must not rebuild already completed tool/file groups.
+  const reply = message.content.trim()
+  const duplicateReply = message.blocks?.find(
+    block => block.type === 'text' && block.content.trim() === reply
+  )
+  const excludedReply = duplicateReply && 'content' in duplicateReply ? duplicateReply.content : ''
+  const segments = useMemo(
+    () => buildMessageDisplaySegments(message.blocks, excludedReply),
+    [message.blocks, excludedReply]
+  )
+  const rows = useMemo(() => segments.flatMap(segment => segment.rows), [segments])
+  const images = useMemo(() => generatedImagesFromBlocks(message.blocks), [message.blocks])
   const [expanded, setExpanded] = useState(false)
+  const collapsed = useAutomaticCollapse(
+    !rows.some(isRequestUserInputRow) &&
+      shouldCollapseCompletedProcessing(message.blocks, message.content, rows, message.status)
+  )
   if (!rows.length && !images.length) return null
-
-  const collapsed = shouldCollapseCompletedProcessing(message.blocks, message.content, rows)
-  const timeline = !rows.length ? null : !collapsed ? (
-    <View style={styles.timeline} testID={`processing-timeline-${message.id}`}>
-      {segments.map(segment => (
-        <ProcessingSegment key={segment.id} segment={segment} />
-      ))}
-    </View>
-  ) : (
-    <View style={styles.completedTimeline} testID={`completed-processing-${message.id}`}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setExpanded(current => !current)}
-        style={styles.completedHeader}
-        testID={`completed-processing-toggle-${message.id}`}
-      >
-        <Text style={styles.completedLabel} variant="bodyMedium">
-          {processingDurationLabel(message.blocks, message.createdAt, message.completedAt)}
-        </Text>
-        <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} />
-      </Pressable>
-      {expanded ? (
-        <View style={styles.completedContent} testID={`completed-processing-content-${message.id}`}>
-          {segments.map(segment => (
-            <ProcessingSegment key={segment.id} segment={segment} />
-          ))}
-        </View>
+  const hidden = collapsed && !expanded
+  const timeline = !rows.length ? null : (
+    <View
+      style={collapsed ? styles.completedTimeline : styles.timeline}
+      testID={`${collapsed ? 'completed-processing' : 'processing-timeline'}-${message.id}`}
+    >
+      {collapsed ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded(current => !current)}
+          style={styles.completedHeader}
+          testID={`completed-processing-toggle-${message.id}`}
+        >
+          <Text style={styles.completedLabel} variant="bodyMedium">
+            {processingDurationLabel(message.blocks, message.createdAt, message.completedAt)}
+          </Text>
+          <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} />
+        </Pressable>
       ) : null}
+      <View
+        accessibilityElementsHidden={hidden}
+        importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+        style={[styles.segments, collapsed && styles.completedContent, hidden && styles.hidden]}
+        testID={collapsed ? `completed-processing-content-${message.id}` : undefined}
+      >
+        {segments.map((segment, index) => (
+          <ProcessingSegment
+            key={segment.id}
+            segment={segment}
+            live={
+              message.status === 'streaming' &&
+              !message.content.trim() &&
+              index === segments.length - 1
+            }
+            {...userInput}
+          />
+        ))}
+      </View>
     </View>
   )
 
@@ -69,24 +106,92 @@ export function ProcessingTimeline({ message }: { message: ChatMessage }) {
   )
 }
 
-function ProcessingSegment({ segment }: { segment: MessageDisplaySegment }) {
-  if (segment.kind === 'tool') return <ToolProcessingSegment rows={segment.rows} />
-  return (
-    <View style={styles.narrativeSegment}>
-      {segment.rows.map(row => (
-        <ProcessingRow key={row.id} row={row} />
-      ))}
-    </View>
-  )
+const ProcessingSegment = memo(
+  function ProcessingSegment({
+    segment,
+    live,
+    ...userInput
+  }: { segment: MessageDisplaySegment; live: boolean } & UserInputPresentation) {
+    if (segment.kind === 'tool') {
+      const groups: MessageDisplayRow[][] = []
+      for (const row of segment.rows) {
+        if (
+          isRequestUserInputRow(row) ||
+          !groups.length ||
+          groups.at(-1)?.some(isRequestUserInputRow)
+        )
+          groups.push([row])
+        else groups.at(-1)!.push(row)
+      }
+      return (
+        <>
+          {groups.map((rows, index) => {
+            const first = rows[0]!
+            if (first.type === 'tool' && isRequestUserInputBlock(first.block)) {
+              const key = requestUserInputPayloadKey(first.block.renderPayload)
+              return (
+                <RequestUserInputCard
+                  key={key ?? first.id}
+                  block={first.block}
+                  active={Boolean(key && userInput.pendingInputKeys?.has(key))}
+                  onRequestUserInputSubmit={userInput.onRequestUserInputSubmit}
+                  onRequestUserInputSkip={userInput.onRequestUserInputSkip}
+                />
+              )
+            }
+            return (
+              <ToolProcessingSegment
+                key={`${segment.id}:${index}`}
+                rows={rows}
+                live={live && index === groups.length - 1}
+              />
+            )
+          })}
+        </>
+      )
+    }
+    return (
+      <View style={styles.narrativeSegment}>
+        {segment.rows.map(row => (
+          <ProcessingRow key={row.id} row={row} />
+        ))}
+      </View>
+    )
+  },
+  (previous, next) =>
+    previous.live === next.live &&
+    (previous.pendingInputKeys === next.pendingInputKeys ||
+      (previous.pendingInputKeys?.size === next.pendingInputKeys?.size &&
+        [...(previous.pendingInputKeys ?? [])].every(key => next.pendingInputKeys?.has(key)))) &&
+    previous.onRequestUserInputSubmit === next.onRequestUserInputSubmit &&
+    previous.onRequestUserInputSkip === next.onRequestUserInputSkip &&
+    previous.segment.id === next.segment.id &&
+    previous.segment.rows.length === next.segment.rows.length &&
+    previous.segment.rows.every((row, index) => sameDisplayRow(row, next.segment.rows[index]!))
+)
+
+function sameDisplayRow(previous: MessageDisplayRow, next: MessageDisplayRow): boolean {
+  if (previous === next) return true
+  if (previous.id !== next.id || previous.type !== next.type) return false
+  if (previous.type === 'tool-group' && next.type === 'tool-group') {
+    return (
+      previous.kind === next.kind &&
+      previous.label === next.label &&
+      previous.failed === next.failed &&
+      previous.blocks.length === next.blocks.length &&
+      previous.blocks.every((block, index) => block === next.blocks[index])
+    )
+  }
+  return 'block' in previous && 'block' in next && previous.block === next.block
 }
 
-function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
+function ToolProcessingSegment({ rows, live }: { rows: MessageDisplayRow[]; live: boolean }) {
   const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
   const stats = processingActivityStats(rows)
   const running = rows.some(isProcessingRowRunning)
-  const lockedOpen = rows.some(isRequestUserInputRow)
-  const contentExpanded = lockedOpen || expanded
+  const hidePreview = useAutomaticCollapse(!running && !live)
+  const contentExpanded = expanded
   const color = theme.colors.onSurfaceVariant
   const details = (
     <View style={styles.segmentDetails} testID="processing-segment-details">
@@ -99,8 +204,8 @@ function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
   return (
     <View style={styles.toolSegment} testID="processing-tool-segment">
       <Pressable
-        accessibilityRole={lockedOpen || running ? undefined : 'button'}
-        disabled={lockedOpen || running}
+        accessibilityRole={running ? undefined : 'button'}
+        disabled={running}
         onPress={() => setExpanded(current => !current)}
         style={styles.segmentHeader}
         testID="processing-segment-toggle"
@@ -116,10 +221,8 @@ function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
         <ProcessingStats color={color} stats={stats} />
         {running ? <ActivityIndicator size={14} /> : null}
       </Pressable>
-      {contentExpanded ? (
-        details
-      ) : running ? (
-        <View style={styles.livePreview}>{details}</View>
+      {contentExpanded || !hidePreview ? (
+        <View style={!contentExpanded && styles.livePreview}>{details}</View>
       ) : null}
     </View>
   )
@@ -167,21 +270,55 @@ function isProcessingRowRunning(row: MessageDisplayRow): boolean {
 }
 
 function isRequestUserInputRow(row: MessageDisplayRow): boolean {
-  return row.type === 'tool' && asRecord(row.block.renderPayload).kind === 'request_user_input'
+  return row.type === 'tool' && isRequestUserInputBlock(row.block)
 }
 
 function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  const preview = useMobileFilePreview()
+  const theme = useTheme()
   return (
     <View style={styles.generatedImageGallery} testID="generated-image-gallery">
-      {images.map(image => (
-        <Image
-          accessibilityLabel={image.alt}
+      {images.map((image, index) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`预览 ${image.alt}`}
+          disabled={!preview}
           key={image.id}
-          resizeMode="contain"
-          source={{ uri: image.uri }}
-          style={styles.generatedImage}
-          testID="generated-image"
-        />
+          onPress={() => {
+            const name = `generated-image-${index + 1}${image.fileExtension}`
+            if (image.workspaceFile)
+              preview?.openAttachment({
+                id: index + 1,
+                filename: name,
+                file_size: image.size,
+                mime_type: image.mimeType,
+                status: 'ready',
+                file_extension: image.fileExtension,
+                created_at: '',
+                workspace_file: image.workspaceFile,
+                image_width: image.width,
+                image_height: image.height,
+              })
+            else if (image.src) preview?.openFile({ kind: 'image', dataUri: image.src, name })
+          }}
+          testID={`generated-image-preview-${image.id}`}
+        >
+          {image.src ? (
+            <Image
+              accessibilityLabel={image.alt}
+              resizeMode="contain"
+              source={{ uri: image.src }}
+              style={styles.generatedImage}
+              testID="generated-image"
+            />
+          ) : (
+            <View style={[styles.generatedImage, styles.generatedImagePlaceholder]}>
+              <Ionicons color={theme.colors.onSurfaceVariant} name="image-outline" size={36} />
+              <Text numberOfLines={2}>{image.alt}</Text>
+              <Text variant="labelMedium">查看生成图片</Text>
+            </View>
+          )}
+        </Pressable>
       ))}
     </View>
   )
@@ -194,7 +331,6 @@ function ProcessingRow({
   initialGroupExpanded?: boolean
   row: MessageDisplayRow
 }) {
-  const theme = useTheme()
   if (row.type === 'tool-group') {
     return <ToolActivityGroup initialExpanded={initialGroupExpanded} row={row} />
   }
@@ -204,13 +340,13 @@ function ProcessingRow({
   const { block } = row
   if (!block.content.trim()) return null
   if (block.type === 'error') {
-    return (
-      <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
-        {block.content}
-      </Text>
-    )
+    return <ErrorNotice error={block.content} testID={`processing-error-${block.id}`} />
   }
-  return <AssistantMarkdown muted={block.type === 'guidance'}>{block.content}</AssistantMarkdown>
+  return (
+    <AssistantMarkdown muted={block.type === 'guidance'} streaming={block.status === 'streaming'}>
+      {block.content}
+    </AssistantMarkdown>
+  )
 }
 
 function ToolActivityGroup({
@@ -257,8 +393,6 @@ function ToolActivity({ block, kind }: { block: ChatToolBlock; kind: ToolActivit
   const theme = useTheme()
   const running = block.status !== 'done' && block.status !== 'error'
   const color = block.status === 'error' ? theme.colors.error : theme.colors.onSurfaceVariant
-  const payload = asRecord(block.renderPayload)
-  const requestQuestion = requestUserInputQuestion(payload)
   if (isContextCompactionName(block.toolName)) return <ContextCompactionActivity block={block} />
   return (
     <View style={styles.standaloneTool} testID={`tool-block-${block.id}`}>
@@ -276,20 +410,6 @@ function ToolActivity({ block, kind }: { block: ChatToolBlock; kind: ToolActivit
           {toolStatusLabel(block, kind)}
         </Text>
       </View>
-      {requestQuestion ? (
-        <View
-          style={[styles.requestCard, { backgroundColor: theme.colors.elevation.level1 }]}
-          testID="request-user-input-card"
-        >
-          <Text variant="titleSmall">{requestQuestion.header}</Text>
-          <Text variant="bodyMedium">{requestQuestion.question}</Text>
-          {requestQuestion.options.map(option => (
-            <View key={option} style={styles.requestOption}>
-              <Text variant="bodyMedium">{option}</Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
     </View>
   )
 }
@@ -311,6 +431,8 @@ function ContextCompactionActivity({ block }: { block: ChatToolBlock }) {
 
 function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
+  const paths = toolFilePaths(block)
   const error = block.status === 'error'
   return (
     <View style={styles.activityDetailRow}>
@@ -319,15 +441,39 @@ function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
         name={error ? 'alert-circle-outline' : 'checkmark-circle-outline'}
         size={16}
       />
-      <Text numberOfLines={3} style={{ color: theme.colors.onSurfaceVariant }} variant="bodyMedium">
-        {toolDetail(block)}
-      </Text>
+      {paths.length ? (
+        <View style={{ flex: 1, gap: 4 }}>
+          {paths.map(path => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${path}`}
+              disabled={!preview?.target}
+              key={path}
+              onPress={() => preview?.openWorkspaceFile(path)}
+              testID={`tool-file-preview-${block.id}-${path}`}
+            >
+              <Text numberOfLines={3} style={{ color: theme.colors.onSurfaceVariant }}>
+                {path}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <Text
+          numberOfLines={3}
+          style={{ color: theme.colors.onSurfaceVariant }}
+          variant="bodyMedium"
+        >
+          {toolDetail(block)}
+        </Text>
+      )}
     </View>
   )
 }
 
 function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
   const [expanded, setExpanded] = useState(false)
   const running = block.status !== 'done' && block.status !== 'error'
   return (
@@ -353,7 +499,19 @@ function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
       </Pressable>
       {expanded
         ? block.fileChanges.files.map(file => (
-            <View style={styles.fileActivityRow} key={`${file.oldPath ?? ''}:${file.path}`}>
+            <Pressable
+              style={styles.fileActivityRow}
+              key={`${file.oldPath ?? ''}:${file.path}`}
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${file.path}`}
+              disabled={!preview || (!block.fileChanges.source && !preview.target)}
+              onPress={() =>
+                block.fileChanges.source
+                  ? preview?.openChanges(block.fileChanges.source, file.path)
+                  : preview?.openWorkspaceFile(file.path)
+              }
+              testID={`process-file-preview-${block.id}-${file.path}`}
+            >
               <Ionicons
                 color={theme.colors.onSurfaceVariant}
                 name="document-text-outline"
@@ -376,7 +534,7 @@ function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
                   </Text>
                 </View>
               ) : null}
-            </View>
+            </Pressable>
           ))
         : null}
     </View>
@@ -467,26 +625,6 @@ function toolFilePaths(block: ChatToolBlock): string[] {
   return [...paths]
 }
 
-function requestUserInputQuestion(payload: Record<string, unknown>): {
-  header: string
-  question: string
-  options: string[]
-} | null {
-  if (payload.kind !== 'request_user_input' || !Array.isArray(payload.questions)) return null
-  const question = asRecord(payload.questions[0])
-  const options = Array.isArray(question.options)
-    ? question.options.flatMap(value => {
-        const option = asRecord(value)
-        return typeof option.label === 'string' ? [option.label] : []
-      })
-    : []
-  return {
-    header: typeof question.header === 'string' ? question.header : '需要确认',
-    question: typeof question.question === 'string' ? question.question : '',
-    options,
-  }
-}
-
 function readableToolName(name: string): string {
   return (name.split(/\.|__/).filter(Boolean).at(-1) ?? name).replaceAll('_', ' ')
 }
@@ -502,14 +640,10 @@ function isContextCompactionName(name: string): boolean {
   return suffix === 'context_compaction' || suffix === 'contextcompaction'
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
 const styles = StyleSheet.create({
-  timeline: { marginBottom: 10, gap: 8 },
+  timeline: { marginBottom: 10 },
+  segments: { gap: 8 },
+  hidden: { display: 'none' },
   narrativeSegment: { gap: 8 },
   toolSegment: { marginBottom: 2 },
   segmentHeader: {
@@ -568,12 +702,15 @@ const styles = StyleSheet.create({
   fileStats: { flexDirection: 'row', gap: 7 },
   additions: { color: '#00a86b' },
   deletions: { color: '#ef4444' },
-  requestCard: { borderRadius: 12, padding: 12, gap: 8 },
-  requestOption: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 10 },
   generatedImageGallery: { width: '100%', gap: 10, marginBottom: 12 },
   generatedImage: { width: '100%', height: 280, borderRadius: 12 },
+  generatedImagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 16,
+  },
   contextCompaction: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 4 },
   contextDivider: { height: StyleSheet.hairlineWidth, flex: 1 },
   contextLabel: { flexShrink: 1, fontWeight: '600' },
-  error: { marginTop: 4 },
 })

@@ -392,7 +392,6 @@ export function orderRuntimeConversationItems(
   items: RuntimeConversationItem[],
   observedAnchors?: ReadonlyMap<string, number>,
 ): RuntimeConversationItem[] {
-  if (!items.some((item) => item.position !== undefined)) return items;
   const anchors = new Map(
     observedAnchors ?? observedNativePositionAnchors(items, [items]),
   );
@@ -600,7 +599,14 @@ export function mergeRuntimeConversationItem(
 ): RuntimeConversationItem {
   snapshot = { ...snapshot, position: snapshot.position ?? local?.position };
   if (local?.type === "user_message" && snapshot.type === "user_message") {
-    return { ...snapshot, message: { ...local.message, ...snapshot.message } };
+    return {
+      ...snapshot,
+      message: {
+        ...local.message,
+        ...snapshot.message,
+        source: snapshot.message.source ?? local.message.source,
+      },
+    };
   }
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
   let snapshotBlock = preserveProcessingBlockOutput(

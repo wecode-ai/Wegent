@@ -1,12 +1,14 @@
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Check, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import {
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
+  type ComponentProps,
 } from 'react'
 
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -97,6 +99,52 @@ function lastConversationStorageKey(project: CloudProject): string {
   return `wework-project-space-chat:${project.project_store}:${project.id}`
 }
 
+function ProjectSpaceConversationFrame(props: ComponentProps<typeof TemporaryChatPanel>) {
+  const { projectChat } = useWorkbenchPaneContext()
+  const { onAddressChange: rememberAddress } = props
+  const active = useRef(true)
+  useLayoutEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
+  const onAddressChange = useCallback(
+    (address: RuntimeTaskAddress | null) => {
+      if (active.current) rememberAddress?.(address)
+    },
+    [rememberAddress]
+  )
+  // Runtime discovery binds the same frame to its new task; it does not replace the composer.
+  const [instanceId] = useState(props.instanceId)
+  const draftKey = `pane:${props.instanceId}`
+  const draftKeyRef = useRef(draftKey)
+  const [value, setValue] = useState(() => projectChat.inputByScope[draftKey] ?? '')
+  const writeDraft = projectChat.setInputForScope
+  useLayoutEffect(() => {
+    const previousKey = draftKeyRef.current
+    if (previousKey === draftKey) return
+    draftKeyRef.current = draftKey
+    writeDraft(draftKey, value)
+    writeDraft(previousKey, '')
+  }, [draftKey, value, writeDraft])
+  const onChange = useCallback(
+    (value: string) => {
+      setValue(value)
+      writeDraft(draftKeyRef.current, value)
+    },
+    [writeDraft]
+  )
+  return (
+    <TemporaryChatPanel
+      {...props}
+      instanceId={instanceId}
+      draft={{ value, onChange }}
+      onAddressChange={onAddressChange}
+    />
+  )
+}
+
 export function ProjectSpaceChatSidebar({
   project,
   localProjects,
@@ -131,6 +179,7 @@ export function ProjectSpaceChatSidebar({
     window.localStorage.getItem(lastConversationStorageKey(project))
   )
   const [creatingNew, setCreatingNew] = useState(startNew)
+  const [createdAddress, setCreatedAddress] = useState<RuntimeTaskAddress | null>(null)
   const [chatInstance, setChatInstance] = useState(0)
   const [width, setWidth] = useState(storedProjectChatWidth)
   const [resizing, setResizing] = useState(false)
@@ -139,40 +188,37 @@ export function ProjectSpaceChatSidebar({
   const resizeStartRef = useRef({ pointerX: 0, width: PROJECT_CHAT_DEFAULT_WIDTH })
   const resizedWidthRef = useRef(width)
 
-  useEffect(() => {
-    if (!conversationMenuOpen) return
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!conversationMenuRef.current?.contains(event.target as Node)) {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
+      if (!conversationMenuRef.current?.contains(event.target as Node))
         setConversationMenuOpen(false)
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
+    },
+    { enabled: conversationMenuOpen }
+  )
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') setConversationMenuOpen(false)
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [conversationMenuOpen])
+    },
+    { enabled: conversationMenuOpen }
+  )
 
   const selectedConversation = creatingNew
     ? null
     : (conversations.find(conversation => conversation.key === selectedConversationKey) ??
-      conversations[0] ??
+      (createdAddress ? null : conversations[0]) ??
       null)
   const effectiveLocalProjectId = selectedConversation?.localProjectId ?? localProjectId
   const selectedLocalProject =
     localProjects.find(candidate => candidate.id === effectiveLocalProjectId) ?? null
-  const showsNewConversationControls = creatingNew || selectedConversation === null
+  const showsNewConversationControls =
+    creatingNew || (!createdAddress && selectedConversation === null)
 
   const selectConversation = useCallback(
     (key: string) => {
       setCreatingNew(false)
+      setCreatedAddress(null)
       setSelectedConversationKey(key)
       setChatInstance(current => current + 1)
       window.localStorage.setItem(lastConversationStorageKey(project), key)
@@ -181,18 +227,17 @@ export function ProjectSpaceChatSidebar({
   )
 
   const startNewConversation = useCallback(() => {
-    setCreatingNew(current => {
-      if (current) return false
-      setSelectedConversationKey(null)
-      setChatInstance(instance => instance + 1)
-      return true
-    })
-  }, [])
+    setCreatingNew(current => !current)
+    setCreatedAddress(null)
+    if (!creatingNew) setSelectedConversationKey(null)
+    setChatInstance(instance => instance + 1)
+  }, [creatingNew])
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
       if (!address) return
       const key = `${address.deviceId}:${address.taskId}`
+      setCreatedAddress(address)
       setCreatingNew(false)
       setSelectedConversationKey(key)
       window.localStorage.setItem(lastConversationStorageKey(project), key)
@@ -219,12 +264,22 @@ export function ProjectSpaceChatSidebar({
     if (!identity?.deviceId) throw new Error(t('standIn.errors.workspace_unavailable'))
     return identity.deviceId
   }, [services, t])
-  const createConversation = useProjectRuntimeTaskComposer({
+  const createRuntimeConversation = useProjectRuntimeTaskComposer({
     resolveDeviceId: localExecution ? resolveLocalDeviceId : undefined,
     project: selectedLocalProject,
     workspaceExecution: null,
     runtimeContext,
   })
+
+  const createConversation = useCallback<
+    NonNullable<ComponentProps<typeof TemporaryChatPanel>['createTask']>
+  >(
+    (...args) => {
+      setCreatingNew(true)
+      return createRuntimeConversation(...args)
+    },
+    [createRuntimeConversation]
+  )
 
   const resize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -444,14 +499,22 @@ export function ProjectSpaceChatSidebar({
         )}
       </header>
 
-      <TemporaryChatPanel
-        key={`${project.project_store}:${project.id}:${chatInstance}`}
+      <p
+        data-testid="project-space-chat-capabilities"
+        className="shrink-0 px-4 py-2 text-sm text-text-secondary"
+      >
+        {t('workbench.project_space_chat.capabilities', { name: project.name })}
+      </p>
+
+      <ProjectSpaceConversationFrame
+        key={`${project.project_store}:${project.id}:${chatInstance}:${creatingNew || createdAddress ? 'new' : (selectedConversation?.key ?? 'new')}`}
         currentProject={selectedLocalProject}
         source={null}
-        instanceId={`project-space:${project.project_store}:${project.id}:${selectedConversation?.key ?? 'new'}`}
+        instanceId={`project-space:${project.project_store}:${project.id}:${createdAddress ? `${createdAddress.deviceId}:${createdAddress.taskId}` : (selectedConversation?.key ?? 'new')}`}
         testId="project-space-chat-panel"
-        initialAddress={selectedConversation?.address ?? null}
+        initialAddress={selectedConversation?.address ?? createdAddress}
         createTask={createConversation}
+        runtimeContext={runtimeContext}
         onAddressChange={rememberAddress}
         sendEphemeral={false}
         emptyStateText={

@@ -5,15 +5,30 @@ mod activity;
 #[path = "robot_admission.rs"]
 mod admission;
 #[path = "robot_authority.rs"]
-mod authority;
+pub(crate) mod authority;
+#[path = "robot_managed.rs"]
+pub(crate) mod managed;
+#[path = "robot_managed_jobs.rs"]
+pub(crate) mod managed_jobs;
 #[path = "robot_model.rs"]
-mod model;
+pub(crate) mod model;
 #[path = "robot_projection.rs"]
 mod projection;
 #[path = "robot_state.rs"]
 mod state;
 #[path = "robot_wake.rs"]
 mod wake;
+
+#[cfg(test)]
+pub(crate) use activity::tests::verify_issue_activity_projection;
+#[cfg(test)]
+pub(crate) use projection::tests::verify_managed_activity;
+
+pub(crate) use activity::{
+    finish as finish_runtime_activity, project_runtime_completion, start_runtime_activity,
+};
+pub(crate) use state::fail_preparation;
+pub(crate) use state::{cancel, defer_workday};
 
 use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::AppState;
@@ -58,8 +73,14 @@ pub(crate) async fn coordination_context(
     Ok(row.context().get("project_coordination").cloned())
 }
 
-pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
+/// Resolve pending queue assignments before selecting a runnable execution.
+pub(crate) async fn prepare_queued_assignments(app: &AppState) -> Result<()> {
     admission::prepare(app).await?;
+    Ok(())
+}
+
+pub(crate) async fn prepare_and_wake(app: &AppState) -> Result<()> {
+    prepare_queued_assignments(app).await?;
     wake::notify(app).await?;
     Ok(())
 }
@@ -76,6 +97,7 @@ pub(super) fn register(registry: &mut BackgroundJobRegistry, app: Arc<AppState>)
     if !interval.is_finite() || interval <= 0.0 {
         anyhow::bail!("ROBOT_QUEUE_SCAN_INTERVAL_SECONDS must be finite and positive");
     }
+    managed_jobs::register(registry, app.clone(), Duration::from_secs_f64(interval))?;
     registry.register(JOB, move |context, _| {
         let app = app.clone();
         async move {

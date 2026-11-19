@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react'
+import { act } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
@@ -8,7 +8,7 @@ import {
   getRuntimeConversationMessages,
 } from '../runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+import { renderRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 import {
   runtimeTaskAddress,
   runtimeTranscript,
@@ -65,8 +65,29 @@ function setup() {
     services,
     resume: () => resume(),
     recover: () => handlers.onRuntimeEventLagged?.({ skipped: 0 }),
-    mount: () =>
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />),
+    startTurn: (turnId = 'turn-1') =>
+      handlers.onChatStart?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: turnId,
+      }),
+    finishTurn: (turnId, failed = false, task?: RuntimeTaskSummary) =>
+      failed
+        ? handlers.onChatError?.({
+            taskId: address.taskId,
+            deviceId: address.deviceId,
+            subtaskId: turnId,
+            error: 'superseded turn failed',
+            ...(task ? { task } : {}),
+          } as never)
+        : handlers.onChatDone?.({
+            taskId: address.taskId,
+            deviceId: address.deviceId,
+            subtaskId: turnId,
+            result: {},
+            ...(task ? { task } : {}),
+          } as never),
+    mount: () => renderRuntimeTaskLifecycle({ services: services, store: store }),
   }
 }
 
@@ -75,6 +96,97 @@ afterEach(() => {
   vi.restoreAllMocks()
   clearRuntimeConversationCacheForTests()
   delete window.weworkElectronLifecycle
+})
+
+test('reconciles a completed turn when its terminal stream event is lost', async () => {
+  vi.useFakeTimers()
+  const { store, runtime, mount, startTurn } = setup()
+  runtime.getRuntimeTask.mockResolvedValue(nativeTask(false, '2'))
+  mount()
+
+  await act(async () => startTurn())
+  expect(store.getTask(address)?.turn.phase).toBe('streaming')
+  expect(runtime.getRuntimeTask).not.toHaveBeenCalled()
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledExactlyOnceWith(address, {
+    signal: expect.any(AbortSignal),
+  })
+  expect(runtime.getRuntimeTranscript).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
+  expect(getRuntimeConversationMessages(address).at(-1)?.content).toBe('已恢复的 AI 输出')
+
+  await act(() => vi.advanceTimersByTimeAsync(30_000))
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+})
+
+test('keeps checking an active turn without loading its transcript early', async () => {
+  vi.useFakeTimers()
+  const { store, runtime, mount, startTurn } = setup()
+  runtime.getRuntimeTask
+    .mockResolvedValueOnce(nativeTask(true, '2'))
+    .mockResolvedValueOnce(nativeTask(false, '3'))
+  mount()
+
+  await act(async () => startTurn())
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+  expect(runtime.getRuntimeTranscript).not.toHaveBeenCalled()
+  expect(store.getTask(address)?.turn.phase).toBe('streaming')
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledTimes(2)
+  expect(runtime.getRuntimeTranscript).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
+})
+
+test.each([
+  ['completion', false],
+  ['error', true],
+] as const)('keeps the new turn check after a stale %s event', async (_label, failed) => {
+  vi.useFakeTimers()
+  const { store, runtime, mount, startTurn, finishTurn } = setup()
+  runtime.getRuntimeTask.mockResolvedValue(nativeTask(false, '2', 'turn-2'))
+  runtime.getRuntimeTranscript.mockResolvedValue({
+    ...runtimeTranscript(false),
+    turns: [{ ...runtimeTranscript(false).turns[0]!, id: 'turn-2' }],
+  })
+  mount()
+
+  await act(async () => {
+    startTurn('turn-1')
+    startTurn('turn-2')
+    finishTurn('turn-1', failed, nativeTask(false, '1', 'turn-1'))
+  })
+
+  expect(store.getTask(address)?.turn.id).toBe('turn-2')
+  expect(store.getTask(address)?.turn.phase).toBe('streaming')
+  expect(runtime.getRuntimeTask).not.toHaveBeenCalled()
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
+})
+
+test('checks a restored active turn without waiting for another start event', async () => {
+  vi.useFakeTimers()
+  const { store, runtime, mount } = setup()
+  store.turnStarted(address, 'restored-turn')
+  runtime.getRuntimeTask.mockResolvedValue(nativeTask(false, '2', 'restored-turn'))
+  runtime.getRuntimeTranscript.mockResolvedValue({
+    ...runtimeTranscript(false),
+    turns: [{ ...runtimeTranscript(false).turns[0]!, id: 'restored-turn' }],
+  })
+  mount()
+
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(runtime.getRuntimeTask).toHaveBeenCalledOnce()
+  expect(store.getTask(address)?.turn.phase).toBe('idle')
 })
 
 test('refreshes the cloud owner state even while the local list and transcript are pending', async () => {
@@ -211,7 +323,7 @@ test('preserves a pending catalog retry when services change during backoff', as
 
   const replacement = { ...services, executorClient: { ...services.executorClient! } }
   await act(async () => {
-    view.rerender(<RuntimeTaskLifecycleStreamCoordinator services={replacement} store={store} />)
+    view.rerender({ services: replacement, store: store })
   })
 
   expect(runtime.listRuntimeWork).toHaveBeenCalledTimes(2)

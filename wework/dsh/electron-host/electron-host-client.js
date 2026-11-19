@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { createInterface } from 'node:readline'
+import { performance } from 'node:perf_hooks'
+import { JsonLineReader } from './json-line-reader.js'
 
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
@@ -14,6 +15,30 @@ const RUNTIME_PREPARATION_CAPABILITIES = new Set([
   'runtime.uninstallCoreDshPlugin',
 ])
 const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
+
+function traceHostRequest(phase, requestId, capability) {
+  if (
+    process.env.VITE_WEWORK_E2E !== 'true' ||
+    process.env.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS !== '1'
+  )
+    return
+  const cpu = process.cpuUsage()
+  const loop = performance.eventLoopUtilization()
+  console.debug(
+    '[host-pipe-client]',
+    JSON.stringify({
+      at: new Date().toISOString(),
+      phase,
+      requestId,
+      capability,
+      processId: process.pid,
+      cpuUserMicros: cpu.user,
+      cpuSystemMicros: cpu.system,
+      eventLoopActiveMs: Math.round(loop.active),
+      eventLoopIdleMs: Math.round(loop.idle),
+    })
+  )
+}
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
@@ -98,8 +123,13 @@ export class ElectronHostClient {
       throw new ElectronHostError('client_closed', 'Electron host client is closed')
     }
     this.started = true
-    this.lines = createInterface({ input: this.input })
+    this.lines = new JsonLineReader(this.input, MAX_FRAME_BYTES)
     this.lines.on('line', line => this.handleLine(line))
+    this.lines.on('overflow', () =>
+      this.closeWithError(
+        new ElectronHostError('frame_too_large', 'Electron host response exceeds size limit')
+      )
+    )
     this.input.once('close', this.onInputClose)
     this.input.once('end', this.onInputEnd)
     this.output.once('error', this.onOutputError)
@@ -139,6 +169,7 @@ export class ElectronHostClient {
     const id = `dsh-${++this.sequence}`
     const response = deferred()
     this.pending.set(id, response)
+    traceHostRequest('sent', id, capability)
     this.write({ type: 'request', id, capability, params })
     try {
       return await withTimeout(
@@ -167,12 +198,6 @@ export class ElectronHostClient {
   }
 
   handleLine(rawLine) {
-    if (Buffer.byteLength(rawLine) > MAX_FRAME_BYTES) {
-      this.closeWithError(
-        new ElectronHostError('frame_too_large', 'Electron host response exceeds size limit')
-      )
-      return
-    }
     let message
     try {
       message = JSON.parse(rawLine)
@@ -221,6 +246,7 @@ export class ElectronHostClient {
     }
     const pending = this.pending.get(message.id)
     if (!pending) return
+    traceHostRequest('received', message.id)
     if (message.ok === true) {
       pending.resolve(message.result)
       return

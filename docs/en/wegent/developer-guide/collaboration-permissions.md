@@ -4,13 +4,93 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Tool-generated comments verify their source against the caller's active task binding and use `requires_confirmation=true` to remain pending. `source_verified` proves generation identity; publication authority still depends on the separate `verified` flag and existing automatic-publication policy. Idempotent replay cannot upgrade a pending comment to human confirmation.
+
+Assistant conclusion publication locks the Issue and validates current membership and an active task binding on the caller's owned device before writing content and server-derived provenance in one transaction. Notifications and shared pushes observe only the complete committed message. Publication requires a nonempty idempotency key; retries require the same source and content; ordinary comments cannot impersonate confirmed AI conclusions. An old conversation may still publish public replies, but completing the current assignment requires both its current humanAssignmentId and matching task binding. Completion receipts additionally match the current Runtime turn, thread and generation. Room broadcasts and cross-process pushes remove execution text, sub-agent process content and private parameters; owner request acknowledgements retain the full view. Native runtime ownership is recorded from the verified binding separately from the publisher and trigger author, including valid local owner 0. Canonical project executions and current public project Agents retain their Issue-authorized source entries. Private Agents, member assistants and resources from other projects cannot gain that access by claiming shared metadata. Focused provenance, push, stale-assignment and native publication tests, plus existing CI desktop scenarios, protect this chain. CP01–CP20 remain unchanged.
+
+```mermaid
+flowchart TD
+    Source[Current user and Issue permission] --> Lock[Lock Issue and owned active task binding]
+    Lock --> Commit[Atomically persist content and verified provenance]
+    Commit --> Owner[Full view in owner acknowledgement only]
+    Commit --> Projection[Canonical message projection and opaque source reference]
+    Live[Live execution and background completion] --> Projection
+    Projection --> Filter[Room projection removes private process and parameters]
+    Filter --> Public[Public conclusion and summary]
+    Public --> Receipt{Current assignment and Runtime turn match}
+    Receipt -->|Yes| Complete[Update current assignment receipt]
+    Receipt -->|No| History[Retain public reply and assignment state]
+    Public --> Read[Client reads exact viewer message by ID with authorization]
+    Read --> Trace{Source read permission}
+    Trace -->|Owner or canonical project execution or public project Agent| Scoped[Authorized source entry]
+    Trace -->|Another owner's private assistant| Restricted[Summary and restricted state only]
+```
+
+A restricted source notification from a shared room is not the current viewer's message view. The client reads that exact message by ID through the existing subscription history endpoint, which revalidates project, Issue and source access. Only a response matching the message and subscription scope can update the source entry. Responses after unsubscribe and older responses superseded by a newer notification are discarded. A failed authorized read retains the received public projection and logs the error; bindings never imply private access.
+
+The authenticated snapshot of the current subscription can update read access for the same project, Issue, message and source reference independently. When the snapshot's content is older, apply the verified source or denial while retaining newer content and execution status. A live update received during subscription setup prevents a superseded snapshot from applying this source update.
+
+Rust live execution, background completion and history reads share one message projection. When a durable source exists, an unauthenticated projection carries only an opaque reference and restricted state. Shared pushes contain no Runtime address, private process text or parameters. The client uses the existing subscription endpoint to obtain the current viewer's authorized source, preserving the read entry across running and completion notifications. Missing sources remain history-unavailable. Projection and shared-push contracts cover live deltas, final results, background completion and missing sources. CP01–CP20 remain unchanged.
+
+Private discussion sends retain the original Runtime owner within the validated participation scope, including local owner 0. Public conclusions retain the current profile as publisher. This identity composition applies only within the local project's participation scope for the current account; 0 is never a global account alias and grants no cloud private-history access. `PrivateDiscussionPane` regressions verify actual sends for local owner 0 and the profile owner, plus rejection of account changes, cloud and out-of-scope owners.
+
+```mermaid
+flowchart LR
+    Account[Current account and project] --> Scope[Validate local participation and durable binding]
+    Scope --> Discussion[Continue as the original Runtime owner]
+    Scope --> Conclusion[Publish as the current profile]
+    Discussion --> Native[Native owner 0 or profile owner]
+    Conclusion --> Publish[Server validates permission and publication provenance]
+```
+
+Rust Socket.IO cancellation validates current task access before recording intent
+or delivering cancellation on Chat, executor and device routes. Task owners and
+approved task members retain the shared task-access policy; shell selection and
+executor placement grant no access. The existing isolated MySQL cancellation
+contract covers all three routes and verifies that denied requests leave task,
+subtask and Redis cancellation state unchanged. The existing Chromium CI shards
+discover `chat-cancel-access.spec.ts`, covering a rejected foreign caller followed
+by owner cancellation of a real Chat execution. CP01–CP20 remain unchanged.
+
+Member drawer Skill discovery and saving use the same target publication groups. Ordinary edits and same-namespace clones retain those groups; only an actual cross-namespace clone clears the source group context, with omitted namespaces normalized to `default`. Binding loads and retries belong to the current editing session. Unknown or failed bindings block member saving and expose retry; closing, creating, switching Agents and unmounting invalidate old requests so they cannot overwrite later groups, errors or loading state. The server still validates current resource and target-group authority; client context grants no new permission. CP01–CP20 remain unchanged. Parent-component and BotEdit contract tests cover classification, empty bindings and stale responses. The existing Chromium CI suite discovers `settings-team-member-skills.spec.ts` for real member edits, same-namespace clones, persistence and binding transport-fault recovery; the existing Skill scope suite retains cross-namespace clone coverage.
+
+Mobile and PC personal project/conversation management reuse the same typed Runtime RPCs: project upsert, rename, remove and pin; task pin, rename and archive; archive list, restore and permanent deletion. Python HTTP, Rust Socket.IO and the target executor require current personal-task consent on that installation. Neither another installation nor a project-read grant substitutes for it. Archive `cleanupWorktree` resolves managed worktrees only from the resolved task ID and preserves snapshots; active shared worktrees remain. Cleanup failures retain `accepted: true` with separate `cleanupError`, without repeating archival. Direct worktree deletion, shell, terminal and global configuration remain denied. Archive item identities project to the exact registered route rather than a shared computer name. Three-layer policy matrices, native Git snapshot tests and the existing remote-task-access CI checkpoint cover this flow; CP01–CP20 remain unchanged.
+
+Personal-task worktree capabilities and preflight are task-creation reads. Python HTTP, Rust Socket.IO and the target Executor each require current remote-task consent on that exact computer installation; project transcript grants and another installation's consent cannot replace it. Preflight's `includeBranches` projects only branches from the selected source repository through a fixed Git query. Raw `device.execute_command`, worktree configuration, direct preparation and deletion remain denied. Revocation rejects subsequent reads. Three-layer permission contracts and the existing `remote-task-access` CI checkpoint cover HTTP, Socket.IO, installation isolation and revocation; CP01–CP20 remain unchanged.
+
+Manual source starts use the host snapshot's existing `origin.manual` and exact `standInSourceBindings`. Transient confirmation flags confer no durable authorization, and later arrivals cannot reuse the grant. Disabling automation does not block authorized manual workers or their completion reports. Queue admission revalidates the original message grant, source, identity and configuration version while retaining native confirmation. Automatic workers still require enabled role and source policies; revoking the binding blocks both workers and reports. Native manual-start, snapshot and source-task admission regressions protect these boundaries. CP01–CP20 remain unchanged.
+
+Personal task creation from a connected source requires a connector-verified owner self-conversation record; `isOwn` alone is insufficient. Third-party messages, own messages to others/groups and unknown identity are rejected. The scoped `create_task` revalidates the current owner, device, role, work and exact source, then creates a task using the immutable message record and a stable request ID. Workers inherit role configuration and the stricter confirmation policy; callers cannot supply an owner, permissions, workspace overrides or source-read grants. Workers can read only their own conversation. The durable result outbox returns to the original source work, revalidating source authority before native replies; revocation, identity mismatch, uncertain sends and duplicate execution confer no authority. `stand_in_source_tasks`, source-tool catalog contracts and CI's `stand-in-cli` user story cover these transactions. CP01–CP20 remain unchanged.
+
+Resumed group managers publish their Issue activity and exact Runtime binding before starting a new turn. The Issue-locked transaction verifies the original dispatch owner/device, immutable leader, recorded previous round, terminal member outcomes and exact next manager task ID; replay cannot replace a later assignee. IDs exceeding the database and API's 255-character bound use a deterministic encoding of the previous session and round, shared by Backend and Executor when validating the recorded lineage. Shared transcript reads require current Issue visibility and that recorded collaboration identity. A manual binding alone still grants no access to another owner's transcript or device catalog. `test_collaboration_manager_activity.py` covers these boundaries; the existing remote group desktop checkpoint covers answering native input through the resumed activity. CP01–CP20 remain unchanged.
+
+My Work reuses the Issue list/detail response projector, loading names, executions, human task bindings and visibility once for the whole page. Each Issue uses only its own project's current effective role and security policy; another project's access cannot grant authority. Responses normalize timestamps to UTC while retaining raw database pagination cursors and external-provider boundaries. API field parity, mixed-project permissions and constant cross-project query-count regressions protect this read path. CP01–CP20 remain unchanged.
+
+Child creation from comments rechecks current parent-Issue access and retains the stricter of parent visibility and the project default. Guessing a hidden parent identifier cannot create a child, and copying a comment cannot expose related-only content to the project. CP13 and CP14 remain unchanged. Permission contracts cover both parent and default visibility levels; the existing comment-assignment desktop checkpoint covers a restricted parent.
+
+Independent Issue resource invitations are validated inside the Rust personal-Issue transaction against resource ownership and current group access. Clients cannot submit credentials or execution configuration. Team invitations snapshot human members as explicit invitees; later roster changes confer no access, and removing a team revokes access derived from that invitation while preserving direct invitations. References grant no administration, execution or private-transcript authority. Creation starts no execution; manual task creation retains Runtime Agent authorization checks. Project Issue reads expose only participant kind, name and identifier, and omit them when detail access is denied. CP06, CP14 and CP15 remain unchanged. `personal_issues::tests` and the existing CI-covered `personal_issues::mysql_tests` extend invitation and revocation contracts.
+
+Remote access to personal tasks requires current local consent on the target computer. Answering a question during execution reuses `runtime.tasks.guidance`; Python RPC, Rust Socket.IO and Executor each enforce this consent. Revocation rejects subsequent guidance, and neither another installation's consent nor project read access can replace it. Consent grants no remote configuration or device administration. Contract tests cover consent, revocation, installation isolation and project boundaries; the existing `remote-task-access` CI checkpoint covers real guidance submission. CP01–CP20 remain unchanged.
+
+Independent Issues belong to no project or space, as explicitly authorized by the user. Only their creator and explicit invitees can read them; only the creator manages invitations, deletion and project association. Updates, comments and revocation share the Issue row lock and version checks prevent lost updates. Pagination filters current access first. Association locks the Issue and target project, rechecks target edit authority, allocates a project number and retains discussion without granting participants project membership. CP06 and CP14 add this independent boundary while preserving existing project rules. Real MySQL `personal_issues::mysql_tests` and the `collaboration-personal-issues` desktop checkpoint cover these transactions.
+
+Batch board tools preserve CP01–CP20. Every nested project/Issue reference and optional detail section reuses current source and role authorization; local references additionally match the trusted current device and store. Personal Issue bindings remain defaults, while delegated executors retain only their own Issue actions and existing direct-parent read exceptions. Query pages and aggregates revalidate visibility, and successful receipts reauthorize the actual resulting Issues before returning stored content. Each supported mutation commits its expected-version check, domain change and deduplication receipt in the same transaction; cloud response loss remains unknown until the original operation key can be read, never replaying a mutation. `test_wework_space_batch.py`, Executor MCP batch tests and local `board_receipts` transaction tests cover nested scope denial, permission revocation, parent sections, conflicts, rollback, restart and response-loss recovery. The local architecture transaction records these unchanged invariants.
+
+An exact human-answer acknowledgement may arrive after execution completion. The existing Rust Socket.IO projection transaction requires matching device ownership, persisted answer, execution, project, Issue and completed Runtime turn. It locks Issue, execution and activity in that order, then publishes the Issue change after commit without repeating completion notifications. Execution status, version and sequence remain unchanged; input is never replayed. Later executions do not discard the original answer acknowledgement. Existing isolated MySQL migration checks cover reordering, duplicates, identity rejection and retry boundaries. This reconciliation is owned by the Rust event projection. CP01–CP20 remain unchanged.
+
+Manual cloud startup retains the durable dispatch queue so transient failures and Executor restarts cannot lose accepted requests. Manual recovery requires no assignment, project subscription or intake enablement, while retaining current account, role and Issue authorization; accepted or deleted work is never replayed. Automatic dispatch retains current assignment and intake-policy checks. `manual_issue_startup_intent_survives_restart_without_assignment_or_intake` and the existing real database fault/restart E2E cover recovery; CP invariants are unchanged.
+
+When a queued stand-in Issue message starts execution, it rereads the server's current Issue `permissions.execute`; a read-only role or missing execution permission prevents model startup. This check is independent of assignees and intake settings, and restoring permission preserves the existing conversation. `queued_stand_in_turns_recheck_current_issue_execution_permission` covers revocation, missing permission and restoration; CP15 is unchanged.
+
 Read confirmations still validate current Issue access and advance only the reader's cursor without changing Issue version/time. Automatic receipts carry the observed content revision; one atomic cloud update is bounded by `min(current, observed)` and remains monotonic, while local unread clearing uses the same observation bound. Stale requests do not consume later content or notifications. `test_delayed_read_acknowledges_only_the_observed_public_content`, API cursor regressions and real MySQL desktop coverage protect this transaction; CP invariants remain unchanged.
 
-Explicit manual delegation is distinct from automatic intake. An existing role's enablement, project subscriptions and tags do not replace authority for a manual execution. Launch compares trigger, assignment and mention identities with the persisted conversation to reject forged manual origins; execution and publication still check the current role, Issue access, assignee and original grant. Omitted role selection still requires a connected role, while automatic wakeups and follow-ups retain all intake checks. `paused_issue_intake_allows_only_trusted_manual_requests` and the existing notification/workspace desktop scenarios cover this boundary; CP invariants remain unchanged.
+Explicit manual delegation and persistent conversations are independent of automatic intake. Role enablement, project subscriptions, tags, the current assignee and historical assignments or mentions do not gate starting, continuing, retrying or publishing replies. Omitted role selection retains an existing project role or uses the default role when no project configuration exists; starting a conversation never reassigns the Issue. Current assignments to the owner retain reception receipts, while missing assignments do not block execution or acknowledge another recipient's work. Requests still match the persisted conversation identity, and execution and publication validate the current role, account, project and Issue access. Automatic intake and background follow-ups still select work using the user's configuration. `issue_conversations_do_not_depend_on_intake_or_current_assignment`, `manual_issue_work_needs_no_assignment_or_intake_subscription` and the existing Issue-conversation desktop scenario cover this boundary; CP invariants remain unchanged.
 
 Stand-in Issue reservations use a persistent identity independent of assignment grants. Existing binding writes lock the Issue and reread the owner, active owned device and live bindings, preventing another device or native task from occupying the same identity. Mentions and assignments share routing checks. The identity grants no execution, source or private-transcript authority. Real two-device MySQL concurrency coverage and `test_issue_conversation_reservation_is_device_independent_and_idempotent` protect this transaction; all CP invariants remain unchanged.
 
-Persistent stand-in Issue conversations preserve all CP invariants. Conversation identity is separate from assignment authority: reassignments retain history, but execution and publication revalidate the current member, project, device, role and original assignment or mention. Publication requires the exact owned Issue task binding on an active owned device; superseded grants, foreign devices/tasks, invalid mentions and revoked devices are rejected. Public messages expose no private Runtime address; replies select only the original role without granting private transcript access. Durable wakeup inboxes are recipient-only and sources are revalidated before dispatch. Self mentions create no human reminder. `test_stand_in_issue_replies.py`, Executor public-message filtering tests and the existing desktop notification checkpoint cover these boundaries.
+Persistent stand-in Issue conversations preserve all CP invariants. Conversation identity is independent of its triggering assignment or mention: reassignment, unassignment or deletion of the original mention retains conversation history, continuation and public replies. Publication revalidates the current member, project, role and exact owned Issue task binding on an active owned device; foreign devices/tasks and revoked devices are rejected. Public messages expose no private Runtime address; replies select only the original role without granting private transcript access. Durable wakeup inboxes are recipient-only and sources are revalidated before dispatch. Self mentions create no human reminder. `test_stand_in_issue_replies.py`, Executor public-message filtering tests and the existing desktop conversation checkpoint cover these boundaries.
+
+Project-chat room broadcasts and member snapshots derive Runtime sharing from the persisted message and its same-project Agent. Shared Agent activities retain their canonical execution address and task title through terminal updates; private Agent and stand-in sources retain only an opaque trace and public metadata. Sender views and client metadata cannot grant sharing or replace the persisted Runtime identity. Opening an activity still validates current Issue access and canonical execution authority, independently of manual task bindings. `test_project_chat_provenance.py`, `test_project_chat_push.py` and Rust authorship projection tests cover these boundaries. CP01–CP20 remain unchanged.
 
 Memory-review completion must not automatically start an ordinary primary conversation, which would restore capabilities outside the memory/progress allowlist. Host-identified scheduled memory reviews retain their original task results and arrangement status but do not enter generic generative result delivery, including success, failure, cancellation and restart recovery. Ordinary scheduled and delegated reporting is unchanged. `memory_review_completion_never_starts_an_unrestricted_parent_turn` protects this boundary; CP invariants are unchanged.
 
@@ -85,6 +165,8 @@ Space owners and administrators always administer child projects. For other user
 
 ## Protected contracts
 
+Project permission queries compare project identities as bytes across direct, inherited and public grants. This prevents valid requests from failing when historical tables and connections use different utf8mb4 collations. Role precedence, the unique parent, current membership and CP01–CP20 are unchanged. The metric receipt regression uses the migrated schema and covers first writes, concurrent replay from existing snapshots and one persisted receipt. Receipt reads under the Issue lock use a current locking read so an older consistent snapshot cannot duplicate a receipt.
+
 Local participation discovery uses a composition-verified scope: native owner `0` and the current verified account principal. This is not a global user alias and grants no cloud authority. Quick filters, pending work, the read-only native pending hint and the local inbox share this scope. Empty idle workbenches add no inbox polling; failed hints remain unknown. New comments use the composition's actual current author without rewriting historical senders. Reply claims still require exact `recipient == persisted comment.sender`: recipient `0` with author `7` requires an explicit transfer, not an alias-based claim. Existing group, read and task-start permissions retain their authorization identity rather than being overwritten by storage owner `0`; CP01–CP20 remain unchanged.
 
 Question reports and blocking updates require both an actual caller-owned active/default Device and the source activity's persisted execution ID, exact project, Issue, Runtime task/device and canonical `executor_owner_user_id`. An owned Device with the same name does not prove ownership of someone else's Runtime. Manual-only bindings or group Runtime activities without matching canonical execution evidence return 409 rather than guessing an owner or deriving identity from a conversation name. Question IDs use the persisted source device identity so changing an alias cannot create another question.
@@ -103,16 +185,16 @@ Issue human handoffs preserve the existing membership and native-approval bounda
 | CP03 | Ordinary projects inherit members and viewers; restricted projects stop those two sources. |
 | CP04 | Project invitations never grant access to parent members, resources or sibling projects. |
 | CP05 | Space owners and administrators retain project administration; otherwise valid direct project roles override inherited roles, and removing a direct grant restores inheritance. Pending, rejected, invalid, inactive and archived sources grant nothing. |
-| CP06 | Creator, assignee, group leader and runner identity do not grant human administration. |
-| CP07 | Viewers can read authorized spaces and projects but cannot edit, comment, assign or execute. |
+| CP06 | Creator, assignee, group leader and runner identity do not grant space or project administration; an independent Issue creator administers only that Issue’s explicit invitations and deletion. |
+| CP07 | Viewers are read-only by default. Current invited participants or human assignees of native project Issues, including explicit Viewers, may manage that Issue under CP14 without gaining project or execution authority. |
 | CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Space inheritance stays read-only; project administrators can set or remove a direct project role for inherited members. |
 | CP09 | Enabled shared agents are visible to project readers; explicit private definitions remain creator-only for visibility and use; readiness problems have explicit states and reasons. |
 | CP10 | Resource use never grants source-definition editing or access to private credentials. |
-| CP11 | Project dispatch requires valid Agent/device use authority and an enabled project binding; valid legacy installations retain original-project authority without granting catalog or source-definition access. Personal tasks and stand-ins using their own Executor do not require project device bindings. |
-| CP12 | Fixed, pooled and user-selected project dispatch does not bypass project resource authorization; personal tasks and stand-ins use the personal execution path. |
+| CP11 | Project dispatch requires valid Agent use authority and an enabled project binding. Devices require shared use authority or a manual fixed selection by their current owner. Valid legacy installations retain original-project authority without granting catalog or source-definition access. Personal tasks and stand-ins using their own Executor do not require project device bindings. |
+| CP12 | Manual project dispatch may use the caller's specifically selected fixed device through current ownership, without workspace sharing or a project device binding. Other owners' devices, project pools and automations still require project resource authorization. Personal use creates no sharing grants; personal tasks and stand-ins retain the personal execution path. |
 | CP13 | Lists, details, creation, updates, assignment, comment execution, automation and claims use the same policy. |
-| CP14 | Issue reads check project access before open/related security; project administrators can read all child Issues. |
-| CP15 | Execution checks current Issue access and execution capability. Project dispatch also checks binding and resource grants; personal tasks and stand-ins do not require project device bindings. Snapshots are not durable authority. |
+| CP14 | Project Issue reads check project access and open/related security. Current explicit participants or the current human assignee of a native project Issue may manage that Issue only, without granting project access or project execution resources. Child Issues require separate authorization; parent-child relationships do not propagate invitations. Project administrators can read all their child Issues. Independent Issues have no parent project and require the current creator or explicit invitation; assignment and historical snapshots grant no access. |
+| CP15 | Execution checks current Issue access and execution capability. Project dispatch checks Agent bindings and grants; devices require shared authority or current caller ownership and active status for a manual fixed selection. Personal tasks and stand-ins do not require project device bindings. Admission, claims and running checks never replace current authority with snapshots. |
 | CP16 | Revocation prevents new dispatch and claims; running work requests cancellation and waits for Runtime confirmation. |
 | CP17 | Removing a space member revokes membership and all direct child-project grants; further guest access needs a new invitation. |
 | CP18 | Removing a space resource grant invalidates every child binding while preserving history and exposing the reason. |
@@ -127,9 +209,47 @@ GitHub/GitLab personal and repository sources use a stricter native boundary: lo
 
 ## Resources and execution
 
+An unresolved Shell reference is not retained merely because its name is unchanged.
+Re-resolution requires the editor and definition owner to access the same Shell;
+an expired group reference cannot install an owner-private namesake.
+`test_bot_team_shell_selection.py` and CI Chromium cover denial and unchanged references.
+CP invariants remain unchanged.
+
+Issue creation and automation event dispatch neither scan nor prepare the global execution queue. After dispatch commits, they read only the executions associated with those runs and asynchronously notify their target Executors, using the actual owner's device address for shared runners. Notifications carry no work or execution authority; consumers and independent maintenance jobs retain queue preparation and claiming.
+
+Execution and discovery use separate resource resolution scopes. Resolvers can declare whether they participate in execution checks, preserving existing behavior by default. Request-local group caches isolate the scopes so discovery results do not become execution authority. Extensions retain project, Issue, resource-binding, whitelist, and revocation checks.
+
 Sharing delegates use, not source editing. Project administrators manage bindings and allowed project configuration; resource editors manage the original definition. Actor, definition owner, device owner and Runtime identity remain separate. Model and connector credentials retain their original access rules. Project session reads authorize one bound Issue session, never the owner's entire device catalog.
 
-Desktop personal sessions and Issue-bound sessions both register `wework_space`; cloud links in the prompt no longer determine tool availability. Codex uses the same native deferred tool discovery as the built-in browser; Claude enables native tool search by default. Initialization supplies brief routing instructions without reading projects, Issues or comments; detailed workflows load with tool descriptions. Without a binding, `get_current_context` returns `bound: false`; `list_spaces` and explicit target arguments discover resources. Bindings supply defaults only. Unbound contexts reuse transport only when the backend, credentials and capability surface match exactly; bound grants always receive independent contexts. Follow-up turns reload threads only when MCP configuration or approval boundaries change, preserving background processes. Process restarts and thread unloads discard loaded configuration records. Tool calls still enforce resource permissions and dispatch scope. Human assignments and stand-in tasks retain personal authority through their human-assignment identity; dispatch IDs correlate workflow activity without granting agent roles. Explicit agent roles still enforce dispatch scope; invalid roles or missing project/Issue bindings reject startup. The `project-space-tool-discovery` desktop CI checkpoint covers deferred discovery, explicit reads and persisted comments from a personal session. MCP unit tests cover initialization without data reads, authorization denials and dispatch boundaries.
+Group-namespace Agent configuration requires a current Developer-or-higher role,
+independently of project or space resource-use grants. An existing Team may retain
+a default-private Bot owned by the same creator. Editing requires that Team
+context and an exact Bot name, namespace and owner match; it never grants source
+editing in another group. Team creation and member replacement check reference
+authority. Existing Skill, knowledge-base and routing references may be retained
+unchanged, while additions and replacements check the actual editor. Custom
+Models remain in the Bot owner's scope. New predefined selections must resolve
+to the same model for the editor and the persisted owner-side reference; missing
+models and same-name private/public shadowing are rejected. Group model reads
+reuse current namespace membership and approved capability references.
+`test_bot_team_model_selection.py` protects selection identity, reload and
+independent group authority. `test_bot_kinds_permissions.py` covers
+real persistence and denial branches; CI Chromium's `team-share-scope.spec.ts`
+covers private Skill preservation, model selection, reload and cross-group denial.
+Editors hydrate missing private Bot definitions through the authorized Team detail,
+not the group catalog, and block saves on incomplete or failed loading. Unchanged
+private model references retain their definition and Shell identity without
+granting new private model selections. `useTeamLeaderBot.test.tsx` protects
+hydration, denial, stale response isolation and exact private model retention. CP10, CP13 and
+all other invariants are unchanged.
+
+Primary and secondary model replacements both check the editor's and definition
+owner's current access and resolved identity. An existing private secondary
+reference can be retained or cleared, but cannot authorize a new private
+selection. Model selection contract tests and `team-share-scope.spec.ts` cover
+secondary persistence, reload, retention and denials without changing CP invariants.
+
+Desktop personal sessions and Issue-bound sessions both register `wework_space`; cloud links in the prompt no longer determine tool availability. Codex uses the same native deferred tool discovery as the built-in browser; Claude enables native tool search by default. Initialization supplies brief routing instructions without reading projects, Issues or comments; detailed workflows load with tool descriptions. Without a binding, `get_current_context` returns `bound: false`; `list_spaces` and explicit target arguments discover resources. Bindings supply defaults only. Unbound contexts reuse transport only when the backend, credentials and capability surface match exactly; bound grants always receive independent contexts. Follow-up turns reload threads only when MCP configuration or approval boundaries change, preserving background processes. Process restarts and thread unloads discard loaded configuration records. Tool calls still enforce resource permissions and dispatch scope. Human assignments retain personal execution identity; public stand-in Issue conversations use their validated owner and role identity independently of a human assignment. Dispatch IDs correlate workflow activity without granting agent roles. Explicit agent roles still enforce dispatch scope; invalid roles or missing project/Issue bindings reject startup. The `project-space-tool-discovery` desktop CI checkpoint covers deferred discovery, explicit reads and persisted comments from a personal session. MCP unit tests cover initialization without data reads, authorization denials and dispatch boundaries.
 
 Personal tasks created from an Issue use the original project and Issue as their default context. They can explicitly target any project and Issue accessible to the current user through `wework_space` to read, update, assign or comment under that user's actual permissions. The conversation's starting context is not an additional access boundary; the server continues to authorize the target project and Issue. Accessing another project or Issue does not rebind the original session or deliveries. Issue conversations use one collaboration context without extra write restrictions based on private-task or stand-in identity. Comments, assignments and deliveries required by the user's task and configured responsibilities need no separate confirmation merely because they write to a shared Issue. The built-in collaboration MCP `wework_space` is exempt from tool approval at both server and per-tool levels, including automatic and confirmation stand-in modes. External tools retain native approvals; collaboration retains actual server-side permission checks and dispatch role boundaries. The `stand-in-personal-task` desktop checkpoint also asserts that completed collaboration reads, comments and assignments produce no AI review records. `wework/src/features/todo/workItemRuntimeContext.test.ts` protects this context contract. Dispatch executors default to their assigned Issue and execution tools, with the direct-parent read exception below; managers retain project-level management access. `executor/src/task_runtime/mcp/issue_access_tests.rs` covers same-project and cross-project local reads and writes, cloud reads, writes and comments, server read/write denials and unchanged default context. Existing MCP contract tests protect dispatch role boundaries.
 
@@ -244,6 +364,10 @@ Member rows distinguish the effective project role, read-only inherited space ro
 
 ## Storage and mixed-version compatibility
 
+Project Maintainer administration permits editing visible inline definitions in that project, including entries created by other members. The list's `can_edit` and the update API use the same decision. Explicitly private definitions retain CP09 protection; shared Team and personal Agent sources still require CP10 source-edit authority, and creator identity remains unchanged. Non-creators still receive redacted MCP configuration; saving unchanged redacted entries preserves stored configuration. CP01–CP20 remain unchanged. `test_project_agent_edit_permissions.py` covers role and archived-state matrices, alongside the existing private/shared resource contracts. Desktop CI's `collaboration-template-app-device-routing` checkpoint covers cross-member editing, affinity established by a real execution, conflict rejection and reassignment of the same Issue after repair.
+
+Routing denials retain affinity and resource authorization checks and expose credential-free `routing_context`: the failed member, bound environment, policy environment and workspace-grant, project-grant or policy-mismatch reason. Environment names are limited to the caller's visible catalog. A rejected assignment restores the saved assignee in the UI. Reassignment can follow policy or grant repair. Changing devices after a rejected assignment requires an explicit recovery selection carrying the expected old device; the saved owner remains until admission succeeds. Recovery admission also reads current occupancy under the Issue row lock so concurrent recovery requests cannot block each other. The claim transaction rechecks that binding, active execution occupancy and current resource authority. After explicit confirmation, groups intersect every member’s environment and model candidates before deciding whether recovery is needed; if the bound device still satisfies the entire group, they retain that binding. Active work, stale bindings and automation cannot use this recovery path. Historical tasks, workspaces and credentials are not migrated, and old-thread replies do not overwrite the new binding. CP01–CP20 remain unchanged.
+
 This implementation adds no tables or columns and requires no bulk data or role rewrite. Project containment continues to use the existing approved `CloudProject → workspace` relationship in `resource_members`, retaining its original Owner label. `workspace_id` is a query property. Reads require exactly one parent; missing or ambiguous containment grants nothing.
 
 Membership mode uses `membership_mode` in existing project metadata JSON, defaulting to `inherit`. New projects also write the original parent relationship understood by old backends. Missing fields in old requests preserve new settings. An old backend that replaces an entire JSON object can still discard newer settings; old code does not enforce the new policy.
@@ -281,6 +405,12 @@ Development startup now aborts on migration failure instead of serving an incomp
 
 ## Implementation and regression protection
 
+Socket.IO replies recover stand-in identity only from a persisted agent message in the same project and Issue. When the caller supplies no explicit mentions, the original stand-in user and role become the continuation target. Implicit recipients pass the same membership and Issue-read checks as explicit mentions, and wakeups commit with the comment. Caller metadata cannot supply identity, and explicit recipients retain precedence. Focused `socketio::project_chat_events::reply` tests cover identity provenance and explicit-mention precedence; the existing `stand-in-assignment-notifications` E2E verifies queued supplements during child execution and continuation without another mention. CP01–CP20 remain unchanged.
+
+Rust Socket.IO Issue comments persist the comment, notifications and stand-in wakeups in one transaction. Recipients still require effective project membership and Issue read access. Self mentions suppress human notifications while retaining durable wakeups for the actor's stand-in. Writers lock the Issue, recipients and inboxes in that order, reuse Python-compatible recipient/payload deduplication keys, and roll back together on failure. Idempotent inserts precede current reads of inbox and event rows, avoiding missing-row gap locks during concurrent first mentions. CP01–CP20 remain unchanged. The CI-registered `project_coordination::mysql_tests::issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned` covers concurrent first inbox creation for different recipients, recipient isolation, concurrent sequence allocation, deduplication and rollback on real MySQL; the `stand-in-assignment-notifications` desktop E2E covers actual comment wakeups and public acknowledgments.
+
+First inbox and event creation does not lock missing primary-key ranges. The recipient row still serializes that user's sequence allocation. When an older transaction snapshot misses a concurrently created row, the unique key decides admission: reread the current inbox or retain the existing event without advancing its sequence. The same MySQL regression holds one recipient's first inbox transaction open while another recipient commits, and exercises creation and deduplication from stale snapshots. Comment, notification and wakeup atomicity and CP01–CP20 remain unchanged.
+
 `collaboration_permissions.py` supplies roles, sources and denial reasons. `cloud_project_visibility.py` implements equivalent list queries. `collaboration_revocation.py` revalidates current Issue, Agent, group, Runtime profile and device authority for durable work.
 
 Regression entry points:
@@ -297,6 +427,58 @@ Regression entry points:
 - Shared UI: inherited sources, guests, membership mode, ownership transfer, absent old-backend capabilities, binding reactivation and chat recovery.
 
 Permission changes must update the corresponding rule, local architecture record and tests. Semantic changes require user authorization. Never weaken assertions, skip cases or add administrator exceptions to conceal a violation. Tests use isolated databases, deterministic encryption and mocked external services; passing them does not claim deployment or live Runtime execution.
+
+Stand-in roles and conversation identity do not require a cloud Executor. Cloud
+Issue reservations, assignment receipts and public replies use the owning Runtime's
+backend-assigned registration route; the desktop `electron-…` identity routes local
+IPC. Multiple Runtime registrations may share a desktop alias, so it cannot prove
+device ownership. A missing registration route waits for registration without
+bypassing device, project, Issue or active-assignment checks. Receipt outbox entries
+retain their accepted binding's device. Route changes do not recreate the role or
+conversation identity. `test_stand_in_issue_replies.py` and Executor
+`runtime_owner_tests` cover ambiguity denial, exact routes and receipt identity;
+CI's stand-in Issue-conversation scenario covers real execution with duplicate
+desktop aliases.
+
+Cloud hosts and remote devices confirmed by the Backend device catalog use their
+exact registered identity for task metadata without a desktop-alias identity RPC.
+This path requires an exact match between the requested ID and catalog record;
+local devices, desktop devices and unknown or mismatched aliases still attest
+their registration through the owning Runtime. Backend checks continue to enforce
+device ownership, project, Issue and private-conversation access for every read
+and binding. CP01–CP20 remain unchanged. `canonicalCloudTaskPort.test.ts` covers
+registered devices, an unavailable identity RPC and ambiguous-alias rejection;
+the remote group planning-details E2E covers the real conversation entry.
+
+A role's execution device selects where new work is received; it grants no resource
+authority. A device change stages a paused role on the target, redirects source
+intake, and then activates the target. The target retains identity, resource and
+source authorization checks; credentials are not copied. Source tasks, sessions
+and role configuration remain on their original device, and existing Issues retain
+their conversation binding. Recovery uses version checks and never restores a
+second receiver when target activation is uncertain. CP rules remain unchanged.
+`saveStandInRoleDevice.test.ts`, Executor role-device tests and the existing CI
+stand-in conversation scenario cover success, denial, lost responses and routing
+new work separately from existing tasks.
+
+The Rust comment entry preserves existing authority checks: project and Issue
+visibility are checked for the comment and mentioned recipients, and the comment
+and stand-in wakeups commit in one transaction. Lock order is Issue, recipient,
+then recipient inbox; sequence and event identity retain the Python contract.
+Disabling human reminders or mentioning oneself does not suppress wakeups. Replies
+to a validated public stand-in message retain its role identity and recheck recipient
+visibility; ordinary user messages cannot forge a stand-in recipient. Events only
+prompt Runtime permission revalidation and grant no execution or resource authority.
+The CI stand-in conversation scenario covers self-mentions, durable events and
+direct replies; focused Rust tests cover reply identity and cross-implementation
+event deduplication.
+
+A manual request rejected for the wrong device must never recover as accepted
+work. Repeating that request must also preserve work accepted durably before a
+role move. Project-addressed role saves preserve the primary device. Only imports
+from the old project format normalize stale device aliases; saved independent
+role choices remain intact. Executor regressions cover these persistence and
+recovery boundaries.
 
 ## Verification record
 
@@ -321,3 +503,13 @@ Failed acknowledgements use persisted exponential backoff from 5 seconds up to 1
 Milestones preserve CP07, CP13, CP14 and CP20: project read access is required, Maintainers/Owners manage milestones, and Issue associations require content-edit authority, independently of assignment in mixed patches. Counters use the same Issue visibility policy and retain archived completed Issues. Association validation and deletion lock the same milestone; deletion removes references and advances Issue versions in one transaction. Milestones confer no execution or resource-use authority.
 
 Client milestone queries partition counts by current user, project role, storage type and default Issue security policy. A visibility change immediately hides prior-scope counts and isolates pending requests; failed reads never restore data from prior authority. Component contract tests cover downgrade, failure and late privileged responses.
+
+The user explicitly requested independent Issues together with this navigation change: creator-private by default, shared only through explicit invitations. Rust personal-issues operations validate current invitations, versions and mutations under the same Issue row lock. Only the creator changes invitations or deletes. Comment reads/writes serialize against invitation revocation. Project association additionally checks current target-project edit authority and creates no membership or resource grants. Real MySQL regression coverage protects private defaults, invitations/revocation, identity isolation, concurrent conflicts, comments, deletion and project association.
+
+CP14 includes current native Issue invitations and human assignment as an Issue-scoped boundary. Every access rechecks current invitations; historical assignments, task bindings and client confirmation grant no access. Invitation writes and revocation lock the Issue. Project and external-provider authorization remain unchanged. `test_issue_explicit_invitations.py` and CI Chromium `issue-outside-people.spec.ts` cover invitation, assignment, revocation and denial across Issue/project boundaries.
+
+Native project Issue revocation also governs live discussion: delivery revalidates namespace-authenticated identities and captures the authorized connections for each frame, excluding sockets that join during validation. Former project members follow the same checks. Removing a participant who is no longer the assignee stops subsequent discussion delivery. Detail, delivery-list and discussion reads use current Issue authority; project catalogs and navigation are not prerequisites for opening the Issue. Invitations cannot restore access to inactive projects or parent workspaces, or invalid parent relationships.
+
+Current invitations or human assignment grant the same Issue management to outsiders, public readers and explicit Viewers; revocation restores their existing project authority. Management excludes starting or modifying agent executions. Archiving an Issue that cancels active executions checks execution authority before any mutation.
+
+Discussion writes, execution observations and history repair lock Issue → Run → activity. Execution truth still precedes activity projection, while replies and Runtime updates cannot invert the shared lock order. CI's existing `runtime_activity_mysql.py` covers concurrent legacy and Run sessions, terminal transitions, Runtime acceptance and owner rejection on real MySQL. Native Issue revocation does not change external providers' existing subscription admission policy or add provider HTTP requests for each streaming chunk.

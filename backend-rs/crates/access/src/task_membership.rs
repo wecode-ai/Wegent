@@ -1,5 +1,13 @@
 //! Approved, non-copied task membership queries.
 
+pub const fn member_access_statement() -> &'static str {
+    "SELECT 1 \nFROM resource_members \n\
+             WHERE resource_members.resource_type = 'Task' AND resource_members.resource_id = ? \
+             AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? \
+             AND resource_members.status = 'approved' AND resource_members.copied_resource_id = 0 \n\
+             LIMIT 1"
+}
+
 /// `is_member`'s approved member-row check (only reached when the requesting
 /// user is not the task owner).
 ///
@@ -14,14 +22,7 @@ where
     M: brz_mysql::Mysql,
 {
     let row: Option<i64> = mysql
-        .fetch_optional(
-            "SELECT 1 \nFROM resource_members \n\
-             WHERE resource_members.resource_type = 'Task' AND resource_members.resource_id = ? \
-             AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? \
-             AND resource_members.status = 'approved' AND resource_members.copied_resource_id = 0 \n\
-             LIMIT 1",
-            (task_id, user_id.to_string()),
-        )
+        .fetch_optional(member_access_statement(), (task_id, user_id.to_string()))
         .await?;
     Ok(approved_member_row_exists(row))
 }

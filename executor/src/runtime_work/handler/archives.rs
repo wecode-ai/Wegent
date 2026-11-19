@@ -22,6 +22,29 @@ where
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let cleanup = bool_field(&payload, "cleanupWorktree").unwrap_or(false);
+        let mut result = self.archive_task_only(payload).await?;
+        if cleanup && result["accepted"] == true {
+            // Resolve managed paths from the archived task, never from client-supplied paths.
+            // Shared worktrees remain until all linked tasks have been archived.
+            let task_id = result["taskId"].as_str().ok_or_else(|| {
+                AppIpcError::new(
+                    "archive_task_id_missing",
+                    "Archived task identity is missing",
+                )
+            })?;
+            if let Err(error) = Box::pin(
+                self.cleanup_worktrees_for_tasks(HashSet::from([task_id.to_owned()]), false),
+            )
+            .await
+            {
+                result["cleanupError"] = json!(error.message);
+            }
+        }
+        Ok(result)
+    }
+
+    async fn archive_task_only(&self, payload: Value) -> Result<Value, AppIpcError> {
         log_executor_event(
             "runtime task archive requested",
             &[
@@ -257,6 +280,14 @@ impl RuntimeWorkRpcHandler {
         link.continuable = true;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.work.changed",
+            &link.local_task_id,
+            &runtime_event_request_from_link(&link),
+            json!({"taskId":link.local_task_id,"archived":false}),
+        );
         Ok(task_action_success(&link))
     }
 
@@ -265,6 +296,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "name"))
             .ok_or_else(|| AppIpcError::new("bad_request", "title is required"))?;
         let mut link = self.task_link_from_payload(&payload, false).await?;
+        link = self
+            .store
+            .materialize_discovered_task(link)
+            .map_err(|error| AppIpcError::new("task_state_update_failed", error.to_string()))?
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was deleted before its rename")
+            })?;
         if let Some(thread_id) = link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -277,7 +315,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        link = self.commit_runtime_task_title(link, title);
+        link = self.commit_runtime_task_title(link, title, None)?;
 
         let mut response = task_action_success(&link);
         response["codexRename"] = json!({"stateUpdated": true});
@@ -295,6 +333,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
+        let projection = self.begin_goal_status_read(&link.local_task_id);
         match self
             .call_codex_thread_method("thread/goal/get", json!({"threadId": thread_id}))
             .await
@@ -305,10 +344,17 @@ impl RuntimeWorkRpcHandler {
                     .cloned()
                     .map(normalize_runtime_goal_timestamps)
                     .unwrap_or(Value::Null);
-                self.hydrate_runtime_task_goal_status(
-                    &link.local_task_id,
-                    string_field(&goal, "status"),
-                );
+                if !projection.apply_if_current(|| {
+                    self.hydrate_runtime_task_goal_status(
+                        &link.local_task_id,
+                        string_field(&goal, "status"),
+                    );
+                }) {
+                    log_executor_event(
+                        "runtime work Goal snapshot projection skipped",
+                        &[("local_task_id", link.local_task_id.clone())],
+                    );
+                }
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
                 Ok(response)
@@ -319,8 +365,32 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        let gate = self.task_send_gate(&format!("goal-status:{}", link.local_task_id));
+        let _guard = gate.lock().await;
+        let _mutation = self.begin_goal_status_mutation(&link.local_task_id);
+        let link = self
+            .store
+            .get_task(&link.local_task_id)
+            .ok_or_else(|| AppIpcError::new("not_found", "Conversation no longer exists"))?;
+        if let Some(expected) = payload.get("eventGoalExpected") {
+            let current = self
+                .get_task_goal(json!({"taskId":link.local_task_id}))
+                .await?;
+            if current["accepted"] != true
+                || current["goal"]["status"] != expected["status"]
+                || super::control::connection_events::goal_identity(&current["goal"])
+                    != super::control::connection_events::goal_identity(expected)
+            {
+                return Err(AppIpcError::new(
+                    "goal_changed",
+                    "The user changed the waiting Goal",
+                ));
+            }
+        }
         if is_claude_runtime(&link.runtime) {
             let goal = self.set_claude_goal(&link, &payload);
+            self.sync_runtime_task_goal_status(&link.local_task_id, string_field(&goal, "status"));
+            self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
             let mut response = task_action_success(&link);
             response["goal"] = goal;
             return Ok(response);
@@ -329,8 +399,14 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
+        if let Err(error) = self
+            .prepare_goal_model_route(&link, &thread_id, &payload)
+            .await
+        {
+            return Ok(task_action_failure(&link, error.message));
+        }
         let mut params = Map::new();
-        params.insert("threadId".to_owned(), Value::String(thread_id));
+        params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
             params.insert("objective".to_owned(), objective);
         }
@@ -350,6 +426,26 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                log_executor_event(
+                    "runtime Goal mutation result",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        (
+                            "thread_id",
+                            result["goal"]["threadId"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                        (
+                            "goal_status",
+                            result["goal"]["status"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                    ],
+                );
                 let goal = result
                     .get("goal")
                     .cloned()
@@ -359,26 +455,36 @@ impl RuntimeWorkRpcHandler {
                     &link.local_task_id,
                     string_field(&goal, "status"),
                 );
-                let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
-                    self.resume_goal_needing_attention(&link.local_task_id)
-                        .await
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
+                self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
+                if string_field(&goal, "status").as_deref() == Some("active") {
+                    self.journal_active_goal_turn(
+                        &link.local_task_id,
+                        self.active_codex_turn(&link.local_task_id).as_ref(),
+                    );
+                    // A successful activation must survive shutdown even when
+                    // no local send still owns the native continuation.
+                    self.persist_current_turn_state().await?;
+                    // Route preparation loaded the session before activation; native Goal owns continuation.
+                }
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
-                response["resumed"] = Value::Bool(resumed);
+                response["resumed"] = Value::Bool(false);
                 Ok(response)
             }
+            // A timed-out mutation can still activate the native Goal. Only an
+            // authoritative inactive Goal snapshot may release its route lease.
             Err(error) => Ok(task_action_failure(&link, error)),
         }
     }
 
     pub(super) async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        let gate = self.task_send_gate(&format!("goal-status:{}", link.local_task_id));
+        let _guard = gate.lock().await;
+        let _mutation = self.begin_goal_status_mutation(&link.local_task_id);
         if is_claude_runtime(&link.runtime) {
             let cleared = self.clear_claude_goal(&link);
+            self.sync_runtime_task_goal_status(&link.local_task_id, None);
             let mut response = task_action_success(&link);
             response["cleared"] = Value::Bool(cleared);
             return Ok(response);

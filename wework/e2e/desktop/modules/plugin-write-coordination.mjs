@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
@@ -24,6 +25,7 @@ export async function verifyPluginWriteCoordination({
   deviceProxy,
   packageProxy,
   localDeviceId,
+  executorHome,
   evidence,
   timeoutMs,
 }) {
@@ -65,6 +67,16 @@ export async function verifyPluginWriteCoordination({
     await assertSurfaces(control, item, present)
   }
 
+  await verifyCanonicalNameReactivation({
+    cloud,
+    control,
+    apiProxy,
+    executorHome,
+    refreshSurfaces,
+    evidence,
+    timeoutMs,
+  })
+
   const responsive = {
     ...(await publish('coordination-e2e-responsive')),
     slug: 'coordination-e2e-responsive',
@@ -72,11 +84,13 @@ export async function verifyPluginWriteCoordination({
   await openPlugin(control, responsive)
   await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await assertInstallButton(control, responsive)
-  let lease = await holdPluginWriteLease(cloud)
+  const independent = await publishIndependentPluginReleases(cloud, 'coordination-e2e-independent')
+  let lease = await holdPluginWriteLease(cloud, responsive)
   let pending
   try {
     pending = startInstall(responsive, localDeviceId)
     await lease.waitFor('contended')
+    await verifyIndependentPluginMutations(cloud, independent, evidence)
     const startedAt = Date.now()
     // Bypass Rust's liveness handler: this must share the Python ASGI loop
     // with the contended plugin install. The real lease remains held.
@@ -144,7 +158,7 @@ export async function verifyPluginWriteCoordination({
       'The real remote Executor did not materialize the committed install',
       timeoutMs
     )
-    lease = await holdPluginWriteLease(cloud)
+    lease = await holdPluginWriteLease(cloud, acknowledged)
     deviceProxy.pauseDeviceAcknowledgements(false)
     await lease.waitFor('contended')
     const response = await installResponse(pending)
@@ -212,6 +226,151 @@ export async function verifyPluginWriteCoordination({
     evidence,
     timeoutMs,
   })
+}
+
+function installedPluginKindName(catalogNamespace, slug) {
+  const digest = createHash('sha256')
+    .update(`${catalogNamespace}:${slug}`)
+    .digest('hex')
+    .slice(0, 10)
+  return `${slug.slice(0, 89)}-${digest}`
+}
+
+async function seedStaleInstallation({ cloud, item, staleIdentity }) {
+  const [plugin] = await cloud.queryDatabase(
+    'SELECT catalog_namespace, name, slug FROM plugins WHERE id = %s',
+    [item.pluginId]
+  )
+  assert.ok(plugin, `Published plugin ${item.pluginId} is missing`)
+  const kindName = installedPluginKindName(plugin.catalog_namespace, plugin.slug)
+  await cloud.executeDatabase(
+    'DELETE FROM kinds WHERE user_id = %s AND kind = %s AND name = %s AND namespace = %s',
+    [1, 'InstalledPlugin', kindName, 'default']
+  )
+  const stalePluginId = item.pluginId + 1000
+  const spec = {
+    revision: 7,
+    source: {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: plugin.name,
+      marketplace: 'wegent',
+    },
+    origin: 'market',
+    releaseId: item.releaseId,
+    desiredVersion: '0.0.1',
+    version: '0.0.1',
+    installState: 'installed',
+    enabled: false,
+    componentStates: { review: false },
+  }
+  if (staleIdentity === 'legacy_plugin_id') {
+    spec.pluginId = stalePluginId
+    spec.source.catalogItemId = String(stalePluginId)
+  }
+  const document = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: { name: kindName, namespace: 'default' },
+    spec,
+  }
+  await cloud.executeDatabase(
+    'INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, 0, NOW(), NOW())',
+    [1, 'InstalledPlugin', kindName, 'default', JSON.stringify(document)]
+  )
+  const [stale] = await cloud.queryDatabase(
+    'SELECT id, is_active, JSON_UNQUOTE(JSON_EXTRACT(json, "$.spec.pluginId")) AS pluginId FROM kinds WHERE user_id = %s AND kind = %s AND name = %s AND namespace = %s',
+    [1, 'InstalledPlugin', kindName, 'default']
+  )
+  assert.ok(stale, 'The stale installation fixture was not persisted')
+  assert.equal(stale.is_active, 0)
+  assert.equal(stale.pluginId, spec.pluginId == null ? null : String(spec.pluginId))
+  return { id: Number(stale.id), kindName }
+}
+
+async function verifyCanonicalNameReactivation({
+  cloud,
+  control,
+  apiProxy,
+  executorHome,
+  refreshSurfaces,
+  evidence,
+  timeoutMs,
+}) {
+  for (const staleIdentity of ['legacy_plugin_id', 'missing_plugin_id']) {
+    const suffix = staleIdentity.replaceAll('_', '-')
+    const slug = `coordination-e2e-${suffix}`
+    const item = {
+      ...(await cloud.publishPluginRelease({
+        slug,
+        version: '1.0.0',
+        skills: { [slug]: slug },
+      })),
+      slug,
+    }
+    const stale = await seedStaleInstallation({ cloud, item, staleIdentity })
+    await openPlugin(control, item)
+    await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
+    await assertInstallButton(control, item)
+    await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${item.pluginId}`))
+    await control.command('waitFor', testId('install-plugin-dialog-confirm'))
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    const response = await until(
+      () =>
+        apiProxy.requests.find(
+          request =>
+            request.method === 'POST' &&
+            request.path === `/api/plugins/marketplace/${item.pluginId}/install`
+        ),
+      request => request?.responseCompleted === true,
+      `${staleIdentity} marketplace install request did not complete`,
+      timeoutMs
+    )
+    assert.equal(response.status, 200)
+    const installed = await until(
+      () => accountPlugin(cloud, slug),
+      Boolean,
+      `${staleIdentity} did not install through the real marketplace UI`,
+      timeoutMs
+    )
+    item.installedId = Number(installed.metadata.labels.id)
+    assert.equal(item.installedId, stale.id, 'Install did not reuse the canonical Kind ID')
+    assert.equal(installed.spec.pluginId, item.pluginId)
+    assert.equal(installed.spec.releaseId, item.releaseId)
+    const runtime = await until(
+      () => materializedPlugin(executorHome, stale.id),
+      plugin => plugin?.version === '1.0.0',
+      `${staleIdentity} did not materialize the installed plugin version`,
+      timeoutMs
+    )
+    const devices = await cloud.queryDatabase(
+      'SELECT device_id, state, actual_release_id, desired_release_id FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND state = %s',
+      [1, stale.id, 'installed']
+    )
+    const device = devices.find(
+      row =>
+        Number(row.actual_release_id) === item.releaseId &&
+        Number(row.desired_release_id) === item.releaseId
+    )
+    assert.ok(device, `${staleIdentity} did not persist a synchronized device state`)
+    const marketplace = await pluginApi(
+      cloud,
+      `/plugins/marketplace/${item.pluginId}?device_id=${encodeURIComponent(device.device_id)}`
+    )
+    assert.equal(marketplace.installed, true)
+    assert.equal(marketplace.installedPluginId, stale.id)
+    await refreshSurfaces(item)
+    evidence.push({
+      case: 'marketplace-install-reuses-stale-kind',
+      staleIdentity,
+      pluginKey: slug,
+      kindId: stale.id,
+      kindName: stale.kindName,
+      deviceId: device.device_id,
+      actualReleaseId: device.actual_release_id,
+      runtimeVersion: runtime.version,
+    })
+  }
 }
 
 async function verifyLateInstallAcknowledgementRemoval({
@@ -356,4 +515,70 @@ export function hasLateInstallCorrection(log, installedId, deviceId) {
     )
   )
   return delivered >= 0 && retry > delivered
+}
+
+/** Account writes progress while another installation's lease is held. */
+export async function verifyIndependentPluginMutations(cloud, releases, evidence) {
+  let installedId
+  let removed = false
+  const call = async (path, method, body) => {
+    const response = await fetch(`${cloud.backendUrl}/api${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(8_000),
+    }).catch(async error => {
+      const waits = await cloud.queryDatabase(
+        'SELECT requested.OBJECT_NAME, requested.INDEX_NAME, requested.LOCK_MODE, requested.LOCK_DATA, requested.ENGINE_TRANSACTION_ID AS waiting_transaction, blocking.ENGINE_TRANSACTION_ID AS blocking_transaction FROM performance_schema.data_lock_waits AS waits JOIN performance_schema.data_locks AS requested ON requested.ENGINE_LOCK_ID=waits.REQUESTING_ENGINE_LOCK_ID JOIN performance_schema.data_locks AS blocking ON blocking.ENGINE_LOCK_ID=waits.BLOCKING_ENGINE_LOCK_ID'
+      )
+      console.error('[plugin-write-coordination] database lock waits', JSON.stringify(waits))
+      throw error
+    })
+    if (!response.ok) {
+      const failure = await response.json()
+      assert.fail(
+        `${method} ${path.split('?')[0]}: HTTP ${response.status} ${typeof failure.detail === 'string' ? failure.detail : 'request_failed'}`
+      )
+    }
+    return response.status === 204 ? null : response.json()
+  }
+  try {
+    const installed = await call(`/plugins/marketplace/${releases.latest.pluginId}/install`, 'POST')
+    installedId = Number(installed.plugin.metadata.labels.id)
+    const updated = await call(`/plugins/installed/${installedId}`, 'PUT', {
+      releaseId: releases.first.releaseId,
+    })
+    assert.equal(updated.spec.releaseId, releases.first.releaseId)
+    const configured = await call(`/plugins/installed/${installedId}`, 'PUT', { enabled: false })
+    assert.equal(configured.spec.enabled, false)
+    await call(`/plugins/installed/${installedId}`, 'DELETE')
+    removed = true
+    const rows = await cloud.queryDatabase(
+      "SELECT is_active, JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.installState')) AS state FROM kinds WHERE id=%s AND user_id=1 AND kind='InstalledPlugin' AND namespace='default'",
+      [installedId]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].is_active, 0)
+    assert.equal(rows[0].state, 'uninstalled')
+    evidence.push({
+      case: 'different-plugin-install-update-uninstall-before-lock-release',
+      installedId,
+    })
+  } finally {
+    if (installedId && !removed) await call(`/plugins/installed/${installedId}`, 'DELETE')
+  }
+}
+
+export async function publishIndependentPluginReleases(cloud, slug) {
+  const first = await cloud.publishPluginRelease({
+    slug,
+    version: '1.0.0',
+    skills: { [slug]: 'first' },
+  })
+  const latest = await cloud.publishPluginRelease({
+    slug,
+    version: '1.1.0',
+    skills: { [slug]: 'latest' },
+  })
+  return { first, latest }
 }

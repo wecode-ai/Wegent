@@ -1,6 +1,13 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
+import {
+  handlePersonalHomeModel,
+  openCollaborationIssueCreation,
+} from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
+import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -9,6 +16,12 @@ import { createProjectSpacePickerRegression } from '../modules/project-space-pic
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
+import { verifyCollaborationSettingsUx } from '../modules/collaboration-settings-ux.mjs'
+import {
+  handleProjectCreateGroupModel,
+  verifyPrivateProjectCreation,
+  verifyProjectCreateDialogUi,
+} from '../modules/project-create-dialog-regression.mjs'
 import {
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
@@ -28,7 +41,7 @@ import {
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
-import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
@@ -257,7 +270,13 @@ export function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
-    handleHttp: boardReplyModel.handleHttp,
+    async handleHttp(request, response, url) {
+      return (
+        (await handleProjectCreateGroupModel(request, response, url)) ||
+        (await handlePersonalHomeModel(request, response, url)) ||
+        boardReplyModel.handleHttp(request, response, url)
+      )
+    },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
@@ -276,7 +295,7 @@ export function createDesktopScenario({
       projectOnlyNavigation.setRestartDesktopApp(restart)
     },
 
-    async verify(control) {
+    verify: withLegacyBoardGrouping(async control => {
       assert.ok(owner?.id, 'The collaboration owner fixture is missing')
       assert.ok(cloudEnvironment, 'The real cloud environment was not attached to the scenario')
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
@@ -325,6 +344,10 @@ export function createDesktopScenario({
         await projectOnlyNavigation.verify(control, scoped)
         await capture(control, 'collaboration-shared-core-project-only-navigation.png')
 
+        await revealCollaborationSidebarElement(
+          control,
+          scoped('[data-testid="collaboration-primary-devices"]')
+        )
         await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
         const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
         await control.command('waitFor', deviceRow, { visible: true, timeoutMs: uiTimeoutMs })
@@ -469,6 +492,7 @@ export function createDesktopScenario({
         await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
           value: projectName,
         })
+        await verifyProjectCreateDialogUi(control, scoped)
         await control.command(
           'click',
           scoped('[data-testid="collaboration-project-create-advanced"]')
@@ -512,7 +536,9 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
+        await verifyPrivateProjectCreation({ control, scoped, request, workspace, project })
         await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
+        await verifyCollaborationSettingsUx(control, { scoped, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(
@@ -545,7 +571,7 @@ export function createDesktopScenario({
             plugins: [],
           }),
         })
-        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await openCollaborationIssueCreation(control, scoped)
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -575,7 +601,7 @@ export function createDesktopScenario({
           uiTimeoutMs,
           remoteDevice.id
         )
-        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await openCollaborationIssueCreation(control, scoped)
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -644,6 +670,7 @@ export function createDesktopScenario({
         await selectCollaborationProjectView(control, scoped('').trim(), 'board', uiTimeoutMs)
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
+        await showAllCollaborationIssues(control, scoped('').trim())
         await verifyPersonalBoardGrouping(control, {
           scoped,
           request,
@@ -651,6 +678,7 @@ export function createDesktopScenario({
           groupBy: 'priority',
         })
         await selectProjectBoardGrouping(control, scoped, 'status')
+        await showAllCollaborationIssues(control, scoped('').trim())
         await capture(control, 'collaboration-shared-core-personal-board-views.png')
         await verifyMultiTagBoardDrag(control, { scoped, request, project, uiTimeoutMs })
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
@@ -857,7 +885,7 @@ export function createDesktopScenario({
           text: '关联任务',
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
           text: '创建任务',
           timeoutMs: uiTimeoutMs,
         })
@@ -868,7 +896,7 @@ export function createDesktopScenario({
               scoped('[data-testid="cloud-todo-create-task"]')
             )
           ),
-          0,
+          1,
           'Personal task creation must have one entry in the linked Tasks section'
         )
         const personalTaskSnapshot = await snapshot(control)
@@ -908,7 +936,7 @@ export function createDesktopScenario({
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )
 
-        await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+        await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -945,6 +973,12 @@ export function createDesktopScenario({
 
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
+        )
+        await selectE2EModel(
+          control,
+          undefined,
+          undefined,
+          scoped('[data-testid="work-item-new-task-chat-panel"]')
         )
         linkedIssueTaskModel = boardReplyModel.holdLinkedIssueTask(project.id, issue)
         await control.command('press', taskComposer, { key: 'Enter' })
@@ -1036,7 +1070,7 @@ export function createDesktopScenario({
           }
         }
       }
-    },
+    }),
 
     async cleanup() {
       linkedIssueTaskModel?.release()

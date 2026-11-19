@@ -4,7 +4,6 @@
 
 import io
 import logging
-from dataclasses import dataclass
 from urllib.parse import quote
 
 from fastapi import (
@@ -20,17 +19,19 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response, StreamingResponse
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.marketplace_upload import read_marketplace_package
+from app.api.plugin_submission_auth import (
+    PluginSubmissionAuth,
+    _ensure_submission_matches_task_token,
+    _get_plugin_submission_auth,
+)
 from app.core import security
 from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.config import settings
 from app.models.plugin_marketplace import PluginDeviceInstallation
-from app.models.subtask import SubtaskStatus
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import (
@@ -55,7 +56,6 @@ from app.schemas.installed_plugin import (
     PluginSubmissionInitResponse,
     PluginSubmissionItem,
 )
-from app.services.auth.task_token import TaskTokenInfo, verify_task_token
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.plugin_reconciliation import reconcile_device_plugins
 from app.services.device.plugin_removal_sync import sync_pending_plugin_removals
@@ -64,11 +64,15 @@ from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
     verify_marketplace_submission_upload_token,
 )
-from app.services.plugin_device_identity import resolve_plugin_runtime_device_id
+from app.services.plugin_device_identity import (
+    plugin_device_id,
+    resolve_plugin_runtime_device_id,
+)
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_device_sync import (
+    sync_cloud_plugins_after_local_change,
     sync_global_capabilities,
     sync_plugin_after_change,
     sync_plugin_to_other_devices_after_change,
@@ -79,6 +83,7 @@ from app.services.plugin_installation_operations import (
     uninstall_account_plugin,
     update_account_plugin,
 )
+from app.services.plugin_local_sync import mutate_local_plugin, validate_local_request
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
@@ -86,95 +91,11 @@ from app.services.plugin_write_coordination import (
     get_plugin_db,
 )
 from app.services.plugin_write_operations import run_plugin_operation
-from app.stores.tasks import subtask_store, task_store
 from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
 PLUGIN_UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
-ACTIVE_PLUGIN_SUBMISSION_SUBTASK_STATUSES = (
-    SubtaskStatus.PENDING,
-    SubtaskStatus.RUNNING,
-    SubtaskStatus.PENDING_CONFIRMATION,
-)
-
-
-@dataclass(frozen=True)
-class PluginSubmissionAuth:
-    user: User
-    task_token: TaskTokenInfo | None = None
-
-
-def _task_token_from_authorization(authorization: str) -> TaskTokenInfo | None:
-    token = security.extract_authorization_token(authorization)
-    if not token:
-        return None
-    try:
-        # Unverified claims only select the parser; verify_task_token authenticates it.
-        if jwt.get_unverified_claims(token).get("type") != "task_token":
-            return None
-    except JWTError:
-        return None
-    return verify_task_token(token)
-
-
-def _get_plugin_submission_auth(
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-) -> PluginSubmissionAuth:
-    """Restrict task-token submission access to its live Task execution."""
-    if request.headers.get("X-API-Key", "").strip():
-        return PluginSubmissionAuth(user=current_user)
-
-    token_info = _task_token_from_authorization(
-        request.headers.get("Authorization", "")
-    )
-    if token_info is None:
-        return PluginSubmissionAuth(user=current_user)
-
-    task = task_store.get_by_id_for_update(
-        db,
-        task_id=token_info.task_id,
-        owner_user_id=current_user.id,
-    )
-    subtask = subtask_store.get_basic_by_id_for_update(
-        db,
-        subtask_id=token_info.subtask_id,
-        owner_user_id=current_user.id,
-    )
-    if (
-        task is None
-        or task.kind != "Task"
-        or task.is_active not in TaskResource.is_active_query()
-        or subtask is None
-        or subtask.task_id != token_info.task_id
-        or subtask.user_id != current_user.id
-        or subtask.status not in ACTIVE_PLUGIN_SUBMISSION_SUBTASK_STATUSES
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Task token is no longer active",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return PluginSubmissionAuth(user=current_user, task_token=token_info)
-
-
-def _ensure_submission_matches_task_token(
-    db: Session,
-    *,
-    auth: PluginSubmissionAuth,
-    submission_id: int,
-) -> None:
-    if auth.task_token is None:
-        return
-    plugin_marketplace_service.ensure_submission_task_binding(
-        db,
-        user_id=auth.user.id,
-        submission_id=submission_id,
-        task_id=auth.task_token.task_id,
-        subtask_id=auth.task_token.subtask_id,
-    )
 
 
 def _get_plugin_sync_user(
@@ -577,10 +498,44 @@ async def install_marketplace_plugin(
     background_tasks: BackgroundTasks,
     release_id: int | None = None,
     device_id: str | None = None,
+    source_device_id: str | None = None,
+    delivery_mode: str | None = None,
+    local_instance_id: str | None = None,
+    local_intent_order: int | None = None,
+    operation_id: str | None = None,
+    response: Response = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Save the account install and synchronize only the requesting device."""
+    if validate_local_request(delivery_mode, local_instance_id, operation_id):
+        db.close()
+        result = await run_plugin_operation(
+            mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
+            user_id=current_user.id,
+            instance_id=local_instance_id,
+            intent_order=local_intent_order,
+            operation_id=operation_id,
+            source_device_id=source_device_id,
+            action="install",
+            target_id=marketplace_id,
+            payload={"releaseId": release_id},
+        )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            int(result["metadata"]["labels"]["id"]),
+            source_device_id,
+        )
+        if response is not None:
+            response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
+            response.headers["X-Plugin-Operation-Id"] = operation_id
+            response.headers["X-Plugin-Intent-Order"] = str(local_intent_order)
+        return PluginMarketplaceInstallResponse(
+            plugin=InstalledPlugin.model_validate(result)
+        )
     user_id = current_user.id
     db.close()
     plugin = await run_plugin_operation(
@@ -618,10 +573,43 @@ async def ensure_builtin_plugin_installed(
     plugin_key: str,
     request: BuiltinPluginInstallRequest,
     background_tasks: BackgroundTasks,
+    source_device_id: str | None = None,
+    delivery_mode: str | None = None,
+    local_instance_id: str | None = None,
+    local_intent_order: int | None = None,
+    operation_id: str | None = None,
+    response: Response = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a bundled plugin from the v2 marketplace catalog."""
+    if validate_local_request(delivery_mode, local_instance_id, operation_id):
+        db.close()
+        result = await run_plugin_operation(
+            mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
+            user_id=current_user.id,
+            instance_id=local_instance_id,
+            intent_order=local_intent_order,
+            operation_id=operation_id,
+            source_device_id=source_device_id,
+            action="ensure_builtin",
+            target_id=plugin_key,
+        )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            int(result["metadata"]["labels"]["id"]),
+            source_device_id,
+        )
+        if response is not None:
+            response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
+            response.headers["X-Plugin-Operation-Id"] = operation_id
+            response.headers["X-Plugin-Intent-Order"] = str(local_intent_order)
+        return PluginMarketplaceInstallResponse(
+            plugin=InstalledPlugin.model_validate(result)
+        )
     user_id = current_user.id
     db.close()
     plugin = await run_plugin_operation(
@@ -666,6 +654,7 @@ async def _read_plugin_upload(file: UploadFile) -> bytes:
 @router.get("/installed/{installed_id}/download")
 def download_installed_plugin(
     installed_id: int,
+    expected_release_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> StreamingResponse:
@@ -673,11 +662,18 @@ def download_installed_plugin(
     try:
         package_bytes, filename = (
             plugin_marketplace_service.release_package_for_install(
-                db, user_id=current_user.id, installed_id=installed_id
+                db,
+                user_id=current_user.id,
+                installed_id=installed_id,
+                **(
+                    {"expected_release_id": expected_release_id}
+                    if expected_release_id is not None
+                    else {}
+                ),
             )
         )
     except HTTPException as exc:
-        if exc.status_code != 404:
+        if exc.status_code != 404 or expected_release_id is not None:
             raise
         package_bytes, filename = installed_plugin_service.package_data_for_download(
             db=db,
@@ -704,10 +700,42 @@ async def update_installed_plugin(
     request: InstalledPluginUpdateRequest,
     background_tasks: BackgroundTasks,
     device_id: str | None = None,
+    source_device_id: str | None = None,
+    delivery_mode: str | None = None,
+    local_instance_id: str | None = None,
+    local_intent_order: int | None = None,
+    operation_id: str | None = None,
+    response: Response = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Update an installed plugin's runtime state, metadata, or update policy."""
+    if validate_local_request(delivery_mode, local_instance_id, operation_id):
+        db.close()
+        result = await run_plugin_operation(
+            mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
+            user_id=current_user.id,
+            instance_id=local_instance_id,
+            intent_order=local_intent_order,
+            operation_id=operation_id,
+            source_device_id=source_device_id,
+            action="update",
+            target_id=installed_id,
+            payload=request.model_dump(mode="json", exclude_unset=True),
+        )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            int(result["metadata"]["labels"]["id"]),
+            source_device_id,
+        )
+        if response is not None:
+            response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
+            response.headers["X-Plugin-Operation-Id"] = operation_id
+            response.headers["X-Plugin-Intent-Order"] = str(local_intent_order)
+        return InstalledPlugin.model_validate(result)
     user_id = current_user.id
     db.close()
     installed = await run_plugin_operation(
@@ -746,16 +774,67 @@ async def uninstall_installed_plugin(
     installed_id: int,
     background_tasks: BackgroundTasks,
     device_id: str | None = None,
+    source_device_id: str | None = None,
+    delivery_mode: str | None = None,
+    local_instance_id: str | None = None,
+    local_intent_order: int | None = None,
+    operation_id: str | None = None,
+    response: Response = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
     """Commit account removal before asynchronously reconciling devices."""
+    if validate_local_request(delivery_mode, local_instance_id, operation_id):
+        db.close()
+        result = await run_plugin_operation(
+            mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
+            user_id=current_user.id,
+            instance_id=local_instance_id,
+            intent_order=local_intent_order,
+            operation_id=operation_id,
+            source_device_id=source_device_id,
+            action="uninstall",
+            target_id=installed_id,
+            payload=None,
+        )
+        background_tasks.add_task(
+            sync_cloud_plugins_after_local_change,
+            current_user.id,
+            installed_id,
+            source_device_id,
+        )
+        if response is not None:
+            response.headers["X-Plugin-Delivery-Mode"] = "local_pull_v1"
+            response.headers["X-Plugin-Operation-Id"] = operation_id
+            response.headers["X-Plugin-Intent-Order"] = str(local_intent_order)
+        return None
     user_id = current_user.id
+    source = None
+    if source_device_id is not None:
+        source = resolve_plugin_runtime_device_id(
+            db, user_id=user_id, device_id=source_device_id
+        )
+        target = (
+            resolve_plugin_runtime_device_id(db, user_id=user_id, device_id=device_id)
+            if device_id
+            else None
+        )
+        if source is None or source != target:
+            raise HTTPException(status_code=404, detail="Device not found")
+        source = plugin_device_id(db, user_id, source_device_id)
     db.close()
     await run_plugin_operation(
         uninstall_account_plugin, user_id=user_id, installed_id=installed_id
     )
-    background_tasks.add_task(sync_pending_plugin_removals, user_id)
+    if source is None:
+        background_tasks.add_task(sync_pending_plugin_removals, user_id)
+    else:
+        # The source owns its immediate ACK; durable work survives a lost caller.
+        background_tasks.add_task(
+            sync_pending_plugin_removals, user_id, exclude_device_id=source
+        )
 
 
 @router.post(

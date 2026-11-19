@@ -7,7 +7,7 @@ use std::{
     future::{pending, Future},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -33,7 +33,9 @@ use crate::{
         session_gateway::start_session_gateway,
         workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     },
-    logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
+    logging::{
+        format_executor_log, log_executor_event, write_executor_error_line, write_executor_log_line,
+    },
     protocol::ExecutionRequest,
     runtime_work::RuntimeWorkRpcHandler,
     server::TaskRunner,
@@ -45,8 +47,10 @@ mod client;
 mod config;
 mod connection;
 mod connection_controller;
+mod connection_service;
 mod extension;
 mod handlers;
+mod runtime_events;
 pub(crate) mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
@@ -184,12 +188,14 @@ pub struct LocalBackendRunner<
     cancellations: LocalCancellationRegistry,
     runtime_event_forwarder: Option<JoinHandle<()>>,
     runtime_event_hub: Option<ExecutorEventHub>,
+    runtime_event_cursor: Arc<AtomicU64>,
     connection_status: Arc<AtomicBool>,
     connection_epoch: Arc<Mutex<u64>>,
     runtime_pull_lock: Arc<AsyncMutex<()>>,
     runtime_pull_pending: Arc<AtomicBool>,
     /// Latest backend-assigned record route id for this Runtime registration.
     device_route_id: Arc<Mutex<Option<String>>>,
+    external_plugin_auth_broker: bool,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -233,15 +239,18 @@ where
         let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
         event_hub.ensure_started();
+        let device_route_id = Arc::new(Mutex::new(None));
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-            RuntimeWorkRpcHandler::with_event_sender(
+            RuntimeWorkRpcHandler::with_event_sender_and_backend_connection(
                 config.device_id.clone(),
                 resolve_codex_binary(),
                 runtime_event_tx,
+                Some(Arc::new(Mutex::new(connection_snapshot_from_config(
+                    &config,
+                )))),
+                Some(device_route_id.clone()),
             )
-            .with_backend_connection(Arc::new(Mutex::new(
-                connection_snapshot_from_config(&config),
-            ))),
+            .with_connection_observation_device_type(&config.device_type),
         );
         Self::new_with_runtime_work_handler(
             config,
@@ -250,6 +259,7 @@ where
             event_hub,
             session_gateway_profile,
         )
+        .with_device_route_id_slot(device_route_id)
     }
 
     pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
@@ -357,12 +367,24 @@ where
             cancellations: LocalCancellationRegistry::default(),
             runtime_event_forwarder: None,
             runtime_event_hub: None,
+            runtime_event_cursor: Arc::new(AtomicU64::new(0)),
             connection_status: Arc::new(AtomicBool::new(false)),
             connection_epoch: Arc::new(Mutex::new(0)),
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
             runtime_pull_pending: Arc::new(AtomicBool::new(false)),
             device_route_id: Arc::new(Mutex::new(None)),
+            external_plugin_auth_broker: false,
         }
+    }
+
+    pub(crate) fn with_external_plugin_auth_broker(mut self) -> Self {
+        self.external_plugin_auth_broker = true;
+        self
+    }
+
+    pub(crate) fn with_runtime_event_cursor(mut self, cursor: Arc<AtomicU64>) -> Self {
+        self.runtime_event_cursor = cursor;
+        self
     }
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
@@ -437,84 +459,6 @@ where
         self.cancellations.snapshot()
     }
 
-    fn start_runtime_event_forwarder(&mut self, event_hub: ExecutorEventHub) {
-        if let Some(forwarder) = self.runtime_event_forwarder.take() {
-            forwarder.abort();
-        }
-        let client = self.client.clone();
-        let connection_status = Arc::clone(&self.connection_status);
-        self.runtime_event_forwarder = Some(tokio::spawn(async move {
-            let mut delivered_sequence = 0;
-            loop {
-                while !connection_status.load(Ordering::Acquire) {
-                    sleep(RUNTIME_EVENT_CONNECTION_POLL_INTERVAL).await;
-                }
-                let mut subscription = event_hub.subscribe_after(delivered_sequence);
-                let mut reconnect = false;
-                for event in subscription.replay.drain(..) {
-                    if !connection_status.load(Ordering::Acquire) {
-                        reconnect = true;
-                        break;
-                    }
-                    match client
-                        .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
-                        .await
-                    {
-                        Ok(()) => {
-                            delivered_sequence =
-                                event_sequence(&event).unwrap_or(delivered_sequence);
-                        }
-                        Err(error) => {
-                            connection_status.store(false, Ordering::Release);
-                            write_executor_error_line(&format_executor_log(
-                                "runtime event relay paused until reconnect",
-                                &[("error", error)],
-                            ));
-                            reconnect = true;
-                            break;
-                        }
-                    }
-                }
-                if reconnect {
-                    while connection_status.load(Ordering::Acquire) {
-                        sleep(RUNTIME_EVENT_CONNECTION_POLL_INTERVAL).await;
-                    }
-                    continue;
-                }
-                delivered_sequence = delivered_sequence.max(subscription.resume_after);
-                loop {
-                    if !connection_status.load(Ordering::Acquire) {
-                        break;
-                    }
-                    match subscription.receiver.recv().await {
-                        Ok(event) => {
-                            let sequence = event_sequence(&event).unwrap_or(delivered_sequence);
-                            if sequence <= delivered_sequence {
-                                continue;
-                            }
-                            match client
-                                .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
-                                .await
-                            {
-                                Ok(()) => delivered_sequence = sequence,
-                                Err(error) => {
-                                    connection_status.store(false, Ordering::Release);
-                                    write_executor_error_line(&format_executor_log(
-                                        "runtime event relay paused until reconnect",
-                                        &[("error", error)],
-                                    ));
-                                    break;
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => break,
-                        Err(broadcast::error::RecvError::Closed) => return,
-                    }
-                }
-            }
-        }));
-    }
-
     pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
         self.cancellations.is_cancel_requested(task_id, subtask_id)
     }
@@ -542,6 +486,11 @@ where
             DEVICE_SYNC_CAPABILITIES_EVENT,
             self.capability_sync_handler(),
         );
+        if matches!(self.client.config.device_type.as_str(), "cloud" | "remote") {
+            self.client
+                .transport
+                .on("plugin.auth.changed", self.plugin_auth_changed_handler());
+        }
         self.client.transport.on(
             DEVICE_START_TERMINAL_SESSION_EVENT,
             self.session_start_handler(SessionType::Terminal),
@@ -863,15 +812,26 @@ pub async fn serve_local_app_endpoint(
     token: &str,
     owner_token: &str,
 ) -> Result<(), String> {
-    local_app_ipc_server(config)
-        .await?
+    let started = Instant::now();
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[("phase", "server_initialization_started".to_owned())],
+    );
+    let server = local_app_ipc_server(config).await?;
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "server_initialized".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
+    server
         .serve_local_endpoint(endpoint, token, owner_token)
         .await
 }
 
 async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, String> {
-    crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    let started = Instant::now();
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
@@ -886,8 +846,16 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
             app_ipc_device_id.clone(),
             resolve_codex_binary(),
             runtime_event_tx.clone(),
-        )
-        .with_backend_connection(backend_connection_snapshot.clone()),
+            Some(backend_connection_snapshot.clone()),
+            Some(device_route_id.clone()),
+        ),
+    );
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "runtime_handler_ready".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
     );
     let backend_connection = LocalBackendConnectionController::start_with_runtime(
         config,
@@ -897,20 +865,38 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
         device_route_id.clone(),
     )
     .await;
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "backend_controller_ready".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
     let server = AppIpcServer::new()
         .with_device_id(app_ipc_device_id)
         .with_runtime_instance_id(runtime_instance_id)
         .with_device_route_id_slot(device_route_id)
         .with_shared_runtime_work_handler(runtime_work_handler, runtime_event_tx, event_hub)
         .with_backend_connection_handler(backend_connection);
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "server_assembled".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
     Ok(server)
 }
 
 pub async fn serve_remote_local_backend(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config);
-    LocalBackendRunner::new(backend_config, SocketIoTransport::default())
-        .run_forever()
-        .await
+    let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
+    let service = connection_service::supervise(&runner);
+    tokio::pin!(service);
+    tokio::select! {
+        result = runner.run_forever() => result,
+        _ = &mut service => unreachable!("connection supervision stays available for retries"),
+    }
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {

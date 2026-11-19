@@ -7,7 +7,7 @@ import {
   isAsyncRequestUserInputPayload,
 } from '@wegent/chat-core/runtime-user-input'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -21,7 +21,12 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { isSameModelSelection } from '@/lib/model-ui'
+import {
+  resolvePreparingAttachments,
+  localRuntimeAttachments,
+  remoteAttachmentIds,
+} from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -68,6 +73,7 @@ import type {
   CreateTemporaryRuntimeTaskOptions,
   RuntimePaneActionOptions,
   RuntimePaneGuidanceResult,
+  RuntimeTaskModelSelectionControls,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
 import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
@@ -155,10 +161,14 @@ export async function prepareRuntimeAttachmentsForDevice(
   attachments: Attachment[] = [],
   uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
 ): Promise<RuntimeAttachmentTransport> {
+  attachments = await resolvePreparingAttachments(attachments, filename =>
+    i18n.t('workbench.attachment_preparation_unavailable', { filename })
+  )
+  attachmentIds = [...new Set([...attachmentIds, ...remoteAttachmentIds(attachments)])]
   const device = devices.find(item => item.device_id === deviceId)
   const usesRemoteFilesystem = device?.device_type === 'cloud' || device?.device_type === 'remote'
   if (!usesRemoteFilesystem || attachments.length === 0) {
-    return { attachmentIds, attachments }
+    return { attachmentIds, attachments: localRuntimeAttachments(attachments) }
   }
 
   return prepareCloudAttachments(attachments, uploadLocalAttachmentToCloud, attachmentIds)
@@ -220,6 +230,9 @@ interface UseWorkbenchRuntimeMessagingOptions {
   isOptionsLocked: boolean
   attachmentSelection: RuntimeMessagingAttachmentSelection
   modelSelection: RuntimeMessagingModelSelection
+  resolveRuntimeTaskModelSelection: (
+    address: RuntimeTaskAddress
+  ) => RuntimeTaskModelSelectionControls
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
 }
@@ -348,9 +361,11 @@ export function useWorkbenchRuntimeMessaging({
   isOptionsLocked,
   attachmentSelection,
   modelSelection,
+  resolveRuntimeTaskModelSelection,
   skillSelection,
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
+  const sendAttemptsRef = useRef(new Map<string, number>())
   const appPreferences = useAppPreferencesState()
   const preferences = appPreferences?.preferences
   const reportError = useCallback(
@@ -372,10 +387,45 @@ export function useWorkbenchRuntimeMessaging({
     [reportError]
   )
 
+  // Sends without explicit model fields (for example todo continuations)
+  // otherwise fall back to the saved task selection from runtime work, which
+  // may be a model the user already replaced in the pane. Prefer the pane's
+  // ready selection before the continuation resolves the saved one.
+  const applyReadyRuntimeTaskModel = useCallback(
+    (request: RuntimeSendRequest): RuntimeSendRequest => {
+      const userInputResponse =
+        request.requestUserInputResponse ?? request.request_user_input_response
+      if (userInputResponse || request.modelId || request.modelSelection?.modelName) {
+        return request
+      }
+      const selection = resolveRuntimeTaskModelSelection(request.address)
+      if (!selection.selectionReady || !selection.selectedModel) return request
+      const requestOptions = request.modelOptions ?? {}
+      // Downstream readers prefer the canonical key, and alias normalization
+      // does not rename keys, so promote an explicit request alias.
+      const requestModeAlias = requestOptions.collaboration_mode
+      const requestCollaborationMode: ModelOptions =
+        requestModeAlias && !requestOptions.collaborationMode
+          ? { collaborationMode: requestModeAlias }
+          : {}
+      return {
+        ...request,
+        ...selectedModelExecutionFields(selection.selectedModel, {
+          ...selection.selectedModelOptions,
+          ...requestOptions,
+          ...requestCollaborationMode,
+        }),
+      }
+    },
+    [resolveRuntimeTaskModelSelection]
+  )
+
   const prepareRuntimeSendRequest = useCallback(
     async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
-      const request = await prepareRuntimeContinuationModel(input, state.runtimeWork, () =>
-        executorClient.runtime.listRuntimeWork()
+      const request = await prepareRuntimeContinuationModel(
+        applyReadyRuntimeTaskModel(input),
+        state.runtimeWork,
+        () => executorClient.runtime.listRuntimeWork()
       )
       if (!request.attachments?.length) return request
       const prepared = await prepareRuntimeAttachmentsForDevice(
@@ -391,23 +441,45 @@ export function useWorkbenchRuntimeMessaging({
         attachments: prepared.attachments,
       }
     },
-    [executorClient, services.attachmentApi, state.devices, state.runtimeWork]
+    [
+      applyReadyRuntimeTaskModel,
+      executorClient,
+      services.attachmentApi,
+      state.devices,
+      state.runtimeWork,
+    ]
   )
 
   const blockRuntimeSendForUnavailableModel = useCallback(
     (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): boolean => {
-      const isCurrentTask =
-        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
       if (
-        !isCurrentTask ||
-        (modelSelection.isSelectionReady !== false &&
-          modelSelection.isConfiguredModelUnavailable !== true) ||
         isAsyncRequestUserInputPayload(
           pendingRequestUserInputPayload(getRuntimeConversationMessages(address))
         )
       ) {
         // Async replies must not depend on composer discovery. Destination model
         // resolution and native validation still apply to the continuation.
+        return false
+      }
+      const taskSelection = resolveRuntimeTaskModelSelection(address)
+      // A ready per-task selection (including a replacement chosen in the pane)
+      // is authoritative. Otherwise keep the legacy active-scope guard below.
+      if (taskSelection.selectionReady) return false
+      const isCurrentTask =
+        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+      if (!isCurrentTask) return false
+      // Catalog-confirmed compatibility-disabled models are unusable even when
+      // the active-scope selection state does not track compatibility. Other
+      // not-ready states (catalog loading, stale catalogs) stay sendable.
+      const resolvedModel = taskSelection.selectedModel
+      const resolvedCatalogModel = resolvedModel
+        ? modelSelection.models.find(model => isSameModelSelection(model, resolvedModel))
+        : null
+      if (
+        !resolvedCatalogModel?.compatibilityDisabled &&
+        modelSelection.isSelectionReady !== false &&
+        modelSelection.isConfiguredModelUnavailable !== true
+      ) {
         return false
       }
       reportSendBlocked(
@@ -425,7 +497,9 @@ export function useWorkbenchRuntimeMessaging({
     [
       modelSelection.isConfiguredModelUnavailable,
       modelSelection.isSelectionReady,
+      modelSelection.models,
       reportSendBlocked,
+      resolveRuntimeTaskModelSelection,
       state.currentRuntimeTask,
     ]
   )
@@ -457,13 +531,36 @@ export function useWorkbenchRuntimeMessaging({
             message: optimisticUserMessage,
           })
         }
-        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
-        if (!isCurrent()) return false
         if (!options?.silentBusyRetry && !userInputResponse) {
-          lifecycleStore.sendRequested(outboundRequest.address)
+          lifecycleStore.sendRequested(request.address)
           sendRequested = true
         }
+        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
+        if (!isCurrent()) return false
+        const sendAttempt = advanceRuntimeSendAttempt(
+          sendAttemptsRef.current,
+          outboundRequest.address
+        )
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
+        if (!response.accepted && response.code === 'cancelled') {
+          if (optimisticUserMessage) {
+            removeRuntimeConversationTurn(outboundRequest.address, {
+              clientUserMessageId: optimisticUserMessage.id,
+            })
+          }
+          if (isLatestRuntimeSendAttempt(sendAttemptsRef.current, sendAttempt)) {
+            lifecycleStore.stopRequested(outboundRequest.address)
+            lifecycleStore.turnSettled(outboundRequest.address, undefined, 'cancelled')
+            lifecycleStore.executorSettled(outboundRequest.address)
+          }
+          await refreshWorkLists().catch(error => {
+            console.warn('[Wework] Cancelled stale send but work list refresh failed', {
+              taskId: outboundRequest.address.taskId,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          })
+          return isCurrent()
+        }
         if (!isCurrent()) return false
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
@@ -750,7 +847,11 @@ export function useWorkbenchRuntimeMessaging({
   const cancelRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
       try {
-        const ack = await executorClient.runtime.cancelRuntimeTask(address)
+        const ack = await executorClient.runtime.cancelRuntimeTask(
+          options?.pendingClientUserMessageId
+            ? { ...address, clientUserMessageId: options.pendingClientUserMessageId }
+            : address
+        )
         if (!ack.accepted) {
           reportError(normalizeGuidanceError(ack.error ?? '取消当前回复失败'), options)
           return false
@@ -972,12 +1073,14 @@ export function useWorkbenchRuntimeMessaging({
       const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
       const friendlyTitle =
         runtime === 'codex'
-          ? friendlyTitleForTask(
-              preferences,
-              modelSelection.models,
-              executionModel,
-              options?.ephemeral
-            )
+          ? typeof options?.origin?.generatedIssueTitle === 'string' && !options?.ephemeral
+            ? titleModelForGeneration(preferences, modelSelection.models, executionModel)
+            : friendlyTitleForTask(
+                preferences,
+                modelSelection.models,
+                executionModel,
+                options?.ephemeral
+              )
           : null
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
@@ -1145,24 +1248,9 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      let preparedAttachments: RuntimeAttachmentTransport
-      try {
-        preparedAttachments = await prepareRuntimeAttachmentsForDevice(
-          optimisticDeviceId,
-          state.devices,
-          intent.attachmentIds,
-          intent.attachments,
-          services.attachmentApi?.uploadLocalAttachmentToCloud
-        )
-      } catch (error) {
-        reportSendBlocked(
-          error instanceof Error
-            ? error.message
-            : i18n.t('workbench.cloud_attachment_upload_failed'),
-          undefined,
-          options
-        )
-        return false
+      const preparedAttachments: RuntimeAttachmentTransport = {
+        attachmentIds: intent.attachmentIds ?? [],
+        attachments: intent.attachments ?? [],
       }
 
       const targetDevice = findWorkbenchDevice(state.devices, optimisticDeviceId)
@@ -1306,6 +1394,15 @@ export function useWorkbenchRuntimeMessaging({
       // Start the primary request before optimistic navigation mounts task readers.
       // Presentation work must never leave a visible pending task without a runtime request.
       const createResponsePromise = (async () => {
+        const prepared = await prepareRuntimeAttachmentsForDevice(
+          optimisticDeviceId,
+          state.devices,
+          intent.attachmentIds,
+          intent.attachments,
+          services.attachmentApi?.uploadLocalAttachmentToCloud
+        )
+        createRequest.attachmentIds = prepared.attachmentIds
+        createRequest.attachments = prepared.attachments
         const worktreeCreationDelayMs = Number(
           getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
             import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??
@@ -1396,6 +1493,9 @@ export function useWorkbenchRuntimeMessaging({
             ? { taskId: response.taskId || optimisticAddress.taskId }
             : {}),
         }
+        const resolvedSameIdentity =
+          optimisticAddress.deviceId === address.deviceId &&
+          optimisticAddress.taskId === address.taskId
         debugRuntimeCreateFlow('create-resolved', {
           taskId: address.taskId,
           runtime,
@@ -1403,12 +1503,11 @@ export function useWorkbenchRuntimeMessaging({
           accepted: response.accepted,
           optimisticAddress: runtimeAddressLog(optimisticAddress),
           resolvedAddress: runtimeAddressLog(address),
-          sameIdentity: isSameRuntimeTaskIdentity(optimisticAddress, address),
+          sameIdentity: resolvedSameIdentity,
           responseHasWorkspacePath: Boolean(response.workspacePath),
           responseHasTaskId: Boolean(response.taskId),
         })
         const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
-        const resolvedSameIdentity = isSameRuntimeTaskIdentity(optimisticAddress, address)
         const optimisticTaskStillSelected = runtimeTasks.isCurrentRuntimeTask(optimisticAddress)
         if (!resolvedSameIdentity) {
           dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
@@ -1796,15 +1895,16 @@ export function useWorkbenchRuntimeMessaging({
       options: CreateProjectRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
       const message = input.trim()
-      if (!message) {
-        reportSendBlocked('请输入内容后再发送', undefined, options)
+      const selectedAttachments = options.attachments ?? attachmentSelection.attachments
+      if (!message && selectedAttachments.length === 0) {
+        reportSendBlocked('请输入内容或添加附件后再发送', undefined, options)
         return false
       }
 
       const taskRequest = options.taskRequest
       const prepared = buildSendPayload(
         message,
-        options.attachments,
+        selectedAttachments,
         options.project,
         taskRequest?.additionalSkills ? false : undefined,
         taskRequest?.additionalSkills,
@@ -1912,7 +2012,13 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane: false,
       })
     },
-    [buildSendPayload, reportSendBlocked, sendPreparedRuntimeMessage, state.devices]
+    [
+      attachmentSelection.attachments,
+      buildSendPayload,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.devices,
+    ]
   )
 
   const loadTurnFileChangesDiff = useCallback(
@@ -2135,6 +2241,28 @@ export function applyExecutionModelOverride(
     next.modelOptions = executionModel.modelOptions
   }
   return next
+}
+
+interface RuntimeSendAttempt {
+  key: string
+  version: number
+}
+
+function advanceRuntimeSendAttempt(
+  attempts: Map<string, number>,
+  address: RuntimeTaskAddress
+): RuntimeSendAttempt {
+  const key = `${address.deviceId}\u0000${address.taskId}`
+  const version = (attempts.get(key) ?? 0) + 1
+  attempts.set(key, version)
+  return { key, version }
+}
+
+function isLatestRuntimeSendAttempt(
+  attempts: Map<string, number>,
+  attempt: RuntimeSendAttempt
+): boolean {
+  return attempts.get(attempt.key) === attempt.version
 }
 
 function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown> {

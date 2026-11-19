@@ -1,3 +1,4 @@
+import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   openStandInActivity,
   openStandInSettings,
@@ -34,7 +35,7 @@ import {
 } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身交互-${process.pid}`
+const PROJECT = `助理交互-${process.pid}`
 const MARKER = `STAND_IN_ASSIGNED_${process.pid}`
 const AGENT_PROMPT = `STAND_IN_AGENT_INSTRUCTIONS_${process.pid}`
 // The ordinary desktop fixture authenticates /api/users/me as this account.
@@ -199,7 +200,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-role-name"]'),
-        `${PROJECT} 分身`
+        `${PROJECT} 助理`
       )
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
@@ -360,7 +361,7 @@ export async function createDesktopScenario({
         {
           project_id: project.id,
           agent: {
-            name: '分身专用助手',
+            name: '助理专用助手',
             runtime: 'codex',
             system_prompt: AGENT_PROMPT,
             execution_policy: { mode: 'fixed', environment_id: saved.executionDeviceId },
@@ -455,10 +456,53 @@ export async function createDesktopScenario({
           'Migration must preserve identity, versions and grants'
         )
         assert.equal(Object.hasOwn(migrated.primary, 'collaboration'), false)
+        const saved = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.save',
+          { userId: USER_ID, settings: migrated },
+          uiTimeoutMs
+        )
+        const enabledAfter = identity => {
+          assert.equal(typeof identity.enabledAfter, 'string')
+          assert.ok(Number.isFinite(Date.parse(identity.enabledAfter)))
+          return identity.enabledAfter
+        }
+        assert.deepEqual(saved, {
+          ...migrated,
+          version: migrated.version + 1,
+          primary: {
+            ...migrated.primary,
+            enabledAfter: enabledAfter(saved.primary),
+            projectBoundaries: [],
+          },
+          roles: migrated.roles.map((role, index) => {
+            const actual = saved.roles[index]
+            const roleEnabledAfter = enabledAfter(actual)
+            if (typeof role.enabledAfter === 'string')
+              assert.equal(roleEnabledAfter, role.enabledAfter)
+            return {
+              ...role,
+              version: role.version + 1,
+              enabledAfter: roleEnabledAfter,
+              projectBoundaries: role.collaboration.projects.map(project => {
+                const boundary = actual.projectBoundaries.find(
+                  row => row.id === project.id && row.store === project.store
+                )
+                assert.ok(boundary)
+                const timestamp = enabledAfter(boundary)
+                const previous = role.projectBoundaries?.find(
+                  row => row.id === project.id && row.store === project.store
+                )
+                if (previous?.enabledAfter) assert.equal(timestamp, previous.enabledAfter)
+                return { ...project, enabledAfter: timestamp }
+              }),
+            }
+          }),
+        })
         const persisted = database
           .prepare('SELECT metadata FROM loop_items WHERE id=?')
           .get(`personal-stand-in:${USER_ID}`)
-        assert.deepEqual(JSON.parse(persisted.metadata), migrated)
+        assert.deepEqual(JSON.parse(persisted.metadata), saved)
         assert.deepEqual(
           await requestExecutor(
             control,
@@ -466,7 +510,7 @@ export async function createDesktopScenario({
             { userId: USER_ID },
             uiTimeoutMs
           ),
-          migrated,
+          saved,
           'Repeated reads must not change the migrated settings'
         )
       } finally {
@@ -516,8 +560,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(requests, 2, 'Polling or editing duplicated a completed assignment')
       for (const excluded of [old, other, unassigned]) {
         assert.equal(
@@ -557,8 +601,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(
         (
           await requestExecutor(
@@ -583,7 +627,7 @@ export async function createDesktopScenario({
               projectStore: 'local',
               settings: {
                 id,
-                name: `${id} 分身`,
+                name: `${id} 助理`,
                 tags: [id],
                 agentId: agent.id,
                 enabled: true,
@@ -619,7 +663,11 @@ export async function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '同时匹配两个分身', tags: ['review', 'docs'], assignee_user_id: USER_ID },
+          todo: {
+            title: '匹配两个助理时只自动接手一次',
+            tags: ['review', 'docs'],
+            assignee_user_id: USER_ID,
+          },
         },
         uiTimeoutMs
       )
@@ -627,20 +675,21 @@ export async function createDesktopScenario({
         await waitForExecution(control, tagged.id, modelResponseTimeoutMs, [
           index === 0 ? 'review' : 'docs',
         ])
-      await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review', 'docs'])
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
-      assert.equal(requests, 6, 'Each eligible stand-in must execute each assignment exactly once')
+      // Automatic intake selects one matching role in configured order.
+      await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review'])
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
+      assert.equal(requests, 5, 'Each assignment must execute once through its selected assistant')
       assert.equal(agentRequests, 0, 'Independent roles must not inherit agent prompts')
       assert.deepEqual(
         tagRequests,
-        { review: 2, docs: 2 },
-        'Each matching role must use its own prompt'
+        { review: 2, docs: 1 },
+        'The first matching role must own an ambiguous assignment and use its own prompt'
       )
       assert.equal(
         (await requestExecutor(control, 'todos.bindings', { task_id: ambiguous.id }, uiTimeoutMs))
           .length,
-        2
+        1
       )
       assert.equal(
         (
@@ -681,7 +730,8 @@ export async function createDesktopScenario({
         )
       }
       // Create a personally owned stand-in through the project picker.
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      // Reloaded sidebar badges precede the asynchronously restored project header.
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
       await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目协调' })
@@ -736,17 +786,14 @@ export async function createDesktopScenario({
         {
           project_id: project.id,
           todo: {
-            title: '所有连接的分身分别处理',
+            title: '重叠标签只由一个助理处理',
             tags: ['review', 'docs'],
             assignee_user_id: USER_ID,
           },
         },
         uiTimeoutMs
       )
-      await waitForExecution(control, overlappingIssue.id, modelResponseTimeoutMs, [
-        'review',
-        'docs',
-      ])
+      await waitForExecution(control, overlappingIssue.id, modelResponseTimeoutMs, ['review'])
       const beforeReorder = { requests, ...tagRequests }
       personal = await requestExecutor(
         control,
@@ -757,8 +804,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full five-second scheduler interval plus timer jitter.
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe a full configured scheduler interval plus timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.deepEqual(
         { requests, ...tagRequests },
         beforeReorder,
@@ -769,7 +816,7 @@ export async function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '仅文档分身接手', tags: ['docs'], assignee_user_id: USER_ID },
+          todo: { title: '仅文档助理接手', tags: ['docs'], assignee_user_id: USER_ID },
         },
         uiTimeoutMs
       )
@@ -797,7 +844,7 @@ export async function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
-      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用分身' })
+      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用助理' })
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: '仅为此项目处理分配给我的任务',
       })
@@ -809,7 +856,7 @@ export async function createDesktopScenario({
         { userId: USER_ID },
         uiTimeoutMs
       )
-      const newRole = created.roles.find(row => row.name === '项目专用分身')
+      const newRole = created.roles.find(row => row.name === '项目专用助理')
       assert.ok(newRole, 'A project-created stand-in must belong to the personal document')
       assert.equal(created.userId, USER_ID)
       assert.equal(
@@ -870,7 +917,7 @@ export async function createDesktopScenario({
         await control.command('getAttribute', '[data-testid="stand-in-details-open"]', {
           value: 'aria-label',
         }),
-        '分身详情'
+        '助理详情'
       )
       await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')

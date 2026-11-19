@@ -3,7 +3,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
+import { restartCloudConfigDesktop } from '../modules/cloud-config-restart-readiness.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { restartCodexWhenIdle } from '../modules/executor-restart-readiness.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
@@ -15,7 +17,7 @@ import {
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const PREFIX = 'WEWORK_CLOUD_CONFIG_RECOVERY'
-const OFFICIAL_MODEL = 'gpt-5.5'
+const OFFICIAL_MODEL = 'gpt-6.1-sol'
 // Cold enterprise configuration retries and intentional desktop restarts are
 // slow operations; ordinary UI actions retain the shared ten-second timeout.
 const RECOVERY_TIMEOUT_MS = 60_000
@@ -66,6 +68,19 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       return { ...model.diagnostics(), evidence }
     },
     async verify(control) {
+      // The auth-mode switch below controls which turn is active. Reply
+      // predictions also open turns and have their own auth-mode checkpoint.
+      // The tray's periodic Codex quota read is an unrelated app-server request
+      // that can block an auth-mode switch as `pending_requests=1`, so disable
+      // it to give the restores a deterministic idle precondition.
+      const preferences = JSON.parse(
+        await control.command('setAppPreferences', 'body', {
+          value: JSON.stringify({ replyPredictionsEnabled: false, trayUsageEnabled: false }),
+        })
+      )
+      assert.equal(preferences.replyPredictionsEnabled, false)
+      assert.equal(preferences.trayUsageEnabled, false)
+
       const addresses = new Map()
       const rpc = (method, params, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) =>
         requestExecutor(control, method, params, timeoutMs)
@@ -156,13 +171,29 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         evidence.push({ taskId, status: persisted.status, threadId: persisted.threadId })
         return history
       }
-      const startFault = async () => {
-        const failureCount = await model.failBundle()
+      const restartWhenIdle = async () => {
+        const result = await restartCodexWhenIdle(
+          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          RECOVERY_TIMEOUT_MS
+        )
+        assert.equal(result.requiresConfirmation, false)
+        assert.equal(result.activeTaskCount, 0)
+        // The restart gate only succeeds when the app-server has no in-flight
+        // request; assert that precondition before starting a turn or fault.
+        assert.equal(result.pendingRequestCount, 0)
+        return result
+      }
+      const startFault = async (options = {}) => {
+        // A persisted reply can still own a native background prediction. Admit
+        // the cold-process fixture only after that work has actually finished.
+        const idleRestart = await restartWhenIdle()
+        evidence.push({ beforeFault: true, idleRestart })
+        const failureCount = await model.failBundle(options)
         const offset = (await readFile(logPath, 'utf8')).length
         const result = await rpc(
           'runtime.codex.app_server.restart',
-          // Force the intentional fault-injection restart; background rate-limit
-          // reads can be in flight and must not turn this setup step into a
+          // Force the intentional fault-injection restart so a concurrent
+          // composer prediction or read cannot turn this setup step into a
           // confirmation path.
           { force: true },
           RECOVERY_TIMEOUT_MS
@@ -185,6 +216,10 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       const restoreOfficial = async name => {
         model.recoverBundle()
+        // A completed task can still have a native composer prediction or read
+        // in flight. Reuse the idle-only restart gate before changing auth modes.
+        const idleRestart = await restartWhenIdle()
+        evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
         const taskId = await create(name, { official: true })
@@ -215,7 +250,11 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       })
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
-      await assertDegraded(resumeFault, { method: 'thread/resume' })
+      await assertDegraded(resumeFault, {
+        methods: ['thread/resume', 'plugin/installed'],
+        taskId: oldTask,
+        threadId: oldThread,
+      })
       assert.equal((await task(oldTask)).threadId, oldThread)
       assert.ok(continued.turns.length > original.turns.length)
       assert.ok(JSON.stringify(continued.messages).includes(`${PREFIX}_OLD_COMPLETE`))
@@ -282,14 +321,22 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       // Exercise the primary config/read and thread/start recovery entry points.
       const configFault = await startFault()
       assert.ok((await native('config/read', { includeLayers: true, cwd: null })).config)
-      await assertDegraded(configFault, { method: 'config/read' })
+      await assertDegraded(configFault, { methods: ['config/read', 'plugin/installed'] })
       assert.ok((await rpc('runtime.codex.models.list', { includeHidden: true })).data.length > 0)
       await restoreOfficial('OFFICIAL_BEFORE_START')
       const startFaultState = await startFault()
       model.plan(`${PREFIX}_NEW_RECOVERED`)
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
-      await assertDegraded(startFaultState, { method: 'thread/start' })
+      await assertDegraded(startFaultState, { methods: ['thread/start', 'plugin/installed'] })
+
+      // A startup failure can make native Codex use defaults before the first task RPC.
+      await restoreOfficial('OFFICIAL_BEFORE_BOOTSTRAP')
+      const bootstrapFault = await startFault({ allowBootstrap: false })
+      model.plan(`${PREFIX}_BOOTSTRAP_RECOVERED`)
+      const bootstrapTask = await create('BOOTSTRAP_RECOVERED')
+      await completed(bootstrapTask, `${PREFIX}_BOOTSTRAP_RECOVERED`)
+      await assertDegraded(bootstrapFault, { methods: ['thread/start', 'plugin/installed'] })
 
       await restoreOfficial('OFFICIAL_BEFORE_GOAL')
       const goalMarker = `${PREFIX}_GOAL`
@@ -321,7 +368,9 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const goalFailureCount = await model.failBundle()
       const goalOffset = (await readFile(logPath, 'utf8')).length
       assert.equal(typeof restartDesktopApp, 'function')
-      await restartDesktopApp({ forceStop: true })
+      await restartCloudConfigDesktop(control, restartDesktopApp, RECOVERY_TIMEOUT_MS, {
+        forceStop: true,
+      })
       await completed(goalTask, goalMarker, 3)
       assert.equal(goalPlan.count, 3, 'Goal recovery started a duplicate model turn')
       const afterGoal = (await rpc('runtime.tasks.goal.get', { address: address(goalTask) })).goal
@@ -347,7 +396,7 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       await openGoalConversation()
       model.recoverBundle()
-      await restartDesktopApp()
+      await restartCloudConfigDesktop(control, restartDesktopApp, RECOVERY_TIMEOUT_MS)
       await completed(goalTask, goalMarker, 3)
       assert.equal(goalPlan.count, 3, 'The completed Goal continued after a cold desktop restart')
       // Main-window startup restores configured fixed tabs, not the last transient task route.

@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     ValidationError,
     field_validator,
@@ -129,8 +130,8 @@ class RuntimeProjectEditingFeatures(BaseModel):
         return value if isinstance(value, bool) else None
 
 
-class RuntimePluginSyncFeatures(BaseModel):
-    """Explicit plugin synchronization wire protocol support."""
+class RuntimeProtocolFeatures(BaseModel):
+    """An explicitly advertised optional Runtime wire protocol."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -147,6 +148,21 @@ def register_runtime_feature_normalizer(
     if not name or name in _runtime_feature_normalizers:
         raise ValueError(f"Runtime feature '{name}' is already registered")
     _runtime_feature_normalizers[name] = normalizer
+
+
+class RuntimeRemoteTaskAccessFeatures(BaseModel):
+    """Target-local consent; missing or malformed metadata grants no access."""
+
+    version: Literal[1]
+    enabled: StrictBool
+    task_creation: StrictBool = Field(default=False, alias="taskCreation")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, value: Any) -> int:
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported remote task access version")
+        return value
 
 
 class RuntimeFeatures(BaseModel):
@@ -167,16 +183,32 @@ class RuntimeFeatures(BaseModel):
     project_editing: Optional[RuntimeProjectEditingFeatures] = Field(
         default=None, alias="projectEditing"
     )
-    plugin_sync: Optional[RuntimePluginSyncFeatures] = Field(
+    plugin_sync: Optional[RuntimeProtocolFeatures] = Field(
         default=None, alias="pluginSync"
     )
+    connection_events: Optional[RuntimeProtocolFeatures] = Field(
+        default=None, alias="connectionEvents"
+    )
+    remote_task_access: Optional[RuntimeRemoteTaskAccessFeatures] = Field(
+        default=None, alias="remoteTaskAccess"
+    )
 
-    @field_validator("plugin_sync", mode="before")
+    @field_validator("remote_task_access", mode="before")
     @classmethod
-    def normalize_plugin_sync(cls, value: Any) -> Optional[RuntimePluginSyncFeatures]:
+    def normalize_remote_task_access(cls, value: Any) -> Any:
+        try:
+            return RuntimeRemoteTaskAccessFeatures.model_validate(value)
+        except ValidationError:
+            return None
+
+    @field_validator("plugin_sync", "connection_events", mode="before")
+    @classmethod
+    def normalize_protocol_feature(
+        cls, value: Any
+    ) -> Optional[RuntimeProtocolFeatures]:
         # A malformed optional feature must not erase unrelated capabilities.
         try:
-            return RuntimePluginSyncFeatures.model_validate(value)
+            return RuntimeProtocolFeatures.model_validate(value)
         except ValidationError:
             return None
 
@@ -195,6 +227,12 @@ class RuntimeFeatures(BaseModel):
         if self.plugin_sync is None:
             result.pop("pluginSync", None)
             result.pop("plugin_sync", None)
+        if self.connection_events is None:
+            result.pop("connectionEvents", None)
+            result.pop("connection_events", None)
+        if self.remote_task_access is None:
+            result.pop("remoteTaskAccess", None)
+            result.pop("remote_task_access", None)
         return result
 
     @model_validator(mode="before")

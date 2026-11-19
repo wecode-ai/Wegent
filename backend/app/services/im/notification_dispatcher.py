@@ -52,28 +52,6 @@ NOTIFICATION_LINK_LABEL = "查看详情"
 class IMNotificationDispatcher:
     """Send provider-neutral best-effort notifications to private IM sessions."""
 
-    async def send_task_switched(
-        self,
-        db: Session,
-        sessions: Sequence[IMPrivateSession],
-        task_title: str,
-    ) -> dict[str, Any]:
-        """Notify each session that subsequent IM messages target a task."""
-
-        title = task_title or "当前任务"
-        message = f"已切换到任务「{title}」，后续消息将继续发送到该任务。"
-        results: list[dict[str, Any]] = []
-        sent = 0
-
-        for session in sessions:
-            result = await self.send_text(db, session, message)
-            result.setdefault("session_key", session.session_key)
-            results.append(result)
-            if result.get("success"):
-                sent += 1
-
-        return {"sent": sent, "results": results}
-
     async def send_runtime_task_update(
         self,
         db: Session,
@@ -283,14 +261,6 @@ class IMNotificationDispatcher:
         if not settings.enabled:
             return []
 
-        active_sessions = await im_session_service.list_active_runtime_task_sessions(
-            db,
-            user_id=user_id,
-            runtime_task=address,
-        )
-        if active_sessions:
-            return _dedupe_sessions(active_sessions)
-
         subscribed_sessions = (
             await im_session_service.list_runtime_task_notification_sessions(
                 db,
@@ -429,7 +399,12 @@ class IMNotificationDispatcher:
                 "error": "Missing DingTalk staff ID",
             }
 
-        sender = DingTalkRobotSender(client_id, client_secret)
+        sender_options = (
+            {"api_base_url": config["api_base_url"]}
+            if config.get("api_base_url")
+            else {}
+        )
+        sender = DingTalkRobotSender(client_id, client_secret, **sender_options)
         card_template_id = _notification_card_template(config)
         if push is not None and card_template_id:
             result = await self._send_dingtalk_card(
@@ -532,8 +507,7 @@ class IMNotificationDispatcher:
         if not recipient_id:
             return ""
 
-        session.proactive_recipient_id = recipient_id
-        await im_session_service.save_session(session)
+        await im_session_service.set_proactive_recipient_id(session, recipient_id)
         return recipient_id
 
     async def _send_telegram(

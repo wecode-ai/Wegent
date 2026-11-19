@@ -326,9 +326,15 @@ async fn resolve_create_scope(
             user_id,
             owner_user_id: user.id,
             continuation,
+            history_window: None,
             team_id: team.id,
             bot_ids: &bots.bot_ids,
+            create_assistant: true,
+            model_override_type: None,
+            model_options: None,
             input_text,
+            user_result: None,
+            additional_skills: &[],
             crd: TaskCrdInput {
                 task_id: 0,
                 team_name: &team.name,
@@ -361,6 +367,22 @@ async fn resolve_create_scope(
     )
     .await?;
 
+    if !input.attachment_ids.is_empty() {
+        let invalid = super::contexts::link_chat_attachments(
+            transaction,
+            user_id,
+            setup.user_subtask_id,
+            input.attachment_ids.clone(),
+            setup.task_id,
+            state.task_store.table_templates().subtasks,
+        )
+        .await
+        .map_err(dependency)?;
+        if !invalid.is_empty() {
+            return Err(invalid_attachment_ids(&invalid));
+        }
+    }
+
     Ok(PreparedCreate {
         user,
         team,
@@ -370,6 +392,14 @@ async fn resolve_create_scope(
         project_id,
         setup,
     })
+}
+
+/// The source's 403 for attachment ids that cannot be linked to this request.
+fn invalid_attachment_ids(invalid: &[i64]) -> FastApiError {
+    FastApiError::detail(
+        StatusCode::FORBIDDEN,
+        format!("Invalid or unauthorized attachment IDs: {invalid:?}"),
+    )
 }
 
 /// The `create_response` flow after the body is parsed.
@@ -465,6 +495,7 @@ async fn create_response_flow(
     // `chat_session.py:104`: the memory-context guard's `enable_chat_bot`
     // (`openapi_responses.py` passes `enable_deep_thinking = enable_chat_bot`).
     let enable_chat_bot = tool_settings.enable_chat_bot;
+    let attachment_ids = input.attachment_ids.clone();
 
     // `lifecycle.py:421-429`: `prepare_execution_session` commits inside the
     // call (`commit=True`; `chat_session.py:91` passes no override) and only
@@ -628,6 +659,7 @@ async fn create_response_flow(
         enable_chat_bot,
         enable_web_search: enable_chat_bot && seam::web_search_enabled(),
         reasoning: input.reasoning.as_ref(),
+        attachment_ids: &attachment_ids,
     };
     seam::dispatch_create(state, &dispatch).await
 }
@@ -673,7 +705,7 @@ fn source_group_error(error: crate::task_source_group::SourceGroupError) -> Fast
 }
 
 /// The matching team member's `role` and `prompt` for the resolved bot.
-fn team_member_context(
+pub(crate) fn team_member_context(
     team_json: &serde_json::Value,
     bot_name: &str,
     bot_namespace: &str,
@@ -760,7 +792,7 @@ async fn reload_request_user(
 /// The new row is then recorded in the `task-run-monitor:v2` run totals. The
 /// source hook logs and swallows a store failure, so neither step can change
 /// the committed setup.
-async fn publish_inserted_assistant_subtask_metrics(
+pub(crate) async fn publish_inserted_assistant_subtask_metrics(
     state: &AppState,
     task_id: i64,
     subtask_id: i64,
@@ -921,6 +953,16 @@ mod tests {
         assert_eq!(
             error.status(),
             brz_http_server::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn rejected_attachment_ids_render_the_source_403() {
+        let error = invalid_attachment_ids(&[12, 31]);
+        assert_eq!(error.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            error.detail_message(),
+            Some("Invalid or unauthorized attachment IDs: [12, 31]")
         );
     }
 }

@@ -6,6 +6,9 @@ rust-version = "1.77"
 license = "Apache-2.0"
 description = "Execution requests, OpenAI adapters, and task status for Wegent"
 
+[package.metadata.wegent]
+source-inputs = ["../../assets/calendars/china-workdays.json", "../../assets/calendars/LICENSE.chinesecalendar"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

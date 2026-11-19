@@ -249,6 +249,37 @@ pub fn subtask_by_id_refresh_statement(table: &str) -> String {
     format!("SELECT {SUBTASK_COLUMNS} \nFROM `{table}` \nWHERE {table}.id = ?")
 }
 
+/// `db.refresh(subtask)` on a session whose row was expired by a commit
+/// (`create_task_and_subtasks`' memory block, `task_manager.py:857-905`): the
+/// ORM reloads the entity, so the projection is the labeled
+/// `{table}.col AS {table}_col` form with no `LIMIT` (`f084b6fc` qs173-175).
+pub fn subtask_by_id_labeled_refresh_statement(table: &str) -> String {
+    format!(
+        "SELECT {} \nFROM {table} \nWHERE {table}.id = ?",
+        subtask_projection(table)
+    )
+}
+
+/// The `TaskResource` reload `db.query(TaskResource)` emits after a commit
+/// (`link_contexts_to_subtask`, `f084b6fc`/`e06fe28f` qs112): labeled
+/// projection, primary key, no `LIMIT`.
+pub fn task_by_id_labeled_refresh_statement(table: &str) -> String {
+    format!(
+        "SELECT {} \nFROM {table} \nWHERE {table}.id = ?",
+        task_projection(table)
+    )
+}
+
+/// `db.refresh(team)` for the custom-mapped `Kind`: the flat projection of one
+/// `kinds` row by primary key (`chat_namespace.py:1237-1240`, `e06fe28f`
+/// qs116).
+pub fn kind_by_id_flat_statement() -> String {
+    "SELECT kinds.id, kinds.user_id, kinds.kind, kinds.name, kinds.namespace, \
+     kinds.json, kinds.is_active, kinds.created_at, kinds.updated_at \nFROM kinds \
+     \nWHERE kinds.id = ?"
+        .to_string()
+}
+
 /// `task_store.get_task_by_states` with `states = [STATE_ACTIVE]` and an
 /// explicit owner, read from `table`.
 pub fn active_task_owned_statement(table: &str) -> String {
@@ -257,6 +288,20 @@ pub fn active_task_owned_statement(table: &str) -> String {
         client_origin, is_group_chat \n    FROM `{table}` \n    \
         WHERE id = ? AND kind = 'Task' AND is_active IN (1) AND user_id = ? \n    \
         LIMIT 1"
+    )
+}
+
+/// [`active_task_owned_statement`] through the ORM's labeled projection.
+///
+/// `db.query(TaskResource)` renders `{table}.col AS {table}_col`; the chat:send
+/// session setup records this statement (qs153) with the predicates on one
+/// line before `LIMIT 1`.
+pub fn active_task_owned_labeled_statement(table: &str) -> String {
+    format!(
+        "SELECT {projection} \nFROM {table} \n\
+         WHERE {table}.id = ? AND {table}.kind = 'Task' \
+         AND {table}.is_active IN (1) AND {table}.user_id = ? \n LIMIT 1",
+        projection = task_projection(table)
     )
 }
 
@@ -410,6 +455,19 @@ pub fn task_by_id_owned_statement(table: &str) -> String {
     )
 }
 
+/// `task_store.get_by_id` with an owner filter through the ORM's labeled
+/// projection (`db.query(TaskResource).filter(id == ...).filter(user_id ==
+/// ...)`), used by the `/chat` `task:join` fork-history lineage read: the full
+/// `{table}.col AS {table}_col` projection with both predicates table
+/// prefixed, bare identifiers, and `LIMIT 1`.
+pub fn task_by_id_owned_labeled_statement(table: &str) -> String {
+    format!(
+        "SELECT {projection} \nFROM {table} \n\
+         WHERE {table}.id = ? AND {table}.user_id = ? \n LIMIT 1",
+        projection = task_projection(table)
+    )
+}
+
 /// `task_store.get_active_non_deleted_task` on `table`: the active task of one
 /// id. `json_delete_filter` adds the base store's `text()` JSON deletion
 /// predicate, which the sharded store applies in Rust instead; `client_origin`
@@ -438,6 +496,16 @@ pub fn active_task_by_id_statement(
 /// `ShardedSubtaskStore._owner_matches_task_id`'s task-table probe on `table`.
 pub fn owner_matches_task_id_statement(table: &str) -> String {
     format!("SELECT id \nFROM {table} \nWHERE id = ? AND user_id = ? \n LIMIT 1")
+}
+
+/// [`owner_matches_task_id_statement`] through the ORM's labeled projection
+/// (`db.query(TaskResource.id)` renders `{table}.id AS {table}_id`), which is
+/// what the recorded chat:send transaction carries for qs154/qs157.
+pub fn owner_matches_task_id_labeled_statement(table: &str) -> String {
+    format!(
+        "SELECT {table}.id AS {table}_id \nFROM {table} \n\
+         WHERE {table}.id = ? AND {table}.user_id = ? \n LIMIT 1"
+    )
 }
 
 /// `_owner_matches_task_id`'s subtask-owner fallback on `table`: the distinct
@@ -541,6 +609,49 @@ pub fn subtasks_by_message_ordered_statement(table: &str) -> String {
         created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
         FROM {table} \n    \
         WHERE task_id = ?"
+    )
+}
+
+/// `subtask_store.list_by_task_ordered` with the source's default `order_by`
+/// (`message_id`, `created_at`) kept in SQL.
+///
+/// [`subtasks_by_message_ordered_statement`] omits the ordering so a caller can
+/// restore it outside MySQL. The `/chat` `task:join` chain records the ordered
+/// statement as its dependency, so that path uses this variant and pays the
+/// same filesort the source does instead of diverging on `ORDER BY`.
+pub fn subtasks_by_task_message_ordered_statement(table: &str) -> String {
+    format!(
+        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
+        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
+        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
+        FROM {table} \n    \
+        WHERE task_id = ? \n    \
+        ORDER BY message_id ASC, created_at ASC"
+    )
+}
+
+/// `subtask_store.list_by_task_ordered`'s default order with the ORM's labeled
+/// projection (`db.query(Subtask)` renders `{table}.col AS {table}_col`).
+///
+/// The chat:send session setup records this statement, including the
+/// `ORDER BY` kept in SQL, so the transaction member carries the same labels
+/// and predicate prefixes as the source.
+pub fn subtasks_by_task_message_ordered_labeled_statement(table: &str) -> String {
+    let columns = SUBTASK_LABELED_COLUMNS.replace("{t}", table);
+    format!(
+        "SELECT {columns} \nFROM {table} \n\
+         WHERE {table}.task_id = ? ORDER BY {table}.message_id ASC, {table}.created_at ASC"
+    )
+}
+
+/// `subtask_store.list_by_task_desc` (`db.query(Subtask).filter(task_id ==
+/// task_id).order_by(Subtask.message_id.desc(), Subtask.id.desc())`): the
+/// interactive-form pending scan `get_pending_interactive_form` runs.
+pub fn subtasks_by_task_desc_statement(table: &str) -> String {
+    let columns = SUBTASK_LABELED_COLUMNS.replace("{t}", table);
+    format!(
+        "SELECT {columns} \nFROM {table} \n\
+         WHERE {table}.task_id = ? ORDER BY {table}.message_id DESC, {table}.id DESC"
     )
 }
 

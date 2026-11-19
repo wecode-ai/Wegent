@@ -10,23 +10,27 @@ jest.mock('@playwright/test', () => ({
 }))
 
 const independent = new Set([
+  'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
+  'tasks/device-ide.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
   'tasks/shell-reference-cancel.spec.ts',
 ])
 const expectedCounts: Record<string, number> = {
   'global-setup.ts': 1,
   'global-teardown.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 19,
+  'tasks/agent-conversation-regression.spec.ts': 22,
   'tasks/device-artifact-declaration.spec.ts': 3,
+  'tasks/device-ide.spec.ts': 1,
   'tasks/claudecode-compaction.spec.ts': 4,
+  'tasks/executor-workspace-recovery.spec.ts': 1,
   'tasks/pipeline-session-archive.spec.ts': 5,
-  'tasks/claude-background-lifecycle.spec.ts': 3,
-  'tasks/provider-native-claudecode.spec.ts': 2,
+  'tasks/claude-background-lifecycle.spec.ts': 5,
+  'tasks/provider-native-claudecode.spec.ts': 4,
   'tasks/shell-reference-cancel.spec.ts': 1,
-  'collaboration/collaboration-agent-execution.spec.ts': 1,
-  'collaboration/issue-dispatch-executor.spec.ts': 4,
+  'collaboration/collaboration-agent-execution.spec.ts': 2,
+  'collaboration/issue-dispatch-executor.spec.ts': 5,
 }
 
 type ListedSuite = {
@@ -106,6 +110,11 @@ describe('Executor scheduling boundaries', () => {
     expect(identities.size).toBe(
       Object.values(expectedCounts).reduce((total, count) => total + count, 0)
     )
+    expect(
+      identities.has(
+        'collaboration/collaboration-agent-execution.spec.ts:runs a managed Chat Team and continues its original persisted Task'
+      )
+    ).toBe(true)
     for (const deviceSetup of ['authorized', 'configure']) {
       expect(
         identities.has(
@@ -115,7 +124,42 @@ describe('Executor scheduling boundaries', () => {
     }
     expect(
       identities.has(
+        'tasks/agent-conversation-regression.spec.ts:device ClaudeCode preserves streamed text order after completion and reload'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
         'tasks/claude-background-lifecycle.spec.ts:ClaudeCode persists a child message above 1 MiB and completes after a real background notification'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/provider-native-claudecode.spec.ts:cloud ClaudeCode discovers and invokes static and lazy connector tools without keywords'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/provider-native-claudecode.spec.ts:cloud ClaudeCode retains compact access to a keyword-preloaded long lazy identity'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/claude-background-lifecycle.spec.ts:cloud Claude registers downloadable artifacts before new and reused turns finish'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/claude-background-lifecycle.spec.ts:Web coordinate chat runs a configured team member as a Claude subagent'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:Socket.IO binds a Git checkout on the first turn and reuses it on follow-up'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:Socket.IO rejects a whitespace-only Git URL before dispatch'
       )
     ).toBe(true)
     expect(counts).toEqual(expectedCounts)

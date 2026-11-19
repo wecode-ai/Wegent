@@ -1,5 +1,8 @@
+import { branchMatchesQuery } from '@wegent/chat-core/workspace-branches'
 import { Check, ChevronDown, GitBranch, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useEscapeKey, useFocusRequest, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -20,21 +23,6 @@ interface WorktreeBranchSelectorProps {
 
 const WORKTREE_BRANCH_MENU_MAX_HEIGHT = 360
 
-function branchMatchesQuery(branch: string, query: string): boolean {
-  const normalizedBranch = branch.toLowerCase()
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery || normalizedBranch.includes(normalizedQuery)) return true
-
-  let queryIndex = 0
-  for (const character of normalizedBranch) {
-    if (character === normalizedQuery[queryIndex]) {
-      queryIndex += 1
-      if (queryIndex === normalizedQuery.length) return true
-    }
-  }
-  return false
-}
-
 export function WorktreeBranchSelector({
   currentBranch,
   selectedBranch,
@@ -48,10 +36,26 @@ export function WorktreeBranchSelector({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
-  const [branches, setBranches] = useState<string[]>([])
+  const branchesResource = useMemo(
+    () =>
+      createAsyncResource('worktree-branches', () => onListBranches(), {
+        refreshOnSubscribe: true,
+      }),
+    [onListBranches]
+  )
+  const snapshot = useSyncExternalStore(
+    open ? branchesResource.subscribe : subscribeIdleResource,
+    branchesResource.getSnapshot,
+    branchesResource.getSnapshot
+  )
   const [query, setQuery] = useState('')
-  const [branchesLoading, setBranchesLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const branchesLoading = open && (snapshot.status === 'loading' || snapshot.status === 'idle')
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : t('workbench.project_worktree_branch_load_failed', '分支加载失败')
+      : null
   const [desktopMenuLayout, setDesktopMenuLayout] = useState<{
     placement: FloatingMenuPlacement
     maxHeight: number
@@ -65,8 +69,8 @@ export function WorktreeBranchSelector({
     ? t('workbench.project_worktree_branch_loading', '加载中')
     : effectiveBranch || t('workbench.project_worktree_branch_empty', '选择分支')
   const filteredBranches = useMemo(
-    () => branches.filter(branch => branchMatchesQuery(branch, query)),
-    [branches, query]
+    () => (snapshot.data ?? []).filter(branch => branchMatchesQuery(branch, query)),
+    [snapshot.data, query]
   )
 
   const close = useCallback(() => {
@@ -96,66 +100,18 @@ export function WorktreeBranchSelector({
     )
   }, [isMobile, open])
 
-  useEffect(() => {
-    if (!open) return
+  useFocusRequest(searchInputRef, 'worktree-branches', { enabled: open && !isMobile })
 
-    let cancelled = false
-    async function loadBranches() {
-      setBranchesLoading(true)
-      setError(null)
-      try {
-        const items = await onListBranches()
-        if (!cancelled) setBranches(items)
-      } catch (loadError) {
-        if (cancelled) return
-        setBranches([])
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : t('workbench.project_worktree_branch_load_failed', '分支加载失败')
-        )
-      } finally {
-        if (!cancelled) setBranchesLoading(false)
-      }
-    }
+  const bindMenu = useCallback(
+    (menu: HTMLDivElement | null) => {
+      if (menu) updateDesktopMenuLayout()
+    },
+    [updateDesktopMenuLayout]
+  )
 
-    void loadBranches()
-    return () => {
-      cancelled = true
-    }
-  }, [onListBranches, open, t])
-
-  useEffect(() => {
-    if (!open || isMobile) return
-    searchInputRef.current?.focus()
-  }, [isMobile, open])
-
-  useLayoutEffect(() => {
-    if (!open || isMobile) return
-
-    updateDesktopMenuLayout()
-  }, [isMobile, open, updateDesktopMenuLayout])
-
-  useEffect(() => {
-    if (!open || isMobile) return
-
-    window.addEventListener('resize', updateDesktopMenuLayout)
-    window.addEventListener('scroll', updateDesktopMenuLayout, true)
-    return () => {
-      window.removeEventListener('resize', updateDesktopMenuLayout)
-      window.removeEventListener('scroll', updateDesktopMenuLayout, true)
-    }
-  }, [isMobile, open, updateDesktopMenuLayout])
-
-  useEffect(() => {
-    if (!open) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [close, open])
+  useWindowEvent('resize', updateDesktopMenuLayout, { enabled: open && !isMobile })
+  useWindowEvent('scroll', updateDesktopMenuLayout, { enabled: open && !isMobile, capture: true })
+  useEscapeKey(close, open, containerRef)
 
   const handleSelectBranch = (branch: string) => {
     onSelectBranch(branch === normalizedCurrentBranch ? null : branch)
@@ -168,6 +124,7 @@ export function WorktreeBranchSelector({
       {open && isMobile && <div className="fixed inset-0 z-modal bg-black/25" onClick={close} />}
       {open && (
         <div
+          ref={bindMenu}
           data-testid="project-worktree-branch-menu"
           data-mobile={isMobile ? 'true' : undefined}
           className={cn(

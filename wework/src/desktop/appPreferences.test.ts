@@ -26,7 +26,9 @@ const mergedDefaultPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 75,
   experimentalFeaturesEnabled: false,
+  collaborationExperienceEnabled: false,
   localCodexSubscriptionEnabled: true,
+  telemetryConsentRevision: 0,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
@@ -44,6 +46,7 @@ const mergedDefaultPreferences = {
   browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  appshotsShortcut: 'CommandOrControl+Shift+2',
   computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
@@ -101,6 +104,17 @@ const mergedDefaultPreferences = {
 }
 
 describe('appPreferences', () => {
+  test('carries the observed consent revision to the atomic host update', async () => {
+    invokeMock.mockResolvedValue({ ...mergedDefaultPreferences, telemetryConsentRevision: 8 })
+    const { updateAppPreferences } = await import('./appPreferences')
+    const patch = { telemetryConsentAsked: true, telemetryEnabled: true }
+    const preferences = await updateAppPreferences(patch, 7)
+    expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
+      patch,
+      expectedTelemetryConsentRevision: 7,
+    })
+    expect(preferences.telemetryConsentRevision).toBe(8)
+  })
   beforeEach(() => {
     vi.resetModules()
     invokeMock.mockReset()
@@ -147,6 +161,21 @@ describe('appPreferences', () => {
 
     await expect(getAppPreferences()).resolves.toMatchObject({
       performanceRecordingEnabled: expected,
+    })
+  })
+
+  test.each([
+    [undefined, 'CommandOrControl+Shift+2'],
+    [null, null],
+    ['', null],
+    [' Command+Shift+3 ', 'Command+Shift+3'],
+  ])('loads Appshots shortcut preference %j as %j', async (stored, expected) => {
+    invokeMock.mockResolvedValue(stored === undefined ? {} : { appshotsShortcut: stored })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toMatchObject({
+      appshotsShortcut: expected,
     })
   })
 

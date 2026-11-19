@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Bell, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
@@ -25,38 +26,37 @@ export function StandInNotificationPrompt({ scopeKey }: { scopeKey: string }) {
   return (
     <div
       data-testid="stand-in-notification-prompt"
-      className="mb-3 flex items-center gap-3 rounded-2xl border border-border bg-surface p-3 text-sm"
+      className="mb-2 flex flex-wrap items-center gap-x-2 px-2 text-sm text-text-secondary"
     >
-      <Bell className="h-5 w-5 shrink-0" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <p className="font-medium">{t('standIn.desktop_notifications.title')}</p>
-        <p className="text-text-secondary">{t('standIn.desktop_notifications.description')}</p>
-        {error && (
-          <p role="alert" className="text-error">
-            {t('standIn.desktop_notifications.error')}
-          </p>
-        )}
-      </div>
-      <Button
-        data-testid="stand-in-notifications-enable"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true)
-          setError(false)
-          try {
-            await invokeDesktopHost('notification.openSettings')
-            window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATION_SETTINGS_EVENT))
-          } catch {
-            setError(true)
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        {t('standIn.desktop_notifications.enable')}
-      </Button>
+      <Bell className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span className="mr-auto">{t('standIn.desktop_notifications.title')}</span>
+      <Tooltip label={t('standIn.desktop_notifications.description')}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="min-h-11 px-2 md:h-7 md:min-h-7"
+          data-testid="stand-in-notifications-enable"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setError(false)
+            try {
+              await invokeDesktopHost('notification.openSettings')
+              window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATION_SETTINGS_EVENT))
+            } catch {
+              setError(true)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {t('standIn.desktop_notifications.enable')}
+        </Button>
+      </Tooltip>
       <Button
         variant="ghost"
+        size="sm"
+        className="min-h-11 px-2 md:h-7 md:min-h-7"
         data-testid="stand-in-notifications-never"
         onClick={() => {
           try {
@@ -70,18 +70,26 @@ export function StandInNotificationPrompt({ scopeKey }: { scopeKey: string }) {
       >
         {t('standIn.desktop_notifications.never')}
       </Button>
-      <Button
-        variant="ghost"
-        data-testid="stand-in-notifications-dismiss"
-        aria-label={t('standIn.desktop_notifications.dismiss')}
-        title={t('standIn.desktop_notifications.dismiss')}
-        onClick={() => {
-          dismissedThisSession.add(key)
-          setDismissed(key)
-        }}
-      >
-        <X className="h-4 w-4" />
-      </Button>
+      <Tooltip label={t('standIn.desktop_notifications.dismiss')}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-11 w-11 md:h-7 md:w-7"
+          data-testid="stand-in-notifications-dismiss"
+          aria-label={t('standIn.desktop_notifications.dismiss')}
+          onClick={() => {
+            dismissedThisSession.add(key)
+            setDismissed(key)
+          }}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </Tooltip>
+      {error && (
+        <p role="alert" className="w-full text-error">
+          {t('standIn.desktop_notifications.error')}
+        </p>
+      )}
     </div>
   )
 }

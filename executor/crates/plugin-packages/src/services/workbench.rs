@@ -14,9 +14,18 @@ use std::{
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::file_lease::FileLease;
+
+#[path = "workbench_digest.rs"]
+mod digest;
+pub(crate) use digest::PackageDigest;
+
+#[path = "workbench_recovery.rs"]
+mod recovery;
+pub(crate) use recovery::{
+    prepare_plugin_archive, read_plugin_package, LeasedPluginPackage, PackageRecoveryError,
+};
 
 const MAX_FILES: usize = 10_000;
 const MAX_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
@@ -65,7 +74,9 @@ use wegent_runtime_config::home::resolve_workbench_root;
 pub use wegent_runtime_config::home::workbench_root;
 
 pub fn archive_hash(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    let mut digest = PackageDigest::new();
+    digest.update(bytes);
+    digest.finish()
 }
 
 pub fn validate_archive_hash(bytes: &[u8], expected: Option<&str>) -> Result<String, String> {
@@ -209,6 +220,7 @@ pub(crate) fn published_plugin_bytecode_paths(
     root: &Path,
     hash: &str,
 ) -> Result<Option<BTreeSet<PathBuf>>, String> {
+    let _reader = recovery::read_lease(root, hash).map_err(|error| error.to_string())?;
     Ok(read_package_record(root, PackageKind::Plugin, hash)?
         .published_bytecode_paths
         .map(|paths| paths.into_iter().collect()))
@@ -501,7 +513,7 @@ fn files_hash(root: &Path) -> Result<String, String> {
 }
 
 fn files_hash_excluding(root: &Path, excluded: &BTreeSet<PathBuf>) -> Result<String, String> {
-    let mut digest = Sha256::new();
+    let mut digest = PackageDigest::new();
     visit_package_files(root, &mut |path, metadata| {
         let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
         if excluded.contains(relative) {
@@ -527,7 +539,7 @@ fn files_hash_excluding(root: &Path, excluded: &BTreeSet<PathBuf>) -> Result<Str
         }
         Ok(())
     })?;
-    Ok(format!("sha256:{:x}", digest.finalize()))
+    Ok(digest.finish())
 }
 
 /// Replace a managed symlink. Callers must establish ownership and exclude readers.

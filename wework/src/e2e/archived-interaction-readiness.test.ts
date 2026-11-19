@@ -5,6 +5,7 @@ import { verifyArchivedTaskInteractionCleanup } from '../../e2e/desktop/modules/
 import { DEFAULT_MODEL_LABEL, MODEL_PROVIDER_ID } from '../../e2e/desktop/modules/shared.mjs'
 import { requestExecutor } from '../../e2e/desktop/modules/executor-rpc.mjs'
 import { createBarrier } from '../test/async-barrier'
+import { loadDesktopCheckpointCatalog } from '../../e2e/desktop/checkpoint-catalog.mjs'
 
 vi.mock('../../e2e/desktop/modules/executor-rpc.mjs', () => ({
   requestExecutor: vi.fn(async () => ({ code: 'task_archived' })),
@@ -12,15 +13,35 @@ vi.mock('../../e2e/desktop/modules/executor-rpc.mjs', () => ({
 
 beforeEach(() => vi.clearAllMocks())
 
+test('the archive verifier regression selects its existing CI checkpoint', () => {
+  expect(
+    loadDesktopCheckpointCatalog().PATH_TARGETS.get(
+      'wework/src/e2e/archived-interaction-readiness.test.ts'
+    )
+  ).toEqual(['core:human-interactions'])
+})
+
 function fixture(state: 'ready' | 'loading', failure?: Error) {
   const waiting = createBarrier()
   const refreshed = createBarrier()
   let archived = false
+  let historyReady = false
+  let historyMode = false
   let refreshClicks = 0
   const control = {
     readyCount: 1,
     awaitReadyAfter: vi.fn(async () => ({})),
     command: vi.fn(async (action: string, selector: string, options?: unknown) => {
+      if (action === 'snapshot') return JSON.stringify({ testIds: [] })
+      if (action === 'clickWhenEnabled' && selector.includes('interactions-history'))
+        historyMode = !historyMode
+      if (action === 'waitFor' && selector.includes('interactions-history-count')) {
+        expect(historyMode).toBe(true)
+        historyReady = true
+      }
+      if (selector.includes('interaction-open-original')) expect(historyReady).toBe(true)
+      if (action === 'waitFor' && selector.includes('interaction-list-item'))
+        expect(historyMode).toBe(false)
       if (selector.includes('interactions-refresh')) {
         expect(archived).toBe(true)
         expect(action).toBe('clickWhenEnabled')
@@ -67,6 +88,10 @@ test.each(['ready', 'loading'] as const)(
       refreshed.release()
     }
     await verification
+    expect(control.command).toHaveBeenCalledWith(
+      'clickWhenEnabled',
+      expect.stringContaining('[data-testid="interactions-history"]')
+    )
     expect(refreshClicks()).toBe(1)
     expect(
       control.command.mock.calls.filter(

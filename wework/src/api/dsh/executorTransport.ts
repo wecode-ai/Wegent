@@ -1,3 +1,4 @@
+import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
@@ -25,6 +26,7 @@ export interface DshExecutorDescription {
   device_route_id?: string
   version?: string
   capabilities: string[]
+  runtime_features?: DeviceInfo['runtime_features']
   renderer_methods: string[]
   transports: string[]
 }
@@ -78,6 +80,8 @@ export class DshExecutorTransportError extends Error {
 
 export async function describeDshExecutor(): Promise<DshExecutorDescription> {
   const response = await fetch(EXECUTOR_BASE_PATH, {
+    // Read live identity without serializing on Chromium HTTP cache entries.
+    cache: 'no-store',
     headers: { accept: 'application/json' },
   })
   const body = (await response.json()) as DshExecutorDescribeResponse | DshExecutorErrorBody

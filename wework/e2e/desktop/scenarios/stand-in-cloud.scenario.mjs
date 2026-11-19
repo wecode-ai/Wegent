@@ -1,3 +1,4 @@
+import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import { verifyLocalCloudStandInReceipt } from '../modules/stand-in-local-cloud-receipts.mjs'
@@ -15,6 +16,7 @@ import {
 } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  revealCollaborationSidebarElement,
   reloadMainWindow,
   selectCollaborationDomain,
   configureFirstProjectExecutionEnvironment,
@@ -176,13 +178,10 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await selectCollaborationDomain(control, CONTENT, 'cloud')
-        const toggle = `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
-        await control.command('waitFor', toggle)
-        if (
-          (await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true'
-        ) {
-          await control.command('click', toggle)
-        }
+        await revealCollaborationSidebarElement(
+          control,
+          `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+        )
         await control.command(
           'click',
           `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
@@ -202,7 +201,7 @@ export function createDesktopScenario({
           `Remote device must have an active project authorization: ${JSON.stringify(authorized.items.map(row => ({ device_key: row.device_key, app_device_id: row.app_device_id, can_use: row.can_use, status: row.status })))}`
         )
         await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
-          name: '云端分身助手',
+          name: '云端助理助手',
           runtime: 'codex',
           system_prompt: `${MARKER}_AGENT`,
           execution_policy: { mode: 'fixed', environment_id: String(remote.id) },
@@ -216,7 +215,7 @@ export function createDesktopScenario({
             },
           },
         })
-        const historical = await createIssue('启用云端分身前已分配')
+        const historical = await createIssue('启用云端助理前已分配')
         // The real inbox must resolve the stored assigner, without additional inbox lookups.
         const beforeStandIn = await request('/v1/wework-notifications?category=collaboration')
         const historicalNotice = beforeStandIn.items.find(
@@ -384,7 +383,7 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
-        await control.command('waitFor', processing, { text: '分身处理' })
+        await control.command('waitFor', processing, { text: '助理处理' })
         assert.ok(
           (await control.command('getText', processing)).includes('云端设备自动接手'),
           'Completed stand-in notification must preserve its assignment title'
@@ -430,8 +429,8 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-        // Observe a full five-second scheduler interval plus timer jitter.
-        await new Promise(resolve => setTimeout(resolve, 5500))
+        // Observe a full configured scheduler interval plus timer jitter.
+        await waitForStandInSchedulerCycle()
         assert.equal((await bindings(issue)).length, 1, 'Another device duplicated existing work')
         assert.equal(requests, 1)
         assert.equal(

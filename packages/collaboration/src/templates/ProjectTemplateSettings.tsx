@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationGroup, CollaborationProject } from '../types'
+import type { CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import { useCollaborationTemplateStore } from './context'
 import { downloadTemplate, templateFromProject } from './document'
@@ -14,6 +15,7 @@ import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
 import { readTemplateAgents } from './agents'
+import { ProjectSettingsPage } from '../project-manage/ProjectSettingsPage'
 
 export function ProjectTemplateSettings({
   api,
@@ -34,45 +36,51 @@ export function ProjectTemplateSettings({
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [configurationProject, setConfigurationProject] = useState(project)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const projectId = project.id
+  const projectStore = project.project_store
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        `${projectStore}:${projectId}`,
+        async () => {
+          const [groups, latest, rules] = await Promise.all([
+            api.projects.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
+            api.projects.get(projectId),
+            api.automations?.list(projectId) ?? Promise.resolve([]),
+          ])
+          return { groups, project: { ...latest, automatic_processing_rules: rules } }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api, projectId, projectStore]
+  )
+  const state = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot)
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<{ error: unknown } | null>(null)
   const [choosing, setChoosing] = useState(false)
   const [selected, setSelected] = useState<CollaborationTemplate | null>(null)
   const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
-  const scope = useRef(0)
-  const reload = useCallback(async () => {
-    const generation = ++scope.current
-    setLoading(true)
-    try {
-      const [result, latest, rules] = await Promise.all([
-        api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
-        api.projects.get(project.id),
-        api.automations?.list(project.id) ?? Promise.resolve([]),
-      ])
-      if (scope.current === generation) {
-        setGroups(result)
-        setConfigurationProject({
-          ...latest,
-          automatic_processing_rules: rules,
-        })
-        setError(null)
-        return latest
-      }
-    } catch {
-      if (scope.current === generation) setError(m.failed)
-    } finally {
-      if (scope.current === generation) setLoading(false)
-    }
-  }, [api, project.id, m.failed])
-  useEffect(() => {
-    setGroups([])
-    void reload()
-    return () => {
-      scope.current++
-    }
-  }, [reload])
+  const [selectionScope, setSelectionScope] = useState(resource)
+  if (selectionScope !== resource) {
+    setSelectionScope(resource)
+    setBusy(false)
+    setFailure(null)
+    setChoosing(false)
+    setSelected(null)
+    setSaving(null)
+  }
+  const groups = state.data?.groups ?? []
+  const configurationProject = state.data?.project ?? project
+  const loading = busy || state.status === 'idle' || state.status === 'loading'
+  const error = failure
+    ? templateFailureMessage(failure.error, locale)
+    : state.status === 'error'
+      ? m.failed
+      : null
+  const reload = () => {
+    setFailure(null)
+    return resource.reload()
+  }
   if (!store) return null
   const snapshot = async () =>
     templateFromProject(
@@ -87,9 +95,11 @@ export function ProjectTemplateSettings({
       )
     )
   return (
-    <section className="collaboration-template-settings" data-testid="project-template-settings">
-      <h2>{m.configuration}</h2>
-      <p>{m.configurationHint}</p>
+    <ProjectSettingsPage
+      title={m.configuration}
+      description={m.configurationHint}
+      testId="project-template-settings"
+    >
       {error && (
         <p role="alert">
           {error}{' '}
@@ -99,9 +109,11 @@ export function ProjectTemplateSettings({
         </p>
       )}
       {canManage && api.projects.createCollaborationGroup && (
-        <section>
-          <h3>{m.importProject}</h3>
-          <p>{m.importProjectHint}</p>
+        <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-medium">{m.importProject}</h2>
+            <p className="mt-1 text-sm text-text-secondary">{m.importProjectHint}</p>
+          </div>
           <button
             type="button"
             className="collaboration-template-choice"
@@ -109,50 +121,57 @@ export function ProjectTemplateSettings({
             disabled={loading || !!error}
             onClick={() => setChoosing(true)}
           >
-            {m.importProject}
+            {m.chooseTemplate}
           </button>
         </section>
       )}
-      <section>
-        <h3>{m.saveTitle}</h3>
-        <p>{m.saveHint}</p>
+      <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-medium">{m.saveTitle}</h2>
+          <p className="mt-1 text-sm text-text-secondary">{m.saveHint}</p>
+        </div>
         <button
           type="button"
           className="collaboration-template-choice"
           data-testid="project-template-save"
           disabled={loading || !!error}
           onClick={async () => {
-            setLoading(true)
-            setError(null)
+            setBusy(true)
+            setFailure(null)
             try {
-              setSaving(await snapshot())
+              const document = await snapshot()
+              if (resource.hasSubscribers()) setSaving(document)
             } catch (error) {
-              setError(templateFailureMessage(error, locale))
+              if (resource.hasSubscribers()) setFailure({ error })
             } finally {
-              setLoading(false)
+              if (resource.hasSubscribers()) setBusy(false)
             }
           }}
         >
-          {m.saveTitle}
+          {m.save}
         </button>
       </section>
-      <section>
-        <h3>{m.export}</h3>
-        <p>{m.exportHint}</p>
+      <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-medium">{m.export}</h2>
+          <p className="mt-1 text-sm text-text-secondary">{m.exportHint}</p>
+        </div>
         <button
           type="button"
           className="collaboration-template-choice"
           data-testid="project-template-export"
           disabled={loading || !!error}
           onClick={async () => {
-            setLoading(true)
-            setError(null)
+            setBusy(true)
+            setFailure(null)
             try {
-              downloadTemplate(await snapshot(), 'collaboration-template.yaml')
+              const document = await snapshot()
+              if (resource.hasSubscribers())
+                downloadTemplate(document, 'collaboration-template.yaml')
             } catch (error) {
-              setError(templateFailureMessage(error, locale))
+              if (resource.hasSubscribers()) setFailure({ error })
             } finally {
-              setLoading(false)
+              setBusy(false)
             }
           }}
         >
@@ -166,6 +185,7 @@ export function ProjectTemplateSettings({
           onClose={() => setChoosing(false)}
         >
           <CollaborationTemplatePage
+            embedded
             store={store}
             locale={locale}
             onUse={record => {
@@ -202,6 +222,6 @@ export function ProjectTemplateSettings({
           onClose={() => setSaving(null)}
         />
       )}
-    </section>
+    </ProjectSettingsPage>
   )
 }

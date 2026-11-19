@@ -1,5 +1,5 @@
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
-import type { TodoViewState } from './TodoDetailPanel'
+import type { TodoViewState } from './todoViewTypes'
 
 export type TodoPrincipalType = 'unassigned' | 'human' | 'ai'
 
@@ -57,15 +57,6 @@ export interface TodoWorkItemEvent {
   type: 'created' | 'updated' | 'run-linked' | 'confirmed'
   summary: string
   createdAt: string
-}
-
-export interface TodoWorkspaceEntry {
-  path: string
-  name: string
-  nodeType: 'file' | 'directory'
-  size: number
-  modifiedAtMs: number
-  absolutePath: string
 }
 
 export const DEFAULT_TODO_WORKFLOW: TodoWorkflowConfig = {
@@ -210,59 +201,6 @@ export async function hydrateLocalWorkItems(userId: number | undefined): Promise
 export function saveLocalWorkItems(userId: number | undefined, items: LocalWorkItem[]): void {
   const contents = JSON.stringify(items)
   window.localStorage.setItem(storageKey(userId), contents)
-}
-
-export async function ensureTodoWorkspace(item: LocalWorkItem): Promise<string | null> {
-  void item
-  return null
-}
-
-export async function ensureTodoWorkDirectory(
-  rootItemId: string,
-  workType: string
-): Promise<string | null> {
-  void rootItemId
-  void workType
-  return null
-}
-
-export async function listTodoWorkspace(itemId: string): Promise<TodoWorkspaceEntry[]> {
-  void itemId
-  return []
-}
-
-export async function writeTodoWorkspaceFile(
-  itemId: string,
-  relativePath: string,
-  file: File
-): Promise<string | null> {
-  void itemId
-  void relativePath
-  void file
-  return null
-}
-
-export async function renameTodoWorkspaceEntry(
-  itemId: string,
-  fromPath: string,
-  toPath: string
-): Promise<void> {
-  void itemId
-  void fromPath
-  void toPath
-}
-
-export async function deleteTodoWorkspaceEntry(
-  itemId: string,
-  relativePath: string
-): Promise<void> {
-  void itemId
-  void relativePath
-}
-
-export async function getTodoWorkspacePath(itemId: string): Promise<string | null> {
-  void itemId
-  return null
 }
 
 export function createLocalWorkItemId(): string {

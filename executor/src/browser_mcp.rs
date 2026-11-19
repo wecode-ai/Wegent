@@ -218,23 +218,6 @@ pub(crate) async fn handle_request_with_context(
     }
 }
 
-#[cfg(test)]
-async fn handle_request(
-    client: &reqwest::Client,
-    request: &Value,
-    sequence: u64,
-    started: Instant,
-) -> Option<Value> {
-    handle_request_with_context(
-        client,
-        request,
-        &BrowserMcpRequestContext::new(None, "browser-test-session".to_owned()),
-        sequence,
-        started,
-    )
-    .await
-}
-
 async fn execute_tool(
     client: &reqwest::Client,
     name: &str,
@@ -645,13 +628,25 @@ async fn send_bridge_request(
     if let Some(token) = identity.token.as_deref() {
         request = request.bearer_auth(token);
     }
-    let response = request.send().await.map_err(|error| BridgeRequestError {
-        message: format!(
-            "Embedded browser bridge is unavailable at {}: {error}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
+    let response = request.send().await.map_err(|error| {
+        let message = format!(
+            "Embedded browser bridge is unavailable at {}: {error:#}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
             identity.base_url
-        ),
-        refresh_identity: true,
-        retry_same_identity: error.is_connect(),
+        );
+        let retry_same_identity = error.is_connect();
+        // Reqwest's Display omits the transport cause. Drop the request URL
+        // before recording Debug; never include authorization headers or body.
+        write_browser_log(&format!(
+            "[wework-browser-mcp] transport=request_failed connect={} timeout={} error={:?}",
+            retry_same_identity,
+            error.is_timeout(),
+            error.without_url(),
+        ));
+        BridgeRequestError {
+            message,
+            refresh_identity: true,
+            retry_same_identity,
+        }
     })?;
     if !response.status().is_success() {
         let status = response.status();

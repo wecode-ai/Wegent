@@ -72,6 +72,7 @@ fn ref_meta_derives_from_the_kind_row() {
                 "sha256:d9f8d69053873ea444f69e871cf9ce542d8315869b0f1b0bfe3aa00c26c50caa"
                     .to_string()
             ),
+            bind_shells: None,
         }
     );
 }
@@ -500,6 +501,33 @@ async fn user_default_binding_read_binds_the_user_id_as_an_integer() {
     assert_eq!(queries[0].first_integer, Some(6582));
 }
 
+/// `list_user_default_skill_refs` (`skill_binding_service.py:477-487`): the
+/// ref carries the package's runtime shells so the request builder can filter
+/// the binding against the bot's Shell before `_get_bot_skills`; a package
+/// without `bindShells` omits the key entirely.
+#[test]
+fn binding_refs_carry_the_declared_runtime_shells() {
+    let restricted = named_skill_row("web-tools", 0, "default", json!({"bindShells": ["Chat"]}));
+    assert_eq!(
+        binding_reference(&restricted, false),
+        json!({
+            "skill_id": 187_624,
+            "name": "web-tools",
+            "namespace": "default",
+            "is_public": true,
+            "bind_shells": ["Chat"],
+        })
+    );
+    assert_eq!(
+        binding_reference(&restricted, true)["force_preload"],
+        json!(true)
+    );
+    let unrestricted = named_skill_row("notes", 0, "default", json!({"description": "d"}));
+    let reference = binding_reference(&unrestricted, false);
+    assert_eq!(reference.get("bind_shells"), None);
+    assert_eq!(reference.get("force_preload"), None);
+}
+
 fn named_skill_row(name: &str, kinds_user_id: i64, namespace: &str, spec: Value) -> SkillKindRow {
     SkillKindRow {
         kinds_id: 187_624,
@@ -514,13 +542,10 @@ fn named_skill_row(name: &str, kinds_user_id: i64, namespace: &str, spec: Value)
     }
 }
 
-/// `_build_skill_data`'s user-managed provider branch
-/// (`request_builder.py:2004-2035`): a public `default`-namespace Skill whose
-/// name is registered by a user-mode provider removes its `mcpServers` and
-/// replaces `prompt` with the configuration guidance when the request user has
-/// not configured that service.
+/// Connector-managed provider Skills defer availability to the caller's
+/// connector grant instead of asking for an unrelated personal MCP URL.
 #[test]
-fn an_unconfigured_user_managed_runtime_skill_requires_configuration() {
+fn a_connector_managed_runtime_skill_defers_availability_to_the_connector() {
     let skill = named_skill_row(
         "dingtalk-docs",
         0,
@@ -534,11 +559,46 @@ fn an_unconfigured_user_managed_runtime_skill_requires_configuration() {
     let data = build_skill_data(&skill, Some("")).expect("skill data");
     let object = data.as_object().expect("object");
     assert!(!object.contains_key("mcpServers"));
-    assert_eq!(object["configuration_required"], json!(true));
-    let prompt = object["prompt"].as_str().expect("prompt");
-    assert_eq!(prompt.chars().count(), 836);
-    assert!(prompt.starts_with("## Configuration Required\n"));
-    assert!(prompt.contains("wegent://modal/mcp-provider-config?provider=dingtalk&service=docs"));
+    assert!(!object.contains_key("configuration_required"));
+    assert_eq!(object["connector_slug"], json!("dingtalk_docs"));
+    assert_eq!(object["connector_available"], json!(false));
+    assert_eq!(object["prompt"], json!("# skill prompt"));
+}
+
+#[test]
+fn an_unconfigured_non_connector_provider_still_requires_personal_configuration() {
+    use crate::mcp_provider_registry::{
+        McpProviderDefinition, McpProviderServiceDefinition, register_mcp_provider,
+    };
+    static SERVICES: &[McpProviderServiceDefinition] = &[McpProviderServiceDefinition {
+        service_id: "service",
+        server_name: "personal-server",
+        detail_url: "",
+        skill_name: "skills-test-personal-provider",
+        display_name: "Personal service",
+        message_keywords: &[],
+        oauth_supported: false,
+        connector_slug: None,
+    }];
+    register_mcp_provider(McpProviderDefinition {
+        provider_id: "skills-test-personal",
+        display_name: "Personal provider",
+        configuration_mode: "user",
+        message_keywords: &[],
+        services: SERVICES,
+    });
+    let skill = named_skill_row(
+        "skills-test-personal-provider",
+        0,
+        "default",
+        json!({"prompt":"# skill prompt","mcpServers":{"personal-server":{"url":"https://personal.invalid"}}}),
+    );
+    let data = build_skill_data(&skill, Some("")).unwrap();
+    assert!(data.get("mcpServers").is_none());
+    assert_eq!(data["configuration_required"], true);
+    assert!(data["prompt"].as_str().unwrap().contains(
+        "wegent://modal/mcp-provider-config?provider=skills-test-personal&service=service"
+    ));
 }
 
 /// When the user has an enabled service with a usable URL the branch leaves
@@ -615,6 +675,7 @@ fn a_system_mode_provider_skips_the_user_configuration_branch() {
             server_name: "skills-test-system-server",
             detail_url: "",
             skill_name: "skills-test-system-skill",
+            connector_slug: None,
             display_name: "System",
             message_keywords: &[],
             oauth_supported: false,
@@ -691,7 +752,9 @@ fn loaded_builder_preferences_keep_configured_runtime_servers() {
     let without_document = build_skill_data(&skill, None).expect("skill data");
     let object = without_document.as_object().expect("object");
     assert!(!object.contains_key("mcpServers"));
-    assert_eq!(object["configuration_required"], json!(true));
+    assert!(!object.contains_key("configuration_required"));
+    assert_eq!(object["connector_slug"], json!("dingtalk_sheet"));
+    assert_eq!(object["connector_available"], json!(false));
 }
 
 /// A stub `ensure_access_token_sync`: it returns the synthetic token and
@@ -885,8 +948,8 @@ async fn legacy_hyphenated_server_name_receives_the_header() {
     assert_eq!(tokens.calls().len(), 1);
 }
 
-/// An unconfigured user-managed provider service renders the configuration
-/// guidance and never asks for a token.
+/// An unconfigured connector-managed provider keeps its Skill prompt and
+/// defers authorization to the connector rather than requesting an OAuth token.
 #[tokio::test]
 async fn unconfigured_runtime_skill_requests_no_token() {
     let skill = named_skill_row(
@@ -908,6 +971,76 @@ async fn unconfigured_runtime_skill_requests_no_token() {
         .expect("skill data");
 
     assert!(!data.as_object().expect("object").contains_key("mcpServers"));
-    assert_eq!(data["configuration_required"], json!(true));
+    assert_eq!(data["connector_slug"], json!("dingtalk_sheet"));
+    assert_eq!(data["connector_available"], json!(false));
+    assert_eq!(data["prompt"], json!("# skill prompt"));
     assert!(tokens.calls().is_empty());
+}
+
+#[test]
+fn the_skill_ref_projects_the_declared_bind_shells() {
+    let row = SkillKindRow {
+        kinds_id: 42,
+        kinds_user_id: 0,
+        kinds_kind: "Skill".to_string(),
+        kinds_name: "docx".to_string(),
+        kinds_namespace: "default".to_string(),
+        kinds_json: Json(json!({"spec": {"bindShells": ["ClaudeCode"]}})),
+        kinds_is_active: 1,
+        kinds_created_at: None,
+        kinds_updated_at: None,
+    };
+    let meta = SkillRefMeta::from_kind(&row);
+    assert_eq!(meta.bind_shells, Some(vec!["ClaudeCode".to_string()]));
+    let serialized = serde_json::to_value(&meta).expect("serializes");
+    assert_eq!(serialized["bind_shells"], json!(["ClaudeCode"]));
+}
+
+#[test]
+fn an_explicitly_empty_bind_shells_list_is_preserved_for_the_device_payload() {
+    let row = SkillKindRow {
+        kinds_id: 42,
+        kinds_user_id: 1,
+        kinds_kind: "Skill".to_string(),
+        kinds_name: "docx".to_string(),
+        kinds_namespace: "default".to_string(),
+        kinds_json: Json(json!({"spec": {"bindShells": []}})),
+        kinds_is_active: 1,
+        kinds_created_at: None,
+        kinds_updated_at: None,
+    };
+    // `get_runtime_skill_shells` returns the stored empty list as-is, so the
+    // device payload must be able to emit `[]` rather than collapse to null.
+    assert_eq!(
+        project_runtime_skill_shells(&row.kinds_json.0, 1, "default", "docx"),
+        Some(Vec::new())
+    );
+    // The skill ref only adds the key for a non-empty list.
+    let meta = SkillRefMeta::from_kind(&row);
+    assert_eq!(meta.bind_shells, None);
+    assert_eq!(
+        serde_json::to_value(&meta)
+            .expect("serializes")
+            .get("bind_shells"),
+        None
+    );
+}
+
+/// `skill_resolution.get_runtime_skill_shells` applies to `skill_configs`
+/// too: the built-in public `default` interactive-form Skill keeps its
+/// shipped Codex compatibility, so `bindShells` and the ref's `bind_shells`
+/// never disagree for the same Skill.
+#[test]
+fn the_interactive_skill_keeps_its_codex_binding_in_the_config() {
+    let row = named_skill_row(
+        "interactive",
+        0,
+        "default",
+        json!({
+            "bindShells": ["ClaudeCode"],
+            "mcpServers": {"wegent-interactive-form-question": {}},
+        }),
+    );
+    let data = build_skill_data(&row, Some("")).expect("skill data");
+    assert_eq!(data["bindShells"], json!(["ClaudeCode", "Codex"]));
 }

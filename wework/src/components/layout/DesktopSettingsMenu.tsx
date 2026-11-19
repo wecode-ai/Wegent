@@ -1,3 +1,4 @@
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import {
   ChevronDown,
@@ -10,7 +11,7 @@ import {
   Settings,
   TriangleAlert,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import {
   emptyCodexUsageDisplay,
@@ -19,11 +20,7 @@ import {
   type CodexUsageDisplay,
   type CodexUsageWindowDisplay,
 } from '@/api/local/codexUsage'
-import {
-  emptyWegentUsageDisplay,
-  getWegentUsageDisplay,
-  type WegentUsageDisplay,
-} from '@/api/wegentUsage'
+import { emptyWegentUsageDisplay, getWegentUsageDisplay } from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
@@ -79,13 +76,27 @@ export function DesktopSettingsMenu({
   const [isCodexUsageExpanded, setIsCodexUsageExpanded] = useState(false)
   const [isWegentUsageExpanded, setIsWegentUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
-  const [wegentUsage, setWegentUsage] = useState<WegentUsageDisplay>(() =>
-    emptyWegentUsageDisplay()
+  const { isConnected, apiBaseUrl, token, serviceKey } = cloudConnection
+  const wegentQuotaResource = useMemo(
+    () =>
+      createAsyncResource(serviceKey ?? 'settings-wegent-quota', () =>
+        getWegentUsageDisplay({ isConnected, apiBaseUrl, token })
+      ),
+    [isConnected, apiBaseUrl, token, serviceKey]
   )
+  const wegentQuotaSnapshot = useSyncExternalStore(
+    isConnected ? wegentQuotaResource.subscribe : subscribeIdleResource,
+    wegentQuotaResource.getSnapshot,
+    wegentQuotaResource.getSnapshot
+  )
+  const wegentUsage = wegentQuotaSnapshot.data ?? emptyWegentUsageDisplay()
+  const wegentQuotaLoading = wegentQuotaSnapshot.status === 'loading'
+  const wegentQuotaError =
+    wegentQuotaSnapshot.status === 'error'
+      ? t('workbench.quota_load_failed', '额度信息获取失败')
+      : null
   const [codexQuotaLoading, setCodexQuotaLoading] = useState(false)
-  const [wegentQuotaLoading, setWegentQuotaLoading] = useState(false)
   const [codexQuotaError, setCodexQuotaError] = useState<string | null>(null)
-  const [wegentQuotaError, setWegentQuotaError] = useState<string | null>(null)
   const [selectedUpdateError, setSelectedUpdateError] = useState<AppUpdateError | null>(null)
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
@@ -116,22 +127,8 @@ export function DesktopSettingsMenu({
   }
 
   const loadWegentUsage = () => {
-    if (wegentQuotaLoading) {
-      return
-    }
-
-    setWegentQuotaLoading(true)
-    setWegentQuotaError(null)
-    getWegentUsageDisplay(cloudConnection)
-      .then(data => {
-        setWegentUsage(data)
-      })
-      .catch(() => {
-        setWegentQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
-      })
-      .finally(() => {
-        setWegentQuotaLoading(false)
-      })
+    if (!isConnected || wegentQuotaResource.getSnapshot().status === 'loading') return
+    void wegentQuotaResource.reload()
   }
 
   const handleCodexUsageClick = () => {
@@ -151,30 +148,6 @@ export function DesktopSettingsMenu({
       loadWegentUsage()
     }
   }
-
-  useEffect(() => {
-    if (!cloudConnection.isConnected) return
-
-    let cancelled = false
-    getWegentUsageDisplay({
-      isConnected: cloudConnection.isConnected,
-      apiBaseUrl: cloudConnection.apiBaseUrl,
-      token: cloudConnection.token,
-    })
-      .then(data => {
-        if (!cancelled) setWegentUsage(data)
-      })
-      .catch(() => undefined)
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    cloudConnection.apiBaseUrl,
-    cloudConnection.isConnected,
-    cloudConnection.serviceKey,
-    cloudConnection.token,
-  ])
 
   const handleUpdateClick = async () => {
     if (availableUpdate && installUpdate) {

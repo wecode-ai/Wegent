@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -48,6 +50,26 @@ function readProfile(home) {
   }
 }
 
+function readConversationIssueState(home, taskId) {
+  const database = new DatabaseSync(join(home, 'data/tasks.sqlite'), { readOnly: true })
+  try {
+    return {
+      issues: database
+        .prepare(
+          "SELECT id FROM loop_items WHERE resource_type='task' AND cloud_project_id='default-work-items' ORDER BY id"
+        )
+        .all(),
+      bindings: database
+        .prepare(
+          "SELECT id,loop_item_id FROM loop_items WHERE resource_type='execution' AND task_id=? AND loop_item_id IS NOT NULL ORDER BY id"
+        )
+        .all(taskId),
+    }
+  } finally {
+    database.close()
+  }
+}
+
 // The existing cloud checkpoint owns binding, actual cancellation and offline recovery.
 export function createDesktopScenario({
   resultDir,
@@ -60,18 +82,53 @@ export function createDesktopScenario({
   let heldResponse
   let heldRequestSeen = false
   let heldConnectionClosed = false
+  let remoteSocket
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const binding = control => readStandInBinding(control, uiTimeoutMs)
   const stop = control => stopBoundStandIn(control, uiTimeoutMs)
   const bind = (control, user, device) => bindStoppedStandIn(control, user, device, uiTimeoutMs)
-  async function createRole(control, name) {
+  async function remoteRpc(method, params) {
+    if (!remoteSocket) {
+      const { io } = createRequire(
+        new URL('../../../../packages/chat-core/package.json', import.meta.url)
+      )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
+      remoteSocket = io(`${cloud.backendUrl}/wework-runtime`, {
+        path: '/socket.io',
+        transports: ['websocket'],
+        auth: { token: cloud.authToken },
+        autoConnect: false,
+        forceNew: true,
+        reconnection: false,
+        timeout: uiTimeoutMs,
+      })
+      await new Promise((resolve, reject) => {
+        remoteSocket.once('connect', resolve)
+        remoteSocket.once('connect_error', reject)
+        remoteSocket.connect()
+      })
+    }
+    const ack = await remoteSocket.timeout(uiTimeoutMs).emitWithAck('runtime:request', {
+      type: 'request',
+      id: randomUUID(),
+      method,
+      params,
+      device_id: CLOUD_DEVICE_ID,
+      timeout_seconds: uiTimeoutMs / 1000,
+    })
+    assert.equal(ack.ok, true, `${method}: ${ack.error?.message}`)
+    return ack.result
+  }
+  async function createRole(control, name, deviceId) {
     await control.command('clickWhenEnabled', testId('stand-in-create-role'))
     await control.command('waitFor', testId('stand-in-role-name'))
     assert.equal(
       await control.command('getElementCount', testId('stand-in-device')),
       '0',
-      'Role creation must stay on the bound Executor'
+      'Role creation must not expose a primary binding switch'
     )
+    await control.command('waitFor', testId('stand-in-role-device'))
+    if (deviceId)
+      await control.command('select', testId('stand-in-role-device'), { value: deviceId })
     await control.command('fill', testId('stand-in-role-name'), { value: name })
     await control.command('clickWhenEnabled', testId('stand-in-save'))
     await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
@@ -105,6 +162,7 @@ export function createDesktopScenario({
     },
     async cleanup() {
       heldResponse?.end()
+      remoteSocket?.disconnect()
     },
     async handleHttp(req, res, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -248,7 +306,7 @@ export function createDesktopScenario({
       )
       await control.command('clickWhenEnabled', testId('stand-in-close'))
       await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
-      await createRole(control, CLOUD_NAME)
+      await createRole(control, CLOUD_NAME, CLOUD_DEVICE_ID)
       const role = readProfile(remoteHome).roles.find(row => row.name === CLOUD_NAME)
       assert.ok(role, 'The bound real cloud Executor must persist the role')
       assert.equal(role.executionDeviceId, CLOUD_DEVICE_ID)
@@ -256,14 +314,17 @@ export function createDesktopScenario({
         !readProfile(remoteHome).roles.some(row => row.id === localRole.id),
         'Binding another profile must not copy local roles'
       )
+      const taskId = `stand-in-chat-${USER}-role-${role.id}`
+      const issuesBefore = readConversationIssueState(remoteHome, taskId)
+      assert.deepEqual(issuesBefore.bindings, [])
       const remoteChat = await chat(control, role.id, PROMPT)
       await control.command('waitFor', remoteChat, {
         text: COMPLETE,
         timeoutMs: modelResponseTimeoutMs,
       })
-      const taskId = `stand-in-chat-${USER}-role-${role.id}`
       const indexPath = join(remoteHome, 'runtime-work/index.json')
-      assert.ok(JSON.parse(await readFile(indexPath, 'utf8')).tasks[taskId]?.thread_id)
+      const threadId = JSON.parse(await readFile(indexPath, 'utf8')).tasks[taskId]?.thread_id
+      assert.ok(threadId)
       const localTasks = await rpc(control, 'runtime.tasks.list', {})
       assert.equal(localTasks.coverage.authorized_index_complete, true)
       assert.equal(
@@ -287,20 +348,24 @@ export function createDesktopScenario({
       await until(() => heldConnectionClosed, Boolean, 'Stopping must cancel the real model stream')
       assert.equal(readProfile(remoteHome).lifecycle.status, 'stopped')
       assert.ok(readProfile(remoteHome).roles.every(row => !row.enabled))
-      // The durable index intentionally omits live status. Assert the owning
-      // Runtime's native terminal projection, in addition to stream cancellation.
-      await until(
-        () => readFile(cloud.remoteExecutorRuntimeLogPath, 'utf8'),
-        log =>
-          log
-            .split('\n')
-            .some(
-              line =>
-                line.includes('runtime task Issue status projected') &&
-                line.includes(`local_task_id=${taskId} `) &&
-                line.includes('execution_status=cancelled')
-            ),
+      // Identity conversations have no business Issue. Read the owning Runtime's
+      // native terminal state instead of requiring an unrelated Issue mutation.
+      const cancelled = await until(
+        () => remoteRpc('runtime.tasks.get', { taskId }),
+        result => {
+          assert.equal(result.success, true, result.error)
+          assert.equal(result.task.taskId, taskId)
+          assert.equal(result.task.threadId, threadId)
+          return result.task.status === 'cancelled' && result.task.running === false
+        },
         'The real remote task must project its native cancelled outcome'
+      )
+      assert.equal(cancelled.task.status, 'cancelled')
+      assert.equal(cancelled.task.running, false)
+      assert.deepEqual(
+        readConversationIssueState(remoteHome, taskId),
+        issuesBefore,
+        'Ordinary identity conversation and cancellation must not create a business Issue'
       )
       await bind(control, 0, localDevice)
       await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${localRole.id}`))

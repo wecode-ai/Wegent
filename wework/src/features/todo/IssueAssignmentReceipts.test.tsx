@@ -34,6 +34,32 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
+  it('shows queued delivery separately from received and limits repair to the owner', async () => {
+    const dispatch = {
+      projectId: 'project',
+      issueId: 'issue',
+      humanAssignmentId: 'human',
+      ownerUserId: 7,
+      state: 'queued' as const,
+      reasonCode: 'awaiting_device_ack',
+      runtimeTaskId: null,
+      deliveryId: null,
+      updatedAt: '2026-11-17T02:00:00Z',
+    }
+    const view = setup(8, [{ ...receipt, dispatch_receipt: dispatch }])
+    expect(await screen.findByTestId('issue-assignment-dispatch')).toHaveTextContent(/排队|queued/)
+    expect(screen.queryByText(/助理已接收|Received by stand-in/)).not.toBeInTheDocument()
+    view.unmount()
+    setup(7, [
+      {
+        ...receipt,
+        human_read_at: '2026-11-17T02:00:00Z',
+        dispatch_receipt: { ...dispatch, state: 'blocked_policy', reasonCode: 'tag_mismatch' },
+      },
+    ])
+    expect(await screen.findByTestId('issue-assignment-dispatch')).toHaveTextContent(/标签|tags/)
+    expect(screen.getByTestId('issue-assignment-dispatch-repair')).toBeVisible()
+  })
   it('preserves a hovered receipt while an unrelated issue revision is refreshed', async () => {
     vi.useFakeTimers()
     const rows = [{ ...receipt, stand_in_received_at: '2026-11-07T16:54:00Z' }]
@@ -54,7 +80,7 @@ describe('Issue reception receipts', () => {
     )
     const { rerender } = render(view(1))
     await act(async () => {})
-    const icon = screen.getByTitle(/^分身已接收/)
+    const icon = screen.getByTitle(/^助理已接收/)
     fireEvent.pointerOver(icon)
     await act(async () => vi.advanceTimersByTimeAsync(600))
 
@@ -65,18 +91,18 @@ describe('Issue reception receipts', () => {
       })
     )
     rerender(view(2))
-    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
+    expect(screen.getByTitle(/^助理已接收/)).toBe(icon)
     await act(async () => vi.advanceTimersByTimeAsync(100))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('助理已接收')
     await act(async () => resolveRefresh(rows))
-    expect(screen.getByTitle(/^分身已接收/)).toBe(icon)
-    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    expect(screen.getByTitle(/^助理已接收/)).toBe(icon)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('助理已接收')
 
     rerender(view(3, 9))
-    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+    expect(screen.queryByTitle(/^助理已接收/)).not.toBeInTheDocument()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     rerender(view(4, 7, 'another-issue'))
-    expect(screen.queryByTitle(/^分身已接收/)).not.toBeInTheDocument()
+    expect(screen.queryByTitle(/^助理已接收/)).not.toBeInTheDocument()
   })
 
   it('identifies an assignment independently of history ordering and display names', () => {
@@ -120,7 +146,7 @@ describe('Issue reception receipts', () => {
     }
     const { rerender } = render(<IssueAssignmentReceipts {...props} version={1} />)
     await act(async () => {})
-    const icon = screen.getByText('分身已接收').closest('[title]')!
+    const icon = screen.getByText('助理已接收').closest('[title]')!
     fireEvent.pointerOver(icon)
     await act(async () => vi.advanceTimersByTimeAsync(380))
     let finishOldRefresh!: (rows: IssueAssignmentReceipt[]) => void
@@ -131,9 +157,9 @@ describe('Issue reception receipts', () => {
         })
     )
     rerender(<IssueAssignmentReceipts {...props} version={2} />)
-    expect(screen.getByText('分身已接收').closest('[title]')).toBe(icon)
+    expect(screen.getByText('助理已接收').closest('[title]')).toBe(icon)
     await act(async () => vi.advanceTimersByTimeAsync(320))
-    expect(screen.getByRole('tooltip')).toHaveTextContent('分身已接收')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('助理已接收')
     let finishNewAssignment!: (rows: IssueAssignmentReceipt[]) => void
     api.getIssueAssignmentReceipts.mockImplementationOnce(
       () =>
@@ -142,12 +168,12 @@ describe('Issue reception receipts', () => {
         })
     )
     rerender(<IssueAssignmentReceipts {...props} version={3} assignmentRevision="assignment-2" />)
-    expect(screen.queryByText('分身已接收')).not.toBeInTheDocument()
+    expect(screen.queryByText('助理已接收')).not.toBeInTheDocument()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     await act(async () =>
       finishOldRefresh([{ ...receipt, stand_in_received_at: '2026-11-07T18:35:58Z' }])
     )
-    expect(screen.queryByText('分身已接收')).not.toBeInTheDocument()
+    expect(screen.queryByText('助理已接收')).not.toBeInTheDocument()
     await act(async () => finishNewAssignment([{ ...receipt, id: 'assignment-2' }]))
     expect(screen.getByText('未读')).toBeInTheDocument()
   })
@@ -171,12 +197,12 @@ describe('Issue reception receipts', () => {
       { ...receipt, stand_in_received_at: '2026-11-07T19:09:38Z' },
     ])
     await act(async () => {})
-    expect(screen.getByTitle(/分身已接收/)).toBeInTheDocument()
+    expect(screen.getByTitle(/助理已接收/)).toBeInTheDocument()
     api.getIssueAssignmentReceipts.mockReturnValueOnce(new Promise(() => {}))
     rerender(
       <IssueAssignmentReceipts api={api as never} {...scope} version={2} currentUserId={8} />
     )
-    expect(screen.queryByTitle(/分身已接收/)).not.toBeInTheDocument()
+    expect(screen.queryByTitle(/助理已接收/)).not.toBeInTheDocument()
   })
 
   it('does not acknowledge a detail kept mounted in an inactive workspace tab', async () => {

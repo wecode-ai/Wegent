@@ -1,6 +1,10 @@
 // @vitest-environment node
 
 import { describe, expect, test } from 'vitest'
+import { Readable } from 'node:stream'
+import { gzipSync } from 'node:zlib'
+import { generateCollaborationGroupDraft } from '../src/features/collaboration/collaborationGroupDraftGeneration'
+import { handleProjectCreateGroupModel } from '../e2e/desktop/modules/project-create-group-model.mjs'
 import {
   createSse,
   delegatedTaskResultEvents,
@@ -16,7 +20,108 @@ import {
   selectMcpToolRequest,
   selectProgrammaticExec,
   selectTool,
+  toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
+
+test('returns a real Responses stream accepted by the production group prompt and draft parser', async () => {
+  const input = {
+    projectName: 'Protocol generation',
+    projectDescription: 'Verify the model boundary',
+    generationInstructions: 'PROJECT_CREATE_GROUP_DRAFT_E2E generate responsibilities',
+    currentUser: { id: 91, name: 'Project owner' },
+    members: [],
+    agents: [
+      { id: 'team:protocol-alpha', name: 'Planner' },
+      { id: 'team:protocol-beta', name: 'Implementer' },
+    ],
+    modelSelection: { modelName: 'protocol-cloud-model', modelType: 'public' },
+  }
+  const progress = []
+  const draft = await generateCollaborationGroupDraft({
+    input,
+    onEvent: event => progress.push(event),
+    textGenerationApi: {
+      async generateText(data) {
+        expect(data.outputSchema.properties.events.type).toBe('array')
+        const payload = {
+          model: data.modelId,
+          stream: true,
+          text: { format: { type: 'json_schema', name: 'group_draft', schema: data.outputSchema } },
+          input: [{ role: 'user', content: [{ type: 'input_text', text: data.prompt }] }],
+        }
+        const request = Readable.from([gzipSync(Buffer.from(JSON.stringify(payload)))])
+        request.method = 'POST'
+        request.headers = { 'content-encoding': 'gzip' }
+        let wire = ''
+        const handled = await handleProjectCreateGroupModel(
+          request,
+          {
+            writeHead(status, headers) {
+              expect(status).toBe(200)
+              expect(headers['content-type']).toContain('text/event-stream')
+            },
+            end(chunk) {
+              wire += chunk
+            },
+          },
+          new URL('http://model-fixture/v1/responses')
+        )
+        expect(handled).toBe(true)
+        const events = wire
+          .trim()
+          .split('\n\n')
+          .map(frame =>
+            JSON.parse(
+              frame
+                .split('\n')
+                .find(line => line.startsWith('data: '))
+                .slice(6)
+            )
+          )
+        expect(events[0].type).toBe('response.created')
+        const completed = events.at(-1)
+        expect(completed.type).toBe('response.completed')
+        const text = completed.response.output[0].content[0].text
+        data.onDelta?.(text)
+        return text
+      },
+    },
+  })
+  expect(draft.leader.id).toBe(String(input.currentUser.id))
+  expect(draft.members.map(member => member.id)).toEqual(input.agents.map(agent => agent.id))
+  expect(draft.members.every(member => member.responsibility.length > 300)).toBe(true)
+  expect(draft.stages).toHaveLength(3)
+  expect(
+    progress
+      .filter(event => event.type === 'participant_started')
+      .map(({ kind, id }) => `${kind}:${id}`)
+  ).toEqual(['human:91', 'agent:team:protocol-alpha', 'agent:team:protocol-beta'])
+})
+
+test('leaves ordinary model requests and unrelated HTTP routes to the existing scenario handler', async () => {
+  for (const [path, content] of [
+    ['/v1/responses', 'PROJECT_CREATE_GROUP_DRAFT_E2E is mentioned by ordinary task history'],
+    ['/v1/chat/completions', '你是项目协作架构师。 PROJECT_CREATE_GROUP_DRAFT_E2E'],
+  ]) {
+    const request = Readable.from([
+      JSON.stringify({ model: 'ordinary-model', input: [{ role: 'user', content }] }),
+    ])
+    request.method = 'POST'
+    let replied = false
+    expect(
+      await handleProjectCreateGroupModel(
+        request,
+        {
+          end() {
+            replied = true
+          },
+        },
+        new URL(`http://model-fixture${path}`)
+      )
+    ).toBe(false)
+    expect(replied).toBe(false)
+  }
+})
 
 describe('native function selection', () => {
   test.each([
@@ -85,10 +190,7 @@ describe('native function selection', () => {
     })
   })
 })
-import {
-  longCodeStreamingEvents,
-  textDeltaEvents,
-} from '../e2e/desktop/modules/streaming-text-fixture.mjs'
+import { textDeltaEvents } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 function searchResult(...tools) {
   return {
@@ -110,24 +212,6 @@ function functionTool(name) {
 }
 
 describe('responses stream fixtures', () => {
-  test('keeps long-code reasoning and final text in the same order through completion', () => {
-    const stream = longCodeStreamingEvents('long-code')
-    const started = stream.start.filter(event => event.type === 'response.output_item.added')
-    expect(started.map(event => event.output_index)).toEqual([0, 1])
-    expect(started.map(event => event.item.type)).toEqual(['reasoning', 'message'])
-    expect(textDeltaEvents(stream.itemId, 'code', 0, stream.outputIndex)[0]).toMatchObject({
-      item_id: started[1].item.id,
-      output_index: 1,
-    })
-    const completed = stream.finish.at(-1).response.output
-    expect(completed.map(item => item.id)).toEqual(started.map(event => event.item.id))
-    expect(completed.map(item => item.status)).toEqual(['completed', 'completed'])
-    expect(completed[1].phase).toBe('final_answer')
-    expect(
-      stream.finish.filter(event => 'output_index' in event).map(event => event.output_index)
-    ).toEqual([1, 1])
-  })
-
   test('completes tool items in the final response for Codex turn history', () => {
     const events = [
       responseCreated('response-1'),
@@ -185,6 +269,21 @@ describe('cors', () => {
 })
 
 describe('programmatic exec', () => {
+  test.each(['function_call_output', 'custom_tool_call_output'])(
+    'reads bound-Issue results from %s envelopes',
+    type => {
+      const request = {
+        input: [
+          { type, call_id: 'unrelated', output: 'unrelated result' },
+          { type, call_id: 'manual-read', output: 'BOARD_READ_OK' },
+        ],
+      }
+      expect(toolOutputText(request, 'manual-read')).toBe('BOARD_READ_OK')
+      expect(toolOutputText({ input: [{ content: request.input }] }, 'manual-read')).toBe(
+        'BOARD_READ_OK'
+      )
+    }
+  )
   test('recognizes the native exec declaration before additional tools are injected', () => {
     const request = { tools: [{ type: 'custom', name: 'exec' }], input: [] }
     expect(requestAdvertisesProgrammaticExec(request)).toBe(true)
@@ -312,6 +411,81 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('discovers a newly announced native namespace without replaying a failed call ID', () => {
+    const step = {
+      toolName: 'read_task',
+      directToolName: 'mcp__wework_stand_in__read_task',
+      argumentsValue: { taskId: 'child-task' },
+      searchCallId: 'search-child',
+      toolCallId: 'read-child',
+    }
+    const failure = {
+      type: 'custom_tool_call_output',
+      call_id: step.searchCallId,
+      output: 'Native discovery requires one exact capability',
+    }
+    const announcement = {
+      type: 'message',
+      role: 'developer',
+      content: [
+        {
+          type: 'input_text',
+          text: '<tools>\nAdded deferred tool namespaces:\n- wework_stand_in\n</tools>',
+        },
+      ],
+    }
+    const request = { tools: [{ type: 'custom', name: 'exec' }], input: [failure, announcement] }
+    const response = mcpToolRequestEvents(request, step)
+    const call = response.events.find(event => event.type === 'response.output_item.done').item
+    expect(response.mode).toBe('search')
+    expect(call.call_id).not.toBe(step.searchCallId)
+    expect(call.input).toContain('wework_stand_in__read_task')
+    expect(() =>
+      mcpToolRequestEvents(
+        { ...request, input: [failure, announcement, { ...failure, call_id: call.call_id }] },
+        step
+      )
+    ).toThrow('Native discovery did not expose')
+    expect(() =>
+      mcpToolRequestEvents({ ...request, input: [announcement, failure] }, step)
+    ).toThrow('Native discovery did not expose')
+    expect(() =>
+      mcpToolRequestEvents(
+        { ...request, input: [failure, { ...announcement, role: 'user' }] },
+        step
+      )
+    ).toThrow('Native discovery did not expose')
+  })
+
+  test('reports the exact failed discovery instead of repeating it until the UI times out', () => {
+    const request = {
+      tools: [{ type: 'custom', name: 'exec' }],
+      input: [
+        {
+          type: 'custom_tool_call_output',
+          call_id: 'other-search',
+          output: 'Unrelated discovery output',
+        },
+        {
+          type: 'custom_tool_call_output',
+          call_id: 'search-context',
+          output: 'Native discovery execution failed',
+        },
+      ],
+    }
+    expect(() =>
+      mcpToolRequestEvents(request, {
+        toolName: 'get_current_context',
+        directToolName: 'mcp__wework_space__get_current_context',
+        argumentsValue: {},
+        searchCallId: 'search-context',
+        toolCallId: 'read-context',
+      })
+    ).toThrow(
+      'Native discovery did not expose mcp__wework_space__get_current_context: Native discovery execution failed'
+    )
+  })
+
   test('does not select a same-named tool from another MCP server', () => {
     expect(() =>
       selectMcpToolRequest(

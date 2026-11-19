@@ -47,6 +47,18 @@ function fixture() {
       update: vi.fn(async () => project),
       createCollaborationGroup: vi.fn(async () => group),
     },
+    agents: {
+      list: vi.fn(async () =>
+        ['coordinator', 'executor'].map(id => ({
+          id,
+          executionPolicy: { mode: 'fixed', environment_id: 'runner' },
+          modelPolicy: {
+            mode: 'fixed',
+            model: { runtime: 'codex', provider: 'test', model_id: 'model' },
+          },
+        }))
+      ),
+    },
     automations: {
       list: vi.fn(async () => [] as WorkspaceAutomationRule[]),
       create: vi.fn(),
@@ -56,8 +68,19 @@ function fixture() {
 }
 
 describe('template execution defaults', () => {
-  it('routes new tasks to the persisted group and makes stage tags the default board without removing existing views', async () => {
+  it('routes new tasks to the persisted group and makes the stage view default without changing the status board', async () => {
     const { api, document, drafts, group, project } = fixture()
+    project.board_config = {
+      group_by: 'status',
+      processing_start_status_id: 'in_progress',
+      statuses: [
+        { id: 'inbox', name: '收集箱', color: 'gray' },
+        { id: 'pending', name: '待开始', color: 'gray' },
+        { id: 'in_progress', name: '进行中', color: 'blue' },
+        { id: 'in_review', name: '待确认', color: 'purple' },
+        { id: 'completed', name: '已完成', color: 'green' },
+      ],
+    }
     await applyProjectTemplate(api, project.id, document, drafts, 'zh-CN', 'Partial')
     expect(api.automations!.create).toHaveBeenCalledWith(
       project.id,
@@ -71,6 +94,7 @@ describe('template execution defaults', () => {
       })
     )
     const update = vi.mocked(api.projects.update).mock.calls[0][1]
+    expect(update.boardConfig).toEqual(project.board_config)
     const views = update.boardViews!
     expect(views.views[0].id).toBe('original')
     const defaultView = views.views.find(view => view.id === views.default_view_id)!
@@ -104,6 +128,57 @@ describe('template execution defaults', () => {
     )
     expect(exported.spec.resources.collaboration.groups[0].roles[0].defaultKind).toBe('agent')
     expect(JSON.stringify(exported)).not.toContain(group.id)
+  })
+
+  it('imports definitions and leaves automatic execution disabled until routing is configured', async () => {
+    const { api, document, drafts, project } = fixture()
+    vi.mocked(api.agents.list).mockResolvedValue(
+      ['coordinator', 'executor'].map(id => ({
+        id,
+        name: id,
+        executionPolicy: { mode: 'user_select' },
+        modelPolicy: { mode: 'user_select' },
+      }))
+    )
+    await applyProjectTemplate(api, project.id, document, drafts, 'zh-CN', 'Partial')
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(api.automations!.create).toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({ enabled: false })
+    )
+  })
+
+  it('restores legacy tag grouping while preserving the configured status order and existing views', async () => {
+    const { api, document, drafts, project } = fixture()
+    project.board_config = {
+      group_by: 'tag',
+      processing_start_status_id: 'active',
+      statuses: [
+        { id: 'active', name: 'Active', color: 'blue' },
+        { id: 'queued', name: 'Queued', color: 'gray' },
+        { id: 'done', name: 'Done', color: 'green' },
+      ],
+      schedule_view: {
+        status_filter: 'active',
+        assignee_filter: null,
+        tag_filter: 'business',
+        group_by: 'tag',
+        sort_by: 'due_asc',
+      },
+    }
+    const originalConfig = structuredClone(project.board_config)
+    const originalViews = structuredClone(project.board_views)
+
+    await applyProjectTemplate(api, project.id, document, drafts, 'zh-CN', 'Partial')
+
+    const update = vi.mocked(api.projects.update).mock.calls[0][1]
+    expect(update.boardConfig).toEqual({ ...originalConfig, group_by: 'status' })
+    expect(update.boardViews!.views.slice(0, originalViews!.views.length)).toEqual(
+      originalViews!.views
+    )
+    expect(project.board_config).toEqual(originalConfig)
+    expect(project.board_views).toEqual(originalViews)
+    expect(project.tags).toEqual(['business'])
   })
 
   it('rejects a competing creation rule before adding any group', async () => {
@@ -182,7 +257,11 @@ it('preserves routing filters and selects the enabled rule when exporting a proj
   expect(api.automations!.create).toHaveBeenCalledWith(
     project.id,
     expect.objectContaining({
-      eventConfig: { executionTarget: 'existing_issue', tags: ['review'], priorities: ['high'] },
+      eventConfig: {
+        executionTarget: 'existing_issue',
+        tags: ['review'],
+        priorities: ['high'],
+      },
     })
   )
 })

@@ -232,6 +232,64 @@ describe("shared PC and Web conversation queue", () => {
     queue.reconcileGuidance(new Set(["one"]));
     expect(queue.getSnapshot()).toEqual([]);
   });
+  it.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: "submitted-thread" },
+    { startNewSession: false, expectedThreadId: "submitted-thread" },
+  ])("preserves the submitted session boundary: %j", (boundary) => {
+    const request = runtimeQueuedMessageRequest(
+      {
+        address: { deviceId: "device", taskId: "task" },
+        ...(boundary
+          ? {
+              startNewSession: !boundary.startNewSession,
+              expectedThreadId: "stale-context",
+            }
+          : {}),
+      },
+      { ...message("session-boundary"), ...boundary },
+    );
+
+    if (boundary) {
+      expect(request).toMatchObject(boundary);
+    } else {
+      expect(request).not.toHaveProperty("startNewSession");
+      expect(request).not.toHaveProperty("expectedThreadId");
+    }
+  });
+
+  it.each([undefined, "private_discussion"] as const)(
+    "preserves queued conversation scope %s even when the active pane has the opposite scope",
+    (conversationContext) => {
+      const request = runtimeQueuedMessageRequest(
+        {
+          address: { deviceId: "device", taskId: "task" },
+          conversationContext: conversationContext
+            ? undefined
+            : "private_discussion",
+        },
+        {
+          ...message("source-context"),
+          conversationContext,
+          origin: { source: "manual", external_id: "source-intent" },
+          cloudProjectId: "source-project",
+          additionalContext: {
+            source: { value: "source-intent", kind: "application" },
+          },
+        },
+      );
+      expect(request.conversationContext).toBe(conversationContext);
+      expect(request).toMatchObject({
+        clientUserMessageId: "source-context",
+        cloudProjectId: "source-project",
+        origin: { source: "manual", external_id: "source-intent" },
+        additionalContext: {
+          source: { value: "source-intent", kind: "application" },
+        },
+      });
+    },
+  );
+
   it("addresses remote and local attachments correctly and freezes the submitted model selection", () => {
     const request = runtimeQueuedMessageRequest(
       {

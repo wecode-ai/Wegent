@@ -1,5 +1,6 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { GitBranch, Info, Link2 } from 'lucide-react'
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
@@ -118,19 +119,15 @@ export function EnvironmentInfoPopover({
     if (nextOpen) void onRefresh?.()
   }
 
-  useEffect(() => {
-    if (!open || docked) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target))
         onOpenChange(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [docked, onOpenChange, open])
+    },
+    { enabled: open && !docked }
+  )
 
   function getFloatingPopoverPosition(): CSSProperties | undefined {
     const anchor = rootRef.current?.getBoundingClientRect()

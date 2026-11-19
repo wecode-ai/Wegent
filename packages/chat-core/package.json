@@ -347,6 +347,54 @@
     "./conversation-search": {
       "types": "./src/conversation-search.ts",
       "import": "./src/conversation-search.ts"
+    },
+    "./runtime-device-identity": {
+      "types": "./src/runtime-device-identity.ts",
+      "import": "./src/runtime-device-identity.ts"
+    },
+    "./workspace-file-types": {
+      "types": "./src/workspace-file-types.ts",
+      "import": "./src/workspace-file-types.ts"
+    },
+    "./workspace-file-paths": {
+      "types": "./src/workspace-file-paths.ts",
+      "import": "./src/workspace-file-paths.ts"
+    },
+    "./generated-images": {
+      "types": "./src/generated-images.ts",
+      "import": "./src/generated-images.ts"
+    },
+    "./workspace-git": {
+      "types": "./src/workspace-git.ts",
+      "import": "./src/workspace-git.ts"
+    },
+    "./local-runtime-execution": {
+      "types": "./src/local-runtime-execution.ts",
+      "import": "./src/local-runtime-execution.ts"
+    },
+    "./local-runtime-model": {
+      "types": "./src/local-runtime-model.ts",
+      "import": "./src/local-runtime-model.ts"
+    },
+    "./runtime-composer-references": {
+      "types": "./src/runtime-composer-references.ts",
+      "import": "./src/runtime-composer-references.ts"
+    },
+    "./worktree-types": {
+      "types": "./src/worktree-types.ts",
+      "import": "./src/worktree-types.ts"
+    },
+    "./worktree-availability": {
+      "types": "./src/worktree-availability.ts",
+      "import": "./src/worktree-availability.ts"
+    },
+    "./workspace-branches": {
+      "types": "./src/workspace-branches.ts",
+      "import": "./src/workspace-branches.ts"
+    },
+    "./async-resource": {
+      "types": "./src/async-resource.ts",
+      "import": "./src/async-resource.ts"
     }
   },
   "scripts": {

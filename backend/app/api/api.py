@@ -254,9 +254,6 @@ api_router.include_router(
     subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
-api_router.include_router(
-    im_sessions.tasks_router, prefix="/tasks", tags=["im-sessions"]
-)
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(

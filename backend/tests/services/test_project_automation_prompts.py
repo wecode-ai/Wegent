@@ -53,7 +53,7 @@ async def test_saved_prompt_reaches_ai_runtime_request(
     effective_prompt = prompt if override is None else override
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         saved = project_automation_service.create(

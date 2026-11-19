@@ -2,7 +2,10 @@ import {
   createCloudRuntimeIpcClient,
   type CloudRuntimeIpcClient,
 } from '../vendor/chat-core/runtime-ipc.js'
-import { requireCloudCredentialOwner } from './cloud-connection-profile.js'
+import {
+  configuredCloudRuntimeCredentials,
+  configuredCloudRuntimeTarget,
+} from './cloud-connection-profile.js'
 
 interface Target {
   apiBaseUrl: string
@@ -50,24 +53,10 @@ export class McpAppRuntime {
     // Disposal belongs to the acquired client, even after the cloud settings are cleared.
     if (request.method === 'release' && entry)
       return this.release(key, entry.client, request, address.deviceId)
-    const connection = (await this.connection()) as
-      | (Target & { token?: string; credentialMode?: string; user?: { id?: number | string } })
-      | null
-    if (
-      !connection ||
-      !['apiBaseUrl', 'socketBaseUrl', 'socketPath'].every(
-        key =>
-          (connection as unknown as Record<string, unknown>)[key] ===
-          (target as Record<string, unknown>)[key]
-      )
-    )
-      throw new Error('MCP App Runtime target is not configured')
-    const account = requireCloudCredentialOwner(connection, route.apiBaseUrl)
+    const connection = await this.connection()
+    const { account } = configuredCloudRuntimeTarget(route, connection)
     if (entry && entry.account !== account) throw new Error('MCP App Runtime account changed')
-    const token =
-      connection.credentialMode !== 'desktop_refresh' && connection.token
-        ? connection.token
-        : await this.refreshToken(route.apiBaseUrl, account)
+    const { token } = await configuredCloudRuntimeCredentials(route, connection, this.refreshToken)
     if (!entry) {
       const credential = { token }
       const client = createCloudRuntimeIpcClient({

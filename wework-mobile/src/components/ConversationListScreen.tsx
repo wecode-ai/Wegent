@@ -1,84 +1,143 @@
+import type { ConversationMenuActions } from './ConversationMenu'
+import { ConversationListRow } from './ConversationListRow'
+import { ProjectMenu, type ProjectMenuActions } from './ProjectMenu'
+import type { RuntimeFailureAction } from '@/hooks/useRuntimeFailures'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useIsFocused } from '@react-navigation/native'
 import type { GlassColorScheme } from 'expo-glass-effect'
-import { useEffect, useMemo, useState } from 'react'
-import { FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  BackHandler,
+  FlatList,
+  Keyboard,
+  Platform,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native'
+import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller'
 import { ActivityIndicator, Portal, Text, useTheme, type MD3Theme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { buildConversationList, type ConversationProjectGroup } from '@/domain/conversationList'
 import { DRAWER_HEADER_HEIGHT, drawerBottomOffset, drawerTopPadding } from '@/domain/drawerLayout'
-import { onlineDevicesFirst } from '@/domain/deviceOrdering'
+import {
+  mobileCreatableDevices,
+  mobileProjectCreatableDevices,
+  onlineDevicesFirst,
+} from '@/domain/deviceOrdering'
 import type {
   ConversationItem,
   DeviceInfo,
   RuntimeDeviceWorkspace,
+  RuntimeProjectWork,
   RuntimeTaskAddress,
 } from '@/types/runtime'
+import { LiquidGlassButton, LiquidGlassSurface } from './LiquidGlass'
+import { WorkbenchSidebar } from './WorkbenchSidebar'
 import {
-  LiquidGlassButton,
-  LiquidGlassGroup,
-  LiquidGlassSurface,
-  liquidGlassAccentBorder,
-  liquidGlassAccentTint,
-} from './LiquidGlass'
-import { KeyboardSafeTextInput, KeyboardSafeView, useKeyboardVisible } from './KeyboardSafeInput'
+  beginMobileDiagnostic,
+  diagnosticsEnabled,
+  recordMobileDiagnostic,
+  subscribeDiagnostics,
+} from '@/services/mobileDiagnostics'
+import { isPhoneLocalDeviceId } from '@/services/localRuntime'
 
 interface ConversationListScreenProps {
+  userLabel?: string
+  failures: RuntimeFailureAction[]
+  onRetryFailure: (failure: RuntimeFailureAction) => Promise<void>
+  showDeviceFilters?: boolean
   conversations: ConversationItem[]
   devices: DeviceInfo[]
-  workspaces: Array<{ projectName: string; workspace: RuntimeDeviceWorkspace }>
+  workspaces: Array<{
+    projectName: string
+    projectWork?: RuntimeProjectWork
+    workspace: RuntimeDeviceWorkspace
+  }>
   currentAddress: RuntimeTaskAddress | null
   selectedDeviceId: string | null
   allDevicesSelected: boolean
   search: string
   loading: boolean
+  snapshotReady?: boolean
   refreshing: boolean
   onSearch: (value: string) => void
   onRefresh: () => Promise<void>
+  onRefreshDevices?: () => Promise<unknown>
   onSelectDevice: (deviceId: string) => void
   onSelectAllDevices: () => void
   onSelectConversation: (item: ConversationItem) => void
   onNewConversation: (workspace?: RuntimeDeviceWorkspace) => void
   onNewProject: () => void
   onSettings: () => void
-  onOpenCurrentConversation: () => void
+  onArchives?: () => void
+  projectActions?: ProjectMenuActions
+  conversationActions?: (item: ConversationItem) => ConversationMenuActions
 }
 
 type DrawerItem =
   | {
-      key: 'projects-title' | 'tasks-title'
+      key: 'pinned-title' | 'projects-title' | 'tasks-title'
       type: 'section'
       section: DrawerSection
-      title: '项目' | '任务'
+      title: '置顶' | '项目' | '任务'
       expanded: boolean
     }
   | {
       key: string
       type: 'project'
       name: string
+      detail: string | null
       workspace: RuntimeDeviceWorkspace | undefined
       expanded: boolean
+      projectWork?: RuntimeProjectWork
     }
   | { key: string; type: 'conversation'; conversation: ConversationItem }
   | { key: 'empty'; type: 'empty' }
 
-type DrawerSection = 'projects' | 'tasks'
+type DrawerSection = 'pinned' | 'projects' | 'tasks'
 
-const BOTTOM_CONTROL_HEIGHT = 52
+const BOTTOM_CONTROL_HEIGHT = 48
 const SEARCH_LINE_HEIGHT = 22
-const searchVerticalInset = (BOTTOM_CONTROL_HEIGHT - SEARCH_LINE_HEIGHT) / 2
-const searchTextOpticalOffset = Platform.OS === 'ios' ? 2 : 0
+const searchVerticalInset = (44 - SEARCH_LINE_HEIGHT) / 2
 
 export function ConversationListScreen(props: ConversationListScreenProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
   const focused = useIsFocused()
-  const keyboardVisible = useKeyboardVisible()
+  const recording = useSyncExternalStore(subscribeDiagnostics, diagnosticsEnabled)
+  const keyboardVisible = useKeyboardState(state => state.isVisible)
   const styles = useMemo(() => createStyles(theme.colors), [theme.colors])
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const [actionsVisible, setActionsVisible] = useState(false)
+  const [openSwipeKey, setOpenSwipeKey] = useState<string | null>(null)
+  useEffect(() => {
+    setOpenSwipeKey(null)
+  }, [props.selectedDeviceId, props.allDevicesSelected, props.search, focused])
+  const [refreshingDevices, setRefreshingDevices] = useState(false)
+  const deviceRefreshPending = useRef(false)
+  const refreshDevices = async () => {
+    if (!props.onRefreshDevices || deviceRefreshPending.current) return
+    deviceRefreshPending.current = true
+    setRefreshingDevices(true)
+    try {
+      await props.onRefreshDevices()
+    } catch {
+      // Discovery records its own source-specific avatar retry.
+    } finally {
+      deviceRefreshPending.current = false
+      setRefreshingDevices(false)
+    }
+  }
+  const [sidebarVisible, setSidebarVisible] = useState(false)
+  const [searchVisible, setSearchVisible] = useState(Boolean(props.search))
   const [showAllDevices, setShowAllDevices] = useState(false)
-  const [collapsedSections, setCollapsedSections] = useState<Set<DrawerSection>>(() => new Set())
+  const [collapsedSections, setCollapsedSections] = useState<Set<DrawerSection>>(
+    () => new Set(['pinned'])
+  )
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set())
   const onlineDeviceIds = useMemo(
     () =>
@@ -89,6 +148,15 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   )
   const onlineDevices = props.devices.filter(device => onlineDeviceIds.has(device.device_id))
   const displayedDevices = showAllDevices ? onlineDevicesFirst(props.devices) : onlineDevices
+  const creatableDeviceIds = new Set(
+    mobileCreatableDevices(props.devices).map(device => device.device_id)
+  )
+  const canCreate = [...creatableDeviceIds].some(
+    deviceId => props.allDevicesSelected || deviceId === props.selectedDeviceId
+  )
+  const canCreateProject = mobileProjectCreatableDevices(props.devices).some(
+    device => props.allDevicesSelected || device.device_id === props.selectedDeviceId
+  )
   const selectedDeviceId = props.allDevicesSelected
     ? null
     : (onlineDevices.find(device => device.device_id === props.selectedDeviceId)?.device_id ??
@@ -104,11 +172,57 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       .toLocaleLowerCase()
       .includes(query)
   })
+  useEffect(() => {
+    if (!recording || !focused) return
+    const diagnostic = beginMobileDiagnostic(
+      'conversation-list',
+      props.selectedDeviceId
+        ? isPhoneLocalDeviceId(props.selectedDeviceId)
+          ? 'phone'
+          : 'cloud'
+        : undefined
+    )
+    const counts = {
+      loading: Number(props.loading),
+      snapshotReady: Number(Boolean(props.snapshotReady)),
+      conversations: filteredConversations.length,
+      failures: props.failures.length,
+      devices: onlineDevices.length,
+    }
+    diagnostic.step(
+      props.loading
+        ? 'waiting-for-list'
+        : props.snapshotReady
+          ? 'list-content-committed'
+          : 'waiting-for-work-snapshot',
+      counts
+    )
+    if (!props.loading && props.snapshotReady) diagnostic.complete(counts)
+    return () => diagnostic.cancel()
+  }, [
+    recording,
+    focused,
+    props.loading,
+    props.snapshotReady,
+    props.selectedDeviceId,
+    filteredConversations.length,
+    props.failures.length,
+    onlineDevices.length,
+  ])
   const visibleWorkspaces = props.workspaces.filter(
-    ({ workspace }) =>
+    ({ projectName, workspace }) =>
       workspace.available &&
       onlineDeviceIds.has(workspace.deviceId) &&
-      (!selectedDeviceId || workspace.deviceId === selectedDeviceId)
+      (!selectedDeviceId || workspace.deviceId === selectedDeviceId) &&
+      (!query ||
+        `${projectName} ${workspace.label ?? ''} ${workspace.deviceName}`
+          .toLocaleLowerCase()
+          .includes(query) ||
+        filteredConversations.some(
+          item =>
+            item.address.deviceId === workspace.deviceId &&
+            item.sourceWorkspacePath === workspace.workspacePath
+        ))
   )
 
   const drawerItems = useMemo<DrawerItem[]>(() => {
@@ -123,39 +237,52 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
         expanded: projectsExpanded,
       },
     ]
-    const projectNames = new Set<string>()
-    visibleWorkspaces.forEach(({ projectName }) => projectNames.add(projectName))
-    filteredConversations.forEach(item => {
-      if (item.projectName) projectNames.add(item.projectName)
+    const groups = buildConversationList(filteredConversations, visibleWorkspaces)
+    const pinnedExpanded = !collapsedSections.has('pinned')
+    items.unshift({
+      key: 'pinned-title',
+      type: 'section',
+      section: 'pinned',
+      title: '置顶',
+      expanded: pinnedExpanded,
     })
-
-    if (projectsExpanded) {
-      for (const projectName of projectNames) {
-        const workspace = visibleWorkspaces.find(
-          item => item.projectName === projectName
-        )?.workspace
-        const expanded = !collapsedProjects.has(projectName)
-        items.push({
-          key: `project:${projectName}`,
-          type: 'project',
-          name: projectName,
-          workspace,
-          expanded,
-        })
-        if (!expanded) continue
-        for (const conversation of filteredConversations.filter(
-          item => item.projectName === projectName
-        )) {
-          items.push({
+    if (pinnedExpanded) {
+      items.splice(
+        1,
+        0,
+        ...groups.pinned.map(conversation => ({
+          key: `pinned:${conversation.address.deviceId}:${conversation.address.taskId}`,
+          type: 'conversation' as const,
+          conversation,
+        }))
+      )
+    }
+    const appendProject = (group: ConversationProjectGroup, target: DrawerItem[]) => {
+      const expanded = !collapsedProjects.has(group.key)
+      target.push({
+        key: group.key,
+        type: 'project',
+        name: group.name,
+        detail: group.detail,
+        workspace: group.workspace,
+        projectWork: group.projectWork,
+        expanded,
+      })
+      if (expanded)
+        for (const conversation of group.conversations)
+          target.push({
             key: `conversation:${conversation.address.deviceId}:${conversation.address.taskId}`,
             type: 'conversation',
             conversation,
           })
-        }
-      }
     }
+    if (pinnedExpanded) {
+      const pinnedProjects: DrawerItem[] = []
+      for (const group of groups.pinnedProjects) appendProject(group, pinnedProjects)
+      items.splice(1 + groups.pinned.length, 0, ...pinnedProjects)
+    }
+    if (projectsExpanded) for (const group of groups.projects) appendProject(group, items)
 
-    const standaloneConversations = filteredConversations.filter(item => !item.projectName)
     items.push({
       key: 'tasks-title',
       type: 'section',
@@ -164,7 +291,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       expanded: tasksExpanded,
     })
     if (tasksExpanded) {
-      for (const conversation of standaloneConversations) {
+      for (const conversation of groups.standalone) {
         items.push({
           key: `conversation:${conversation.address.deviceId}:${conversation.address.taskId}`,
           type: 'conversation',
@@ -172,10 +299,14 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
         })
       }
     }
-
-    if (projectNames.size === 0 && standaloneConversations.length === 0) {
+    if (
+      groups.projects.length === 0 &&
+      groups.standalone.length === 0 &&
+      groups.pinned.length === 0
+    ) {
       items.push({ key: 'empty', type: 'empty' })
     }
+
     return items
   }, [collapsedProjects, collapsedSections, filteredConversations, visibleWorkspaces])
 
@@ -198,46 +329,171 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   }
 
   useEffect(() => {
-    if (!focused) setActionsVisible(false)
+    if (!focused) {
+      setActionsVisible(false)
+      setSidebarVisible(false)
+    }
   }, [focused])
 
-  const actionsAnchor = (
-    <LiquidGlassButton
-      accessibilityLabel="更多"
-      colorScheme={glassColorScheme}
-      contentStyle={styles.roundButton}
-      fallbackStyle={styles.glassFallback}
-      onPress={() => setActionsVisible(true)}
-      style={styles.roundGlass}
-      testID="drawer-actions"
-    >
-      <Ionicons color={theme.colors.onBackground} name="ellipsis-horizontal" size={26} />
-    </LiquidGlassButton>
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !focused || (!actionsVisible && !searchVisible)) return
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (actionsVisible) setActionsVisible(false)
+      else {
+        setSearchVisible(false)
+        props.onSearch('')
+        Keyboard.dismiss()
+      }
+      return true
+    })
+    return () => subscription.remove()
+  }, [actionsVisible, focused, props.onSearch, searchVisible])
+
+  const closeSearch = () => {
+    setSearchVisible(false)
+    props.onSearch('')
+    Keyboard.dismiss()
+  }
+
+  const deviceStrip = (
+    <FlatList
+      contentContainerStyle={styles.deviceStrip}
+      data={displayedDevices}
+      horizontal
+      keyboardShouldPersistTaps="handled"
+      keyExtractor={device => device.device_id}
+      ListHeaderComponent={
+        <Pressable
+          accessibilityLabel="显示所有设备任务"
+          accessibilityRole="button"
+          accessibilityState={{ selected: props.allDevicesSelected }}
+          onPress={props.onSelectAllDevices}
+          style={[styles.allDevicePill, props.allDevicesSelected && styles.selectedDevicePill]}
+          testID="device-option-all"
+        >
+          <Text style={[styles.deviceText, props.allDevicesSelected && styles.deviceTextSelected]}>
+            全部
+          </Text>
+        </Pressable>
+      }
+      renderItem={({ item: device }) => {
+        const selected = device.device_id === selectedDeviceId
+        const online = device.status !== 'offline'
+        return (
+          <Pressable
+            accessibilityLabel={device.name}
+            accessibilityRole="button"
+            accessibilityState={{ selected, disabled: !online }}
+            disabled={!online}
+            onPress={() => props.onSelectDevice(device.device_id)}
+            style={[styles.devicePill, selected && styles.selectedDevicePill]}
+            testID={`device-option-${device.device_id}`}
+          >
+            <View style={[styles.statusDot, online ? styles.onlineDot : styles.offlineDot]} />
+            <Ionicons
+              color={selected ? theme.colors.onBackground : theme.colors.onSurfaceVariant}
+              name="laptop-outline"
+              size={19}
+            />
+            <Text
+              numberOfLines={1}
+              style={[styles.deviceText, selected && styles.deviceTextSelected]}
+            >
+              {device.name}
+            </Text>
+          </Pressable>
+        )
+      }}
+      showsHorizontalScrollIndicator={false}
+      style={styles.deviceScroller}
+      testID="device-carousel"
+    />
   )
 
   return (
-    <KeyboardSafeView style={[styles.panel, { paddingTop: drawerTopPadding(insets.top) }]}>
+    <KeyboardAvoidingView
+      automaticOffset
+      behavior="height"
+      enabled={focused}
+      style={[styles.panel, { paddingTop: drawerTopPadding(insets.top) }]}
+      testID="conversation-list-keyboard"
+    >
       <View style={styles.header}>
+        {searchVisible ? (
+          <LiquidGlassSurface
+            colorScheme={glassColorScheme}
+            fallbackStyle={styles.glassFallback}
+            style={styles.searchGlass}
+          >
+            <View style={styles.searchBox}>
+              <Ionicons color={theme.colors.onSurfaceVariant} name="search-outline" size={25} />
+              <TextInput
+                accessibilityLabel="搜索聊天记录"
+                autoFocus
+                onChangeText={props.onSearch}
+                placeholder="搜索聊天"
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                returnKeyType="search"
+                style={styles.searchInput}
+                testID="conversation-search"
+                value={props.search}
+              />
+            </View>
+          </LiquidGlassSurface>
+        ) : (
+          <>
+            <LiquidGlassButton
+              accessibilityLabel="打开侧边栏"
+              colorScheme={glassColorScheme}
+              contentStyle={styles.roundButton}
+              fallbackStyle={styles.glassFallback}
+              onPress={() => setSidebarVisible(true)}
+              style={styles.roundGlass}
+              testID="drawer-close"
+            >
+              <View style={styles.menuGlyph}>
+                <View style={[styles.menuGlyphLine, styles.menuGlyphLineLong]} />
+                <View style={styles.menuGlyphLine} />
+              </View>
+            </LiquidGlassButton>
+            <Pressable
+              accessibilityLabel="Wework 更多选项"
+              accessibilityRole="button"
+              accessibilityState={{ expanded: actionsVisible }}
+              onPress={() => setActionsVisible(true)}
+              style={styles.titleButton}
+              testID="drawer-actions"
+            >
+              <Text style={styles.headerTitle}>Wework</Text>
+              <Ionicons color={theme.colors.onSurfaceVariant} name="chevron-down" size={14} />
+            </Pressable>
+          </>
+        )}
         <LiquidGlassButton
-          accessibilityLabel="打开当前会话"
+          accessibilityLabel={searchVisible ? '关闭搜索' : '搜索聊天记录'}
           colorScheme={glassColorScheme}
           contentStyle={styles.roundButton}
           fallbackStyle={styles.glassFallback}
-          disabled={!props.currentAddress}
-          onPress={props.onOpenCurrentConversation}
+          onPress={searchVisible ? closeSearch : () => setSearchVisible(true)}
           style={styles.roundGlass}
-          testID="drawer-close"
+          testID="drawer-search-toggle"
         >
-          <View style={styles.menuGlyph}>
-            <View style={[styles.menuGlyphLine, styles.menuGlyphLineLong]} />
-            <View style={styles.menuGlyphLine} />
-          </View>
+          <Ionicons
+            color={theme.colors.onBackground}
+            name={searchVisible ? 'close' : 'search-outline'}
+            size={27}
+          />
         </LiquidGlassButton>
-        <Text style={styles.headerTitle} variant="titleMedium">
-          远程
-        </Text>
-        {actionsAnchor}
       </View>
+
+      <WorkbenchSidebar
+        failures={props.failures}
+        onRetryFailure={props.onRetryFailure}
+        onDismiss={() => setSidebarVisible(false)}
+        onSettings={props.onSettings}
+        userLabel={props.userLabel ?? ''}
+        visible={focused && sidebarVisible}
+      />
 
       {focused && actionsVisible ? (
         <Portal>
@@ -266,6 +522,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
               >
                 <DrawerAction
                   icon="folder-outline"
+                  disabled={!canCreateProject}
                   label="新建项目"
                   onPress={() => {
                     setActionsVisible(false)
@@ -274,6 +531,17 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                   showAddBadge
                   testID="drawer-new-project"
                 />
+                {props.onArchives ? (
+                  <DrawerAction
+                    icon="archive-outline"
+                    label="已归档会话"
+                    onPress={() => {
+                      setActionsVisible(false)
+                      props.onArchives?.()
+                    }}
+                    testID="drawer-archives"
+                  />
+                ) : null}
                 <DrawerAction
                   icon="settings-outline"
                   label="设置"
@@ -283,15 +551,28 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                   }}
                   testID="drawer-settings"
                 />
-                <DrawerAction
-                  icon={showAllDevices ? 'eye-off-outline' : 'eye-outline'}
-                  label={showAllDevices ? '仅显示在线设备' : '显示全部设备'}
-                  onPress={() => {
-                    setActionsVisible(false)
-                    setShowAllDevices(current => !current)
-                  }}
-                  testID="drawer-toggle-offline-devices"
-                />
+                {props.showDeviceFilters !== false && props.onRefreshDevices && (
+                  <DrawerAction
+                    icon="refresh-outline"
+                    label={refreshingDevices ? '正在刷新设备列表' : '刷新设备列表'}
+                    disabled={refreshingDevices}
+                    onPress={() => {
+                      void refreshDevices()
+                    }}
+                    testID="drawer-refresh-devices"
+                  />
+                )}
+                {props.showDeviceFilters !== false && (
+                  <DrawerAction
+                    icon={showAllDevices ? 'eye-off-outline' : 'eye-outline'}
+                    label={showAllDevices ? '仅显示在线设备' : '显示全部设备'}
+                    onPress={() => {
+                      setActionsVisible(false)
+                      setShowAllDevices(current => !current)
+                    }}
+                    testID="drawer-toggle-offline-devices"
+                  />
+                )}
               </LiquidGlassSurface>
             </Pressable>
           </Pressable>
@@ -299,250 +580,192 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       ) : null}
 
       <FlatList
-        contentContainerStyle={styles.deviceStrip}
-        data={displayedDevices}
-        horizontal
-        keyExtractor={device => device.device_id}
-        ListHeaderComponent={
-          <LiquidGlassButton
-            accessibilityLabel="显示所有设备任务"
-            colorScheme={glassColorScheme}
-            contentStyle={styles.allDevicePill}
-            fallbackStyle={
-              props.allDevicesSelected ? styles.selectedGlassFallback : styles.glassFallback
-            }
-            glassEffectStyle={props.allDevicesSelected ? 'clear' : 'regular'}
-            onPress={props.onSelectAllDevices}
-            style={styles.deviceGlass}
-            testID="device-option-all"
-            tintColor={props.allDevicesSelected ? theme.colors.primary : undefined}
-          >
-            <Text
-              style={[styles.deviceText, props.allDevicesSelected && styles.deviceTextSelected]}
-            >
-              全部
-            </Text>
-          </LiquidGlassButton>
+        contentContainerStyle={styles.list}
+        onLayout={
+          recording
+            ? event =>
+                recordMobileDiagnostic('[MobileStartup] Conversation list layout', {
+                  width: event.nativeEvent.layout.width,
+                  height: event.nativeEvent.layout.height,
+                  loading: props.loading,
+                  snapshotReady: Boolean(props.snapshotReady),
+                })
+            : undefined
         }
-        renderItem={({ item: device }) => {
-          const selected = device.device_id === selectedDeviceId
-          const online = device.status !== 'offline'
-          return (
-            <LiquidGlassButton
-              accessibilityLabel={device.name}
-              colorScheme={glassColorScheme}
-              contentStyle={styles.devicePill}
-              disabled={!online}
-              fallbackStyle={selected ? styles.selectedGlassFallback : styles.glassFallback}
-              glassEffectStyle={selected ? 'clear' : 'regular'}
-              onPress={() => props.onSelectDevice(device.device_id)}
-              style={styles.deviceGlass}
-              testID={`device-option-${device.device_id}`}
-              tintColor={selected ? theme.colors.primary : undefined}
-            >
-              <View style={[styles.statusDot, online ? styles.onlineDot : styles.offlineDot]} />
-              <Ionicons
-                color={selected ? theme.colors.onPrimary : theme.colors.onBackground}
-                name="laptop-outline"
-                size={22}
-              />
-              <Text
-                numberOfLines={1}
-                style={[styles.deviceText, selected && styles.deviceTextSelected]}
+        data={props.loading ? [] : drawerItems}
+        ListHeaderComponent={props.showDeviceFilters === false ? null : deviceStrip}
+        ListEmptyComponent={props.loading ? <ActivityIndicator style={styles.loader} /> : null}
+        keyExtractor={item => item.key}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => void props.onRefresh()}
+            refreshing={props.refreshing}
+            testID="conversation-list-refresh"
+            tintColor={theme.colors.onSurfaceVariant}
+          />
+        }
+        renderItem={({ item }) => {
+          if (item.type === 'section') {
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: item.expanded }}
+                onPress={() => toggleSection(item.section)}
+                style={({ pressed }) => [
+                  styles.sectionHeader,
+                  item.section === 'tasks' && styles.tasksSectionHeader,
+                  pressed && styles.rowPressed,
+                ]}
+                testID={`section-${item.section}-toggle`}
               >
-                {device.name}
-              </Text>
-            </LiquidGlassButton>
-          )
-        }}
-        showsHorizontalScrollIndicator={false}
-        style={styles.deviceScroller}
-        testID="device-carousel"
-      />
-
-      {props.loading ? (
-        <ActivityIndicator style={styles.loader} />
-      ) : (
-        <FlatList
-          contentContainerStyle={styles.list}
-          data={drawerItems}
-          keyExtractor={item => item.key}
-          keyboardDismissMode="interactive"
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              onRefresh={() => void props.onRefresh()}
-              refreshing={props.refreshing}
-              testID="conversation-list-refresh"
-              tintColor={theme.colors.onSurfaceVariant}
-            />
+                <Text style={styles.sectionTitle} variant="titleMedium">
+                  {item.title}
+                </Text>
+                <Ionicons
+                  color={theme.colors.onSurfaceVariant}
+                  name={item.expanded ? 'chevron-down' : 'chevron-forward'}
+                  size={18}
+                />
+              </Pressable>
+            )
           }
-          renderItem={({ item }) => {
-            if (item.type === 'section') {
-              return (
+          if (item.type === 'project') {
+            const canCreateWorkspace = Boolean(
+              item.workspace && creatableDeviceIds.has(item.workspace.deviceId)
+            )
+            return (
+              <View style={styles.projectRow}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityState={{ expanded: item.expanded }}
-                  onPress={() => toggleSection(item.section)}
-                  style={({ pressed }) => [
-                    styles.sectionHeader,
-                    item.section === 'tasks' && styles.tasksSectionHeader,
-                    pressed && styles.rowPressed,
-                  ]}
-                  testID={`section-${item.section}-toggle`}
+                  onPress={() => toggleProject(item.key)}
+                  style={({ pressed }) => [styles.projectMain, pressed && styles.rowPressed]}
+                  testID={`project-${item.name}`}
                 >
-                  <Text style={styles.sectionTitle} variant="titleMedium">
-                    {item.title}
-                  </Text>
                   <Ionicons
-                    color={theme.colors.onSurfaceVariant}
-                    name={item.expanded ? 'chevron-down' : 'chevron-forward'}
-                    size={18}
+                    color={theme.colors.onBackground}
+                    name={item.expanded ? 'folder-open-outline' : 'folder-outline'}
+                    size={23}
                   />
-                </Pressable>
-              )
-            }
-            if (item.type === 'project') {
-              return (
-                <View style={styles.projectRow}>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => toggleProject(item.name)}
-                    style={({ pressed }) => [styles.projectMain, pressed && styles.rowPressed]}
-                    testID={`project-${item.name}`}
-                  >
-                    <Ionicons
-                      color={theme.colors.onBackground}
-                      name={item.expanded ? 'folder-open-outline' : 'folder-outline'}
-                      size={27}
-                    />
+                  <View style={styles.projectLabel}>
                     <Text numberOfLines={1} style={styles.projectName} variant="titleMedium">
                       {item.name}
                     </Text>
-                    <Ionicons
-                      color={theme.colors.onSurfaceVariant}
-                      name={item.expanded ? 'chevron-down' : 'chevron-forward'}
-                      size={18}
-                    />
-                  </Pressable>
-                  <LiquidGlassButton
-                    accessibilityLabel={`在 ${item.name} 中新建聊天`}
-                    colorScheme={glassColorScheme}
-                    contentStyle={styles.projectCompose}
-                    disabled={!item.workspace}
-                    fallbackStyle={styles.glassFallback}
-                    onPress={() => props.onNewConversation(item.workspace)}
-                    style={styles.projectComposeGlass}
-                    testID={`workspace-new-${item.workspace?.deviceId ?? 'none'}-${item.workspace?.workspacePath ?? item.name}`}
-                  >
-                    <Ionicons
-                      color={
-                        item.workspace ? theme.colors.onBackground : theme.colors.onSurfaceVariant
-                      }
-                      name="create-outline"
-                      size={25}
-                    />
-                  </LiquidGlassButton>
-                </View>
-              )
-            }
-            if (item.type === 'conversation') {
-              const selected =
-                props.currentAddress?.deviceId === item.conversation.address.deviceId &&
-                props.currentAddress.taskId === item.conversation.address.taskId
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  onPress={() => props.onSelectConversation(item.conversation)}
-                  style={({ pressed }) => [
-                    styles.textRow,
-                    selected && styles.rowSelected,
-                    pressed && styles.rowPressed,
-                  ]}
-                  testID={`conversation-${item.conversation.address.taskId}`}
-                >
-                  <View style={styles.textRowContent}>
-                    <Text numberOfLines={1} style={styles.rowTitle} variant="titleMedium">
-                      {item.conversation.title}
-                    </Text>
-                    {item.conversation.running ? (
-                      <ActivityIndicator color={theme.colors.onSurfaceVariant} size={22} />
+                    {item.projectWork?.project.pinned ? (
+                      <Ionicons
+                        name="pin-outline"
+                        size={16}
+                        color={theme.colors.onSurfaceVariant}
+                      />
+                    ) : null}
+                    {item.detail ? (
+                      <Text numberOfLines={1} style={styles.projectDetail}>
+                        {item.detail}
+                      </Text>
                     ) : null}
                   </View>
                 </Pressable>
-              )
-            }
-            return (
-              <View style={styles.empty}>
-                <Text style={styles.rowTitle} variant="titleMedium">
-                  {onlineDeviceIds.size ? '暂无会话' : '暂无在线 Executor'}
-                </Text>
-                <Text style={styles.muted} variant="bodyMedium">
-                  {onlineDeviceIds.size
-                    ? '当前范围内还没有会话'
-                    : '请先在电脑端启动 Wework executor'}
-                </Text>
+                {item.projectWork && props.projectActions ? (
+                  <ProjectMenu project={item.projectWork} actions={props.projectActions} />
+                ) : null}
+                <Pressable
+                  accessibilityLabel={`在 ${item.name} 中新建聊天`}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !canCreateWorkspace }}
+                  disabled={!canCreateWorkspace}
+                  onPress={() => props.onNewConversation(item.workspace)}
+                  style={styles.projectComposeGlass}
+                  testID={`workspace-new-${item.workspace?.deviceId ?? 'none'}-${item.workspace?.workspacePath ?? item.name}`}
+                >
+                  <Ionicons
+                    color={
+                      canCreateWorkspace ? theme.colors.onSurfaceVariant : theme.colors.outline
+                    }
+                    name="create-outline"
+                    size={22}
+                  />
+                </Pressable>
               </View>
             )
-          }}
-          showsVerticalScrollIndicator={false}
-          testID="conversation-list"
-        />
-      )}
+          }
+          if (item.type === 'conversation') {
+            const conversation = item.conversation
+            const key = JSON.stringify([conversation.address.deviceId, conversation.address.taskId])
+            return (
+              <ConversationListRow
+                conversation={conversation}
+                selected={
+                  props.currentAddress?.deviceId === conversation.address.deviceId &&
+                  props.currentAddress.taskId === conversation.address.taskId
+                }
+                actions={props.conversationActions?.(conversation)}
+                open={openSwipeKey === key}
+                onOpen={() => setOpenSwipeKey(key)}
+                onClose={() => setOpenSwipeKey(current => (current === key ? null : current))}
+                onSwipeStart={() => {
+                  Keyboard.dismiss()
+                  setOpenSwipeKey(current => (current === key ? current : null))
+                }}
+                onSelect={props.onSelectConversation}
+              />
+            )
+          }
+          return (
+            <View style={styles.empty}>
+              <Text style={styles.rowTitle} variant="titleMedium">
+                {onlineDeviceIds.size ? '暂无会话' : '暂无在线 Executor'}
+              </Text>
+              <Text style={styles.muted} variant="bodyMedium">
+                {onlineDeviceIds.size ? '当前范围内还没有会话' : '请先在电脑端启动 Wework executor'}
+              </Text>
+            </View>
+          )
+        }}
+        onScrollBeginDrag={() => setOpenSwipeKey(null)}
+        showsVerticalScrollIndicator={false}
+        testID="conversation-list"
+      />
 
-      <LiquidGlassGroup
-        spacing={8}
-        style={[styles.bottomDock, { bottom: drawerBottomOffset(insets.bottom, keyboardVisible) }]}
-      >
-        <LiquidGlassSurface
-          colorScheme={glassColorScheme}
-          fallbackStyle={styles.glassFallback}
-          style={styles.searchGlass}
+      {!searchVisible ? (
+        <View
+          style={[
+            styles.bottomDock,
+            { bottom: drawerBottomOffset(insets.bottom, keyboardVisible) },
+          ]}
         >
-          <View style={styles.searchBox}>
-            <Ionicons color={theme.colors.onSurfaceVariant} name="search-outline" size={21} />
-            <KeyboardSafeTextInput
-              accessibilityLabel="搜索聊天记录"
-              onChangeText={props.onSearch}
-              placeholder="搜索聊天记录"
-              placeholderTextColor={theme.colors.onSurfaceVariant}
-              style={styles.searchInput}
-              testID="conversation-search"
-              value={props.search}
+          <LiquidGlassButton
+            accessibilityLabel="新聊天"
+            colorScheme={glassColorScheme}
+            contentStyle={styles.askContent}
+            disabled={!canCreate}
+            fallbackStyle={styles.glassFallback}
+            onPress={() => props.onNewConversation()}
+            style={styles.askGlass}
+            testID="drawer-new-conversation"
+          >
+            <Ionicons
+              color={canCreate ? theme.colors.onBackground : theme.colors.onSurfaceVariant}
+              name="add"
+              size={26}
             />
-          </View>
-        </LiquidGlassSurface>
-        <LiquidGlassButton
-          accessibilityLabel="新聊天"
-          colorScheme={glassColorScheme}
-          contentStyle={styles.roundButton}
-          disabled={onlineDeviceIds.size === 0}
-          fallbackStyle={onlineDeviceIds.size ? styles.blueGlassFallback : styles.glassFallback}
-          glassEffectStyle="regular"
-          onPress={() => props.onNewConversation()}
-          style={styles.bottomRoundGlass}
-          testID="drawer-new-conversation"
-          tintColor={onlineDeviceIds.size ? liquidGlassAccentTint : undefined}
-        >
-          <Ionicons
-            color={onlineDeviceIds.size ? '#ffffff' : theme.colors.onSurfaceVariant}
-            name="create-outline"
-            size={24}
-          />
-        </LiquidGlassButton>
-      </LiquidGlassGroup>
-    </KeyboardSafeView>
+            <Text style={styles.askPlaceholder}>向 Wework 提问</Text>
+          </LiquidGlassButton>
+        </View>
+      ) : null}
+    </KeyboardAvoidingView>
   )
 }
 
 function DrawerAction({
+  disabled = false,
   icon,
   label,
   onPress,
   showAddBadge = false,
   testID,
 }: {
+  disabled?: boolean
   icon: keyof typeof Ionicons.glyphMap
   label: string
   onPress: () => void
@@ -552,10 +775,16 @@ function DrawerAction({
   const theme = useTheme()
   return (
     <Pressable
+      disabled={disabled}
+      accessibilityState={{ disabled }}
       accessibilityLabel={label}
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+      style={({ pressed }) => [
+        styles.actionRow,
+        pressed && styles.actionRowPressed,
+        disabled && { opacity: 0.4 },
+      ]}
       testID={testID}
     >
       <View style={styles.actionIconCircle}>
@@ -578,144 +807,107 @@ function createStyles(colors: MD3Theme['colors']) {
     panel: { flex: 1, backgroundColor: colors.background },
     header: {
       height: DRAWER_HEADER_HEIGHT,
-      paddingHorizontal: 20,
+      paddingHorizontal: 16,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
+      gap: 12,
     },
-    headerTitle: { fontWeight: '600', color: colors.onBackground },
-    glassFallback: {
-      backgroundColor: colors.elevation.level2,
-      borderColor: colors.outlineVariant,
+    titleButton: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
     },
-    selectedGlassFallback: {
-      backgroundColor: colors.primary,
-      borderColor: colors.primary,
-    },
-    blueGlassFallback: {
-      backgroundColor: liquidGlassAccentTint,
-      borderColor: liquidGlassAccentBorder,
-    },
-    roundGlass: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-    },
+    headerTitle: { fontSize: 17, fontWeight: '600', color: colors.onBackground },
+    glassFallback: { backgroundColor: colors.surface, borderColor: colors.outlineVariant },
+    roundGlass: { width: 44, height: 44, borderRadius: 22 },
     roundButton: {
       width: '100%',
       height: '100%',
-      borderRadius: 26,
       alignItems: 'center',
       justifyContent: 'center',
+      borderRadius: 22,
     },
-    menuGlyph: { width: 26, gap: 8, alignItems: 'flex-start' },
-    menuGlyphLine: {
-      width: 17,
-      height: 3,
-      borderRadius: 2,
-      backgroundColor: colors.onBackground,
-    },
-    menuGlyphLineLong: { width: 26 },
+    menuGlyph: { width: 22, gap: 7, alignItems: 'flex-start' },
+    menuGlyphLine: { width: 14, height: 2, borderRadius: 2, backgroundColor: colors.onBackground },
+    menuGlyphLineLong: { width: 22 },
     actionsBackdrop: { position: 'absolute', inset: 0 },
-    actionsPositioner: { position: 'absolute', right: 20, width: 196 },
-    actionsGlass: {
-      padding: 8,
-      borderRadius: 28,
-      overflow: 'hidden',
-    },
-    deviceScroller: { flexGrow: 0, height: 52 },
+    actionsPositioner: { position: 'absolute', alignSelf: 'center', width: 240 },
+    actionsGlass: { padding: 8, borderRadius: 28, overflow: 'hidden' },
+    deviceScroller: { flexGrow: 0, height: 60 },
     deviceStrip: {
-      paddingHorizontal: 24,
-      paddingBottom: 8,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 6,
       gap: 8,
       alignItems: 'center',
     },
-    deviceGlass: {
-      height: 36,
-      borderRadius: 18,
-    },
     allDevicePill: {
-      height: 36,
-      paddingHorizontal: 18,
-      borderRadius: 18,
+      minHeight: 44,
+      paddingHorizontal: 16,
+      borderRadius: 24,
       alignItems: 'center',
       justifyContent: 'center',
     },
     devicePill: {
-      maxWidth: 220,
-      height: 36,
+      maxWidth: 280,
+      minHeight: 44,
       paddingHorizontal: 14,
-      borderRadius: 18,
+      borderRadius: 24,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 6,
     },
-    statusDot: { width: 8, height: 8, borderRadius: 4 },
-    onlineDot: { backgroundColor: '#20c77a' },
-    offlineDot: { backgroundColor: '#ff7d87' },
-    deviceText: { maxWidth: 160, flexShrink: 1, color: colors.onBackground, fontSize: 15 },
-    deviceTextSelected: { color: colors.onPrimary },
+    selectedDevicePill: { backgroundColor: colors.surfaceVariant },
+    statusDot: { width: 6, height: 6, borderRadius: 3 },
+    onlineDot: { backgroundColor: '#20be8b' },
+    offlineDot: { backgroundColor: '#ff535f' },
+    deviceText: { flexShrink: 1, color: colors.onSurfaceVariant, fontSize: 17 },
+    deviceTextSelected: { color: colors.onBackground, fontWeight: '500' },
     loader: { flex: 1 },
-    list: { paddingTop: 12, paddingBottom: 104, flexGrow: 1 },
+    list: { paddingTop: 4, paddingBottom: 104, flexGrow: 1 },
     sectionHeader: {
-      minHeight: 44,
+      minHeight: 50,
       marginHorizontal: 16,
-      paddingHorizontal: 8,
+      paddingHorizontal: 4,
       borderRadius: 12,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
     },
-    tasksSectionHeader: { marginTop: 32 },
-    sectionTitle: { color: colors.onBackground, fontWeight: '600' },
+    tasksSectionHeader: { marginTop: 20 },
+    sectionTitle: { color: colors.onBackground, fontSize: 16, fontWeight: '600' },
     projectRow: {
-      minHeight: 52,
-      marginBottom: 6,
-      paddingLeft: 24,
-      paddingRight: 8,
+      minHeight: 48,
+      paddingLeft: 20,
+      paddingRight: 12,
       flexDirection: 'row',
       alignItems: 'center',
     },
     projectMain: {
-      minHeight: 52,
+      minHeight: 48,
       flex: 1,
       minWidth: 0,
       borderRadius: 12,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 12,
     },
-    projectName: { flex: 1, color: colors.onBackground, fontWeight: '400' },
+    projectLabel: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+    projectName: { flexShrink: 1, color: colors.onBackground, fontSize: 17, fontWeight: '500' },
+    projectDetail: { flexShrink: 2, color: colors.onSurfaceVariant, fontSize: 17 },
     projectComposeGlass: {
       width: 44,
       height: 44,
       marginLeft: 8,
-      borderRadius: 22,
-    },
-    projectCompose: {
-      width: '100%',
-      height: '100%',
-      borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    textRow: {
-      minHeight: 52,
-      marginHorizontal: 24,
-      borderRadius: 12,
-      overflow: 'hidden',
-    },
-    textRowContent: {
-      minHeight: 52,
-      width: '100%',
-      paddingHorizontal: 14,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
-    rowSelected: { backgroundColor: colors.elevation.level1 },
-    rowPressed: { backgroundColor: colors.elevation.level1 },
-    rowTitle: { flex: 1, color: colors.onBackground, fontWeight: '400' },
+    rowSelected: { backgroundColor: colors.surfaceVariant },
+    rowPressed: { backgroundColor: colors.surfaceVariant },
+    rowTitle: { flex: 1, color: colors.onBackground, fontSize: 17, fontWeight: '400' },
     empty: {
       flex: 1,
       minHeight: 220,
@@ -725,43 +917,32 @@ function createStyles(colors: MD3Theme['colors']) {
       padding: 32,
     },
     muted: { color: colors.onSurfaceVariant, textAlign: 'center' },
-    bottomDock: {
-      position: 'absolute',
-      left: 8,
-      right: 8,
+    bottomDock: { position: 'absolute', left: 36, right: 36 },
+    askGlass: { height: BOTTOM_CONTROL_HEIGHT, borderRadius: BOTTOM_CONTROL_HEIGHT / 2 },
+    askContent: {
+      minHeight: BOTTOM_CONTROL_HEIGHT,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-    },
-    searchGlass: {
-      height: BOTTOM_CONTROL_HEIGHT,
-      flex: 1,
-      minWidth: 0,
-      borderRadius: 26,
-    },
-    searchBox: {
-      width: '100%',
-      height: '100%',
+      gap: 12,
       paddingHorizontal: 14,
-      borderRadius: 26,
+    },
+    askPlaceholder: { color: colors.onSurfaceVariant, fontSize: 17, flex: 1 },
+    searchGlass: { height: 44, borderRadius: 22, flex: 1 },
+    searchBox: {
+      height: 44,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 10,
+      paddingHorizontal: 14,
     },
     searchInput: {
       flex: 1,
-      minWidth: 0,
-      height: BOTTOM_CONTROL_HEIGHT,
-      paddingTop: searchVerticalInset - searchTextOpticalOffset,
-      paddingBottom: searchVerticalInset + searchTextOpticalOffset,
       color: colors.onBackground,
-      fontSize: 16,
+      fontSize: 17,
       lineHeight: SEARCH_LINE_HEIGHT,
-    },
-    bottomRoundGlass: {
-      width: BOTTOM_CONTROL_HEIGHT,
-      height: BOTTOM_CONTROL_HEIGHT,
-      borderRadius: 26,
+      paddingVertical: searchVerticalInset,
+      paddingHorizontal: 0,
+      includeFontPadding: false,
     },
   })
 }

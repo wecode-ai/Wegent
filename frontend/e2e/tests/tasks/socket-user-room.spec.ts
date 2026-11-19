@@ -2,11 +2,66 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, type Page } from '@playwright/test'
+import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { checked, expectSelected, test } from '../../fixtures/recent-team-history'
 
 // The default chromium project runs this spec in e2e-tests.yml's existing shards.
 // Only the model is mocked; authentication, Redis, persistence and sockets are real.
 const MODEL_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
+
+test('group chat stores a plain message and starts an assistant only on mention', async ({
+  history,
+}) => {
+  const team = await history.teamWithModes('group-mention', ['chat'])
+  const client = createAuthenticatedSocketClient({
+    socketBaseUrl: () => process.env.E2E_API_URL || 'http://localhost:8000',
+    getToken: () => history.token,
+    namespace: '/chat',
+  })
+  try {
+    await client.ensureConnected()
+    const socket = client.getRawSocket()!
+    const first = (await socket.timeout(10_000).emitWithAck('chat:send', {
+      team_id: team.id,
+      task_type: 'chat',
+      is_group_chat: true,
+      message: 'A group message without a mention',
+    })) as { task_id: number; subtask_id: number; error?: string }
+    expect(first.error).toBeUndefined()
+    expect(first.subtask_id).toEqual(expect.any(Number))
+    const subtasks = async () =>
+      checked(
+        await history.api.get<{ subtasks: Array<{ id: number; role: string }> }>(
+          `/api/tasks/${first.task_id}`
+        )
+      ).subtasks
+    expect(await subtasks()).toEqual([
+      expect.objectContaining({ id: first.subtask_id, role: 'USER' }),
+    ])
+
+    const second = (await socket.timeout(10_000).emitWithAck('chat:send', {
+      task_id: first.task_id,
+      team_id: team.id,
+      message: `@${team.name} Reply to the group`,
+    })) as { subtask_id: number; error?: string }
+    expect(second.error).toBeUndefined()
+    expect(second.subtask_id).toEqual(expect.any(Number))
+    expect((await subtasks()).map(row => row.role)).toEqual(['USER', 'USER', 'ASSISTANT'])
+    await expect
+      .poll(
+        async () =>
+          checked(
+            await history.api.get<{ task_status: string }>(
+              `/api/tasks/${first.task_id}/runtime-check`
+            )
+          ).task_status,
+        { timeout: 45_000 }
+      )
+      .toBe('COMPLETED')
+  } finally {
+    client.dispose()
+  }
+})
 
 type ChatEvent = [string, { task_id?: number; status?: string; title?: string }]
 

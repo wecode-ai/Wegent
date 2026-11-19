@@ -1,7 +1,72 @@
 //! Model credentials enter only through the authenticated desktop IPC channel.
 use super::*;
 
+pub(in super::super) fn codex_runtime_model_config(
+    name: &str,
+    provider: &Value,
+    inherited: &Value,
+) -> Value {
+    let mut config = inherited
+        .as_object()
+        .cloned()
+        .map(Value::Object)
+        .unwrap_or_else(|| json!({}));
+    config["model_id"] = json!(name);
+    config["model_provider"] = provider.clone();
+    if !config["runtime_config"].is_object() {
+        config["runtime_config"] = config
+            .get("runtimeConfig")
+            .filter(|runtime| runtime.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+    }
+    if !config["runtime_config"]["codex"].is_object() {
+        config["runtime_config"]["codex"] = json!({});
+    }
+    config["runtime_config"]["codex"]["use_user_config"] = json!(true);
+    config["runtime_config"]["codex"]["configured"] = json!(true);
+    config
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(in super::super) async fn refresh_persisted_model_credentials(
+        &self,
+        payload: &mut Value,
+    ) -> Result<(), AppIpcError> {
+        let Some(selection) = normalized_selection(payload)? else {
+            return Ok(());
+        };
+        if !matches!(
+            selection["modelType"].as_str(),
+            Some("public" | "user" | "group")
+        ) {
+            return Ok(());
+        }
+        let runtime = payload["runtime"].as_str().unwrap_or("codex");
+        // A persisted model identity is reusable; its access token is not.
+        let current = self
+            .creation_model_config(runtime, &selection, &Value::Null)
+            .await?;
+        for key in ["modelConfig", "executionRequest", "execution_request"] {
+            if !payload[key].is_object() {
+                continue;
+            }
+            let config = if key == "modelConfig" {
+                &mut payload[key]
+            } else {
+                &mut payload[key]["model_config"]
+            };
+            if !config.is_object() {
+                *config = current.clone();
+            } else {
+                for field in ["api_key", "base_url", "default_headers"] {
+                    config[field] = current[field].clone();
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(in super::super) fn sync_creation_model_profiles(
         &self,
         payload: Value,
@@ -42,7 +107,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_default()
     }
 
-    pub(super) async fn creation_model_config(
+    pub(in super::super) async fn creation_model_config(
         &self,
         runtime: &str,
         selection: &Value,
@@ -113,9 +178,10 @@ impl RuntimeWorkRpcHandler {
                 "Selected model is unavailable on this device; refresh the Wework model catalog"
             }));
         }
-        Ok(
-            json!({"model_id":name,"model_provider":models[0]["provider"],
-            "runtime_config":{"codex":{"use_user_config":true,"configured":true}}}),
-        )
+        Ok(codex_runtime_model_config(
+            name,
+            &models[0]["provider"],
+            &Value::Null,
+        ))
     }
 }

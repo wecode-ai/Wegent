@@ -1,6 +1,7 @@
 //! Native-only bridge for the existing local login UI. Never a model capability.
 
 use super::{AuthError, NativeAuthGateway};
+#[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
 use serde_json::{json, Value};
 use std::{
@@ -22,10 +23,11 @@ pub(super) struct Request {
     reply: oneshot::Sender<Result<Value, AuthError>>,
 }
 
-pub(super) fn start<T: LocalBackendTransport>(
+pub(super) fn start<T: super::PluginAuthTransport>(
     transport: T,
     connected: Arc<AtomicBool>,
     mut cancelled: watch::Receiver<bool>,
+    reconcile: mpsc::Sender<u64>,
 ) -> (mpsc::Sender<Request>, JoinHandle<()>) {
     let (sender, mut receiver) = mpsc::channel::<Request>(16);
     let task = tokio::spawn(async move {
@@ -37,7 +39,10 @@ pub(super) fn start<T: LocalBackendTransport>(
             if request.reply.is_closed() {
                 continue;
             }
-            let result = if !connected.load(Ordering::Acquire) {
+            let changed = (request.payload["action"] != "status")
+                .then(|| request.payload["installed_plugin_id"].as_u64())
+                .flatten();
+            let result = if !transport.available(connected.load(Ordering::Acquire)) {
                 Err(AuthError("plugin_auth_backend_unavailable"))
             } else {
                 let gateway = NativeAuthGateway::new(transport.clone());
@@ -48,6 +53,11 @@ pub(super) fn start<T: LocalBackendTransport>(
                     ) => result,
                 }
             };
+            if result.as_ref().is_ok_and(|result| result["status"] == "ok") {
+                if let Some(id) = changed {
+                    let _ = reconcile.try_send(id);
+                }
+            }
             let _ = request.reply.send(result);
         }
     });
@@ -478,7 +488,12 @@ mod tests {
         let transport = Transport::default();
         let connected = Arc::new(AtomicBool::new(true));
         let (cancel, receiver) = watch::channel(false);
-        let (sender, task) = start(transport.clone(), connected.clone(), receiver);
+        let (sender, task) = start(
+            transport.clone(),
+            connected.clone(),
+            receiver,
+            mpsc::channel(16).0,
+        );
         let payload = json!({"installed_plugin_id":42,"connector_slug":"mail","action":"logout"});
         let (reply, response) = oneshot::channel();
         sender

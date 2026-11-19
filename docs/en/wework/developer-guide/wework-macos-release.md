@@ -33,6 +33,22 @@ startup error path. The `startup-network-change` checkpoint interrupts one real
 script request through Chromium's protocol error API and verifies that the
 recovered workbench can continue opening a task.
 
+## macOS notarization
+
+The hook validates any existing stapled ticket first. Each archive is uploaded once;
+after receiving Apple's submission ID, `notarytool wait` observes that same job.
+A connection failure during observation must not upload the archive again. If a
+submission transport error contains an official submission URL or structured ID,
+observation continues with that ID. An unknown result without a valid ID remains
+a failure and is never interpreted as approval.
+
+Observations share the existing 30-minute wait budget and use only its remaining
+time after transport recovery. `WEWORK_NOTARY_UPLOAD_ATTEMPTS` continues to bound
+idempotent observation, staple and validate attempts (default 3, range 1–5), rather
+than repeated uploads. Only `Accepted` proceeds to stapling and final validation;
+rejection or budget exhaustion still fails the build. Logs record submission IDs,
+not authentication arguments.
+
 ## macOS app icons
 
 macOS bundles include both the existing `wework/resources/icons/icon.icns` and
@@ -108,6 +124,11 @@ check retained host paths, component directories, and profile identity for
 independently built regression packages.
 Compatible manual rollback switches directly to the retained release. Incompatible
 rollback still requires confirmation before restoring the pre-update snapshot.
+
+Preparation, stopped-data validation, and startup handoffs share actual path
+identity, accepting aliases such as macOS `/tmp` and `/private/tmp` for the same
+location. Version and schema checks remain exact. Relative or missing paths,
+unrelated hosts, and links escaping release slots cannot gain activation ownership.
 
 Startup-failure rollback records identify the actual activation attempt and target
 package hash. Update checks still return a verified path, with a retry question in
@@ -384,7 +405,7 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
-The current pin is Codex `0.163.0-alpha.5`. Codex `0.152` disables
+The current pin is Codex `0.169.1`, supporting `gpt-6.2-sol` and `gpt-6.2-astra`. Codex `0.152` disables
 `tools.update_plan.enabled` by default, while Wework consumes the corresponding
 plan events to render plan blocks, so the Executor must enable the tool
 explicitly when launching Codex. Desktop E2E verifies the lockfile binary by
@@ -410,6 +431,15 @@ only an intermediate resource directory does not prove that the distribution
 is complete.
 
 ## Development hot reload
+
+On macOS, development watching checks source file and directory metadata once per
+second so missing FSEvents or native directory notifications cannot stop atomic
+saves, subsequent edits, or new directories from triggering builds. Only changed
+input versions trigger a build; output directories, `node_modules`, `.git`, and
+`dist` remain excluded. Polling does not read file contents. Chokidar 3 requires
+both `useFsEvents: false` and `usePolling: true`: setting only
+`CHOKIDAR_USEPOLLING=true` does not disable the already selected FSEvents backend.
+Other platforms retain native watching.
 
 Wait for Chokidar's `ready` before taking the input snapshot and starting the
 initial build. Creating a native watcher alone does not establish subscription

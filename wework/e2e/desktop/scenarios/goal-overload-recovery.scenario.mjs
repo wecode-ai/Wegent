@@ -1,3 +1,7 @@
+import {
+  OVERLOAD_FIRST_RETRY_DELAY_MS,
+  assertOverloadRetryTiming,
+} from '../modules/overload-retry-timing.mjs'
 import assert from 'node:assert/strict'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -18,12 +22,14 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
 
 export function createDesktopScenario(options) {
   const existing = createOverloadRecovery(options)
+  const admission = createGoalAdmissionRecovery(options)
   let active = false
   let requests = 0
   let releaseRecovered
@@ -42,6 +48,7 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     async handleHttp(request, response, url) {
+      if (admission.active) return admission.handleHttp(request, response, url)
       if (!active) return existing.handleHttp(request, response, url)
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -112,11 +119,11 @@ export function createDesktopScenario(options) {
           )
           await control.command('click', '[data-testid="set-goal-button"]')
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: `${GOAL}_${action}` })
-          // Admit the user mutation before recovery sees the failed native frame.
-          // UI commands must not race the production five-second retry deadline.
-          if (!continuing) await existing.overloadTerminalGate.arm()
+          // Hold the real failed frame until both UI and RPC observe the stopped Goal.
+          // Neither the baseline read nor a user mutation may race native recovery.
+          await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-          if (!continuing) await existing.overloadTerminalGate.wait()
+          await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,
             snapshot =>
@@ -130,6 +137,7 @@ export function createDesktopScenario(options) {
           assert.equal(before.status, 'blocked')
           assert.equal(before.threadId, stopped.pane.goal.threadId)
           if (continuing) {
+            await existing.overloadTerminalGate.release()
             if (action === 'resume')
               await rpc('runtime.tasks.goal.set', { address, status: 'active' })
             await waitForWorkbenchDebugState(
@@ -139,7 +147,8 @@ export function createDesktopScenario(options) {
                 snapshot.pane?.goal?.status === 'active' &&
                 snapshot.workbench?.activeLifecycle?.goalStatus === 'active' &&
                 snapshot.pane?.status?.isBusy,
-              'Overload recovery did not restore the Goal lifecycle'
+              'Overload recovery did not restore the Goal lifecycle',
+              options.modelResponseTimeoutMs
             )
             const after = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(after.objective, before.objective)
@@ -173,9 +182,9 @@ export function createDesktopScenario(options) {
             'The recovered or stopped Goal did not settle'
           )
           if (!continuing) {
-            // The model backoff is five seconds. Observe beyond its deadline to
+            // Observe beyond the native first retry delay in turn_recovery.rs to
             // prove a user mutation cannot be undone by the pending recovery.
-            await new Promise(resolve => setTimeout(resolve, 5500))
+            await new Promise(resolve => setTimeout(resolve, OVERLOAD_FIRST_RETRY_DELAY_MS + 500))
             assert.equal(requests, 1, 'Recovery continued a Goal changed by the user')
             const goal = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(goal?.status ?? null, action === 'clear' ? null : action)
@@ -187,6 +196,7 @@ export function createDesktopScenario(options) {
             await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { text: RECOVERED })
             const log = await readFile(join(options.resultDir, 'executor.log'), 'utf8')
             assert.ok(log.includes('codex overloaded turn recovery'))
+            assertOverloadRetryTiming(log)
             assert.equal((await rpc('runtime.tasks.goal.get', { address })).goal.status, 'complete')
           }
           await rpc('runtime.tasks.goal.clear', { address })
@@ -194,11 +204,15 @@ export function createDesktopScenario(options) {
         }
       } finally {
         await existing.overloadTerminalGate.release()
-        releaseRecovered?.()
-        releaseContinuation?.()
-        if (address) await rpc('runtime.tasks.goal.clear', { address })
-        active = false
+        try {
+          if (address) await rpc('runtime.tasks.goal.clear', { address })
+        } finally {
+          releaseRecovered?.()
+          releaseContinuation?.()
+          active = false
+        }
       }
+      await admission.verify(control)
     },
     diagnostics() {
       return { ...existing.diagnostics(), goalRequests: requests, goalActive: active }

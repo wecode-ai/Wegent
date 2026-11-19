@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
+import { findNestedString, requestContainsSkillLocator } from '../modules/desktop-server.mjs'
 import {
   refreshPluginInventory,
   verifyPluginEnabledState,
@@ -14,9 +14,11 @@ import {
   HISTORICAL_PLUGIN_UPDATE,
   HISTORICAL_PLUGIN_SOURCE,
   LEGACY_PLUGIN_RELEASES,
+  assertHistoricalPackageUncached,
   historicalPluginPackages,
   prepareHistoricalPluginTools,
   readHistoricalPluginState,
+  seedHistoricalRuntimeBytecode,
   startHistoricalPluginExecutor,
 } from '../modules/legacy-plugin-executor.mjs'
 import {
@@ -111,9 +113,21 @@ export async function createDesktopScenario({
     return { ...fixture, ...release }
   }
 
+  async function verifyDeliveredFiles(fixture, root) {
+    for (const [path, checksum] of Object.entries(fixture.files))
+      assert.equal(
+        createHash('sha256')
+          .update(await readFile(join(root, path)))
+          .digest('hex'),
+        checksum,
+        `Migration changed a delivered plugin file: ${path}`
+      )
+  }
+
   async function update(fixture, device, data) {
+    const query = device ? `?device_id=${encodeURIComponent(device)}` : ''
     const response = await fetch(
-      `${cloud.backendUrl}/api/plugins/installed/${fixture.installedId}?device_id=${encodeURIComponent(device)}`,
+      `${cloud.backendUrl}/api/plugins/installed/${fixture.installedId}${query}`,
       {
         method: 'PUT',
         headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
@@ -139,14 +153,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -158,26 +164,49 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
-    try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
-        await pluginApi(
-          cloud,
-          `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-          'POST'
-        )
-        fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
-        fixtures[role] = fixture
+    // The install endpoint selects the marketplace latest. Pin the account before
+    // the historical executor connects so an earlier baseline's latest cannot
+    // be materialized into this baseline's native cache.
+    for (const [role, original] of Object.entries(delivered.packages)) {
+      const fixture = await publish(original)
+      let installed = await accountPlugin(cloud, fixture.slug)
+      if (!installed) {
+        await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
+        installed = await accountPlugin(cloud, fixture.slug)
       }
+      assert.ok(installed, 'The historical plugin installation is missing')
+      fixture.installedId = Number(installed.metadata.labels.id)
+      await update(fixture, null, { releaseId: fixture.releaseId })
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
+      const desired = await accountPlugin(cloud, fixture.slug)
+      assert.equal(desired.spec.releaseId, fixture.releaseId)
+      assert.equal(desired.spec.version, fixture.version)
+      fixtures[role] = fixture
+    }
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
+    })
+    try {
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
+      }
+      let observedState
       const original = await until(
-        () => readHistoricalPluginState(root, release),
+        async () => {
+          observedState = await readHistoricalPluginState(root, release)
+          return observedState
+        },
         value =>
           Object.values(fixtures).every(
             fixture => value.value.plugins[`${fixture.slug}@wegent`]?.version === fixture.version
@@ -188,7 +217,28 @@ export async function createDesktopScenario({
           ] === false,
         'The delivered historical installer did not materialize the plugins',
         workbenchReadyTimeoutMs
-      )
+      ).catch(async error => {
+        await writeFile(
+          join(resultDir, `legacy-source-${release.version}-materialization-failure.json`),
+          JSON.stringify(
+            {
+              plugins: Object.fromEntries(
+                Object.entries(observedState?.value?.plugins ?? {}).map(([key, plugin]) => [
+                  key,
+                  {
+                    version: plugin.version,
+                    enabled: plugin.enabled,
+                    componentStates: plugin.component_states,
+                  },
+                ])
+              ),
+            },
+            null,
+            2
+          )
+        ).catch(() => {})
+        throw error
+      })
       const records = Object.fromEntries(
         Object.values(fixtures).map(fixture => {
           const value = original.value.plugins[`${fixture.slug}@wegent`]
@@ -227,6 +277,7 @@ export async function createDesktopScenario({
             'Historical fixture has the wrong real layout'
           )
         assert.ok((await lstat(source)).isDirectory())
+        await verifyDeliveredFiles(fixture, source)
       }
       evidence.push({
         ...installer.evidence,
@@ -236,9 +287,35 @@ export async function createDesktopScenario({
     } finally {
       await installer.stop()
     }
+    let initialUpdate = fixtures.update
+    let bytecode
+    if (release.source === 'store') {
+      bytecode = await seedHistoricalRuntimeBytecode(root, release, fixtures.update.slug)
+      await assertHistoricalPackageUncached(workbenchFor(release), bytecode.checksum)
+      initialUpdate = {
+        ...(await publish(updatePackages.update)),
+        installedId: fixtures.update.installedId,
+      }
+      assert.notEqual(initialUpdate.version, fixtures.update.version)
+      // The old executor is stopped. Change account intent before the first modern sync,
+      // so preparation cannot cache the old archive and bypass the runtime witness.
+      await update(initialUpdate, null, { releaseId: initialUpdate.releaseId })
+      const desired = await accountPlugin(cloud, initialUpdate.slug)
+      assert.equal(desired.spec.releaseId, initialUpdate.releaseId)
+      assert.equal(desired.spec.version, initialUpdate.version)
+      evidence.push({
+        phase: 'legacy-runtime-bytecode',
+        sourceVersion: release.version,
+        plugin: fixtures.update.slug,
+        targetVersion: initialUpdate.version,
+        ...bytecode,
+      })
+    }
     return {
       release,
       fixtures,
+      initialUpdate,
+      bytecode,
       legacyManifest: await readFile(
         join(root, 'capabilities', release.schema === 1 ? 'manifest.json' : 'manifest-v2.json')
       ),
@@ -260,21 +337,14 @@ export async function createDesktopScenario({
   async function invoke(control, fixture) {
     const { version } = fixture
     const record = await waitRuntime(fixture, version)
-    for (const [path, checksum] of Object.entries(fixture.files)) {
-      assert.equal(
-        createHash('sha256')
-          .update(await readFile(join(record.runtime.codex_link, path)))
-          .digest('hex'),
-        checksum,
-        `Migration changed a delivered plugin file: ${path}`
-      )
-    }
+    await verifyDeliveredFiles(fixture, record.runtime.codex_link)
     const id = `legacy-business-${Date.now()}`
     active = {
       id,
       prompt: `WEWORK_LEGACY_PLUGIN ${id}`,
       output: null,
-      command: `node ${quote(join(record.runtime.codex_link, 'scripts/smart-app-tool.mjs'))} doctor`,
+      // Keep the prepared Corepack ahead of host tools after native login-shell hydration.
+      command: `node -e ${quote('Object.assign(process.env,JSON.parse(Buffer.from(process.argv[1],`base64`).toString())); const script=process.argv[2]; process.argv=[process.execPath,script,`doctor`]; import(require(`node:url`).pathToFileURL(script).href)')} ${quote(Buffer.from(JSON.stringify(pluginTools)).toString('base64'))} ${quote(join(record.runtime.codex_link, 'scripts/smart-app-tool.mjs'))}`,
       expected: '"pnpmAvailable": true',
       skillPath: join(record.runtime.codex_link, 'skills', fixture.skillName, 'SKILL.md'),
       skillName: fixture.skillName,
@@ -320,7 +390,12 @@ export async function createDesktopScenario({
     const device = (await cloud.waitForConnectedAppDevice()).device_id
     await createSingleRootLocalProject(control, workspacePath, `legacy-${current.release.version}`)
     const { fixtures, release } = current
-    await waitRuntime(fixtures.update, fixtures.update.version)
+    await waitRuntime(current.initialUpdate, current.initialUpdate.version)
+    if (current.bytecode) {
+      await assertHistoricalPackageUncached(workbenchFor(release), current.bytecode.checksum)
+      const original = JSON.parse(current.legacyManifest).plugins[`${fixtures.update.slug}@wegent`]
+      await verifyDeliveredFiles(fixtures.update, original.store_path)
+    }
     assert.equal((await entry(fixtures.disabled)).enabled, false)
     assert.equal(
       (await entry(fixtures.disabled)).component_states[`skill:${fixtures.disabled.skillName}`],
@@ -345,11 +420,13 @@ export async function createDesktopScenario({
         current.legacyManifest,
         'Legacy evidence was rewritten'
       )
-    await invoke(control, fixtures.update)
+    await invoke(control, current.initialUpdate)
     const latest = await publish(updatePackages.update)
-    await update(fixtures.update, device, { releaseId: latest.releaseId })
     latest.installedId = fixtures.update.installedId
-    await invoke(control, latest)
+    if (current.initialUpdate.version !== latest.version) {
+      await update(fixtures.update, device, { releaseId: latest.releaseId })
+      await invoke(control, latest)
+    }
     await uninstallInUi(control, latest)
     await assertInstallButton(control, latest)
     await until(
@@ -441,9 +518,34 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
+        const discovered = requestContainsSkillLocator(body, active.skillPath, active.skillName)
+        if (!discovered) {
+          const catalog =
+            findNestedString(body, text => text.includes('### Available skills')) ?? ''
+          await writeFile(
+            join(resultDir, 'legacy-skill-discovery-failure.json'),
+            JSON.stringify(
+              {
+                sourceVersion: current.release.version,
+                expectedPath: active.skillPath,
+                catalogLines: catalog
+                  .split(/\r?\n/u)
+                  .filter(
+                    line =>
+                      /^- `[^`]+` = `[^`]+`$/u.test(line.trim()) ||
+                      (line.includes('(file:') && line.includes(`:${active.skillName}:`))
+                  ),
+              },
+              null,
+              2
+            )
+          ).catch(error =>
+            console.error('Legacy skill discovery diagnostics failed:', error.message)
+          )
+        }
         assert.ok(
-          requestContainsSkillLocator(body, active.skillPath, active.skillName),
-          'Codex did not discover the historical plugin in its migrated native runtime'
+          discovered,
+          `Codex did not discover the historical plugin in its migrated native runtime: ${active.skillPath}`
         )
         events = shellCommandResponse(body, active.id, active.command, workspacePath)
       } else events = [assistantMessage('Legacy plugin migration fixture ready')]

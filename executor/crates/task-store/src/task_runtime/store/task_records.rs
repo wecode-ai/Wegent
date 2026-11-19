@@ -94,7 +94,7 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_schedule(project_id, input, None, None, false)
     }
 
     pub fn create_task_with_schedule(
@@ -103,13 +103,73 @@ impl LocalTaskStore {
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        personal_task: bool,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_with_options(
+            project_id,
+            input,
+            super::super::TaskCreateOptions {
+                start_at,
+                due_at,
+                personal_task,
+                request_id: None,
+            },
+        )
+    }
+
+    pub fn create_task_with_options(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        options: super::super::TaskCreateOptions,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_transaction(project_id, input, options, None)
+    }
+
+    pub fn create_task_with_receipt(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_transaction(
+            project_id,
+            input,
+            super::super::TaskCreateOptions {
+                start_at,
+                due_at,
+                ..Default::default()
+            },
+            receipt,
+        )
+    }
+
+    fn create_task_transaction(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        options: super::super::TaskCreateOptions,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let super::super::TaskCreateOptions {
+            start_at,
+            due_at,
+            personal_task,
+            request_id,
+        } = options;
         validate_name(&input.title, "task title")?;
         validate_priority(&input.priority)?;
         crate::task_runtime::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(receipt) = receipt {
+            if let Some(result) = receipt.replay(&transaction)? {
+                return Ok(result);
+            }
+        }
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
         project_status::validate(&project.metadata, &input.status)?;
@@ -137,6 +197,21 @@ impl LocalTaskStore {
         if let Some(parent_id) = input.parent_id.as_deref() {
             require_parent(&transaction, project_id, parent_id, None)?;
         }
+        if let Some(request_id) = request_id.as_deref() {
+            if request_id.is_empty() || request_id.len() > 64 {
+                return Err(TaskRuntimeError::Invalid(
+                    "Invalid creation request ID".into(),
+                ));
+            }
+            let existing: Option<String> = transaction.query_row(
+                "SELECT id FROM loop_items WHERE resource_type='task' AND cloud_project_id=?1 AND json_extract(metadata, '$.creation_request_id')=?2 LIMIT 1",
+                params![project_id, request_id], |row| row.get(0),
+            ).optional()?;
+            if let Some(id) = existing {
+                return get_item_from(&transaction, &id, "task")?
+                    .ok_or(TaskRuntimeError::TaskNotFound);
+            }
+        }
         let sequence = project.next_item_number.unwrap_or(1);
         let project_key = project
             .project_key
@@ -153,6 +228,9 @@ impl LocalTaskStore {
         let completed_at = (status == "completed").then(|| now.clone());
         milestones::require_milestone(&transaction, project_id, input.milestone_id.as_deref())?;
         let mut metadata = json!({"tags": input.tags});
+        if let Some(request_id) = request_id {
+            metadata["creation_request_id"] = json!(request_id);
+        }
         if let Some(milestone_id) = input.milestone_id {
             metadata["milestone_id"] = json!(milestone_id);
         }
@@ -198,6 +276,18 @@ impl LocalTaskStore {
                 Some(&user_id),
                 None,
             );
+        }
+        if personal_task {
+            if input.assignee_user_id != Some(project.created_by_user_id) {
+                return Err(TaskRuntimeError::Invalid(
+                    "Personal work must belong to its creator".into(),
+                ));
+            }
+            metadata["personal_task_assignment_at"] = metadata["assignment_history"]
+                .as_array()
+                .and_then(|rows| rows.last())
+                .map(|row| row["at"].clone())
+                .unwrap_or(Value::Null);
         }
         // Allocating an Issue number does not change editable project configuration.
         transaction.execute(
@@ -265,9 +355,13 @@ impl LocalTaskStore {
             &id,
             local_automation::AutomationEvent::Created,
         )?;
+        let item =
+            get_item_from(&transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if let Some(receipt) = receipt {
+            receipt.record(&transaction, &item)?;
+        }
         transaction.commit()?;
-        drop(connection);
-        self.get_item(&id, "task")
+        Ok(item)
     }
 
     pub fn update_task(
@@ -287,8 +381,25 @@ impl LocalTaskStore {
         start_at: Option<Option<String>>,
         due_at: Option<Option<String>>,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_with_receipt(project_id, task_id, input, start_at, due_at, None)
+    }
+
+    pub fn update_task_with_receipt(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        start_at: Option<Option<String>>,
+        due_at: Option<Option<String>>,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(receipt) = receipt {
+            if let Some(result) = receipt.replay(&transaction)? {
+                return Ok(result);
+            }
+        }
         let current =
             get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
         if current.cloud_project_id.as_deref() != Some(project_id) {
@@ -613,14 +724,14 @@ impl LocalTaskStore {
                 local_automation::AutomationEvent::TagsAdded(&added_tags),
             )?;
         }
+        let item =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let item = attach_execution(item, latest_execution(&transaction, task_id)?);
+        if let Some(receipt) = receipt {
+            receipt.record(&transaction, &item)?;
+        }
         transaction.commit()?;
-        drop(connection);
-        let item = self.get_item(task_id, "task")?;
-        let connection = self.connection()?;
-        Ok(attach_execution(
-            item,
-            latest_execution(&connection, task_id)?,
-        ))
+        Ok(item)
     }
 
     // ------------------------------------------------------------------

@@ -77,6 +77,35 @@ function classifiedMatrices(
 
 const matrices = classifiedMatrices()
 
+test('the Cloud workflow command accepts populated and empty classifier matrices', () => {
+  for (const original of [
+    JSON.parse(matrices.wework_desktop_cloud_e2e_matrix),
+    { include: [] },
+  ]) {
+    const output = execFileSync(
+      process.execPath,
+      ['.github/scripts/order-wework-linux-e2e.mjs', '--balance-cloud'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CORE_MATRIX: JSON.stringify(original),
+          CORE_RUNNER_SCALE: '1.5',
+        },
+      },
+    ).trim()
+    assert.equal(output.startsWith('matrix='), true)
+    const balanced = JSON.parse(output.slice('matrix='.length))
+    const selected = (matrix) =>
+      matrix.include
+        .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
+        .sort()
+    assert.deepEqual(selected(balanced), selected(original))
+    assert(balanced.include.every((entry) => entry.segments.length > 0))
+  }
+})
+
 test('Linux balancing reuses the history runner without changing coverage, runners or exclusive benchmarks', () => {
   const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix)
   const snapshot = JSON.stringify(original)
@@ -176,20 +205,20 @@ function completionSeconds(checkpoints, seconds) {
 
 test('reuses the existing history runner after its isolated checkpoint', async () => {
   const checkpoints = [
-    'application-menu',
-    'automation-lifecycle',
+    'codex-native-catalog',
+    'collaboration-personal-issues',
     'embedded-browser',
     'task-board-association',
-    'task-status-sync',
+    'stand-in-cloud',
     'temporary-chat',
-    'workspace-tabs',
+    'task-attachments',
     'window-lifecycle',
     'permission-modes',
     'core-task-flow',
     'workspace-attachments',
     'conversation-state',
-    'native-window-chrome',
-    'harness-app-development',
+    'codex-invalid-launch-cwd',
+    'plugin-development',
     'harness-app-lifecycle',
     'harness-app-models',
     'tray-lifecycle',
@@ -200,8 +229,8 @@ test('reuses the existing history runner after its isolated checkpoint', async (
       { id: 'core-1', segments: checkpoints.slice(0, -1).join(',') },
       { id: 'core-2', segments: checkpoints.at(-1) },
       { id: 'core-6', segments: history },
-      { id: 'core-9', segments: 'split-workbench' },
-      { id: 'core-10', segments: 'collaboration-template-agents' },
+      { id: 'core-9', segments: 'human-interactions-hidden' },
+      { id: 'core-10', segments: 'collaboration-shared-core' },
     ],
   }
   const seconds = Object.fromEntries(
@@ -262,16 +291,16 @@ test('reuses the existing history runner after its isolated checkpoint', async (
 
 test('balancing includes exclusive startup checkpoints before the four-worker queue', () => {
   const seconds = {
-    'background-terminals': 60,
+    'plugin-uninstall-lost-response': 60,
     'release-package-startup': 100,
     'collaboration-issue-task-discovery': 80,
-    'application-menu': 80,
-    'automation-lifecycle': 20,
+    'codex-native-catalog': 80,
+    'collaboration-personal-issues': 20,
     'embedded-browser': 60,
     'task-board-association': 100,
-    'task-status-sync': 80,
+    'stand-in-cloud': 80,
     'temporary-chat': 80,
-    'workspace-tabs': 100,
+    'task-attachments': 100,
     'window-lifecycle': 20,
     'permission-modes': 20,
     'running-conversation-history': 300,
@@ -311,16 +340,16 @@ test('balancing distributes the four-worker tail across existing Core runners', 
       {
         id: 'core-1',
         segments:
-          'harness-app-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
+          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
       },
-      { id: 'core-2', segments: 'application-menu' },
+      { id: 'core-2', segments: 'codex-native-catalog' },
       { id: 'core-6', segments: 'running-conversation-history' },
     ],
   }
   const seconds = Object.fromEntries(
     expandDesktopCheckpoints(
       matrix.include.flatMap((entry) => entry.segments.split(',')),
-    ).map((name) => [name, name === 'application-menu' ? 10 : 100]),
+    ).map((name) => [name, name === 'codex-native-catalog' ? 10 : 100]),
   )
   const balanced = balanceLinuxCoreMatrix(matrix, seconds)
   const maximum = (selection) =>
@@ -422,32 +451,37 @@ test('successful Linux timing replay prioritizes measured tails after new covera
     // Historical timing evidence cannot assign a cost to new, unmeasured coverage.
     const originalSeconds = completionSeconds(measured, seconds)
     const orderedSeconds = completionSeconds(measuredOrder, seconds)
-    assert.ok(
-      orderedSeconds < originalSeconds,
-      `${id}: ${orderedSeconds} < ${originalSeconds}`,
-    )
+    if (originalSeconds === seconds[longest]) {
+      // Pruned workloads can already reach the longest task's physical lower bound.
+      assert.equal(orderedSeconds, seconds[longest], id)
+    } else {
+      assert.ok(
+        orderedSeconds < originalSeconds,
+        `${id}: ${orderedSeconds} < ${originalSeconds}`,
+      )
+    }
   }
 })
 
 test('unmeasured and equal-duration checkpoints retain stable priority without dropping new coverage', () => {
   const selected = [
-    'running-sidebar-state',
+    'runtime-task-queue',
     'running-conversation-history',
     'task-board-association',
-    'local-file-preview',
+    'cloud-model-recovery',
   ]
   assert.deepEqual(orderLinuxCheckpoints(selected, 'core', {}), selected)
   assert.deepEqual(
     orderLinuxCheckpoints(selected, 'core', {
-      'running-sidebar-state': 20,
+      'runtime-task-queue': 20,
       'running-conversation-history': 480,
-      'local-file-preview': 20,
+      'cloud-model-recovery': 20,
     }),
     [
       'task-board-association',
       'running-conversation-history',
-      'running-sidebar-state',
-      'local-file-preview',
+      'runtime-task-queue',
+      'cloud-model-recovery',
     ],
   )
   assert.deepEqual(orderLinuxCheckpoints([], 'core'), [])
@@ -460,7 +494,7 @@ test('unmeasured and equal-duration checkpoints retain stable priority without d
     /Unknown desktop E2E checkpoint/,
   )
   assert.throws(
-    () => orderLinuxCheckpoints(selected, 'core', { 'local-file-preview': 0 }),
+    () => orderLinuxCheckpoints(selected, 'core', { 'cloud-model-recovery': 0 }),
     /Invalid Linux E2E duration/,
   )
 })
@@ -567,7 +601,13 @@ test('one existing producer builds MinIO for exactly the consumers that need it 
       required.push({ scope, segment: match[1] })
     }
   }
-  assert.equal(required.length, 6)
+  assert.equal(required.length, 7)
+  assert.ok(
+    required.some(
+      ({ scope, segment }) =>
+        scope === 'cloud' && segment === 'plugin-package-integrity-recovery',
+    ),
+  )
   const evaluate = new Function(
     'needs',
     'contains',
@@ -575,7 +615,7 @@ test('one existing producer builds MinIO for exactly the consumers that need it 
   )
   for (const selection of [
     ...required,
-    { scope: 'core', segment: 'split-workbench' },
+    { scope: 'core', segment: 'task-attachments' },
     null,
   ]) {
     const outputs = Object.fromEntries(

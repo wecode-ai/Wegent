@@ -219,6 +219,28 @@ pub trait TaskStore:
         self.get_active_task_owned(task_id, owner_user_id).await
     }
 
+    /// Read an owned regular or subscription task on the request transaction.
+    async fn get_active_states_task_owned_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i32,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        use crate::request_sql::RouteKey;
+        use crate::sql_support::StatementArg;
+        use crate::task_store_statements::active_states_task_owned_statement;
+
+        sql.fetch_optional_row(
+            RouteKey::Task(task_id as u64),
+            &active_states_task_owned_statement(self.table_templates().tasks),
+            vec![
+                StatementArg::Int(task_id),
+                StatementArg::Int(i64::from(owner_user_id)),
+            ],
+        )
+        .await
+    }
+
     /// `task_store.get_task_by_states` with `states =
     /// TaskResource.is_active_query()` (`[STATE_ACTIVE,
     /// STATE_SUBSCRIPTION]`) and no owner filter (the internal
@@ -387,6 +409,39 @@ pub trait TaskStore:
     /// `subtask_store.list_ids_by_task`: the task's subtask ids.
     async fn list_subtask_ids_by_task(&self, task_id: i64) -> MysqlResult<Vec<MysqlRow>>;
 
+    async fn list_task_attachment_contexts_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        crate::task_store_runtime_reads::task_attachments_on(
+            sql,
+            self.table_templates().subtasks,
+            task_id,
+            crate::request_sql::RouteKey::Task(task_id as u64),
+        )
+        .await
+    }
+
+    async fn list_executor_reference_page_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        after_id: i64,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        sql.fetch_all_rows(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &crate::task_store_runtime_reads::executor_reference_page_statement(
+                self.table_templates().subtasks,
+            ),
+            vec![
+                crate::task_store_statements::StatementArg::Int(task_id),
+                crate::task_store_statements::StatementArg::Int(after_id),
+            ],
+        )
+        .await
+    }
+
     /// `subtask_store.list_by_task`: the page of fully-loaded subtask rows for
     /// one task, ordered `message_id, created_at` ascending. `owner_user_id`
     /// carries the non-member filter the caller's `is_member` produced (`Some`
@@ -422,11 +477,74 @@ pub trait TaskStore:
         owner_user_id: i64,
     ) -> MysqlResult<SubtaskListing>;
 
+    /// Project only ids and ordering fields; never hydrate discarded fork rows.
+    async fn list_subtask_history_candidates_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+        window: crate::task_store_history::SubtaskHistoryWindow,
+    ) -> MysqlResult<Vec<crate::task_store_history::HistoryCandidate>> {
+        crate::task_store_history::history_candidates_on(
+            sql,
+            self.table_templates(),
+            task_id,
+            Some(owner_user_id),
+            window,
+            crate::request_sql::RouteKey::Task(task_id as u64),
+        )
+        .await
+    }
+
+    async fn load_subtask_history_payloads_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+        ids: &[i64],
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        crate::task_store_history::history_payloads_on(
+            sql,
+            self.table_templates(),
+            task_id,
+            Some(owner_user_id),
+            ids,
+            crate::request_sql::RouteKey::Task(task_id as u64),
+        )
+        .await
+    }
+
+    /// A bounded preparation read on the same transaction as the inserted pair.
+    async fn list_subtasks_history_window_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+        window: crate::task_store_history::SubtaskHistoryWindow,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        let candidates = self
+            .list_subtask_history_candidates_on(sql, task_id, owner_user_id, window)
+            .await?;
+        let ids: Vec<_> = candidates.into_iter().rev().map(|row| row.id).collect();
+        self.load_subtask_history_payloads_on(sql, task_id, owner_user_id, &ids)
+            .await
+    }
+
     /// [`Self::list_subtasks_by_task_ordered`] on the caller's request
     /// transaction.
     async fn list_subtasks_by_task_ordered_on(
         &self,
         _sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<SubtaskListing> {
+        self.list_subtasks_by_task_ordered(task_id, owner_user_id)
+            .await
+    }
+
+    /// Read subtasks for a Socket.IO join. Deployments may override the owner check.
+    async fn list_subtasks_by_task_ordered_in_sql(
+        &self,
         task_id: i64,
         owner_user_id: i64,
     ) -> MysqlResult<SubtaskListing> {

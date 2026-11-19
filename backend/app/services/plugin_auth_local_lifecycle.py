@@ -21,7 +21,7 @@ from app.services.plugin_auth_migrations import (
     MIGRATION_KIND,
     PluginAuthMigrationService,
 )
-from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_revision import require_plugin_write_leases
 from shared.telemetry.decorators import trace_sync
 
 LOCAL_POLICY_KIND = "ConnectorLocalAuthPolicy"
@@ -54,7 +54,7 @@ def local_login_pending(
 
 
 def finish_local_login(db: Session, user_id: int, source: dict) -> None:
-    acquire_plugin_write_lock(db, user_id)
+    require_plugin_write_leases(db, user_id)
     row = (
         policy_query(db, user_id, source["source_identity"], source["connector_slug"])
         .populate_existing()
@@ -84,7 +84,9 @@ class PluginAuthLocalLifecycleService:
         device_id: str,
         request: PluginNativeLocalLifecycle,
     ) -> dict:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, installed_id=request.installed_plugin_id
+        )
         identity = resolve_runtime_route_identity(
             db, user_id=user_id, submitted_device_id=device_id
         )
@@ -169,12 +171,20 @@ class PluginAuthLocalLifecycleService:
             )
             db.add(row)
         previous = (row.json or {}).get("spec", {})
-        row.json = {
-            "spec": {
-                "enabled": enabled,
-                "pendingLogins": previous.get("pendingLogins", {}) if enabled else {},
-            }
+        spec = {
+            "enabled": enabled,
+            "pendingLogins": previous.get("pendingLogins", {}) if enabled else {},
         }
+        if "pendingNativeLogins" in previous:
+            spec["pendingNativeLogins"] = (
+                previous["pendingNativeLogins"] if enabled else {}
+            )
+        if "revision" in previous:
+            revision = previous["revision"]
+            if type(revision) is not int or not 0 <= revision < 2**63 - 1:
+                raise PluginAccountAuthError("plugin_auth_revision_conflict")
+            spec["revision"] = revision + 1
+        row.json = {"spec": spec}
         db.flush()
 
     @staticmethod

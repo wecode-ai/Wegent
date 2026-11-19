@@ -22,6 +22,23 @@ test('keeps method-specific fault injection exact', () => {
   ).toThrow()
 })
 
+test('accepts concurrent plugin inventory as the request that observed the failure', () => {
+  expect(
+    assertCloudConfigRecovery(`${degradation('plugin/installed')}\n${resumed()}`, {
+      methods: ['thread/resume', 'plugin/installed'],
+      ...goal,
+    })
+  ).toBe('plugin/installed')
+})
+
+test('rejects recovery through an unrelated concurrent request', () => {
+  expect(() =>
+    assertCloudConfigRecovery(degradation('plugin/list'), {
+      methods: ['thread/resume', 'plugin/installed'],
+    })
+  ).toThrow()
+})
+
 test.each([
   degradation('config/read'),
   `${degradation('config/read')}\n${resumed('another-goal')}`,

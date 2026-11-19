@@ -8,7 +8,9 @@ import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { PermissionModeSelector } from '@/components/chat/composer/PermissionModeSelector'
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 import type { CollaborationTranslate } from '@wegent/collaboration'
@@ -17,6 +19,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
 
 export function TaskCommentComposer({
+  issueActions,
   assignment,
   value,
   onChange,
@@ -32,12 +35,14 @@ export function TaskCommentComposer({
   placeholder,
   predictionAddress,
 }: {
+  issueActions?: import('@wegent/collaboration').CommentIssueActions
   assignment?: import('@wegent/collaboration').CommentAssignment
   value: string
   onChange: (value: string) => void
   onSubmit: (
     body: string,
-    mentions: ProjectChatMention[]
+    mentions: ProjectChatMention[],
+    options?: import('@wegent/collaboration').CommentSubmissionOptions
   ) => void | boolean | Promise<void | boolean>
   disabled: boolean
   sending: boolean
@@ -61,6 +66,7 @@ export function TaskCommentComposer({
       }
     >
       <IssueMainCommentComposer
+        issueActions={issueActions}
         assignment={assignment}
         value={value}
         onChange={onChange}
@@ -107,10 +113,16 @@ export function TaskCommentComposer({
               />
               <PermissionModeSelector
                 value={runtimePermissionMode(controls.selectedModelOptions)}
-                disabled={disabled || sending}
-                onChange={mode =>
-                  controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                commandApproval={runtimeCommandApprovalMode(controls.selectedModelOptions)}
+                onCommandApprovalChange={mode =>
+                  controls.setSelectedModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
                 }
+                disabled={disabled || sending}
+                onChange={(mode, approval) => {
+                  if (approval)
+                    controls.setSelectedModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+                  controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                }}
               />
             </>
           )

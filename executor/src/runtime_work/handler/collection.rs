@@ -14,7 +14,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<RuntimeTaskLink, AppIpcError> {
         let local_task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        if let Some(link) = self.local_task_link(&local_task_id) {
+        if let Some(link) = self
+            .local_task_link(&local_task_id)
+            .or_else(|| self.local_task_by_thread_id(&local_task_id))
+        {
             if (link.status == "archived") == archived {
                 log_runtime_archive_link(
                     "runtime task payload matched local link",
@@ -233,17 +236,27 @@ impl RuntimeWorkRpcHandler {
         self.store.find_summary_by_thread_id(thread_id)
     }
 
+    pub(super) fn canonical_local_task_id(&self, task_id: &str) -> String {
+        self.local_task_link(task_id)
+            .or_else(|| self.local_task_by_thread_id(task_id))
+            .map(|link| link.local_task_id)
+            .unwrap_or_else(|| task_id.to_owned())
+    }
+
     pub(super) fn task_send_gate(&self, local_task_id: &str) -> Arc<AsyncMutex<()>> {
+        // Callers may address a task by its local task ID or provider thread ID.
+        // Both aliases must share one gate so send and history edits serialize.
+        let canonical_task_id = self.canonical_local_task_id(local_task_id);
         let mut gates = self
             .task_send_gates
             .lock()
             .expect("task send gate map lock should not be poisoned");
         gates.retain(|_, gate| gate.strong_count() > 0);
-        if let Some(gate) = gates.get(local_task_id).and_then(Weak::upgrade) {
+        if let Some(gate) = gates.get(&canonical_task_id).and_then(Weak::upgrade) {
             return gate;
         }
         let gate = Arc::new(AsyncMutex::new(()));
-        gates.insert(local_task_id.to_owned(), Arc::downgrade(&gate));
+        gates.insert(canonical_task_id, Arc::downgrade(&gate));
         gate
     }
 
@@ -279,8 +292,23 @@ impl RuntimeWorkRpcHandler {
             _ => return false,
         };
         let goal_is_active = goal_status.as_deref() == Some("active");
-        self.sync_runtime_task_goal_status(local_task_id, goal_status);
+        self.observe_runtime_task_goal_status(local_task_id, goal_status);
         goal_is_active
+    }
+
+    pub(super) fn observe_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+    ) {
+        // Delayed native notifications are projections, not authority to
+        // permanently cancel a wait established by a newer Goal mutation.
+        self.with_goal_status_change(local_task_id, |mutating| {
+            // A notification cannot settle the route being activated by an
+            // in-flight mutation. Its response or a later read is authoritative.
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true, !mutating);
+        });
+        self.schedule_connection_goal_reconciliation(local_task_id);
     }
 
     pub(super) fn sync_runtime_task_goal_status(
@@ -288,7 +316,10 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
-        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
+        self.with_goal_status_change(local_task_id, |_| {
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true, true);
+        });
     }
 
     pub(super) fn hydrate_runtime_task_goal_status(
@@ -296,7 +327,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
-        self.update_runtime_task_goal_status(local_task_id, goal_status, false);
+        self.update_runtime_task_goal_status(local_task_id, goal_status, false, true);
     }
 
     fn update_runtime_task_goal_status(
@@ -304,6 +335,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
         update_activity_time: bool,
+        settle_inactive: bool,
     ) {
         let goal_is_active = goal_status.as_deref() == Some("active");
         self.store.update_task(local_task_id, |link| {
@@ -315,7 +347,7 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             }
         });
-        if !goal_is_active {
+        if !goal_is_active && settle_inactive {
             self.clear_active_goal_turn(local_task_id);
         }
     }

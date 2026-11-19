@@ -1,15 +1,21 @@
 /* eslint-disable react-refresh/only-export-components -- Pane presentation hooks share this context. */
+import { createE2ELifecycleTrace } from '@/e2e/lifecycleTrace'
 import {
   createContext,
   memo,
   useContext,
-  useLayoutEffect,
+  useCallback,
   useMemo,
-  useRef,
+  useState,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import type { DeviceInfo } from '@/types/api'
+import {
+  getWorkbenchPaneKey,
+  workbenchPanesShareTask,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
 
 export interface WorkbenchPanePresentation {
   visible: boolean
@@ -61,14 +67,24 @@ export function useWorkbenchPaneId() {
 
 export function SingleWorkbenchPane({
   pane,
+  devices = [],
   visible,
   renderPane,
 }: {
   pane: WorkbenchPaneIdentity
+  devices?: DeviceInfo[]
   visible: boolean
   renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
 }) {
   const paneKey = getWorkbenchPaneKey(pane)
+  const [mounted, setMounted] = useState({ paneKey, mountKey: 0, pane })
+  let mountKey = mounted.mountKey
+  if (mounted.paneKey !== paneKey) {
+    const sameTask = workbenchPanesShareTask(mounted.pane, pane, devices)
+    // Discovery can replace an alias without changing the owning executor or task.
+    mountKey = sameTask ? mounted.mountKey : mounted.mountKey + 1
+    setMounted({ paneKey, mountKey, pane })
+  }
   return (
     <div
       data-testid={visible ? 'desktop-workbench-main' : undefined}
@@ -81,25 +97,28 @@ export function SingleWorkbenchPane({
         focused={visible}
         headerActionsPortalId={null}
       >
-        <CachedWorkbenchPane key={paneKey} pane={pane} renderPane={renderPane} />
+        <CachedWorkbenchPane key={mountKey} pane={pane} renderPane={renderPane} />
       </WorkbenchPanePresentationProvider>
     </div>
   )
 }
 
 export function WorkbenchPaneHost({ host }: { host: HTMLDivElement }) {
-  const slotRef = useRef<HTMLDivElement>(null)
+  const bindSlot = useCallback(
+    (slot: HTMLDivElement | null) => {
+      if (!slot || host.parentElement === slot) return
+      slot.append(host)
+      const trace = createE2ELifecycleTrace('SplitWorkbenchPaneStack')
+      trace.update({ paneKey: host.dataset.workbenchPaneHost, nativeHostAttached: true })
+      return () => {
+        trace.dispose()
+        if (host.parentElement === slot) host.remove()
+      }
+    },
+    [host]
+  )
 
-  useLayoutEffect(() => {
-    const slot = slotRef.current
-    if (!slot || host.parentElement === slot) return
-    slot.append(host)
-    return () => {
-      if (host.parentElement === slot) host.remove()
-    }
-  }, [host])
-
-  return <div ref={slotRef} className="h-full min-h-0 min-w-0" />
+  return <div ref={bindSlot} className="h-full min-h-0 min-w-0" />
 }
 
 export function WorkbenchPanePortal({

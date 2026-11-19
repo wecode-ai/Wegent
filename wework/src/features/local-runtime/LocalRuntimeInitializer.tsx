@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { LocalExecutorCloudInput } from '@/features/cloud-connection/localExecutorCloudService'
+import {
+  createLocalRuntimeStartupSource,
+  type LocalRuntimeState,
+} from './localRuntimeStartupSource'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
-import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
+import { AlertCircle, Check, Copy } from 'lucide-react'
+import { LocalRuntimeNoticeContext } from './localRuntimeNoticeContext'
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -10,12 +16,11 @@ import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
   ensureLocalExecutorAvailable,
+  ensureLocalExecutorStarted,
   readLocalExecutorLog,
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
-import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
@@ -30,11 +35,8 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 interface LocalRuntimeInitializerProps {
   children: ReactNode
   startupReady?: boolean
+  cloudConnection?: LocalExecutorCloudInput
 }
-
-type LocalRuntimeState =
-  | { phase: 'starting' | 'ready'; error: null }
-  | { phase: 'failed'; error: string; cause: unknown }
 
 interface LocalRuntimeErrorText {
   notRunning: string
@@ -216,12 +218,11 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 export function LocalRuntimeInitializer({
   children,
   startupReady = true,
+  cloudConnection,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
-  const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
-  const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
   const runtimeErrorText = useMemo(
     () => ({
@@ -230,52 +231,34 @@ export function LocalRuntimeInitializer({
     }),
     [t]
   )
-  const [state, setState] = useState<LocalRuntimeState>(() => ({
-    phase: enabled ? 'starting' : 'ready',
-    error: null,
-  }))
-
-  useEffect(() => {
-    if (!enabled) {
-      return undefined
+  const [startup] = useState(() =>
+    createLocalRuntimeStartupSource(enabled, LOCAL_RUNTIME_SLOW_STARTUP_MS)
+  )
+  const resolveStartup = useCallback(
+    () => resolveLocalRuntimeState(fallbackError, runtimeErrorText),
+    [fallbackError, runtimeErrorText]
+  )
+  const prepareExecutor = useCallback(async (): Promise<LocalRuntimeState | null> => {
+    try {
+      await ensureLocalExecutorStarted()
+      return null
+    } catch (cause) {
+      return { phase: 'failed', error: errorMessage(cause, fallbackError), cause }
     }
-
-    const timer = window.setTimeout(() => {
-      setSlowStartupTimedOut(true)
-    }, LOCAL_RUNTIME_SLOW_STARTUP_MS)
-    return () => window.clearTimeout(timer)
-  }, [enabled, startupAttempt])
-
+  }, [fallbackError])
+  const subscribeStartup = useCallback(
+    (listener: () => void) =>
+      startup.subscribe(listener, resolveStartup, cloudConnection, prepareExecutor),
+    [startup, resolveStartup, cloudConnection, prepareExecutor]
+  )
+  const { state, startupAttempt, slowStartupTimedOut } = useSyncExternalStore(
+    subscribeStartup,
+    startup.getSnapshot
+  )
   const retryInitialize = useCallback(async () => {
-    if (!enabled) return
-    setStartupAttempt(attempt => attempt + 1)
-    setSlowStartupTimedOut(false)
     setCopyDebugState('idle')
-    setState({ phase: 'starting', error: null })
-    setState(await resolveLocalRuntimeState(fallbackError, runtimeErrorText))
-  }, [enabled, fallbackError, runtimeErrorText])
-
-  useEffect(() => {
-    if (!enabled) return undefined
-    let cancelled = false
-    void resolveLocalRuntimeState(fallbackError, runtimeErrorText).then(nextState => {
-      if (!cancelled) {
-        setState(nextState)
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [enabled, fallbackError, runtimeErrorText])
-
-  useEffect(() => {
-    if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
-      return
-    }
-    void reportDesktopStartupFailure(state.cause, 'local_runtime_initialize').catch(error => {
-      console.error('[Wework] Failed to report the local runtime startup error', error)
-    })
-  }, [state])
+    await startup.retry()
+  }, [startup])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')
@@ -308,19 +291,26 @@ export function LocalRuntimeInitializer({
     }
   }, [startupReady, state.error, state.phase, t])
 
-  const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren
-  const shouldShowStartupScreen = !canRevealChildren
-  const failed = state.phase === 'failed'
+  const canMountChildren = state.phase !== 'starting' || startupAttempt > 0
 
   return (
     <>
       {canMountChildren && (
-        <div hidden={!canRevealChildren} aria-hidden={!canRevealChildren}>
-          {children}
-        </div>
+        <LocalRuntimeNoticeContext.Provider
+          value={
+            state.error !== null
+              ? {
+                  error: state.error,
+                  retrying: state.phase === 'starting',
+                  retry: () => void retryInitialize(),
+                }
+              : null
+          }
+        >
+          <div>{children}</div>
+        </LocalRuntimeNoticeContext.Provider>
       )}
-      {shouldShowStartupScreen && (
+      {!canMountChildren && (
         <main
           data-testid="local-runtime-initializer"
           className="relative flex h-screen min-h-[520px] items-center justify-center overflow-hidden bg-base px-6 py-10 text-text-primary"
@@ -332,50 +322,12 @@ export function LocalRuntimeInitializer({
             <MacOSTitleBarDragRegion className="h-full w-full" />
           </div>
           <section className="flex w-full max-w-[520px] flex-col items-center text-center">
-            {failed ? (
-              <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">
-                <AlertCircle className="h-6 w-6 text-amber-600" />
-              </div>
-            ) : null}
-            <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>
+            <h1 className="heading-base">{t('starting_title')}</h1>
             <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
-              {failed ? t('failed_description') : t('starting_description')}
+              {t('starting_description')}
             </p>
-
-            {failed && (
-              <div className="mt-6 w-full rounded-lg border border-border bg-surface px-4 py-3 text-left">
-                {state.error && (
-                  <p
-                    data-testid="local-runtime-error"
-                    className="break-words text-sm leading-6 text-text-primary"
-                  >
-                    {state.error}
-                  </p>
-                )}
-                <div className="mt-3 text-xs leading-5 text-text-secondary">
-                  <span className="font-medium">{t('log_label')}: </span>
-                  <code className="break-all rounded bg-base px-1.5 py-0.5 text-text-primary">
-                    {getLocalExecutorLogDisplayPath()}
-                  </code>
-                </div>
-              </div>
-            )}
-
-            {!failed && slowStartupTimedOut && (
+            {slowStartupTimedOut && (
               <SlowStartupHelp copyState={copyDebugState} onCopyDebugInfo={handleCopyDebugInfo} />
-            )}
-
-            {failed && (
-              <Button
-                type="button"
-                variant="primary"
-                className="mt-6 h-10 min-w-[112px]"
-                onClick={() => void retryInitialize()}
-                data-testid="local-runtime-retry-button"
-              >
-                <RefreshCw className="h-4 w-4" />
-                {t('retry')}
-              </Button>
             )}
           </section>
         </main>

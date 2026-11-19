@@ -189,6 +189,21 @@ async fn fetch_user_on(
     Ok(row.as_ref().map(UserRecord::from_mysql_row).transpose()?)
 }
 
+/// `db.query(User).filter(User.id == user_id).first()` on the caller's
+/// transaction: the Source's direct ORM read.
+///
+/// Paths that read the ORM row directly (`chat_namespace.py`'s `on_chat_send`
+/// qs148) must not go through the deployment `userReader`: a read-through
+/// cache would issue its `user:v2:data:{id}` GETs, and the Source issues none
+/// there. The statement is the public reader's, so the recorded projection is
+/// unchanged.
+pub async fn get_by_id_direct_on(
+    sql: &mut dyn RequestSql,
+    user_id: i64,
+) -> anyhow::Result<Option<UserRecord>> {
+    fetch_user_on(sql, USER_BY_ID_QUERY, StatementArg::Int(user_id)).await
+}
+
 impl From<UserRow> for UserRecord {
     fn from(row: UserRow) -> Self {
         Self {
@@ -217,7 +232,7 @@ struct UserEntityRow {
     password_hash: String,
     email: Option<String>,
     #[allow(dead_code, reason = "selected to match the source column list")]
-    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
+    git_info: Option<brz_mysql::Json<brz_json::OpaqueJson>>,
     is_active: i8,
     #[allow(dead_code, reason = "selected to match the source column list")]
     role: String,
@@ -238,7 +253,9 @@ impl From<UserEntityRow> for UserRecord {
             user_name: row.user_name,
             password_hash: row.password_hash,
             email: row.email,
-            git_info: row.git_info.0.to_value(),
+            git_info: row
+                .git_info
+                .map_or(serde_json::Value::Null, |value| value.0.to_value()),
             is_active: row.is_active != 0,
             role: row.role,
             auth_source: row.auth_source,
@@ -310,6 +327,29 @@ pub const USER_BY_NAME_QUERY: &str = "SELECT users.id AS users_id, users.user_na
      FROM users \
      WHERE users.user_name = ? \
      LIMIT 1";
+
+/// `db.refresh(user)`'s ORM refresh read: the labeled projection without the
+/// `LIMIT` a `.first()` query renders.
+pub const USER_BY_ID_REFRESH_QUERY: &str = "SELECT users.id AS users_id, users.user_name AS users_user_name, \
+     users.password_hash AS users_password_hash, users.email AS users_email, \
+     users.git_info AS users_git_info, users.is_active AS users_is_active, \
+     users.`role` AS users_role, users.auth_source AS users_auth_source, \
+     users.preferences AS users_preferences, users.created_at AS users_created_at, \
+     users.updated_at AS users_updated_at \
+     FROM users \
+     WHERE users.id = ?";
+
+/// One direct labeled `users` refresh on the pool handle, bypassing the
+/// deployment `userReader` cache (`db.refresh(user)` issues no cache read).
+pub async fn get_by_id_refresh<M: brz_mysql::Mysql>(
+    mysql: &M,
+    user_id: i64,
+) -> brz_mysql::MysqlResult<Option<UserRecord>> {
+    let row: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(USER_BY_ID_REFRESH_QUERY, (user_id,))
+        .await?;
+    row.map(|row| UserRecord::from_mysql_row(&row)).transpose()
+}
 
 #[cfg(test)]
 mod tests {
@@ -448,6 +488,25 @@ mod tests {
                     1
                 ),
             ]
+        );
+    }
+
+    /// `db.query(User)` paths (`chat_namespace.py` `on_chat_send`'s qs148)
+    /// read the ORM row directly on the caller's handle: one users-by-id
+    /// statement and no deployment reader, so no `user:v2:*` cache lookup can
+    /// occur there.
+    #[tokio::test]
+    async fn the_direct_reader_reads_without_the_deployment_cache() {
+        let mut sql = RecordingSql::default();
+        assert!(get_by_id_direct_on(&mut sql, 6501).await.unwrap().is_none());
+        let calls = sql.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec![(
+                crate::request_sql::RouteKey::None,
+                USER_BY_ID_QUERY.to_string(),
+                1
+            )]
         );
     }
 }

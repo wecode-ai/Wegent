@@ -10,6 +10,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { verifyStandInProjectConnectionNames } from '../modules/stand-in-project-connections.mjs'
 import { verifyStandInConnectionCatalog } from '../modules/stand-in-connection-catalog.mjs'
 import { verifyStandInSessionSettings } from '../modules/stand-in-session-settings.mjs'
+import { verifyStandInGroupMessageScope } from '../modules/stand-in-group-message-scope.mjs'
 
 const DINGTALK = '@wegent/dsh-connection-dingtalk/dingtalk'
 const USER = 9001
@@ -126,6 +127,7 @@ export function createDesktopScenario(options) {
         await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
         await control.command('waitFor', '[data-testid="stand-in-dingtalk-connections"]')
         await verifyStandInSessionSettings(control, uiTimeoutMs)
+        await verifyStandInGroupMessageScope(control, uiTimeoutMs)
         await control.command('click', '[data-testid="stand-in-primary-cancel"]')
         await verifyStandInProjectConnectionNames(control, uiTimeoutMs)
       } finally {

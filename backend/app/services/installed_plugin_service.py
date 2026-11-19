@@ -31,6 +31,7 @@ from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_identity import acquire_installation_write_lock
 
 
 class InstalledPluginService:
@@ -47,9 +48,13 @@ class InstalledPluginService:
     ) -> InstalledPlugin:
         parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
         file_hash = hashlib.sha256(package_bytes).hexdigest()
-        acquire_plugin_write_lock(db, user_id)
-        existing = self._find_uploaded_plugin(
-            db, user_id=user_id, plugin_key=parsed.name
+        existing = acquire_installation_write_lock(
+            db,
+            user_id,
+            creation_name=self._safe_kind_name(parsed.name),
+            find_existing=lambda: self._find_uploaded_plugin(
+                db, user_id=user_id, plugin_key=parsed.name
+            ),
         )
         if existing:
             return self._reactivate_existing(
@@ -103,8 +108,9 @@ class InstalledPluginService:
         user_id: int,
         installed_id: int,
         request: InstalledPluginUpdateRequest,
+        commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
@@ -134,7 +140,10 @@ class InstalledPluginService:
                 )
             spec["updatePolicy"] = request.updatePolicy
         replace_installed_kind(db, row, payload)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
 
@@ -144,8 +153,9 @@ class InstalledPluginService:
         db: Session,
         user_id: int,
         installed_id: int,
+        commit: bool = True,
     ) -> None:
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
@@ -154,7 +164,10 @@ class InstalledPluginService:
         spec["enabled"] = False
         spec["installState"] = "uninstalled"
         replace_installed_kind(db, row, payload, is_active=False)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
 
     def package_data_for_download(
         self, *, db: Session, user_id: int, installed_id: int
@@ -307,8 +320,8 @@ class InstalledPluginService:
         user_id: int,
         marketplace_id: int,
         enabled: bool = True,
+        commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
         row = (
             db.query(Kind)
             .filter(
@@ -340,17 +353,23 @@ class InstalledPluginService:
             package.binary_data
         )
         file_hash = hashlib.sha256(package_bytes).hexdigest()
-        existing = self._find_installed_plugin(
+        existing = acquire_installation_write_lock(
             db,
-            user_id=user_id,
-            source_type="marketplace",
-            plugin_key=parsed.name,
-            marketplace_id=marketplace_id,
+            user_id,
+            creation_name=self._safe_kind_name(parsed.name),
+            find_existing=lambda: self._find_installed_plugin(
+                db,
+                user_id=user_id,
+                source_type="marketplace",
+                plugin_key=parsed.name,
+                marketplace_id=marketplace_id,
+            ),
         )
         if existing:
             return self._reactivate_existing(
                 db,
                 row=existing,
+                commit=commit,
                 parsed=parsed,
                 package_bytes=package_bytes,
                 file_hash=file_hash,
@@ -367,6 +386,7 @@ class InstalledPluginService:
         return self._create_installed_plugin(
             db=db,
             user_id=user_id,
+            commit=commit,
             parsed=parsed,
             package_bytes=package_bytes,
             file_hash=file_hash,
@@ -384,8 +404,8 @@ class InstalledPluginService:
         db: Session,
         user_id: int,
         plugin_key: str,
+        commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
         row = self._find_marketplace_item(
             db,
             user_id=BUILTIN_PLUGIN_OWNER_ID,
@@ -414,6 +434,7 @@ class InstalledPluginService:
             db=db,
             user_id=user_id,
             marketplace_id=row.id,
+            commit=commit,
         )
 
     def _reactivate_existing(
@@ -430,6 +451,7 @@ class InstalledPluginService:
         provider_key: str = "codex-local",
         marketplace_id: int | None = None,
         marketplace_name: str | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
         package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
         payload = self._build_payload(
@@ -451,7 +473,10 @@ class InstalledPluginService:
             file_hash=file_hash,
             filename=filename,
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
 
@@ -469,6 +494,7 @@ class InstalledPluginService:
         provider_key: str,
         marketplace_id: int | None,
         marketplace_name: str | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
         row = Kind(
             user_id=user_id,
@@ -499,7 +525,10 @@ class InstalledPluginService:
             file_hash=file_hash,
             filename=filename,
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
 

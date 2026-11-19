@@ -13,7 +13,7 @@ sidebar_position: 4
 该项目为所有模块提供了全面的单元测试支持：
 
 - **后端** (FastAPI): pytest + pytest-asyncio + pytest-cov + pytest-mock
-- **执行器** (AI Agent 引擎): pytest + pytest-mock + pytest-asyncio
+- **执行器** (Rust 工作区): Cargo 单元测试和协议集成测试
 - **执行器管理器** (任务管理): pytest + pytest-mock + pytest-cov
 - **共享模块** (工具库): pytest + pytest-cov
 - **前端** (Next.js + React 19): Jest + @testing-library/react
@@ -38,9 +38,8 @@ sidebar_position: 4
 
 ### 执行器 (`executor/`)
 
-- ✅ Agent 工厂
-- ✅ 基础 agent 类
-- ✅ 模拟 AI 客户端交互（Anthropic、OpenAI）
+- 权限、凭据隔离、任务状态、持久化和故障恢复的单元测试
+- `executor/tests/` 中的进程、HTTP 和运行时协议集成测试
 
 ### 执行器管理器 (`executor_manager/`)
 
@@ -141,24 +140,18 @@ markers =
 
 ```bash
 cd executor
-pytest tests/ --cov=agents
+cargo test --locked -p wegent-executor --lib <模块或用例名称>
+cargo test --locked -p <工作区包名> --lib
+cargo test --locked --test <集成测试文件名>
 ```
 
-### 测试结构
+### 测试维护
 
-```
-executor/tests/
-├── conftest.py              # 执行器特定的 fixture
-└── agents/                  # Agent 测试
-```
+工作区单元测试位于 `executor/src/` 和 `executor/crates/*/src/`，集成测试位于 `executor/tests/`。源码中的测试也可能包含真实进程或 HTTP 联调，应根据测试行为判断其职责。
 
-### 关键 Fixture
+精简单元测试时，优先裁剪普通参数映射、显示格式、目录元数据和文本投影的独立用例；删除独有用例意味着接受对应覆盖减少，不能称为等价去重。保留权限与资源归属、凭据隔离、并发、持久化、恢复和升级回滚的关键边界，不以固定删减比例替代覆盖判断。同步删除不再使用的测试辅助函数和空模块，不通过 `ignore`、合并用例或改变测试发现规则减少数量。
 
-- `mock_anthropic_client`：模拟的 Anthropic API 客户端，用于测试 Claude 模型
-- `mock_openai_client`：模拟的 OpenAI API 客户端，用于测试 GPT 模型
-- `mock_callback_client`：模拟的回调 HTTP 客户端，用于 agent 响应
-- `suppress_resource_warnings`：会话作用域的 fixture，用于抑制 ResourceWarning 消息
-- `cleanup_logging`：会话作用域的 fixture，用于清理日志处理器并防止守护线程错误
+清理后检查受影响包的编译和单元测试，并保留协议集成测试及 E2E 的独立覆盖。完整测试由推送钩子和 CI 按仓库规则执行。
 
 ## 执行器管理器测试
 
@@ -706,7 +699,7 @@ Milvus 和 etcd 由 shard 4 的知识库测试入口按需启动，复用现有�
 
 Windows 桌面运行器在创建普通测试账户前准备 1920×1080 显示模式，并检查工作区至少为 1440×960，避免默认 1024×768 显示器把 Electron 主窗口压缩到紧凑布局。目录发布故障注入通过不共享删除权限的原生目录句柄占用待发布目录；占用子文件不能证明其父目录重命名必定失败。回归运行 [42033008185](https://github.com/wecode-ai/Wegent/actions/runs/42033008185) 保存了紧凑布局和错误目录占用假设的失败证据。Claude 配置发布同时覆盖超过 Windows `MAX_PATH` 的隔离目录；历史搜索组件回归验证原生滚动事件到达前，虚拟列表已读到搜索写入的新偏移。
 
-分身列表和独立预览的操作确认场景共用 `shell-command-response.mjs`，直接工具调用与 `code_mode` 都必须保留相同的单次提权确认参数。[42048584579](https://github.com/wecode-ai/Wegent/actions/runs/42048584579) 的独立预览夹具仅识别直接 shell 工具，协议回归用 `code_mode` 输入精确复现了相同异常。公共工具生成逻辑覆盖两种场景，未知工具声明仍直接失败，并保存工具 schema、请求类型和输入角色诊断，不保存请求正文或认证头。
+助理列表和独立预览的操作确认场景共用 `shell-command-response.mjs`，直接工具调用与 `code_mode` 都必须保留相同的单次提权确认参数。[42048584579](https://github.com/wecode-ai/Wegent/actions/runs/42048584579) 的独立预览夹具仅识别直接 shell 工具，协议回归用 `code_mode` 输入精确复现了相同异常。公共工具生成逻辑覆盖两种场景，未知工具声明仍直接失败，并保存工具 schema、请求类型和输入角色诊断，不保存请求正文或认证头。
 
 同轮 Windows 日志还记录了两个后续问题。项目详情请求晚于切换任务标签返回时，更新所属协作标签的标题与路由，只有它仍为当前标签时才同步地址栏；已关闭的标签不恢复。标签页组件测试覆盖后台完成、重新选择和关闭后的迟到回调，通知导航 E2E 保留完整路由断言。缓存历史搜索的基线必须取自底部布局完成后、分页不再加载的同一份快照；不能把仍为 `loadingMoreBefore=true` 的中间态与搜索后的已完成分页比较，原有消息与分页一致性断言保持不变。
 
@@ -716,7 +709,7 @@ Windows 桌面运行器在创建普通测试账户前准备 1920×1080 显示模
 
 指派回执的控件与活动时间必须在同一次 DOM 读取中比较。[42072191562](https://github.com/wecode-ai/Wegent/actions/runs/42072191562) 的 Windows 日志记录了两次读取分别发生于 17:42:02.912 与 .977，期间 Issue 状态更新使版本绑定的控件回执重新加载，第二次读到空文本；随后页面快照中的两处接收时间一致。该断言现在等待两个回执在同一份快照中加载，再精确比较时间。协议测试同时覆盖版本刷新中间态与真实时间不一致，后者必须仍然失败。
 
-分身 Beta 按钮开放后，项目头部仍按可用宽度切换完整页签和紧凑下拉导航。
+助理 Beta 按钮开放后，项目头部仍按可用宽度切换完整页签和紧凑下拉导航。
 [CI 42196630424](https://github.com/wecode-ai/Wegent/actions/runs/42196630424)
 的 Cloud 第 1 分片中，`plugin-source-continuation-evidence.json` 与
 `plugin-detail-resilience-evidence.json` 均记录找不到 `collaboration-tab-manage`；

@@ -61,10 +61,6 @@ export function createProjectSpacePickerRegression({
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     const query = new URLSearchParams(address)
     await control.command('navigate', 'body', { value: `/runtime-tasks?${query}` })
-    await control.command('waitFor', CHANGE, {
-      visible: true,
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
     await waitForWorkbenchTask(
       control,
       address.taskId,
@@ -72,6 +68,14 @@ export function createProjectSpacePickerRegression({
     )
     const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
+    // Restoring a task re-resolves its cloud binding asynchronously: the
+    // composer drops its Issue binding, and with it the change-board control,
+    // until the lookup returns. Wait for the post-restore control instead of
+    // the one rendered before the restore, which the click would no longer hit.
+    await control.command('waitFor', CHANGE, {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
   }
 
   return {
@@ -94,7 +98,12 @@ export function createProjectSpacePickerRegression({
     async verify(control, address) {
       const { taskId } = address
       await openTask(control, address)
-      await control.command('click', CHANGE)
+      // Match and click in one control round trip so a binding refresh cannot
+      // remove the visible control between a separate wait and the click.
+      await control.command('clickWhenEnabled', CHANGE, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       for (const project of projects) {
         await control.command('waitFor', optionSelector(project), { timeoutMs: uiTimeoutMs })
       }
@@ -108,6 +117,23 @@ export function createProjectSpacePickerRegression({
         'Descending name order'
       )
 
+      const grouping = '[data-testid="project-space-picker-toggle-workspaces"]'
+      assert.equal(
+        await control.command('getAttribute', grouping, { value: 'aria-pressed' }),
+        'false',
+        'The picker must default to storage groups'
+      )
+      await control.command('click', groupSelector('backend'))
+      await assertProjects(
+        control,
+        [sharedA, sharedB, project10, project2],
+        'Remote projects must include projects from both spaces'
+      )
+      await control.command('fill', SEARCH, { value: spaceB.name })
+      await assertProjects(control, [sharedB], 'Storage grouping must retain space-name search')
+      await control.command('fill', SEARCH, { value: marker })
+      await control.command('click', grouping)
+      await control.command('waitFor', `${grouping}[aria-pressed="true"]`)
       await control.command('click', groupSelector(`backend:${spaceA.id}`))
       await assertProjects(control, [sharedA, project10, project2], 'Descending within Space A')
       await control.command('select', SORT, { value: 'name-asc' })
@@ -188,7 +214,10 @@ export function createProjectSpacePickerRegression({
       await reloadMainWindow(control, 'The picker regression could not reconnect after reload')
       await openTask(control, address)
       await control.command('waitFor', boundContext, { timeoutMs: uiTimeoutMs })
-      await control.command('click', CHANGE)
+      await control.command('clickWhenEnabled', CHANGE, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
       assert.equal(
         await control.command('getAttribute', optionSelector(sharedA), { value: 'aria-selected' }),

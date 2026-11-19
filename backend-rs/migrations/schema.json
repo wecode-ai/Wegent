@@ -1,5 +1,5 @@
 {
-  "revision": "f3a7c9e1b2d4",
+  "revision": "b1c2d3e4f5a6",
   "tables": [
     {
       "table": "background_executions",
@@ -273,7 +273,7 @@
     {
       "table": "share_links",
       "statements": [
-        "CREATE TABLE share_links (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tresource_type VARCHAR(50) NOT NULL COMMENT 'Resource type: Team, Task, KnowledgeBase', \n\tresource_id BIGINT NOT NULL COMMENT 'Resource ID (kinds.id or tasks.id)', \n\tshare_token VARCHAR(512) NOT NULL COMMENT 'AES encrypted share token', \n\trequire_approval BOOL NOT NULL COMMENT 'Whether joining requires approval', \n\tdefault_role VARCHAR(20) NOT NULL COMMENT 'Default member role: Owner, Maintainer, Developer, Reporter' DEFAULT 'Reporter', \n\texpires_at DATETIME NOT NULL COMMENT 'Expiration time (far future = never expires)' DEFAULT '9999-12-31 23:59:59', \n\tcreated_by_user_id INTEGER NOT NULL COMMENT 'User who created the share link', \n\tis_active BOOL NOT NULL COMMENT 'Whether the link is active', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (share_token)\n)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='Share link configurations for resources' COLLATE utf8mb4_unicode_ci",
+        "CREATE TABLE share_links (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tresource_type VARCHAR(50) NOT NULL COMMENT 'Resource type: Team, Task, KnowledgeBase', \n\tresource_id BIGINT NOT NULL COMMENT 'Resource ID (kinds.id or tasks.id)', \n\tshare_token VARCHAR(512) NOT NULL COMMENT 'Opaque share token issued to the resource owner', \n\ttoken_hash VARCHAR(64) COMMENT 'SHA-256 hash of the share token', \n\ttoken_version INTEGER NOT NULL COMMENT '1: legacy locator requiring resource access; 2: opaque bearer token' DEFAULT '1', \n\trequire_approval BOOL NOT NULL COMMENT 'Whether joining requires approval', \n\tdefault_role VARCHAR(20) NOT NULL COMMENT 'Default member role: Owner, Maintainer, Developer, Reporter' DEFAULT 'Reporter', \n\texpires_at DATETIME NOT NULL COMMENT 'Expiration time (far future = never expires)' DEFAULT '9999-12-31 23:59:59', \n\tcreated_by_user_id INTEGER NOT NULL COMMENT 'User who created the share link', \n\tis_active BOOL NOT NULL COMMENT 'Whether the link is active', \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (share_token), \n\tUNIQUE (token_hash)\n)CHARSET=utf8mb4 COMMENT='Share link configurations for resources' ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
         "CREATE INDEX idx_share_links_active_resource ON share_links (resource_type, resource_id, is_active)",
         "CREATE INDEX idx_share_links_resource ON share_links (resource_type, resource_id)",
         "CREATE INDEX ix_share_links_id ON share_links (id)"

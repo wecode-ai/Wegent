@@ -51,6 +51,21 @@ export async function configureTemplateProject(
     const index = configuration.groups.findIndex(group => group.key === taskAssignment.groupKey)
     const group = groups[index]
     if (!group || !api.automations) throw new Error('template_group_unavailable')
+    const agentIds = new Set(
+      [group.leader, ...group.members, ...group.stages.map(stage => stage.assignee)]
+        .filter(member => member?.kind === 'agent')
+        .map(member => member!.id)
+    )
+    const agents = taskAssignment.enabled && agentIds.size ? await api.agents.list(projectId) : []
+    const routingReady = [...agentIds].every(id => {
+      const agent = agents.find(agent => agent.id === id || String(agent.team_id ?? '') === id)
+      if (agent?.runtime === 'wegent') return true
+      return (
+        agent?.executionPolicy &&
+        agent.executionPolicy.mode !== 'user_select' &&
+        agent.modelPolicy?.mode === 'fixed'
+      )
+    })
     await api.automations.create(projectId, {
       name: locale === 'zh-CN' ? `新任务 → ${group.name}` : `New issues → ${group.name}`,
       prompt:
@@ -70,7 +85,7 @@ export async function configureTemplateProject(
       executionDeviceId: null,
       targetKind: 'collaboration_group',
       targetId: group.id,
-      enabled: taskAssignment.enabled,
+      enabled: taskAssignment.enabled && routingReady,
     })
   }
   if (!board) return
@@ -79,7 +94,7 @@ export async function configureTemplateProject(
   await api.projects.update(projectId, {
     version: latest.version,
     tags: [...new Set([...latest.tags, ...board.tags])],
-    ...(latest.board_config ? { boardConfig: { ...latest.board_config, group_by: 'tag' } } : {}),
+    ...(latest.board_config ? { boardConfig: { ...latest.board_config, group_by: 'status' } } : {}),
     ...(latest.card_display ? { cardDisplay: { ...latest.card_display, show_tags: true } } : {}),
     boardViews: {
       schema_version: 1,

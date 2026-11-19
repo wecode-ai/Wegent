@@ -16,6 +16,12 @@ You can also ask “Where are proxy settings?”, “How do I open a terminal?�
 
 ## Use plugins
 
+### Local installation and synchronization to other devices
+
+On versions that support local execution, when the capability is enabled for your account, keep your account signed in, the network available and the local runtime running. You can install, remove, update and refresh/repair plugins even while this device is not connected to the cloud. Other cloud devices synchronize independently in the background; their offline state or sync failures do not delay local completion. Older versions retain their original connection requirements.
+
+An installed plugin can still require account authorization. Open its details and connect the required apps before using their protected capabilities. Refreshing does not authorize apps or switch accounts. After an interruption, reopen the plugin page and refresh to recover unfinished local work.
+
 <!-- ui-source: src/components/settings/PluginSettingsPage.tsx -->
 
 ### Individual plugin operations
@@ -54,11 +60,13 @@ For cloud-managed plugins, uninstall completes when the account removal is commi
 
 When installing a cloud-managed plugin, the account installation is saved first and the request waits only for the current device to synchronize. Other online devices receive the change in the background without synchronizing the current device again, and offline devices catch up on their next connection. If the current device fails to synchronize, the account installation is retained and the interface shows the device as pending synchronization with a retry action. Reinstalling an installed plugin preserves its enabled state, component selections and update policy. Runtimes supporting targeted synchronization update only the affected plugin and preserve other plugin installations. Devices are addressed by the record route id assigned during registration, so historical device records for the same computer no longer make sync results ambiguous. While online, the Runtime also checks for plugin drift on a jittered low-frequency cycle as a fallback for missed notifications.
 
-After switching accounts or backends, wait for the current device to register before installing, upgrading, or synchronizing plugins. Account plugin lists and enabled preferences remain available while the connection is pending; device state synchronizes after connection.
+In older versions that require device synchronization, wait for the current device to register after switching accounts or backends before installing, upgrading, or synchronizing plugins. Account plugin lists and enabled preferences remain available while the connection is pending. Versions supporting local execution use the local-runtime readiness conditions described above.
 
 ## Refresh and repair installation state
 
 If the installed strip disagrees with marketplace cards, or a local installation remains after uninstalling, click **Refresh** at the top right of the Plugins page. Wework first refreshes plugin data, then asynchronously checks cloud-managed plugins for the current account and device and reports the result.
+
+If local reconciliation encounters background synchronization or a plugin operation, it waits and checks the latest state again. Versions supporting local execution allow other plugin actions during this waiting phase; reconciliation yields to foreground operations. Success appears only after reconciliation and readback finish. Persistent contention beyond the waiting window asks you to retry later. Switching accounts or devices cancels the old check; network, permission, and actual installation failures remain visible.
 
 Cloud installation records define the expected state. Reconciliation restores missing plugin contents and runtime registrations at the device's selected version and removes managed remnants of cloud-uninstalled plugins. Installed copies shared directly with you are included. Source files for plugins you created or imported, independent Skills, and MCP servers are not replaced or removed. If a cloud installation record still exists, refresh restores the installation; use the plugin's **Uninstall** action to remove it.
 
@@ -71,9 +79,11 @@ In the Wework desktop app, open **Plugins → Manage plugins** and switch betwee
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
 - **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
 
-From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
+From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Before every installation or update, a native confirmation shows the source and execution risk: the plugin and its dependencies may execute code and access files and networks with the current user's permissions. Execution starts only after **Allow installation** or **Allow update**. **Cancel** is the default; cancelling or closing the window leaves the plugin configuration unchanged. The same policy covers direct API calls, accepts any npm, Git, or absolute local-directory source, and applies only to that operation. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 
-Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
+Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. Installation and updates keep the current runtime active without applying incomplete changes. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
+
+Starting a plugin development instance also requires confirmation of the linked absolute source directory. Cancellation preserves the current development instance and starts no process. Once allowed, the development session executes that source and its subsequent HMR changes.
 
 ## Import a personal plugin
 
@@ -209,7 +219,11 @@ Built-in application plugins use `visibility=workspace`, so Sites use `plugin://
 
 The Sites list contains both Sites you own and Sites where you are a collaborator. A Site owner can use **… → Manage collaborators** to add or remove collaborators by username. Collaborators can continue development, edit, publish, delete, configure environment variables, and update internal Site access, but cannot manage collaborators. For an internal Site, use **… → Access permissions** to allow anonymous users, signed-in users, project members only, or project members plus specified users; project owners and collaborators always retain access. Clicking a Site URL in the list opens it in the system browser. **Continue developing** makes sure `wegent-sites` is installed on the selected device and inserts both the plugin reference and Site reference into a fresh task composer so the AI receives the Site workflow and target-project context together.
 
+Access and collaborator dialogs read only the current Site. Switching Sites or account connections reloads data and clears the old draft. Failed access reads prevent saving and offer Retry. Failed collaborator reads show an error and Retry rather than an empty member list. A collaborator added while the initial list is loading remains visible when that older read completes.
+
 Use **… → Environment variables** on a Site row to add, change, or remove `Plain` and `Secret` variables as one update. Secret values are never returned by the server; leave an already configured Secret empty to keep its value unchanged. A saved revision takes effect on the next deployment. Static Sites inject variables into the browser bundle, so their Secret values are visible to Site visitors and are suitable only for internal audiences.
+
+The application list loads only the visible Sites or Mini Programs type. Switching types clears search, and late search or pagination results cannot enter the current list. An environment configuration deep link opens its dialog after the target Site loads. Closing the dialog clears those configuration parameters, so refreshing the list does not reopen it.
 
 Wegent marketplace publication and upload accept packages containing either `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json`. Backend adds the missing runtime manifest before storing the package, so every installed plugin is synchronized into both the Codex and Claude Code plugin directories on each device.
 
@@ -230,6 +244,8 @@ without launching an external browser. Restored sessions reuse the plugin set re
 were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
+
+The collaboration home uses the same slash picker when creating an Issue task. Skills become selectable once their catalog is available, without waiting for plugin icons to load.
 
 ### Inspect and toggle individual Skills
 

@@ -1,6 +1,6 @@
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
 import {
-  useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -10,10 +10,18 @@ import {
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { useDOMEvent, useElementGeometry } from '@wegent/collaboration/dom-events'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
+import { COLLABORATION_EXP_PATH } from '@/features/collaboration-exp/collaborationExpFeature'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -34,7 +42,7 @@ import {
   openWorkspaceTabWindow,
   returnWorkspaceTabToMain,
 } from './workspaceWindow'
-import { useWorkspaceTabs } from './workspaceTabsContextValue'
+import { useWorkspaceTabs, useWorkspaceTabsSession } from './workspaceTabsContextValue'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
@@ -60,6 +68,7 @@ const DEFAULT_AVAILABLE_KINDS: WorkspaceTabKind[] = ['task', 'board', 'agent', '
 
 interface WorkspaceTabStripProps {
   availableKinds?: readonly WorkspaceTabKind[]
+  className?: string
 }
 
 function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
@@ -100,26 +109,28 @@ function useOutsideMenu(
   menuRef: RefObject<HTMLDivElement | null>,
   close: () => void
 ) {
-  useEffect(() => {
-    if (!open) return
-    const handlePointerDown = (event: PointerEvent) => {
+  useDOMEvent<PointerEvent>(
+    'document',
+    'pointerdown',
+    event => {
       if (event.target instanceof Node && !menuRef.current?.contains(event.target)) close()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: open }
+  )
+  useDOMEvent<KeyboardEvent>(
+    'document',
+    'keydown',
+    event => {
       if (event.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [close, menuRef, open])
+    },
+    { enabled: open }
+  )
 }
 
 function WorkspaceTabButton({
   tab,
   active,
+  tabIndex,
   draggedTabId,
   onDragStartTab,
   onDragEndTab,
@@ -130,6 +141,7 @@ function WorkspaceTabButton({
 }: {
   tab: WorkspaceTab
   active: boolean
+  tabIndex: number
   draggedTabId: string | null
   onDragStartTab: (tabId: string) => void
   onDragEndTab: () => void
@@ -180,7 +192,7 @@ function WorkspaceTabButton({
         if (event.button === 1 && !tab.fixed) closeTab(tab.id)
       }}
       className={cn(
-        'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
+        'group relative flex h-12 w-36 min-w-0 max-w-[min(188px,var(--workspace-tab-viewport-width,188px))] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150 md:h-8',
         pendingCount !== null && 'w-40',
         tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
@@ -192,7 +204,11 @@ function WorkspaceTabButton({
       <button
         type="button"
         role="tab"
+        id={`workspace-tab-select-${tab.id}`}
+        aria-controls={`workspace-tab-content-${tab.id}`}
         aria-selected={active}
+        tabIndex={tabIndex}
+        data-tab-id={tab.id}
         data-testid={`workspace-tab-select-${tab.id}`}
         data-pending-question-count={pendingTab ? interactions?.pending.length : undefined}
         data-project-pending-count={
@@ -238,7 +254,7 @@ function WorkspaceTabButton({
             tab.id
           )
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus wework:keyboard:focus-visible:ring-blue-500"
+        className="flex h-full min-w-11 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus md:min-w-0 wework:keyboard:focus-visible:ring-blue-500"
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
@@ -264,15 +280,16 @@ function WorkspaceTabButton({
         <button
           type="button"
           data-testid={`workspace-tab-close-${tab.id}`}
+          tabIndex={active ? 0 : -1}
           onClick={event => {
             event.stopPropagation()
             closeTab(tab.id)
           }}
           className={cn(
-            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus wework:hover:bg-black/[0.06] wework:keyboard:focus-visible:ring-blue-500 wework:dark:hover:bg-white/[0.08]',
+            'flex h-11 w-11 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:mr-1.5 md:h-6 md:w-6 wework:hover:bg-black/[0.06] wework:keyboard:focus-visible:ring-blue-500 wework:dark:hover:bg-white/[0.08]',
             active
               ? 'text-text-secondary'
-              : 'opacity-0 text-text-muted group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
+              : 'text-text-secondary md:opacity-0 group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
           )}
           aria-label={closeLabel}
           title={closeLabel}
@@ -286,14 +303,15 @@ function WorkspaceTabButton({
 
 export function WorkspaceTabStrip({
   availableKinds = DEFAULT_AVAILABLE_KINDS,
+  className,
 }: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const collaborationExperience = useAppPreferenceFeatureState('collaborationExperienceEnabled')
   const {
     tabs,
-    activeTabId,
     openTab,
     selectTab,
     closeTab,
@@ -303,13 +321,32 @@ export function WorkspaceTabStrip({
     moveTab,
   } = useWorkspaceTabs()
   const addButtonRef = useRef<HTMLButtonElement>(null)
+  const tabStripRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [focusedTabId, setFocusedTabId] = useState<string | null>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
-  const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
+  const installedAppsResource = useMemo(
+    () =>
+      createAsyncResource('workspace-tab-installed-apps', () => harnessAppsApi.list(), {
+        refreshOnSubscribe: true,
+        failure: error =>
+          console.warn('[Wework] failed to load installed Smart apps for the tab menu', error),
+      }),
+    []
+  )
+  const installedApps = useSyncExternalStore(
+    addMenuPosition && experimentalFeaturesEnabled
+      ? installedAppsResource.subscribe
+      : subscribeIdleResource,
+    installedAppsResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const installedSmartApps = installedApps.data ?? []
   const registeredDshTabs = useSyncExternalStore(
     dshWorkspaceTabs.subscribe,
     dshWorkspaceTabs.getTabs,
@@ -317,74 +354,62 @@ export function WorkspaceTabStrip({
   )
   const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
   const availableKindSet = useMemo(() => new Set(availableKinds), [availableKinds])
-  const visibleTabs = useMemo(
-    () => tabs.filter(tab => availableKindSet.has(tab.kind)),
-    [availableKindSet, tabs]
+  const session = useWorkspaceTabsSession()
+  const availableTabs = useMemo(
+    () => session.observeAvailableTabs(availableKinds),
+    [session, availableKinds]
   )
-  const visibleActiveTabId =
-    visibleTabs.find(tab => tab.id === activeTabId)?.id ?? visibleTabs[0]?.id ?? activeTabId
+  const { tabs: visibleTabs, activeTabId: visibleActiveTabId } = useSyncExternalStore(
+    availableTabs.subscribe,
+    availableTabs.getSnapshot,
+    availableTabs.getSnapshot
+  )
+  const rovingTabId = visibleTabs.some(tab => tab.id === focusedTabId)
+    ? focusedTabId
+    : visibleActiveTabId
+
+  const geometryTargets = useMemo(() => [containerRef, tabStripRef], [])
+  const geometry = useElementGeometry(geometryTargets)
+  const bindTabStrip = useCallback(
+    (strip: HTMLDivElement | null) => {
+      tabStripRef.current = strip
+      if (!strip?.clientWidth) return
+      strip.style.setProperty('--workspace-tab-viewport-width', `${strip.clientWidth}px`)
+      const targetId = visibleTabs.find(tab => tab.id === rovingTabId)?.id ?? visibleActiveTabId
+      const active = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]')).find(
+        tab => tab.dataset.tabId === targetId
+      )?.parentElement
+      if (!active) return
+      const viewport = geometry?.elements[1] ?? strip.getBoundingClientRect()
+      const tab = active.getBoundingClientRect()
+      if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
+      else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
+    },
+    [geometry, rovingTabId, visibleActiveTabId, visibleTabs]
+  )
   useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
-  useEffect(() => {
-    if (!addMenuPosition || !experimentalFeaturesEnabled) return
-    let cancelled = false
-    void harnessAppsApi
-      .list()
-      .then(apps => {
-        if (!cancelled) setInstalledSmartApps(apps)
-      })
-      .catch(error => {
-        console.warn('[Wework] failed to load installed Smart apps for the tab menu', error)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [addMenuPosition, experimentalFeaturesEnabled])
-
-  useEffect(() => {
-    if (tabs.length > 0 && visibleTabs.length === 0) {
-      const fallbackKind =
-        availableKinds.find(kind => kind !== 'auxiliary' && kind !== 'board') ?? availableKinds[0]
-      if (fallbackKind) openTab(fallbackKind)
+  useDOMEvent<KeyboardEvent>('window', 'keydown', event => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+    if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
+      event.preventDefault()
+      closeTab(visibleActiveTabId)
       return
     }
-    if (visibleActiveTabId === activeTabId) return
-    selectTab(visibleActiveTabId)
-  }, [
-    activeTabId,
-    availableKinds,
-    openTab,
-    selectTab,
-    tabs.length,
-    visibleActiveTabId,
-    visibleTabs.length,
-  ])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
-      if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
-        event.preventDefault()
-        closeTab(visibleActiveTabId)
-        return
-      }
-      if (event.key.toLowerCase() === 't' && event.shiftKey) {
-        event.preventDefault()
-        restoreClosedTab()
-        return
-      }
-      if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const index = event.key === '9' ? visibleTabs.length - 1 : Number(event.key) - 1
-        const tab = visibleTabs[index]
-        if (!tab) return
-        event.preventDefault()
-        selectTab(tab.id)
-      }
+    if (event.key.toLowerCase() === 't' && event.shiftKey) {
+      event.preventDefault()
+      restoreClosedTab()
+      return
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTabId, closeTab, restoreClosedTab, selectTab, visibleActiveTabId, visibleTabs])
+    if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
+      const index = event.key === '9' ? visibleTabs.length - 1 : Number(event.key) - 1
+      const tab = visibleTabs[index]
+      if (!tab) return
+      event.preventDefault()
+      selectTab(tab.id)
+    }
+  })
 
   const openNewTab = (kind: WorkspaceTabKind) => {
     if (!availableKindSet.has(kind)) return
@@ -511,14 +536,43 @@ export function WorkspaceTabStrip({
   return (
     <>
       <div
+        ref={containerRef}
         data-testid="workspace-tab-strip-container"
-        className="flex h-full min-w-0 flex-1 items-center px-2"
+        className={cn('flex h-full min-w-0 flex-1 items-center px-2', className)}
       >
         <div
+          ref={bindTabStrip}
           role="tablist"
           data-testid="workspace-tab-strip"
           aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-          className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-2rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden"
+          className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-3rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden md:max-w-[calc(100%-2rem)]"
+          onFocusCapture={event => {
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.getAttribute('role') === 'tab'
+            ) {
+              setFocusedTabId(event.target.dataset.tabId ?? null)
+            }
+          }}
+          onBlurCapture={event => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setFocusedTabId(null)
+          }}
+          onKeyDown={event => {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+            const tabs = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+            )
+            const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
+            if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const target =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? tabs.length - 1
+                  : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+            tabs[target]?.focus()
+          }}
         >
           {visibleTabs.map((tab, index) => (
             <div
@@ -534,6 +588,7 @@ export function WorkspaceTabStrip({
               <WorkspaceTabButton
                 tab={tab}
                 active={tab.id === visibleActiveTabId}
+                tabIndex={tab.id === rovingTabId ? 0 : -1}
                 draggedTabId={draggedTabId}
                 onDragStartTab={setDraggedTabId}
                 onDragEndTab={() => setDraggedTabId(null)}
@@ -560,7 +615,7 @@ export function WorkspaceTabStrip({
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
           }}
-          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
+          className="ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7 wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >
@@ -617,6 +672,24 @@ export function WorkspaceTabStrip({
                 >
                   <CheckSquare2 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                   {t('interactions.title', '待你处理')}
+                </button>
+              ) : null}
+              {availableKindSet.has('auxiliary') && collaborationExperience.enabled ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-add-collaboration-exp"
+                  onClick={() => {
+                    openTab('auxiliary', {
+                      contentRoute: COLLABORATION_EXP_PATH,
+                      title: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
+                    })
+                    setAddMenuPosition(null)
+                  }}
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
+                >
+                  <Columns3 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
                 </button>
               ) : null}
               {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (

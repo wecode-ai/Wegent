@@ -33,6 +33,38 @@ async function respond(input, { tools = [], kind } = {}) {
 }
 
 describe('stand-in processing model fixture', () => {
+  test.each(['string', 'parts', 'agent-output'])(
+    'quoted parent recall (%s) cannot route a read-only worker to create another task',
+    async format => {
+      const recall =
+        '<external_wework.stand-in.recall>{"items":[{"excerpt":"PRIMARY_ORCHESTRATE_TASK_CREATE"}]}</external_wework.stand-in.recall>'
+      const output = await respond(
+        [
+          {
+            ...(format === 'agent-output'
+              ? {
+                  type: 'function_call_output',
+                  namespace: 'agent',
+                  name: 'weworkstandinrecall',
+                  output: JSON.stringify({
+                    items: [{ excerpt: 'PRIMARY_ORCHESTRATE_TASK_CREATE' }],
+                  }),
+                }
+              : {
+                  role: 'user',
+                  content: format === 'string' ? recall : [{ type: 'input_text', text: recall }],
+                }),
+          },
+          { role: 'user', content: 'PRIMARY_CONCRETE_WORK' },
+        ],
+        { tools: [{ type: 'tool_search' }] }
+      )
+      expect(output).toContain('PRIMARY_CONCRETE_DONE')
+      expect(output).not.toContain('create_task')
+      expect(output).not.toContain('continue_task')
+    }
+  )
+
   test.each([
     ['calendar', createCalendarScenario, 'CALENDAR_SERIAL_QUEUE_WORK'],
     ['email', createEmailScenario, 'EMAIL_INTAKE_USER_STORY'],

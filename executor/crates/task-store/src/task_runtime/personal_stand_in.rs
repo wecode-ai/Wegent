@@ -1,5 +1,11 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
+use sha2::{Digest, Sha256};
+
+#[path = "personal_stand_in_connections.rs"]
+mod connections;
+use connections::validate_connections;
+pub use connections::{stand_in_collection_connection, stand_in_connection};
 
 pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
 pub const EMAIL_PROVIDER: &str = "@wegent/dsh-connection-runtime/email";
@@ -195,38 +201,71 @@ fn bind_personal_device(personal: &mut Value, device: &str) -> bool {
     if device.is_empty() {
         return false;
     }
-    let mut changed = personal["executionDeviceId"] != device;
+    let previous_device = personal["executionDeviceId"].clone();
+    let mut changed = previous_device != device;
     personal["executionDeviceId"] = json!(device);
     for role in personal["roles"].as_array_mut().into_iter().flatten() {
-        changed |= role["executionDeviceId"] != device;
-        role["executionDeviceId"] = json!(device);
+        if role["executionDeviceId"].is_null() || role["executionDeviceId"] == previous_device {
+            changed |= role["executionDeviceId"] != device;
+            role["executionDeviceId"] = json!(device);
+        }
     }
     changed
 }
 
-/// Read the account document or project-era rows and normalize their legacy configuration.
 pub(super) fn read_personal(
     connection: &Connection,
     user: i64,
     device: &str,
 ) -> Result<Value, TaskRuntimeError> {
+    read_personal_state(connection, user, device).map(|(settings, _)| settings)
+}
+
+fn personal_snapshot(
+    connection: &Connection,
+    user: i64,
+    device: &str,
+) -> Result<(Value, bool), TaskRuntimeError> {
+    let (mut settings, original) = read_personal_state(connection, user, device)?;
+    bind_personal_device(&mut settings, device);
+    let needs_persistence = match original {
+        Some(original) => original != settings,
+        None => settings["roles"].as_array().is_some_and(|roles| {
+            roles
+                .iter()
+                .any(|role| role["version"].as_i64().unwrap_or(0) > 0)
+        }),
+    };
+    Ok((settings, needs_persistence))
+}
+
+/// Read the account document or project-era rows and normalize their legacy configuration.
+fn read_personal_state(
+    connection: &Connection,
+    user: i64,
+    device: &str,
+) -> Result<(Value, Option<Value>), TaskRuntimeError> {
     if let Some(row) = get_item_from(connection, &personal_key(user), "personal_stand_in")? {
-        let mut settings = row.metadata;
+        let original = row.metadata;
+        let mut settings = original.clone();
         if let Some(fields) = settings.as_object_mut() {
             fields.remove("autoSelect");
             fields.remove("selectionErrors");
         }
         migrate_personal_settings(&mut settings)?;
-        return Ok(settings);
+        return Ok((settings, Some(original)));
     }
     let mut personal = empty_personal(user, device);
     let mut statement = connection.prepare(
-        "SELECT metadata FROM loop_items WHERE resource_type='stand_in_settings' AND json_extract(metadata, '$.userId')=?1 ORDER BY id",
+        "SELECT id, metadata FROM loop_items WHERE resource_type='stand_in_settings' AND json_extract(metadata, '$.userId')=?1 ORDER BY id",
     )?;
-    let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
+    let rows = statement.query_map(params![user], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
     let mut roles = Vec::new();
     for row in rows {
-        let mut role: Value = serde_json::from_str(&row?)
+        let (source_id, metadata) = row?;
+        let mut role: Value = serde_json::from_str(&metadata)
             .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
         role["name"] = json!(role["name"].as_str().unwrap_or_default());
         role["legacyStandInId"] = role["id"].clone();
@@ -240,7 +279,9 @@ pub(super) fn read_personal(
             .iter()
             .any(|previous: &Value| previous["id"] == role["id"])
         {
-            role["id"] = json!(Uuid::new_v4().to_string());
+            // Read-only views and eventual migration must expose the same identity.
+            let digest = Sha256::digest(source_id.as_bytes());
+            role["id"] = json!(format!("{:x}", digest));
         }
         role.as_object_mut().unwrap().remove("projectId");
         role.as_object_mut().unwrap().remove("projectStore");
@@ -248,10 +289,14 @@ pub(super) fn read_personal(
     }
     if !roles.is_empty() {
         personal["executionDeviceId"] = roles[0]["executionDeviceId"].clone();
+        // Project-era device IDs were local aliases, not per-role routing choices.
+        for role in &mut roles {
+            role["executionDeviceId"] = personal["executionDeviceId"].clone();
+        }
         personal["roles"] = json!(roles);
     }
     migrate_personal_settings(&mut personal)?;
-    Ok(personal)
+    Ok((personal, None))
 }
 
 pub(super) fn write_personal(
@@ -320,7 +365,7 @@ fn validate_projects(value: &Value) -> bool {
 }
 
 /// Validate a normalized independent role and its execution and connection settings.
-pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntimeError> {
+pub(super) fn validate_role(role: &Value) -> Result<(), TaskRuntimeError> {
     let id = role["id"].as_str().unwrap_or_default();
     if id.is_empty()
         || id.len() > 64
@@ -330,7 +375,9 @@ pub(super) fn validate_role(role: &Value, device: &str) -> Result<(), TaskRuntim
         || role["name"].as_str().is_none()
         || role["prompt"].as_str().is_none()
         || role["enabled"].as_bool().is_none()
-        || role["executionDeviceId"] != device
+        || !role["executionDeviceId"]
+            .as_str()
+            .is_some_and(|id| !id.trim().is_empty())
         || !valid_collaboration(&role["collaboration"])
     {
         return Err(TaskRuntimeError::Invalid(
@@ -353,6 +400,32 @@ fn validate_policy(policy: &Value) -> bool {
 #[cfg(test)]
 mod session_policy_tests {
     use super::*;
+
+    #[test]
+    fn role_devices_survive_profile_reads_and_primary_identity_changes() {
+        let mut settings = empty_personal(7, "mac");
+        settings["roles"][0]["executionDeviceId"] = json!("remote");
+        settings["primary"] = implicit_primary();
+        bind_personal_device(&mut settings, "new-mac");
+        assert_eq!(settings["executionDeviceId"], "new-mac");
+        assert_eq!(settings["roles"][0]["executionDeviceId"], "remote");
+        validate_role(&settings["roles"][0]).unwrap();
+        let identities = stand_in_identities(&settings);
+        assert_eq!(identities[0]["executionDeviceId"], "remote");
+        assert_eq!(identities[1]["executionDeviceId"], "new-mac");
+    }
+
+    #[test]
+    fn saved_role_device_is_not_replaced_by_the_profile_device() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["executionDeviceId"] = json!("remote");
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        let restored = store.personal_stand_in(7, "mac").unwrap();
+        assert_eq!(restored["executionDeviceId"], "mac");
+        assert_eq!(restored["roles"][0]["executionDeviceId"], "remote");
+    }
 
     #[test]
     fn validates_session_strategy_independently_of_timing_and_approval() {
@@ -389,134 +462,23 @@ fn valid_collaboration(source: &Value) -> bool {
         })
 }
 
-/// Validate source identities, handling policies and project scopes before persistence.
-fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
-    if role
-        .get("calendar")
-        .is_some_and(|calendar| !validate_policy(&calendar["policy"]))
-    {
-        return Err(TaskRuntimeError::Invalid(
-            "invalid stand-in calendar policy".into(),
-        ));
-    }
-    if role.get("dingtalk").is_some() {
-        return Err(TaskRuntimeError::Invalid(
-            "conflicting connection formats".into(),
-        ));
-    }
-    let source = &role["collaboration"];
-    let valid = role.get("collaboration").map_or(true, valid_collaboration)
-        && source.get("policy").map_or(true, validate_policy)
-        && source.get("projectPolicies").map_or(true, |rows| {
-            rows.as_array().is_some_and(|rows| {
-                let mut ids = HashSet::new();
-                rows.len() <= 1000
-                    && rows.iter().all(|row| {
-                        validate_projects(&json!([row]))
-                            && validate_policy(&row["policy"])
-                            && ids.insert((row["store"].to_string(), row["id"].to_string()))
-                    })
-            })
-        })
-        && role.get("connections").map_or(true, |rows| {
-            rows.as_array().is_some_and(|rows| {
-                let mut ids = HashSet::new();
-                rows.len() <= 1000
-                    && rows.iter().all(|row| {
-                        let all = row["scope"] == "all";
-                        row["id"]
-                            .as_str()
-                            .is_some_and(|id| !id.trim().is_empty() && id.len() <= 512)
-                            && row["name"]
-                                .as_str()
-                                .is_some_and(|name| !name.trim().is_empty() && name.len() <= 512)
-                            && row["profile"].as_str().is_some_and(|profile| {
-                                !profile.trim().is_empty() && profile.len() <= 512
-                            })
-                            && row["providerId"]
-                                .as_str()
-                                .is_some_and(|id| !id.is_empty() && id.len() <= 256)
-                            && row["kind"]
-                                .as_str()
-                                .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
-                            && row.get("collectionKey").map_or(true, |key| {
-                                key.as_str().is_some_and(|key| {
-                                    !key.is_empty() && key.trim() == key && key.len() <= 256
-                                })
-                            })
-                            && row.get("configurationSummary").map_or(true, |summary| {
-                                summary.as_str().is_some_and(|text| {
-                                    !text.trim().is_empty() && text.len() <= 4096
-                                })
-                            })
-                            && (all || row.get("scope").is_none())
-                            && (all == (row["id"] == "*"))
-                            && !rows.iter().any(|other| {
-                                other["providerId"] == row["providerId"]
-                                    && other["profile"] == row["profile"]
-                                    && other["kind"] == row["kind"]
-                                    && other["id"] != row["id"]
-                                    && (all || other["scope"] == "all")
-                            })
-                            && validate_policy(&row["policy"])
-                            && (!source_provider(row).starts_with("@wegent/dsh-connection-git/")
-                                || row["policy"]["askBeforeAct"] == true)
-                            && ids.insert((
-                                row["providerId"].to_string(),
-                                row["profile"].to_string(),
-                                row["kind"].to_string(),
-                                row["id"].to_string(),
-                            ))
-                    })
-            })
-        });
-    if !valid {
-        return Err(TaskRuntimeError::Invalid(
-            "invalid stand-in connections".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     let mut identities = settings["roles"].as_array().cloned().unwrap_or_default();
     if settings["primary"].is_object() {
         let mut primary = settings["primary"].clone();
         primary["id"] = json!("@primary");
-        primary["name"] = json!("我的分身");
+        primary["name"] = json!("我的助理");
         primary["version"] = settings["version"].clone();
         identities.push(primary);
     }
     for identity in &mut identities {
         identity["userId"] = settings["userId"].clone();
-        identity["executionDeviceId"] = settings["executionDeviceId"].clone();
+        if identity["executionDeviceId"].is_null() {
+            identity["executionDeviceId"] = settings["executionDeviceId"].clone();
+        }
         identity["sharedPreferences"] = settings["primary"]["preferences"].clone();
     }
     identities
-}
-
-pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'a Value> {
-    identity["connections"].as_array()?.iter().find(|row| {
-        (row["id"] == source["id"]
-            || (row["scope"] == "all"
-                && row["id"] == "*"
-                && source["id"]
-                    .as_str()
-                    .is_some_and(|id| !id.is_empty() && id != "*")))
-            && source_provider(row) == source_provider(source)
-            && row["profile"] == source["profile"]
-            && row["kind"] == source["kind"]
-            && row["transport"] == source["transport"]
-    })
-}
-
-/// Intake must still belong to the currently configured collection partition.
-pub fn stand_in_collection_connection<'a>(
-    identity: &'a Value,
-    source: &Value,
-) -> Option<&'a Value> {
-    stand_in_connection(identity, source)
-        .filter(|connection| connection.get("collectionKey") == source.get("collectionKey"))
 }
 
 pub fn project_policy(role: &Value, project: &str, store: &str) -> Value {
@@ -572,32 +534,36 @@ impl LocalTaskStore {
         Ok(())
     }
 
-    /// Transactionally migrate stored settings and bind them to their owning Executor identity.
+    /// Publish a coherent read view without persisting migrations or reserving a writer.
+    pub fn read_personal_stand_in(
+        &self,
+        user: i64,
+        device: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let (settings, _) = personal_snapshot(&transaction, user, device)?;
+        transaction.commit()?;
+        Ok(settings)
+    }
+
+    /// Reconcile execution-owned identity and permission migrations only when needed.
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
-        let mut guard = self.connection()?;
-        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(row) = get_item_from(&connection, &personal_key(user), "personal_stand_in")? {
-            let mut personal = row.metadata;
-            // Device-owned settings follow their Executor, not a stale desktop identity.
-            let migrated = migrate_personal_settings(&mut personal)?;
-            if bind_personal_device(&mut personal, device) || migrated {
-                write_personal(&connection, &personal)?;
-            }
-            connection.commit()?;
-            return Ok(personal);
+        let mut connection = self.connection()?;
+        let snapshot = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let (settings, needs_persistence) = personal_snapshot(&snapshot, user, device)?;
+        snapshot.commit()?;
+        if !needs_persistence {
+            return Ok(settings);
         }
-        let mut personal = read_personal(&connection, user, device)?;
-        bind_personal_device(&mut personal, device);
-        // Migrate old rows atomically, without changing their enable timestamps or versions.
-        if personal["roles"].as_array().is_some_and(|roles| {
-            roles
-                .iter()
-                .any(|role| role["version"].as_i64().unwrap_or(0) > 0)
-        }) {
-            write_personal(&connection, &personal)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Re-read under the writer reservation so a concurrent save is never overwritten.
+        let (settings, needs_persistence) = personal_snapshot(&transaction, user, device)?;
+        if needs_persistence {
+            write_personal(&transaction, &settings)?;
         }
-        connection.commit()?;
-        Ok(personal)
+        transaction.commit()?;
+        Ok(settings)
     }
 
     pub fn save_personal_stand_in(
@@ -665,7 +631,7 @@ impl LocalTaskStore {
         }
         let mut ids = HashSet::new();
         for role in roles {
-            validate_role(role, device)?;
+            validate_role(role)?;
             if !ids.insert(role["id"].as_str().unwrap()) {
                 return Err(TaskRuntimeError::Invalid("duplicate personal role".into()));
             }

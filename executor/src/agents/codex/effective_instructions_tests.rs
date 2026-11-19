@@ -3,6 +3,55 @@ use super::*;
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 
 #[test]
+fn source_question_channels_follow_scoped_provider_guidance_without_vendor_rules() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({"type":"connection_work","sourceProvider":"example/source","askBeforeAct":true}),
+    );
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("source", &request, &launch),
+        thread_fork_params("source", None, &request, &launch),
+        effective_instructions::turn_context_for_test(&request),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("use the current scoped provider assistance"));
+        assert!(instructions.contains("source participant from decisions for the Wework owner"));
+        assert!(instructions.contains("Provider guidance may route an owner's self-conversation"));
+        assert!(instructions.contains("raise a structured question using request_user_input_async"));
+        assert!(instructions.contains("native tool approval controls"));
+        assert!(!instructions.contains("DingTalk"));
+        assert!(!instructions.contains("wework_stand_in.reply"));
+    }
+    assert!(!codex_has_full_access(&request));
+}
+
+#[test]
+fn host_control_routing_reaches_native_start_fork_resume_and_turn_policy() {
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_fork_params("source", None, &request, &launch),
+        thread_resume_params("source", &request, &launch),
+        effective_instructions::turn_context_for_test(&request),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("Standalone Wework tasks are conversations"));
+        assert!(instructions.contains("conversations skill and wework_control"));
+        assert!(instructions.contains("Discover those tools before claiming they are unavailable"));
+        assert!(instructions.contains("subscribe_connection_events with wait_for_event:true"));
+        assert!(instructions.contains("Do not use CLI watch commands or status polling to wait."));
+    }
+    let skill = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/conversations/SKILL.md");
+    assert!(skill.contains("`include_archived: true`"));
+    assert!(skill.contains("`list_conversations`"));
+    assert!(skill.contains("unarchive_conversation"));
+}
+
+#[test]
 fn execution_context_discards_stale_context_and_requires_complete_runtime_identity() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -337,5 +386,29 @@ fn backend_tasks_retain_inline_artifact_rules_while_wework_keeps_them_deferred()
             );
             assert!(instructions.contains(host_skills::INSTRUCTIONS));
         }
+    }
+}
+
+#[test]
+fn application_and_source_context_stay_separate_from_codex_turn_input() {
+    let mut request = ExecutionRequest {
+        prompt: json!("Verify the main build"),
+        ..Default::default()
+    };
+    let context = json!({
+        "cloudCollaboration":{"kind":"application","value":"Current Issue reference"},
+        "source":{"kind":"untrusted","value":"Quoted Issue content"}
+    });
+    request
+        .extra
+        .insert("additionalContext".into(), context.clone());
+    let launch = CodexLaunchConfig::default();
+    let params = turn_start_params("thread", &request, &launch, turn_input(&request.prompt));
+    assert_eq!(
+        params["input"],
+        json!([{"type":"text","text":"Verify the main build","text_elements":[]}])
+    );
+    for key in ["cloudCollaboration", "source"] {
+        assert_eq!(params["additionalContext"][key], context[key]);
     }
 }

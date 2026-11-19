@@ -149,8 +149,12 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         plugins,
       })
     },
-    autoUpdateInstalledPlugins(): Promise<PluginAutoUpdateBatchResponse> {
-      return client.post('/plugins/installed/auto-update-batch')
+    autoUpdateInstalledPlugins(
+      deliveryMode?: 'local_pull_v1'
+    ): Promise<PluginAutoUpdateBatchResponse> {
+      const query = new URLSearchParams()
+      if (deliveryMode) query.set('delivery_mode', deliveryMode)
+      return client.post('/plugins/installed/auto-update-batch' + (query.size ? `?${query}` : ''))
     },
     updateInstalledPlugin(
       id: string | number,
@@ -161,6 +165,13 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     },
     uninstallInstalledPlugin(id: string | number, deviceId?: string): Promise<void> {
       return uninstallCloudPlugin(client, id, deviceQuery(deviceId))
+    },
+    uninstallInstalledPluginWithDeviceHandoff(
+      id: string | number,
+      deviceId: string
+    ): Promise<void> {
+      const query = new URLSearchParams({ device_id: deviceId, source_device_id: deviceId })
+      return uninstallCloudPlugin(client, id, `?${query}`)
     },
     listMarketplacePlugins(
       params: { q?: string; source?: string; deviceId?: string } = {}

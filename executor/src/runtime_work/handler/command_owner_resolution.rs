@@ -186,7 +186,7 @@ impl RuntimeWorkRpcHandler {
 
     fn log_command_resolution_control(&self, task: &str, stage: &str, native: Option<Value>) {
         let preparing = self
-            .preparing_worktree_turns
+            .preparing_turns
             .lock()
             .expect("preparation map poisoned")
             .contains_key(task);

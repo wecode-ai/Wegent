@@ -1,24 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { useCallback, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { ChevronRight, X } from 'lucide-react'
 import type { CollaborationGroupMember } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
-import type { CollaborationTemplate, TemplateRoleAssignments as Bindings } from './types'
-import { bindTemplate } from './document'
-import {
-  templateAgentBindings,
-  templateAgentId,
-  templateAgentReferences,
-  templateRoutingResolver,
-} from './agents'
-import {
-  TemplateModelSelection,
-  sameTemplateModelScope,
-  type TemplateModelConfiguration,
-} from './TemplateModelSelection'
+import type { CollaborationTemplate } from './types'
+import { createTemplateBindingsDraft } from './templateBindingsDraft'
+import { templateAgentId, templateAgentReferences, templateRoutingResolver } from './agents'
+import { TemplateModelSelection, type TemplateModelConfiguration } from './TemplateModelSelection'
+import { sameTemplateModelScope } from './templateModelScope'
 import type { RunnerModelIdentity } from '../agent-form/runnerRouting'
 import type { TemplateRoutingResolver } from './types'
 import { templateFailureMessage, templateMessages } from './messages'
@@ -27,6 +19,30 @@ import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 export interface TemplateParticipant extends CollaborationGroupMember {
   label: string
+}
+
+function TemplateGroupDisclosure({
+  unboundRoles,
+  open,
+  onToggle,
+  children,
+}: {
+  unboundRoles: Set<string>
+  open: boolean
+  onToggle(open: boolean): void
+  children: ReactNode
+}) {
+  const attach = useCallback(
+    (node: HTMLDetailsElement | null) => {
+      if (node && unboundRoles.size) node.open = true
+    },
+    [unboundRoles]
+  )
+  return (
+    <details ref={attach} open={open} onToggle={event => onToggle(event.currentTarget.open)}>
+      {children}
+    </details>
+  )
 }
 
 export function TemplateBindings({
@@ -50,78 +66,17 @@ export function TemplateBindings({
   ): void
 }) {
   const m = templateMessages[locale]
-  const [bindings, setBindings] = useState<Bindings>(() =>
-    Object.fromEntries(
-      document.spec.resources.collaboration.groups.map(group => {
-        const kind = group.roles.find(role => role.key === group.leaderRole)?.defaultKind ?? 'agent'
-        const current =
-          (kind === 'human' &&
-            candidates.find(
-              candidate => candidate.kind === 'human' && candidate.id === String(currentUserId)
-            )) ||
-          candidates.find(candidate => candidate.kind === kind)
-        const embedded = templateAgentBindings(document)[group.key]
-        return [group.key, { ...(current ? { [group.leaderRole]: current } : {}), ...embedded }]
-      })
-    )
+  const bindingErrorId = useId()
+  const [source] = useState(() => createTemplateBindingsDraft(document, candidates, currentUserId))
+  const subscribe = useCallback(
+    (notify: () => void) => source.subscribe(notify, onChange, document, candidates, currentUserId),
+    [source, onChange, document, candidates, currentUserId]
   )
-  const [names, setNames] = useState<Record<string, string>>({})
-  const [removed, setRemoved] = useState<Record<string, string[]>>({})
-  const configured = useMemo(
-    () => ({
-      ...document,
-      spec: {
-        ...document.spec,
-        resources: {
-          collaboration: {
-            ...document.spec.resources.collaboration,
-            groups: document.spec.resources.collaboration.groups.map(group => ({
-              ...group,
-              name: names[group.key] ?? group.name,
-              roles: group.roles.filter(role => !removed[group.key]?.includes(role.key)),
-              stages: group.stages.filter(
-                stage => !stage.ownerRole || !removed[group.key]?.includes(stage.ownerRole)
-              ),
-            })),
-          },
-        },
-      },
-    }),
-    [document, names, removed]
+  const { configured, bindings, unboundRoles, validation, customizing } = useSyncExternalStore(
+    subscribe,
+    source.getSnapshot,
+    source.getSnapshot
   )
-  const changed = useRef(onChange)
-  useEffect(() => {
-    changed.current = onChange
-  }, [onChange])
-  const candidateKey = candidates
-    .map(candidate => `${candidate.kind}:${candidate.id}`)
-    .sort()
-    .join('|')
-  const validation = useMemo(() => {
-    try {
-      const available = new Set([
-        ...candidateKey.split('|'),
-        ...(document.spec.resources.collaboration.agents ?? []).map(
-          agent => `agent:${templateAgentId(agent.key)}`
-        ),
-      ])
-      if (
-        Object.values(bindings).some(roles =>
-          Object.values(roles).some(member => !available.has(`${member.kind}:${member.id}`))
-        )
-      )
-        throw new Error('unbound_roles')
-      return { drafts: bindTemplate(configured, bindings), error: null }
-    } catch (error) {
-      return {
-        drafts: null,
-        error: error instanceof Error ? error.message : '',
-      }
-    }
-  }, [configured, bindings, candidateKey, document])
-  useEffect(() => {
-    changed.current(validation.drafts, configured)
-  }, [validation, configured])
   const removeButton = (groupKey: string, roleKey: string, name: string, leader: boolean) => (
     <button
       type="button"
@@ -130,17 +85,7 @@ export function TemplateBindings({
       disabled={disabled || leader}
       aria-label={leader ? m.keepLeader : m.removeRole.replace('{name}', name)}
       title={leader ? m.keepLeader : m.removeRole.replace('{name}', name)}
-      onClick={() => {
-        setRemoved(current => ({
-          ...current,
-          [groupKey]: [...(current[groupKey] ?? []), roleKey],
-        }))
-        setBindings(current => {
-          const roles = { ...current[groupKey] }
-          delete roles[roleKey]
-          return { ...current, [groupKey]: roles }
-        })
-      }}
+      onClick={() => source.removeRole(groupKey, roleKey)}
     >
       <X size={16} aria-hidden="true" />
     </button>
@@ -173,95 +118,100 @@ export function TemplateBindings({
               disabled={disabled}
               data-testid={`template-group-name-${group.key}`}
               value={group.name}
-              onChange={event => {
-                const name = event.target.value
-                setNames(current => ({ ...current, [group.key]: name }))
-              }}
+              onChange={event => source.rename(group.key, event.target.value)}
             />
           </label>
-          {group.roles.every(role => !!role.agentKey) && (
-            <ul
-              className="collaboration-template-agent-roster"
-              data-testid={`template-roster-${group.key}`}
+          {unboundRoles[group.key].size > 0 && (
+            <p
+              id={`${bindingErrorId}-${group.key}`}
+              role="alert"
+              className="collaboration-template-error"
+              data-testid={`template-unbound-${group.key}`}
             >
-              {group.roles.map(role => (
-                <li key={role.key}>
-                  <div className="collaboration-template-role-heading">
-                    <strong>{role.name}</strong>
-                    {removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
-                  </div>
-                  <span>
-                    {bindings[group.key]?.[role.key]?.name !== role.name
-                      ? `${bindings[group.key]?.[role.key]?.name ?? m.choose} · `
-                      : ''}
-                    {role.responsibility}
-                  </span>
-                </li>
-              ))}
-            </ul>
+              {m.unbound}
+            </p>
           )}
-          <details open={group.roles.every(role => !!role.agentKey) ? undefined : true}>
+          {group.roles.every(role => !!role.agentKey) &&
+            !customizing[group.key] &&
+            unboundRoles[group.key].size === 0 && (
+              <ul
+                className="collaboration-template-agent-roster"
+                data-testid={`template-roster-${group.key}`}
+              >
+                {group.roles.map(role => (
+                  <li key={role.key}>
+                    <div className="collaboration-template-role-heading">
+                      <strong>{role.name}</strong>
+                      {removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+                    </div>
+                    <span>
+                      {bindings[group.key]?.[role.key]?.name !== role.name
+                        ? `${bindings[group.key]?.[role.key]?.name ?? m.choose} · `
+                        : ''}
+                      {role.responsibility}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          <TemplateGroupDisclosure
+            unboundRoles={unboundRoles[group.key]}
+            open={group.roles.every(role => !!role.agentKey) ? !!customizing[group.key] : true}
+            onToggle={open => source.customize(group.key, open)}
+          >
             <summary data-testid={`template-customize-${group.key}`}>{m.customizeMembers}</summary>
-            {group.roles.map(role => (
-              <div className="collaboration-template-binding" key={role.key}>
-                <div>
-                  <div className="collaboration-template-role-heading">
-                    <strong>{role.name}</strong>
-                    {!group.roles.every(role => !!role.agentKey) &&
-                      removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+            {(customizing[group.key] || !group.roles.every(role => !!role.agentKey)) &&
+              group.roles.map(role => (
+                <div className="collaboration-template-binding" key={role.key}>
+                  <div>
+                    <div className="collaboration-template-role-heading">
+                      <strong>{role.name}</strong>
+                      {removeButton(group.key, role.key, role.name, role.key === group.leaderRole)}
+                    </div>
+                    <p>{role.responsibility}</p>
                   </div>
-                  <p>{role.responsibility}</p>
-                </div>
-                <label className="collaboration-template-field">
-                  <span className="sr-only">{role.name}</span>
-                  <select
-                    disabled={disabled}
-                    data-testid={`template-role-${group.key}-${role.key}`}
-                    value={
-                      bindings[group.key]?.[role.key]
-                        ? `${bindings[group.key][role.key].kind}:${bindings[group.key][role.key].id}`
-                        : ''
-                    }
-                    onChange={event => {
-                      const candidate = [
-                        ...candidates,
-                        ...Object.values(templateAgentBindings(document)[group.key]),
-                      ].find(
-                        candidate => `${candidate.kind}:${candidate.id}` === event.target.value
-                      )
-                      const next = {
-                        ...bindings,
-                        [group.key]: { ...bindings[group.key] },
+                  <label className="collaboration-template-field">
+                    <span className="sr-only">{role.name}</span>
+                    <select
+                      disabled={disabled}
+                      data-testid={`template-role-${group.key}-${role.key}`}
+                      aria-invalid={unboundRoles[group.key].has(role.key) || undefined}
+                      aria-describedby={
+                        unboundRoles[group.key].has(role.key)
+                          ? `${bindingErrorId}-${group.key}`
+                          : undefined
                       }
-                      if (candidate) next[group.key][role.key] = candidate
-                      else delete next[group.key][role.key]
-                      setBindings(next)
-                    }}
-                  >
-                    {role.agentKey && (
-                      <option value={`agent:${templateAgentId(role.agentKey)}`}>
-                        {m.autoCreate} ·{' '}
-                        {
-                          document.spec.resources.collaboration.agents?.find(
-                            agent => agent.key === role.agentKey
-                          )?.name
-                        }
-                      </option>
-                    )}
-                    <option value="">{m.choose}</option>
-                    {candidates.map(candidate => (
-                      <option
-                        key={`${candidate.kind}:${candidate.id}`}
-                        value={`${candidate.kind}:${candidate.id}`}
-                      >
-                        {candidate.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ))}
-          </details>
+                      value={
+                        bindings[group.key]?.[role.key]
+                          ? `${bindings[group.key][role.key].kind}:${bindings[group.key][role.key].id}`
+                          : ''
+                      }
+                      onChange={event => source.assign(group.key, role.key, event.target.value)}
+                    >
+                      {role.agentKey && (
+                        <option value={`agent:${templateAgentId(role.agentKey)}`}>
+                          {m.autoCreate} ·{' '}
+                          {
+                            document.spec.resources.collaboration.agents?.find(
+                              agent => agent.key === role.agentKey
+                            )?.name
+                          }
+                        </option>
+                      )}
+                      <option value="">{m.choose}</option>
+                      {candidates.map(candidate => (
+                        <option
+                          key={`${candidate.kind}:${candidate.id}`}
+                          value={`${candidate.kind}:${candidate.id}`}
+                        >
+                          {candidate.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ))}
+          </TemplateGroupDisclosure>
         </section>
       ))}
       {validation.error === 'leader_executor' && (
@@ -311,6 +261,7 @@ export function TemplateBindingsDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
+  const [configurationMounted, setConfigurationMounted] = useState(false)
   const [modelState, setModelState] = useState<{
     configuration: TemplateModelConfiguration
     models: Partial<Record<RunnerModelIdentity['runtime'], RunnerModelIdentity>>
@@ -350,7 +301,7 @@ export function TemplateBindingsDialog({
             type="button"
             className="collaboration-primary-button"
             data-testid="template-bindings-apply"
-            disabled={!selection || busy || failed || runtimes.some(runtime => !models[runtime])}
+            disabled={!selection || busy || failed}
             onClick={async () => {
               if (!selection) return
               if (
@@ -367,17 +318,10 @@ export function TemplateBindingsDialog({
               setError(null)
               try {
                 const args = [selection.drafts, selection.document] as const
-                if (runtimes.length && modelConfiguration) {
+                if (modelConfiguration) {
                   await onApply(
                     ...args,
-                    templateRoutingResolver(
-                      modelConfiguration.host,
-                      modelConfiguration.location,
-                      modelConfiguration.projectId,
-                      locale,
-                      modelConfiguration.environmentId,
-                      models
-                    )
+                    templateRoutingResolver(modelConfiguration.environmentId, models)
                   )
                 } else {
                   await onApply(...args)
@@ -418,34 +362,53 @@ export function TemplateBindingsDialog({
         currentUserId={currentUserId}
         onChange={(drafts, document) => setSelection(drafts ? { drafts, document } : null)}
       />
-      {!selection && <p className="collaboration-template-muted">{m.unbound}</p>}
-      {renderConfiguration?.(busy || failed)}
-      {runtimes.map(runtime => (
-        <TemplateModelSelection
-          key={JSON.stringify([
-            runtime,
-            modelConfiguration?.location,
-            modelConfiguration?.projectId,
-            modelConfiguration?.environmentId,
-          ])}
-          runtime={runtime}
-          showRuntime={runtimes.length > 1}
-          configuration={modelConfiguration!}
-          locale={locale}
-          disabled={busy || failed}
-          onChange={model =>
-            setModelState(current => ({
-              configuration: modelConfiguration!,
-              models: {
-                ...(current && sameTemplateModelScope(current.configuration, modelConfiguration)
-                  ? current.models
-                  : {}),
-                [runtime]: model,
-              },
-            }))
-          }
-        />
-      ))}
+      {(renderConfiguration || runtimes.length > 0) && (
+        <details
+          className="collaboration-runtime-disclosure"
+          data-testid="template-runtime-configuration"
+          onToggle={event => {
+            if (event.currentTarget.open) setConfigurationMounted(true)
+          }}
+        >
+          <summary>
+            <ChevronRight aria-hidden="true" />
+            <span>{m.optionalRuntimeConfiguration}</span>
+          </summary>
+          <p className="collaboration-runtime-hint">{m.deferredRuntimeHint}</p>
+          {configurationMounted && (
+            <>
+              {renderConfiguration?.(busy || failed)}
+              {runtimes.map(runtime => (
+                <TemplateModelSelection
+                  key={JSON.stringify([
+                    runtime,
+                    modelConfiguration?.location,
+                    modelConfiguration?.projectId,
+                    modelConfiguration?.environmentId,
+                  ])}
+                  runtime={runtime}
+                  showRuntime={runtimes.length > 1}
+                  configuration={modelConfiguration!}
+                  locale={locale}
+                  disabled={busy || failed}
+                  onChange={model =>
+                    setModelState(current => ({
+                      configuration: modelConfiguration!,
+                      models: {
+                        ...(current &&
+                        sameTemplateModelScope(current.configuration, modelConfiguration)
+                          ? current.models
+                          : {}),
+                        [runtime]: model,
+                      },
+                    }))
+                  }
+                />
+              ))}
+            </>
+          )}
+        </details>
+      )}
       {error && (
         <p role="alert" className="collaboration-template-error">
           {error}

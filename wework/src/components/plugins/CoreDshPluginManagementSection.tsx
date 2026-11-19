@@ -1,4 +1,5 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { type FormEvent, useMemo, useState, useSyncExternalStore } from 'react'
 import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
@@ -18,6 +19,8 @@ import {
   MODE_MANAGED_HOME_PLUGINS,
 } from '@/features/workbench-mode/workbenchMode'
 
+const EMPTY_PLUGINS: CoreDshPlugin[] = []
+
 type Operation =
   | 'install'
   | 'restart'
@@ -32,31 +35,28 @@ export function CoreDshPluginManagementSection({
   onCreatePlugin?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const [plugins, setPlugins] = useState<CoreDshPlugin[]>([])
+  const resource = useMemo(
+    () => createAsyncResource('core-dsh-plugins', () => readCoreDshPlugins()),
+    []
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const plugins = snapshot.data ?? EMPTY_PLUGINS
+  const setPlugins = (next: CoreDshPlugin[]) => resource.update(() => next)
   const [spec, setSpec] = useState('')
-  const [loading, setLoading] = useState(true)
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
   const [operation, setOperation] = useState<Operation>(null)
   const [restartRequired, setRestartRequired] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [installConfirmation, setInstallConfirmation] = useState<string | null>(null)
+  const [operationError, setError] = useState<string | null>(null)
+  const error =
+    operationError ??
+    (snapshot.status === 'error'
+      ? String(snapshot.error instanceof Error ? snapshot.error.message : snapshot.error)
+      : null)
   const [uninstallConfirmation, setUninstallConfirmation] = useState<string | null>(null)
-
-  useEffect(() => {
-    let current = true
-    void readCoreDshPlugins()
-      .then(nextPlugins => {
-        if (current) setPlugins(nextPlugins)
-      })
-      .catch(reason => {
-        if (current) setError(reason instanceof Error ? reason.message : String(reason))
-      })
-      .finally(() => {
-        if (current) setLoading(false)
-      })
-    return () => {
-      current = false
-    }
-  }, [])
 
   const userPlugins = useMemo(() => plugins.filter(plugin => !plugin.immutable), [plugins])
   const builtIns = useMemo(() => plugins.filter(plugin => plugin.immutable), [plugins])
@@ -64,6 +64,7 @@ export function CoreDshPluginManagementSection({
   const run = async (next: Exclude<Operation, null>, action: () => Promise<void>) => {
     setOperation(next)
     setError(null)
+    resource.update(value => value)
     try {
       await action()
     } catch (reason) {
@@ -77,13 +78,6 @@ export function CoreDshPluginManagementSection({
     event.preventDefault()
     const requested = spec.trim()
     if (!requested || operation) return
-    setInstallConfirmation(requested)
-  }
-
-  const confirmInstall = () => {
-    const requested = installConfirmation
-    if (!requested || operation) return
-    setInstallConfirmation(null)
     void run('install', async () => {
       setPlugins(await installCoreDshPlugin(requested))
       setSpec('')
@@ -231,19 +225,6 @@ export function CoreDshPluginManagementSection({
         </div>
       </section>
 
-      <ConfirmDialog
-        open={installConfirmation !== null}
-        title={t('workbench.core_dsh_plugins_install_confirm_title', '安装 Wework 插件？')}
-        description={t(
-          'workbench.core_dsh_plugins_install_confirm_description',
-          '插件及其安装脚本会以当前用户权限运行。仅安装你信任的 npm、Git 或本地包。'
-        )}
-        cancelLabel={t('common.cancel', '取消')}
-        confirmLabel={t('workbench.core_dsh_plugins_install', '安装')}
-        confirmTestId="core-dsh-plugin-install-confirm"
-        onClose={() => setInstallConfirmation(null)}
-        onConfirm={confirmInstall}
-      />
       <ConfirmDialog
         open={uninstallConfirmation !== null}
         title={t('workbench.core_dsh_plugins_uninstall_confirm_title', '卸载 Wework 插件？')}

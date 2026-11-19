@@ -28,6 +28,7 @@ impl RuntimeWorkRpcHandler {
         routing.routes.insert(
             child.to_owned(),
             RuntimeThreadEventRoute {
+                goal_model_route: None,
                 local_task_id,
                 request,
                 event_mapper,
@@ -42,6 +43,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn ensure_notification_router(&self) {
+        if let Err(error) = self.try_ensure_notification_router().await {
+            log_executor_event(
+                "runtime work notification router subscribe failed",
+                &[("error", error)],
+            );
+        }
+    }
+
+    pub(super) async fn try_ensure_notification_router(&self) -> Result<(), String> {
         if self
             .notification_router
             .lock()
@@ -49,36 +59,27 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .is_some_and(|task| !task.is_finished())
         {
-            return;
+            return Ok(());
         }
 
-        let notification_rx = match self
+        let notification_rx = self
             .codex_app_server
             .subscribe_runtime_notifications()
-            .await
-        {
-            Ok(receiver) => receiver,
-            Err(error) => {
-                log_executor_event(
-                    "runtime work notification router subscribe failed",
-                    &[("error", error)],
-                );
-                return;
-            }
-        };
+            .await?;
 
         let mut router = self
             .notification_router
             .lock()
             .expect("notification router lock should not be poisoned");
         if router.as_ref().is_some_and(|task| !task.is_finished()) {
-            return;
+            return Ok(());
         }
 
         let handler = self.clone();
         *router = Some(tokio::spawn(async move {
             handler.run_notification_router(notification_rx).await;
         }));
+        Ok(())
     }
 
     pub(super) async fn run_notification_router(
@@ -96,6 +97,7 @@ impl RuntimeWorkRpcHandler {
 
             if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
                 log_executor_event("runtime work notification router app-server exited", &[]);
+                self.publish_codex_account_event("runtime.codex.app_server.exited", &message);
                 self.settle_native_transport_exit(message.process_generation());
                 continue;
             }
@@ -113,6 +115,10 @@ impl RuntimeWorkRpcHandler {
         message: CodexNotification,
         replaying_route: Option<(&str, u64)>,
     ) {
+        if message.get("method").and_then(Value::as_str) == Some("account/login/completed") {
+            self.publish_codex_account_event("runtime.codex.auth.login.completed", &message);
+            return;
+        }
         let thread_id =
             codex_notification_thread_id(&message).or_else(|| self.unscoped_route_thread_id());
         let Some(thread_id) = thread_id else {
@@ -241,6 +247,7 @@ impl RuntimeWorkRpcHandler {
                 routing.routes.insert(
                     child_thread_id.clone(),
                     RuntimeThreadEventRoute {
+                        goal_model_route: None,
                         local_task_id: local_task_id.clone(),
                         request,
                         event_mapper: event_mapper.clone(),
@@ -343,29 +350,97 @@ impl RuntimeWorkRpcHandler {
                 }
                 if !route_nested {
                     self.record_background_terminal_notification(&local_task_id, &message);
+                    if message["method"] == "item/completed" {
+                        let item = &message["params"]["item"];
+                        let client_id = item["clientId"]
+                            .as_str()
+                            .or_else(|| item["client_id"].as_str());
+                        let display = client_id.and_then(|client_id| {
+                            self.store
+                                .read_task(&local_task_id, |link| {
+                                    link.runtime_handle["userMessagePresentations"]
+                                        .as_array()?
+                                        .iter()
+                                        .find(|entry| {
+                                            entry["clientUserMessageId"] == client_id
+                                                && entry["source"]["source"] == "connection_event"
+                                        })
+                                        .cloned()
+                                })
+                                .flatten()
+                        });
+                        if let Some(display) = display {
+                            message["params"]["weworkGuidanceDisplay"] = display;
+                        }
+                    }
                 }
-                let event_request = if route_nested {
-                    route_request
-                } else {
-                    self.request_for_codex_event(
-                        &local_task_id,
-                        &route_request,
-                        notification_turn_id.as_deref(),
-                    )
-                };
-                event_mapper
-                    .lock()
-                    .expect("thread event mapper lock should not be poisoned")
-                    .map(
-                        &self.event_tx,
-                        &self.device_id,
-                        &local_task_id,
-                        &event_request,
-                        message.into_value(),
-                    );
+                // The opening item can arrive before the new turn replaces
+                // the thread route. The admitted send already owns its input.
+                if route_nested || !self.is_opening_user_item(&local_task_id, &message) {
+                    let event_request = if route_nested {
+                        route_request
+                    } else {
+                        self.request_for_codex_event(
+                            &local_task_id,
+                            &route_request,
+                            notification_turn_id.as_deref(),
+                        )
+                    };
+                    event_mapper
+                        .lock()
+                        .expect("thread event mapper lock should not be poisoned")
+                        .map(
+                            &self.event_tx,
+                            &self.device_id,
+                            &local_task_id,
+                            &event_request,
+                            message.into_value(),
+                        );
+                }
             }
         }
         self.replay_codex_notifications(pending_replays);
+    }
+
+    fn is_opening_user_item(&self, task_id: &str, message: &CodexNotification) -> bool {
+        if message["method"] != "item/completed" {
+            return false;
+        }
+        let params = &message["params"];
+        let item = &params["item"];
+        if !is_root_codex_turn_event(params) || item_type(item) != "usermessage" {
+            return false;
+        }
+        let Some(id) = string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
+        else {
+            return false;
+        };
+        self.active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned")
+            .get(task_id)
+            .and_then(|execution| execution.request.as_ref())
+            .and_then(|request| {
+                request
+                    .extra
+                    .get("client_user_message_id")
+                    .or_else(|| request.extra.get("clientUserMessageId"))
+            })
+            .and_then(Value::as_str)
+            .is_some_and(|client_id| client_id.trim() == id)
+    }
+
+    fn publish_codex_account_event(&self, event: &str, message: &CodexNotification) {
+        let Some(event_tx) = &self.event_tx else {
+            return;
+        };
+        let mut payload = message["params"].as_object().cloned().unwrap_or_default();
+        payload.insert("deviceId".into(), json!(self.device_id));
+        payload.insert(
+            "processGeneration".into(),
+            json!(message.process_generation()),
+        );
+        let _ = event_tx.send(json!({"type":"event", "event":event, "payload":payload}));
     }
 
     pub(super) fn register_thread_event_route(

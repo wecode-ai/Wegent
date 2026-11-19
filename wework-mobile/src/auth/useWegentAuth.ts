@@ -1,6 +1,6 @@
 import * as WebBrowser from 'expo-web-browser'
 import { AppState } from 'react-native'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   createAuthorizationSession,
@@ -23,6 +23,7 @@ import {
   type RuntimeSessionConfig,
 } from '@/services/backendConfig'
 import { loadBackendAddress, saveBackendAddress } from '@/services/backendAddressStore'
+import { beginMobileDiagnostic } from '@/services/mobileDiagnostics'
 
 export type AuthStatus =
   'initializing' | 'unauthenticated' | 'authorizing' | 'authenticated' | 'error'
@@ -36,6 +37,7 @@ export interface WegentAuthState {
   error: string | null
   setBackendUrl: (value: string) => void
   login: () => Promise<void>
+  cancelLogin: () => void
   logout: () => Promise<void>
   refresh: () => Promise<boolean>
 }
@@ -54,6 +56,13 @@ export function useWegentAuth(): WegentAuthState {
   const [error, setError] = useState<string | null>(null)
   const loginPromise = useRef<Promise<void> | null>(null)
   const activeGeneration = useRef(0)
+  const cancelLogin = useCallback(() => {
+    if (!loginPromise.current) return
+    activeGeneration.current += 1
+    loginPromise.current = null
+    WebBrowser.dismissBrowser()
+    setStatus(current => (current === 'authenticated' ? current : 'unauthenticated'))
+  }, [])
 
   const applyToken = useCallback(
     async (
@@ -110,9 +119,11 @@ export function useWegentAuth(): WegentAuthState {
 
   useEffect(() => {
     const generation = activeGeneration.current
+    const diagnostic = beginMobileDiagnostic('auth-restore', 'cloud')
     void (async () => {
       let cachedSession: CachedAuthSession | null = null
       try {
+        diagnostic.step('read-backend-address-and-session')
         const [storedBackendUrl, storedSession] = await Promise.all([
           loadBackendAddress(),
           loadAuthSession(),
@@ -123,6 +134,7 @@ export function useWegentAuth(): WegentAuthState {
         setBackendInput(backendUrl ?? '')
         if (!backendUrl) {
           setStatus('unauthenticated')
+          diagnostic.complete()
           return
         }
         cachedSession =
@@ -130,34 +142,46 @@ export function useWegentAuth(): WegentAuthState {
             ? storedSession
             : null
         if (cachedSession) {
+          diagnostic.step('restore-cached-session')
           setBackend(cachedSession.backend)
           setAccessToken(cachedSession.accessToken)
           setAccessTokenExpiresAt(cachedSession.accessTokenExpiresAt)
           setUser(cachedSession.user)
           setStatus('authenticated')
         }
+        diagnostic.step('resolve-backend-config')
         const config = await resolveBackendConfig(backendUrl)
+        diagnostic.step('check-backend-health')
         await checkBackendHealth(config)
         if (activeGeneration.current !== generation) return
         setBackend(config)
+        diagnostic.step('read-refresh-credential')
         if (!(await credentials.hasRefreshCredential(config.apiBaseUrl))) {
           if (!cachedSession) setStatus('unauthenticated')
+          diagnostic.complete()
           return
         }
+        diagnostic.step('refresh-session')
         const result = await credentials.refreshAccessToken(config.apiBaseUrl)
         if (activeGeneration.current !== generation) return
+        diagnostic.step('fetch-user-and-persist-session')
         await applyToken(
           config,
           result.accessToken,
           generation,
           result.expiresIn > 0 ? Date.now() + result.expiresIn * 1000 : undefined
         )
+        diagnostic.complete()
       } catch (cause) {
+        diagnostic.fail(cause)
         if (activeGeneration.current !== generation) return
         setError(messageFrom(cause))
         if (!cachedSession) setStatus('error')
+      } finally {
+        diagnostic.cancel()
       }
     })()
+    return () => diagnostic.cancel()
   }, [applyToken])
 
   const setBackendUrl = useCallback((value: string): void => {
@@ -189,15 +213,19 @@ export function useWegentAuth(): WegentAuthState {
       if (activeGeneration.current !== generation) return
       const session = await createAuthorizationSession(config, publicKey)
       if (activeGeneration.current !== generation) return
+      let browserError: unknown
       void WebBrowser.openBrowserAsync(session.authorize_url, {
         presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
         controlsColor: '#181818',
-      }).catch(() => undefined)
+      }).catch(cause => {
+        browserError = cause
+      })
 
       const pollDelay = Math.max(500, session.poll_interval_seconds * 1000 || 2000)
       while (Date.now() < session.expires_at * 1000) {
         await delay(pollDelay)
         if (activeGeneration.current !== generation) return
+        if (browserError != null) throw browserError
         const result = await credentials.claimAuthorization(
           {
             apiBaseUrl: config.apiBaseUrl,
@@ -224,7 +252,7 @@ export function useWegentAuth(): WegentAuthState {
         throw cause
       })
       .finally(() => {
-        loginPromise.current = null
+        if (loginPromise.current === operation) loginPromise.current = null
       })
     loginPromise.current = operation
     return operation
@@ -265,15 +293,28 @@ export function useWegentAuth(): WegentAuthState {
     return () => subscription.remove()
   }, [accessTokenExpiresAt, refresh, status])
 
+  const config = useMemo(
+    () => (backend && accessToken ? { ...backend, accessToken } : null),
+    [
+      backend?.backendUrl,
+      backend?.apiBaseUrl,
+      backend?.socketBaseUrl,
+      backend?.socketPath,
+      backend?.webUrl,
+      accessToken,
+    ]
+  )
+
   return {
     status,
     backend,
     backendUrl: backendInput,
-    config: backend && accessToken ? { ...backend, accessToken } : null,
+    config,
     user,
     error,
     setBackendUrl,
     login,
+    cancelLogin,
     logout,
     refresh,
   }

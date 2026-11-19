@@ -22,7 +22,7 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 ## 插件周期恢复 E2E
 
-`plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。90 秒基础周期为注册后的插件准备流程保留时间，避免准备阶段消耗首个对账周期。
+`plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。检查点根据真实对账 tick 对齐故障注入；准备流程跨过某个 tick 时等待当前定时器窗口，而不是因负载延长周期。
 
 未设置配置时，生产对账周期仍为 600 秒加 0～119 秒的稳定 Runtime 偏移，心跳仍为 30 秒。无效或非正整数配置使用默认值；测试没有手动触发对账或替换真实计时器。
 
@@ -58,7 +58,7 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。
 
-Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给分身场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
+Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给助理场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
 
 ## 共享 Codex 启动保护
 
@@ -157,6 +157,21 @@ Electron 不会为 WebContents 自动创建网页右键菜单。Wework 由 Elect
 
 AI 应先执行 `snapshot` 确认路由和可用的 `data-testid`，再进行最小必要操作，并以 `wait-for` 加 `snapshot` 或 `text` 验证结果。结束时必须执行 `stop`；若失败，保留该会话目录中的 `app.log` 以便诊断。
 
+## 录制验证视频
+
+需要留存操作证据时，先确认 PATH 中的 FFmpeg 支持 `libx264`。用 `start --record true` 启动会话，主窗口就绪后开始录像，并在返回会话路径前采集首帧。也可以对已启动的会话执行 `record-start`，用 `record-stop` 结束当前片段，并按需开启下一段。
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` 保存视频并输出路径。若录像仍在进行，`stop` 会先保存视频，再关闭会话，并输出视频路径。每段录像以独立的 MP4 文件保存在对应的 `wework/test-results/ai-verify/` 会话目录中。如果采集中断，录制器会尽量保存已采集画面，并在停止命令的错误信息中给出已保存的路径。
+
+录像以每秒 5 帧采集隔离 Electron 主窗口内容，覆盖页面重载，无需 macOS 屏幕录制权限。采集范围不包含操作系统弹窗、原生菜单、独立窗口或音频。请将录像与实际断言结果一起作为验收证据，分享前检查画面中的敏感信息。录像和会话文件请保留在 Git 之外。
+
 ## 通用 DevTools 与性能分析
 
 隔离验证实例通过主进程提供鉴权的 CDP 通道。它不经过渲染线程，因此在断点暂停时仍能读取事件并恢复执行。普通应用实例不注册此入口。先启动实例并枚举目标，将返回的 `id` 用作下面的 `ID`：
@@ -206,3 +221,29 @@ CPU 录制成功停止后，即使 trace 读取、解析或报告写入失败，
 显式 `detach` 成功后会丢弃该目标未完成的录制状态，可用于取消录制或在意外断开后重新开始；detach 失败时保留状态。真实 Electron 回归也覆盖录制中断开后重新录制并生成报告。
 
 所有桌面 checkpoint 共用结果目录内的 `desktop-control` 注册表，便于按需诊断自己的隔离实例。macOS 原生进程快照先读取 PID 父子关系，再只读取 Electron 进程树的详细指标和命令行，避免全机无关进程的参数撑满采集缓冲区。
+
+### 差异预览 CPU 与工作台内存回归
+
+差异预览使用 Pierre 的虚拟化渲染。行事件回调、渲染选项、行注解和布局度量应保持稳定；父组件刷新或更换事件处理函数不应重建未变化的代码 DOM。实际选项、差异内容或行注解变化时仍须更新。`FileChangesPatchDiff.test.tsx` 使用真实 Pierre 实例检查连续刷新时的节点身份及卸载清理。
+
+工作台的记忆化回调分别定义在独立 Hook 的词法作用域中，不能重新合并进 Provider 的大型渲染作用域。否则依赖交替变化的回调会通过共享闭包串联保留历史任务、生命周期和工作列表快照。`workbenchCallbackLifetime.test.tsx` 使用 Inspector 触发真实 GC，并通过弱引用验证旧快照能够回收，同时约束 Provider 不再直接定义 `useCallback`。
+
+CPU Trace 的采样时间、HTML 解析时间与进程内存应分别解释。堆快照中的对象大小不等于活动监视器中的进程占用；单份堆快照能证明对象保留路径，不能独立证明内存增长速率。分析文件保持本地，不提交用户 Trace 或堆快照。
+
+## 按 PR 功能进行 Bombadil 探索
+
+使用固定版本 Bombadil 0.7.10（macOS ARM64 或 Linux），通过 BOMBADIL_BIN 指定可执行文件。先用 --plan true 检查选择结果，再显式运行；普通 ai:verify start 不开放调试端口。
+
+```bash
+pnpm --filter wework ai:verify bombadil --base origin/main --plan true
+BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --base origin/main --seconds 30
+BOMBADIL_BIN=/absolute/path/bombadil pnpm --filter wework ai:verify bombadil --suite appearance --seconds 30
+```
+
+--base 使用 merge-base 到 HEAD 的已提交差异，包括删除和重命名涉及的路径；未提交改动不在差异计划内。需要本地未提交验证时显式选择 --suite。路径映射位于 scripts/ai-verify-bombadil.mjs：外观选择 appearance，工作台、聊天和标签页选择 workbench，共享 UI 和桌面宿主选择两者。未映射的 Wework/packages 改动会报告覆盖缺口并阻止将自动选择结果视为通过；新增功能应补充规格和映射。映射只表达候选覆盖，不能证明行为正确。
+
+每个规格使用独立的真实 Electron 与 Executor，自动获取临时 loopback 调试端口，拒绝已有 Executor Home 和多页面目标。执行前处理隔离实例的首次隐私弹窗，再建立规格前置条件。每个规格预算 1—600 秒；多个规格串行执行，结束或失败均清理实例。默认不执行模型请求或云端授权。
+
+结果保存在 wework/test-results/bombadil/<时间>/，包括 summary.json、日志和 Bombadil 原生轨迹。失败或清理失败返回非零；零操作不能通过。轨迹可能含界面截图和内容，只用于本地诊断，不提交仓库，也不上传包含 session.json、认证文件或整个 ai-verify 目录的产物。仅做定向、预算受控的 CI 接入；随机通过不替代确定性回归、权限验证或发布门禁。
+
+GitHub Actions 的 Wework Bombadil exploration 工作流仅支持手动触发：选择 PR 分支，填写 base（默认 origin/main）和每个规格的秒数。普通 PR 不增加自动探索。工作流下载固定版本并校验 SHA-256，只把 summary.json 写入步骤摘要，不上传原始轨迹或认证目录。

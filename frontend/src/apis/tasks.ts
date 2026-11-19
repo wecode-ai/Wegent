@@ -110,6 +110,24 @@ export interface TaskShareInfo {
   branch_name?: string // Original task's branch name (for code tasks)
 }
 
+export interface TaskAccessShareInfo {
+  resource_type: string
+  resource_id: number
+  resource_name: string
+  owner_user_id: number
+  owner_user_name: string
+  require_approval: boolean
+  default_role: string
+  is_expired: boolean
+}
+
+export interface JoinTaskAccessResponse {
+  status: 'pending' | 'approved'
+  resource_type: string
+  resource_id: number
+  copied_resource_id?: number | null
+}
+
 export interface JoinSharedTaskRequest {
   share_token: string
   team_id?: number // Optional: if not provided, backend will use user's first team
@@ -369,15 +387,27 @@ export const taskApis = {
     return apiClient.post('/tasks/share/join', request)
   },
 
-  // Get public shared task - doesn't require authentication
-  // Use native fetch to avoid authentication interceptor
+  // Approval links expose metadata only, never the public conversation reader.
+  getTaskAccessShareInfo: async (token: string): Promise<TaskAccessShareInfo> => {
+    const query = new URLSearchParams({ share_token: token })
+    return apiClient.get(`/share/info?${query}`, { redirectOnUnauthorized: false })
+  },
+
+  joinTaskAccessShare: async (token: string): Promise<JoinTaskAccessResponse> => {
+    return apiClient.post('/share/join', { share_token: token }, { redirectOnUnauthorized: false })
+  },
+
+  // Opaque links are public; legacy locators use existing session permissions.
+  // Keep native fetch so access failures can be explained on the share page.
   getPublicSharedTask: async (token: string): Promise<PublicSharedTaskResponse> => {
     const query = new URLSearchParams()
     query.append('token', token)
+    const sessionToken = getToken()
     const response = await fetch(`/api/tasks/share/public?${query}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
       },
     })
 
@@ -392,7 +422,7 @@ export const taskApis = {
       } catch {
         // Not JSON, use original text
       }
-      throw new Error(errorMsg)
+      throw Object.assign(new Error(errorMsg), { status: response.status })
     }
 
     return response.json()

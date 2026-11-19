@@ -2,40 +2,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  Bot,
-  Check,
-  ChevronDown,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  UserRound,
-  UsersRound,
-  X,
-} from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Bot, Pencil, Plus, Trash2, UserRound, UsersRound, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
 import { projectStatuses } from '../board'
 import { Textarea } from '../controls/Textarea'
+import { requestFailureMessage } from '../controls/requestFailure'
+import { useDialogKeyboard } from '../controls/useDialogKeyboard'
+import { DialogForm } from '../controls/DialogForm'
+import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import type {
   SharedWorkspaceApi,
   WorkspaceAutomationInput,
   WorkspaceAutomationRule,
-  WorkspaceIncomingHook,
 } from '../ports/SharedWorkspaceApi'
-import type {
-  CollaborationAgent,
-  CollaborationGroup,
-  CollaborationMember,
-  CollaborationProject,
-} from '../types'
+import type { CollaborationAgent, CollaborationMember, CollaborationProject } from '../types'
 import { useAutomaticProcessingRules } from './useAutomaticProcessingRules'
 import { ProjectSettingsPage } from './ProjectSettingsPage'
+import {
+  useProjectSettingsRefresh,
+  ProjectSettingsRefreshFeedback,
+} from './useProjectSettingsRefresh'
+import { AutomaticProcessingTargetPicker } from './AutomaticProcessingTargetPicker'
+import { AutomaticProcessingDialogFooter } from './AutomaticProcessingDialogFooter'
 import { AutomaticProcessingTriggerFields } from './AutomaticProcessingTriggerFields'
 import {
   EMPTY_DRAFT,
+  automaticProcessingSaveError,
   draftFromRule,
   eventLabel,
   eventTypesForHook,
@@ -62,7 +57,7 @@ function AutomaticProcessingSwitch({
     <button
       aria-checked={checked}
       aria-label={label}
-      className="inline-flex shrink-0 rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-11 w-11 items-center justify-center shrink-0 rounded-full md:h-8 md:w-9 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
       data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!checked)}
@@ -87,10 +82,10 @@ function AutomaticProcessingSwitch({
 export function ProjectAutomaticProcessing({
   api,
   project,
-  members,
   agents,
   locale,
   translate,
+  onProjectChange,
 }: {
   api: SharedWorkspaceApi
   project: CollaborationProject
@@ -98,6 +93,7 @@ export function ProjectAutomaticProcessing({
   agents: CollaborationAgent[]
   locale: 'zh-CN' | 'en'
   translate: CollaborationTranslate
+  onProjectChange?(project: CollaborationProject): void
 }) {
   const {
     rules,
@@ -105,27 +101,114 @@ export function ProjectAutomaticProcessing({
     error: rulesError,
     load,
   } = useAutomaticProcessingRules(api.automations, project.id)
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [availableAgents, setAvailableAgents] = useState<CollaborationAgent[]>(agents)
-  const [availableMembers, setAvailableMembers] = useState<CollaborationMember[]>(members)
-  const [optionsLoading, setOptionsLoading] = useState(true)
-  const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([])
+  const projectId = project.id
+  const optionsResource = useMemo(
+    () =>
+      createAsyncResource('automatic-processing-options', async () => {
+        const [groups, agents, members] = await Promise.all([
+          api.projects.listCollaborationGroups?.(projectId) ?? [],
+          api.agents.list(projectId),
+          api.members.list(projectId),
+        ])
+        return { groups, agents, members }
+      }),
+    [api, projectId]
+  )
+  const optionsSnapshot = useSyncExternalStore(
+    optionsResource.subscribe,
+    optionsResource.getSnapshot,
+    optionsResource.getSnapshot
+  )
+  const optionsLoading = optionsSnapshot.status === 'idle' || optionsSnapshot.status === 'loading'
+  const [agentSnapshot, setAgentSnapshot] = useState(() => ({
+    resource: optionsResource,
+    catalog: optionsSnapshot.data,
+    source: agents,
+    value: agents,
+  }))
+  if (
+    agentSnapshot.resource !== optionsResource ||
+    agentSnapshot.catalog !== optionsSnapshot.data
+  ) {
+    setAgentSnapshot({
+      resource: optionsResource,
+      catalog: optionsSnapshot.data,
+      source: agents,
+      value: optionsSnapshot.data?.agents ?? agents,
+    })
+  } else if (agentSnapshot.source !== agents) {
+    setAgentSnapshot({ ...agentSnapshot, source: agents, value: agents })
+  }
+  const availableAgents = agentSnapshot.value
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT)
   const [editing, setEditing] = useState(false)
-  const [targetPickerOpen, setTargetPickerOpen] = useState(false)
-  const [targetQuery, setTargetQuery] = useState('')
-  const [hooksLoading, setHooksLoading] = useState(false)
+  const [pendingRemoval, setPendingRemoval] = useState<WorkspaceAutomationRule | null>(null)
   const [saving, setSaving] = useState(false)
   const [actionError, setError] = useState('')
-  const [optionsError, setOptionsError] = useState('')
-  const [hooksError, setHooksError] = useState('')
-  const translateRef = useRef(translate)
-  translateRef.current = translate
+  const [cronError, setCronError] = useState('')
+  const [hooksRevision, setHooksRevision] = useState(0)
   const needsHooks = editing && draft.trigger === 'external'
+  const incomingHooksApi = api.incomingHooks
+  const hookScope = useMemo(
+    () => ({ api, incomingHooksApi, projectId }),
+    [api, incomingHooksApi, projectId]
+  )
+  const hooksResource = useMemo(
+    () =>
+      createAsyncResource(
+        'automatic-processing-hooks',
+        async () => ({
+          hooks: await hookScope.incomingHooksApi!.list(hookScope.projectId),
+          readId: Symbol('incoming-hooks-read'),
+        }),
+        { refreshOnSubscribe: true }
+      ),
+    [hookScope]
+  )
+  const subscribeHooks = useCallback(
+    (listener: () => void) => hooksResource.subscribe(listener, hooksRevision),
+    [hooksResource, hooksRevision]
+  )
+  const hooksEnabled = needsHooks && Boolean(incomingHooksApi)
+  const hooksSnapshot = useSyncExternalStore(
+    hooksEnabled ? subscribeHooks : subscribeIdleResource,
+    hooksResource.getSnapshot,
+    hooksResource.getSnapshot
+  )
+  const hooks = hooksSnapshot.data?.hooks ?? []
+  const hooksLoading =
+    hooksEnabled && (hooksSnapshot.status === 'idle' || hooksSnapshot.status === 'loading')
+  const dataError = (cause: unknown) =>
+    cause instanceof Error
+      ? cause.message
+      : translate('todo.automatic_processing_load_failed', '加载自动处理失败')
+  const optionsError = optionsSnapshot.status === 'error' ? dataError(optionsSnapshot.error) : ''
+  const hooksError =
+    hooksEnabled && hooksSnapshot.status === 'error' ? dataError(hooksSnapshot.error) : ''
+  const [formScope, setFormScope] = useState(optionsResource)
+  if (formScope !== optionsResource) {
+    setFormScope(optionsResource)
+    setDraft(EMPTY_DRAFT)
+    setEditing(false)
+    setPendingRemoval(null)
+    setError('')
+    setCronError('')
+  }
+  const [handledHooksRead, setHandledHooksRead] = useState<symbol>()
+  if (
+    hooksEnabled &&
+    hooksSnapshot.status === 'ready' &&
+    hooksSnapshot.data &&
+    handledHooksRead !== hooksSnapshot.data.readId
+  ) {
+    setHandledHooksRead(hooksSnapshot.data.readId)
+    const hook = hooks[0]
+    if (hook && !draft.hookId)
+      setDraft({ ...draft, hookId: hook.id, eventType: eventTypesForHook(hook)[0] ?? '' })
+  }
   const error =
     actionError ||
     optionsError ||
-    (needsHooks && hooksError) ||
     (rulesError
       ? rulesError instanceof Error
         ? rulesError.message
@@ -134,96 +217,25 @@ export function ProjectAutomaticProcessing({
         ? translate('todo.automatic_processing_unavailable', '当前项目暂不支持自动处理。')
         : '')
   const canManage = project.access_role === 'Owner' || project.access_role === 'Maintainer'
-
-  useEffect(() => {
-    setDraft(EMPTY_DRAFT)
+  const closeEditor = () => {
+    if (saving) return
+    setCronError('')
     setEditing(false)
-    setHooks([])
-    setHooksError('')
-    setError('')
-  }, [api, project.id])
+    setDraft(EMPTY_DRAFT)
+  }
+  const editorRef = useDialogKeyboard<HTMLFormElement>(closeEditor, editing)
 
-  useEffect(() => {
-    let active = true
-    setGroups([])
-    setAvailableMembers([])
-    setOptionsLoading(true)
-    setOptionsError('')
-    void Promise.all([
-      api.projects.listCollaborationGroups?.(project.id) ?? [],
-      api.agents.list(project.id),
-      api.members.list(project.id),
-    ])
-      .then(([nextGroups, nextAgents, nextMembers]) => {
-        if (!active) return
-        setGroups(nextGroups)
-        setAvailableAgents(nextAgents)
-        setAvailableMembers(nextMembers)
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setOptionsError(
-          cause instanceof Error
-            ? cause.message
-            : translateRef.current('todo.automatic_processing_load_failed', '加载自动处理失败')
-        )
-      })
-      .finally(() => {
-        if (active) setOptionsLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project.id])
+  const projectRefresh = useProjectSettingsRefresh(api, project.id, onProjectChange)
 
-  useEffect(() => {
-    if (!needsHooks || !api.incomingHooks) {
-      setHooksLoading(false)
-      return
-    }
-    let active = true
-    setHooksLoading(true)
-    setHooksError('')
-    void api.incomingHooks
-      .list(project.id)
-      .then(nextHooks => {
-        if (!active) return
-        setHooks(nextHooks)
-        const hook = nextHooks[0]
-        if (hook)
-          setDraft(current =>
-            current.hookId
-              ? current
-              : {
-                  ...current,
-                  hookId: hook.id,
-                  eventType: eventTypesForHook(hook)[0] ?? '',
-                }
-          )
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setHooksError(
-          cause instanceof Error
-            ? cause.message
-            : translateRef.current('todo.automatic_processing_load_failed', '加载自动处理失败')
-        )
-      })
-      .finally(() => {
-        if (active) setHooksLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api.incomingHooks, project.id, needsHooks])
-
-  useEffect(() => {
-    setAvailableAgents(agents)
-  }, [agents])
+  async function reloadAfterMutation() {
+    if (!optionsResource.hasSubscribers()) return
+    await projectRefresh.refresh()
+    if (optionsResource.hasSubscribers()) await load()
+  }
 
   const targetOptions = useMemo(
     () => ({
-      human: availableMembers.map(member => ({
+      human: (optionsSnapshot.data?.members ?? []).map(member => ({
         id: String(member.user_id),
         name: member.user_name,
       })),
@@ -231,12 +243,12 @@ export function ProjectAutomaticProcessing({
         id: agent.id,
         name: agent.name,
       })),
-      collaboration_group: groups.map(group => ({
+      collaboration_group: (optionsSnapshot.data?.groups ?? []).map(group => ({
         id: group.id,
         name: group.name,
       })),
     }),
-    [availableAgents, groups, availableMembers]
+    [availableAgents, optionsSnapshot.data]
   )
   const targetAvailable = targetOptions[draft.targetKind].some(
     option => option.id === draft.targetId
@@ -249,10 +261,6 @@ export function ProjectAutomaticProcessing({
   const selectedTargetName =
     targetOptions[draft.targetKind].find(option => option.id === draft.targetId)?.name ??
     translate('common.select', '请选择')
-  const normalizedTargetQuery = targetQuery.trim().toLocaleLowerCase()
-  const filteredTargets = targetOptions[draft.targetKind].filter(option =>
-    option.name.toLocaleLowerCase().includes(normalizedTargetQuery)
-  )
   const targetKinds = [
     {
       kind: 'human',
@@ -289,13 +297,13 @@ export function ProjectAutomaticProcessing({
       ? translate('todo.trigger_issue_created', 'Issue 创建后')
       : draft.trigger === 'tag_added'
         ? draft.tag.trim()
-          ? `${translate('todo.trigger_tag_added', '添加 Tag 后')} · ${draft.tag.trim()}`
-          : translate('todo.trigger_tag_added', '添加指定 Tag 后')
+          ? `${translate('todo.trigger_tag_added', '添加标签后')} · ${draft.tag.trim()}`
+          : translate('todo.trigger_tag_added', '添加指定标签后')
         : draft.trigger === 'status_changed'
           ? statusTriggerLabel(draft)
           : draft.trigger === 'schedule'
             ? draft.cronExpression.trim()
-              ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(draft.cronExpression, locale)}`
+              ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(draft.cronExpression, locale, draft.workdayOnly)}`
               : translate('todo.trigger_schedule', '按时间定期处理')
             : draft.eventType
               ? eventLabel(draft.eventType, locale)
@@ -312,6 +320,7 @@ export function ProjectAutomaticProcessing({
   )
 
   function updateDraft(patch: Partial<AutomaticProcessingDraft>) {
+    if (patch.cronExpression !== undefined || patch.trigger !== undefined) setCronError('')
     setDraft(current => ({
       ...current,
       ...patch,
@@ -337,8 +346,6 @@ export function ProjectAutomaticProcessing({
       targetKind,
       targetId: target.id,
     })
-    setTargetPickerOpen(false)
-    setTargetQuery('')
     setEditing(true)
     setError('')
   }
@@ -409,7 +416,8 @@ export function ProjectAutomaticProcessing({
       eventType,
       eventConfig,
       cronExpression: isSchedule ? value.cronExpression.trim() : null,
-      timezone: 'Asia/Shanghai',
+      workdayOnly: isSchedule && value.workdayOnly,
+      timezone: value.timezone,
       targetKind: value.targetKind,
       targetId: value.targetId,
       executionDeviceId: null,
@@ -419,6 +427,7 @@ export function ProjectAutomaticProcessing({
   }
 
   async function save() {
+    if (!canManage) return
     if (!valid || !api.automations) return
     setSaving(true)
     setError('')
@@ -432,22 +441,24 @@ export function ProjectAutomaticProcessing({
       } else {
         await api.automations.create(project.id, input)
       }
+      await reloadAfterMutation()
+      if (!optionsResource.hasSubscribers()) return
       setEditing(false)
       setDraft(EMPTY_DRAFT)
-      await load()
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : translate('todo.automatic_processing_save_failed', '保存自动处理失败')
-      )
+      if (!optionsResource.hasSubscribers()) return
+      const failure = automaticProcessingSaveError(saveError, translate)
+      if (draft.trigger === 'schedule' && failure.cronInvalid) {
+        setCronError(failure.message)
+        setError('')
+      } else setError(failure.message)
     } finally {
       setSaving(false)
     }
   }
 
   async function toggle(rule: WorkspaceAutomationRule) {
-    if (!api.automations) return
+    if (!api.automations || !canManage) return
     const ruleDraft = draftFromRule(rule)
     setSaving(true)
     setError('')
@@ -456,8 +467,9 @@ export function ProjectAutomaticProcessing({
         ...inputFromDraft({ ...ruleDraft, enabled: !ruleDraft.enabled }),
         version: rule.version,
       })
-      await load()
+      await reloadAfterMutation()
     } catch (toggleError) {
+      if (!optionsResource.hasSubscribers()) return
       setError(
         toggleError instanceof Error
           ? toggleError.message
@@ -469,22 +481,17 @@ export function ProjectAutomaticProcessing({
   }
 
   async function remove(rule: WorkspaceAutomationRule) {
-    if (!api.automations) return
+    if (!api.automations || !canManage) return
     setSaving(true)
     setError('')
     try {
       await api.automations.remove(project.id, rule.id)
+      if (!optionsResource.hasSubscribers()) return
       if (draft.id === rule.id) {
         setEditing(false)
         setDraft(EMPTY_DRAFT)
       }
-      await load()
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error
-          ? removeError.message
-          : translate('todo.automatic_processing_delete_failed', '删除自动处理失败')
-      )
+      await reloadAfterMutation()
     } finally {
       setSaving(false)
     }
@@ -515,7 +522,31 @@ export function ProjectAutomaticProcessing({
       testId="collaboration-project-automatic-processing-page"
       title={translate('todo.automatic_processing', '自动处理')}
     >
+      {pendingRemoval ? (
+        <ConfirmationDialog
+          title={translate('todo.delete_automatic_rule', '删除自动处理规则')}
+          subject={pendingRemoval.name}
+          description={translate(
+            'todo.delete_automatic_rule_description',
+            '删除后将停止此规则的后续自动处理，且无法恢复。'
+          )}
+          labels={{
+            cancel: translate('common.cancel', '取消'),
+            confirm: translate('common.delete', '删除'),
+            pending: translate('common.deleting', '删除中…'),
+            failed: translate('todo.automatic_processing_delete_failed', '删除自动处理失败'),
+          }}
+          testIdPrefix="automatic-processing-delete"
+          onClose={() => setPendingRemoval(null)}
+          onConfirm={() => remove(pendingRemoval)}
+        />
+      ) : null}
       <div className="space-y-4" data-testid="automatic-processing">
+        <ProjectSettingsRefreshFeedback
+          {...projectRefresh}
+          testId="automatic-processing-project-refresh"
+          translate={translate}
+        />
         {loading ? (
           <p
             className="py-8 text-center text-sm text-text-muted"
@@ -527,7 +558,10 @@ export function ProjectAutomaticProcessing({
           <>
             {error ? (
               <div className="collaboration-alert" role="alert">
-                {error}
+                {requestFailureMessage(
+                  error,
+                  translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
+                )}
               </div>
             ) : null}
 
@@ -543,7 +577,7 @@ export function ProjectAutomaticProcessing({
                         : ruleDraft.trigger === 'status_changed'
                           ? statusTriggerLabel(ruleDraft)
                           : ruleDraft.trigger === 'schedule'
-                            ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(ruleDraft.cronExpression, locale)}`
+                            ? `${translate('todo.trigger_schedule', '按时间定期处理')} · ${scheduleLabel(ruleDraft.cronExpression, locale, ruleDraft.workdayOnly)}`
                             : eventLabel(ruleDraft.eventType, locale)
                   const targetName = rule.targetName
                   return (
@@ -565,7 +599,7 @@ export function ProjectAutomaticProcessing({
                           {rule.name}
                         </strong>
                         <span className="mt-0.5 block truncate text-xs text-text-secondary">
-                          {triggerLabel} → {targetName}
+                          {triggerLabel} · {targetKindLabel[rule.targetKind]} · {targetName}
                         </span>
                       </button>
                       {canManage ? (
@@ -579,7 +613,7 @@ export function ProjectAutomaticProcessing({
                           />
                           <button
                             aria-label={translate('common.edit', '编辑')}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
+                            className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-text-secondary hover:bg-muted"
                             data-testid={`automatic-processing-edit-${rule.id}`}
                             onClick={() => {
                               setDraft(ruleDraft)
@@ -592,10 +626,10 @@ export function ProjectAutomaticProcessing({
                           </button>
                           <button
                             aria-label={translate('common.delete', '删除')}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                            className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
                             data-testid={`automatic-processing-delete-${rule.id}`}
                             disabled={saving}
-                            onClick={() => void remove(rule)}
+                            onClick={() => setPendingRemoval(rule)}
                             type="button"
                           >
                             <Trash2 aria-hidden="true" className="h-4 w-4" />
@@ -617,23 +651,13 @@ export function ProjectAutomaticProcessing({
 
       {editing ? (
         <div className="collaboration-dialog-backdrop !bg-black/20">
-          <form
+          <DialogForm
+            ref={editorRef}
+            tabIndex={-1}
             aria-labelledby="automatic-processing-dialog-title"
             aria-modal="true"
             className="collaboration-dialog flex max-h-[calc(100vh-48px)] w-full max-w-[600px] flex-col overflow-hidden !rounded-2xl !p-0 !shadow-lg"
             data-testid="automatic-processing-form"
-            onKeyDown={event => {
-              if (event.key === 'Escape' && !saving) {
-                if (targetPickerOpen) {
-                  event.stopPropagation()
-                  setTargetPickerOpen(false)
-                  setTargetQuery('')
-                  return
-                }
-                setEditing(false)
-                setDraft(EMPTY_DRAFT)
-              }
-            }}
             onSubmit={event => {
               event.preventDefault()
               void save()
@@ -642,306 +666,237 @@ export function ProjectAutomaticProcessing({
           >
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
               <h2 className="heading-small !m-0" id="automatic-processing-dialog-title">
-                {draft.id
-                  ? translate('todo.edit_automatic_processing', '编辑自动处理')
-                  : translate('todo.create_automatic_processing', '新建自动处理')}
+                {!canManage
+                  ? translate('todo.view_automatic_processing', '查看自动处理')
+                  : draft.id
+                    ? translate('todo.edit_automatic_processing', '编辑自动处理')
+                    : translate('todo.create_automatic_processing', '新建自动处理')}
               </h2>
               <button
+                data-testid="automatic-processing-close"
                 aria-label={translate('common.close', '关闭')}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
+                className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-text-secondary hover:bg-muted"
                 disabled={saving}
-                onClick={() => {
-                  setTargetPickerOpen(false)
-                  setTargetQuery('')
-                  setEditing(false)
-                  setDraft(EMPTY_DRAFT)
-                }}
+                onClick={closeEditor}
                 type="button"
               >
                 <X aria-hidden="true" className="h-4 w-4" />
               </button>
             </header>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
-              <div
-                className="rounded-xl border border-border bg-muted/40 px-4 py-3"
-                data-testid="automatic-processing-preview"
-              >
-                <p className="text-xs font-medium text-text-secondary">
-                  {translate('todo.rule_preview', '规则预览')}
-                </p>
-                <p className="mt-1 text-sm font-medium text-text-primary">
-                  {triggerPreview}
-                  <span className="mx-2 text-text-muted">→</span>
-                  {selectedTargetName}
-                  <span className="ml-1 font-normal text-text-secondary">
-                    · {targetKindLabel[draft.targetKind]}
-                  </span>
-                </p>
-              </div>
-
-              <AutomaticProcessingTriggerFields
-                draft={draft}
-                updateDraft={updateDraft}
-                selectTrigger={selectTrigger}
-                locale={locale}
-                translate={translate}
-                hooks={hooks}
-                hooksLoading={hooksLoading}
-                hasIncomingHooks={Boolean(api.incomingHooks)}
-                statuses={statuses}
-              />
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium text-text-primary">
-                  {translate('todo.assign_to', '交给')}
-                </h3>
+            <div
+              className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+              data-testid="automatic-processing-body"
+            >
+              <fieldset disabled={!canManage} className="m-0 min-w-0 space-y-5 border-0 px-5 py-5">
+                {!canManage ? (
+                  <p className="text-sm text-text-secondary">
+                    {translate(
+                      'todo.automatic_rule_read_only',
+                      '只读：你可以查看规则，只有项目管理者可以修改。'
+                    )}
+                  </p>
+                ) : null}
                 <div
-                  className="grid grid-cols-3 gap-2"
-                  data-testid="automatic-processing-target-kinds"
+                  className="rounded-xl border border-border bg-muted/40 px-4 py-3"
+                  data-testid="automatic-processing-preview"
                 >
-                  {targetKinds.map(targetKind => {
-                    const selected = draft.targetKind === targetKind.kind
-                    const available = targetKind.options.length > 0
-                    const Icon = targetKind.icon
-                    return (
-                      <button
-                        aria-pressed={selected}
-                        className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          selected
-                            ? 'automatic-processing-selected-soft'
-                            : available
-                              ? 'border-border hover:bg-muted/60'
-                              : 'cursor-not-allowed border-border/60'
-                        }`}
-                        data-testid={`automatic-processing-target-kind-${targetKind.kind}`}
-                        disabled={!available}
-                        key={targetKind.kind}
-                        onClick={() => {
-                          const firstTarget = targetKind.options[0]
-                          updateDraft({
-                            targetKind: targetKind.kind,
-                            targetId: firstTarget?.id ?? '',
-                          })
-                          setTargetPickerOpen(false)
-                          setTargetQuery('')
-                        }}
-                        type="button"
-                      >
-                        <Icon
-                          aria-hidden="true"
-                          className={`h-4 w-4 shrink-0 ${
-                            selected ? 'automatic-processing-selected-icon' : 'text-text-secondary'
-                          }`}
-                        />
-                        <span className="min-w-0">
-                          <strong
-                            className={`block truncate text-sm font-medium ${
-                              available ? 'text-text-primary' : 'text-text-muted'
-                            }`}
-                          >
-                            {targetKind.label}
-                          </strong>
-                          <span
-                            className={`block text-xs ${
-                              available ? 'text-text-secondary' : 'text-text-muted'
-                            }`}
-                          >
-                            {available
-                              ? locale === 'zh-CN'
-                                ? `${targetKind.options.length} 个可用`
-                                : `${targetKind.options.length} available`
-                              : translate('common.not_configured', '未配置')}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="relative">
-                  <button
-                    aria-expanded={targetPickerOpen}
-                    aria-haspopup="listbox"
-                    className={`automatic-processing-selected flex min-h-[68px] w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-shadow ${
-                      targetPickerOpen ? 'automatic-processing-picker-open' : ''
-                    }`}
-                    data-testid="automatic-processing-target"
-                    onClick={() => {
-                      setTargetPickerOpen(open => !open)
-                      setTargetQuery('')
-                    }}
-                    type="button"
-                  >
-                    <span className="automatic-processing-selected-avatar flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                      <SelectedTargetIcon aria-hidden="true" className="h-4 w-4" />
+                  <p className="text-xs font-medium text-text-secondary">
+                    {translate('todo.rule_preview', '规则预览')}
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-text-primary">
+                    {triggerPreview}
+                    <span className="mx-2 text-text-muted">→</span>
+                    {selectedTargetName}
+                    <span className="ml-1 font-normal text-text-secondary">
+                      · {targetKindLabel[draft.targetKind]}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <strong className="block truncate text-sm font-medium text-text-primary">
-                        {selectedTargetName}
-                      </strong>
-                      <span className="mt-0.5 block text-xs text-text-secondary">
-                        {targetKindLabel[draft.targetKind]}
-                      </span>
-                    </span>
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
-                        targetPickerOpen ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </button>
-
-                  {targetPickerOpen ? (
-                    <div
-                      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
-                      data-testid="automatic-processing-target-picker"
-                    >
-                      <div className="border-b border-border p-2">
-                        <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 keyboard:focus-within:border-focus">
-                          <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-                          <input
-                            autoFocus
-                            className="!h-auto !min-h-0 min-w-0 flex-1 !border-0 !bg-transparent !p-0 text-sm text-text-primary outline-none placeholder:text-text-muted"
-                            data-testid="automatic-processing-target-search"
-                            onChange={event => setTargetQuery(event.target.value)}
-                            placeholder={translate(
-                              'todo.search_processing_target',
-                              `搜索${targetKindLabel[draft.targetKind]}`
-                            )}
-                            value={targetQuery}
-                          />
-                        </label>
-                      </div>
-                      <div
-                        aria-label={translate('todo.processing_target', '处理对象')}
-                        className="max-h-52 overflow-y-auto p-2"
-                        role="listbox"
-                      >
-                        {filteredTargets.map(option => {
-                          const selected = draft.targetId === option.id
-                          return (
-                            <button
-                              aria-selected={selected}
-                              className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
-                              data-testid={`automatic-processing-target-option-${draft.targetKind}-${option.id}`}
-                              key={option.id}
-                              onClick={() => {
-                                updateDraft({ targetId: option.id })
-                                setTargetPickerOpen(false)
-                                setTargetQuery('')
-                              }}
-                              role="option"
-                              type="button"
-                            >
-                              <SelectedTargetIcon
-                                aria-hidden="true"
-                                className="h-4 w-4 shrink-0 text-text-secondary"
-                              />
-                              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
-                                {option.name}
-                              </span>
-                              {selected ? (
-                                <Check
-                                  aria-hidden="true"
-                                  className="automatic-processing-selected-icon h-4 w-4 shrink-0"
-                                />
-                              ) : null}
-                            </button>
-                          )
-                        })}
-                        {!filteredTargets.length ? (
-                          <p className="px-3 py-6 text-center text-sm text-text-secondary">
-                            {translate('todo.no_matching_processing_target', '没有匹配的处理对象')}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
+                  </p>
                 </div>
-              </section>
 
-              <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-text-primary"
-                  htmlFor="automatic-processing-prompt"
-                >
-                  {translate('todo.automatic_processing_prompt', '提示词（可选）')}
-                </label>
-                <Textarea
-                  aria-describedby="automatic-processing-prompt-hint"
-                  data-testid="automatic-processing-prompt"
-                  disabled={saving}
-                  id="automatic-processing-prompt"
-                  maxLength={100000}
-                  onChange={event => updateDraft({ prompt: event.target.value })}
-                  rows={4}
-                  value={draft.prompt}
+                <AutomaticProcessingTriggerFields
+                  cronError={cronError}
+                  draft={draft}
+                  updateDraft={updateDraft}
+                  selectTrigger={selectTrigger}
+                  refreshHooks={() => setHooksRevision(value => value + 1)}
+                  locale={locale}
+                  translate={translate}
+                  hooks={hooks}
+                  hooksLoading={hooksLoading}
+                  hooksError={hooksError}
+                  hasIncomingHooks={Boolean(api.incomingHooks)}
+                  statuses={statuses}
                 />
+
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium text-text-primary">
+                    {translate('todo.assign_to', '交给')}
+                  </h3>
+                  <div
+                    className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-2"
+                    data-testid="automatic-processing-target-kinds"
+                  >
+                    {targetKinds.map(targetKind => {
+                      const selected = draft.targetKind === targetKind.kind
+                      const available = targetKind.options.length > 0
+                      const Icon = targetKind.icon
+                      return (
+                        <button
+                          aria-pressed={selected}
+                          className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                            selected
+                              ? 'automatic-processing-selected-soft'
+                              : available
+                                ? 'border-border hover:bg-muted/60'
+                                : 'cursor-not-allowed border-border/60'
+                          }`}
+                          data-testid={`automatic-processing-target-kind-${targetKind.kind}`}
+                          disabled={!available}
+                          key={targetKind.kind}
+                          onClick={() => {
+                            const firstTarget = targetKind.options[0]
+                            updateDraft({
+                              targetKind: targetKind.kind,
+                              targetId: firstTarget?.id ?? '',
+                            })
+                          }}
+                          type="button"
+                        >
+                          <Icon
+                            aria-hidden="true"
+                            className={`h-4 w-4 shrink-0 ${
+                              selected
+                                ? 'automatic-processing-selected-icon'
+                                : 'text-text-secondary'
+                            }`}
+                          />
+                          <span className="min-w-0">
+                            <strong
+                              className={`block break-words text-sm font-medium ${
+                                available ? 'text-text-primary' : 'text-text-muted'
+                              }`}
+                            >
+                              {targetKind.label}
+                            </strong>
+                            <span
+                              className={`block text-xs ${
+                                available ? 'text-text-secondary' : 'text-text-muted'
+                              }`}
+                            >
+                              {available
+                                ? locale === 'zh-CN'
+                                  ? `${targetKind.options.length} 个可用`
+                                  : `${targetKind.options.length} available`
+                                : translate('common.not_configured', '未配置')}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <AutomaticProcessingTargetPicker
+                    key={draft.targetKind}
+                    kind={draft.targetKind}
+                    kindLabel={targetKindLabel[draft.targetKind]}
+                    icon={SelectedTargetIcon}
+                    options={targetOptions[draft.targetKind]}
+                    selectedId={draft.targetId}
+                    onSelect={targetId => updateDraft({ targetId })}
+                    translate={translate}
+                  />
+                </section>
+
+                {draft.targetKind !== 'human' ||
+                draft.trigger === 'schedule' ||
+                draft.trigger === 'external' ? (
+                  <div className="space-y-2">
+                    <label
+                      className="block text-sm font-medium text-text-primary"
+                      htmlFor="automatic-processing-prompt"
+                    >
+                      {translate(
+                        draft.targetKind === 'human'
+                          ? 'todo.automatic_processing_issue_description'
+                          : 'todo.automatic_processing_prompt',
+                        draft.targetKind === 'human' ? '新 Issue 说明（可选）' : '提示词（可选）'
+                      )}
+                    </label>
+                    <Textarea
+                      aria-describedby="automatic-processing-prompt-hint"
+                      data-testid="automatic-processing-prompt"
+                      disabled={saving}
+                      id="automatic-processing-prompt"
+                      maxLength={100000}
+                      onChange={event => updateDraft({ prompt: event.target.value })}
+                      rows={4}
+                      value={draft.prompt}
+                    />
+                    <p
+                      className="text-xs leading-5 text-text-secondary"
+                      id="automatic-processing-prompt-hint"
+                    >
+                      {draft.targetKind === 'human'
+                        ? translate(
+                            'todo.automatic_processing_human_description_hint',
+                            '触发后创建新 Issue，并将此内容写入事项说明，再指派给所选成员。'
+                          )
+                        : draft.targetKind === 'collaboration_group'
+                          ? translate(
+                              'todo.automatic_processing_group_prompt_hint',
+                              '新建 Issue 时写入事项说明。已有 Issue 的处理要求请写在 Issue 内容或小组协作规则中。'
+                            )
+                          : translate(
+                              'todo.automatic_processing_prompt_hint',
+                              '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+                            )}
+                    </p>
+                  </div>
+                ) : null}
                 <p
                   className="text-xs leading-5 text-text-secondary"
-                  id="automatic-processing-prompt-hint"
+                  data-testid="automatic-processing-routing-hint"
                 >
-                  {translate(
-                    'todo.automatic_processing_prompt_hint',
-                    '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
-                  )}
+                  {draft.targetKind === 'human'
+                    ? translate(
+                        'todo.automatic_processing_human_hint',
+                        '触发后将 Issue 指派给所选成员。成员按 Issue 内容处理，此规则不会启动 AI 执行。'
+                      )
+                    : draft.targetKind === 'collaboration_group'
+                      ? translate(
+                          'todo.automatic_processing_group_runner_hint',
+                          '由小组负责人协调处理；AI 执行时使用小组与成员已配置的运行方式。'
+                        )
+                      : translate(
+                          'todo.automatic_processing_agent_runner_hint',
+                          'AI 按智能体已保存的执行环境与模型策略运行，同一 Issue 的后续执行会沿用其绑定关系。'
+                        )}
                 </p>
-              </div>
 
-              <p className="text-xs leading-5 text-text-secondary">
-                {translate(
-                  'todo.automatic_processing_runner_hint',
-                  '执行时从项目的可用设备池中自动选择设备；同一 Issue 后续执行会优先继续使用原设备。'
-                )}
-              </p>
-
-              {error ? (
-                <div className="collaboration-alert" role="alert">
-                  {error}
-                </div>
-              ) : null}
+                {error ? (
+                  <div className="collaboration-alert" role="alert">
+                    {requestFailureMessage(
+                      error,
+                      translate(
+                        'todo.settings_connection_failed',
+                        '无法连接服务，请检查连接后重试。'
+                      )
+                    )}
+                  </div>
+                ) : null}
+              </fieldset>
             </div>
 
-            <footer className="flex min-h-14 shrink-0 items-center !justify-between gap-4 border-t border-border px-5 py-3">
-              <label className="!flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-text-secondary">
-                <input
-                  checked={draft.enabled}
-                  className="automatic-processing-checkbox !h-4 !min-h-0 !w-4 shrink-0 rounded border-border !p-0"
-                  data-testid="automatic-processing-enabled"
-                  disabled={saving}
-                  onChange={event => updateDraft({ enabled: event.target.checked })}
-                  type="checkbox"
-                />
-                {translate('todo.enable_after_creation', '创建后立即启用')}
-              </label>
-              <div className="flex items-center gap-2">
-                <button
-                  className="h-8 rounded-lg border border-border px-3 text-sm text-text-secondary hover:bg-muted"
-                  data-testid="automatic-processing-cancel"
-                  disabled={saving}
-                  onClick={() => {
-                    setEditing(false)
-                    setDraft(EMPTY_DRAFT)
-                  }}
-                  type="button"
-                >
-                  {translate('common.cancel', '取消')}
-                </button>
-                <button
-                  className="collaboration-primary-button"
-                  data-testid="automatic-processing-save"
-                  disabled={!valid || saving}
-                  type="submit"
-                >
-                  {saving
-                    ? translate('common.saving', '保存中…')
-                    : draft.id
-                      ? translate('common.save', '保存')
-                      : translate('todo.create_automatic_processing', '创建自动处理')}
-                </button>
-              </div>
-            </footer>
-          </form>
+            <AutomaticProcessingDialogFooter
+              draft={draft}
+              saving={saving}
+              canManage={canManage}
+              translate={translate}
+              onEnabledChange={enabled => updateDraft({ enabled })}
+              onClose={closeEditor}
+              valid={valid}
+            />
+          </DialogForm>
         </div>
       ) : null}
     </ProjectSettingsPage>

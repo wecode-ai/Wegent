@@ -16,6 +16,8 @@ use serde_json::{Map, Value, json};
 use super::event::ExecutionEvent;
 use super::py_json::{orjson_dumps, python_dumps, utc_isoformat};
 
+#[path = "block_index.rs"]
+mod block_index;
 #[path = "identified_text.rs"]
 mod identified_text;
 
@@ -43,6 +45,14 @@ pub(crate) struct LoadedBlocks {
 
 fn set_ex_options() -> SetOptions {
     SetOptions::default().with_expiration(SetExpiration::Seconds(STREAMING_TTL))
+}
+
+/// `settings.STREAMING_REDIS_TTL` (300 seconds): the context-metrics snapshot
+/// uses the shorter cache TTL, unlike the one-hour streaming state.
+pub(crate) const CONTEXT_METRICS_TTL: u64 = 300;
+
+fn context_metrics_options() -> SetOptions {
+    SetOptions::default().with_expiration(SetExpiration::Seconds(CONTEXT_METRICS_TTL))
 }
 
 pub(crate) fn streaming_key(subtask_id: i64) -> String {
@@ -148,6 +158,9 @@ pub(crate) async fn touch_task_streaming_activity<R: Redis>(
 }
 
 /// `save_context_metrics`: cache the latest context-metrics snapshot.
+///
+/// The source passes `settings.STREAMING_REDIS_TTL` (300 seconds), so this key
+/// expires earlier than the one-hour streaming state.
 pub(crate) async fn save_context_metrics<R: Redis>(
     redis: &R,
     subtask_id: i64,
@@ -155,9 +168,13 @@ pub(crate) async fn save_context_metrics<R: Redis>(
 ) -> RedisResult<()> {
     let payload = orjson_dumps(context_metrics);
     redis
-        .set_with(context_metrics_key(subtask_id), payload, set_ex_options())
-        .await?;
-    Ok(())
+        .set_with(
+            context_metrics_key(subtask_id),
+            payload,
+            context_metrics_options(),
+        )
+        .await
+        .map(|_| ())
 }
 
 /// `publish_callback_event`: publish the serialized event to the subtask's
@@ -170,6 +187,15 @@ pub(crate) async fn publish_callback_event<R: Redis>(
     let channel = callback_channel(subtask_id);
     let payload = python_dumps(&event.to_value());
     redis.publish(channel, payload).await
+}
+
+pub(crate) async fn publish_terminal_callback<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+) -> RedisResult<bool> {
+    let key = super::completion::notification_key(event.task_id, event.subtask_id, "callback");
+    let channel = callback_channel(event.subtask_id);
+    super::completion::publish_once(redis, &key, &channel, &python_dumps(&event.to_value())).await
 }
 
 /// `_load_blocks_from_client`: read block metadata and hydrate per-block
@@ -230,6 +256,25 @@ pub(crate) async fn get_blocks<R: Redis>(redis: &R, subtask_id: i64) -> Vec<Map<
         .unwrap_or_default()
 }
 
+/// Load and hydrate one block without transferring the complete block list.
+pub(crate) async fn get_block<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    block_id: &str,
+) -> RedisResult<Option<Map<String, Value>>> {
+    let Some((_, mut block)) = block_index::find(redis, subtask_id, block_id).await? else {
+        return Ok(None);
+    };
+    if let Some(Value::String(content_key)) = block.shift_remove(BLOCK_CONTENT_KEY_FIELD) {
+        let content = redis
+            .get::<_, String>(content_key)
+            .await?
+            .unwrap_or_default();
+        block.insert("content".into(), Value::String(content));
+    }
+    Ok(Some(block))
+}
+
 /// `_finalize_current_text_block` / `_finalize_current_thinking_block`: mark
 /// the current block done.
 ///
@@ -250,27 +295,17 @@ async fn finalize_block_state<R: Redis>(redis: &R, subtask_id: i64, key: &str) -
         return Ok(());
     };
     let blocks_key = blocks_key(subtask_id);
-    let raw = redis.lrange::<_, String>(&blocks_key, 0, -1).await?;
-    let mut found_index = None;
-    let mut serialized = None;
-    for (index, entry) in raw.iter().enumerate() {
-        let Ok(Value::Object(mut block)) = serde_json::from_str::<Value>(entry) else {
-            continue;
-        };
-        if block.get("id").and_then(Value::as_str) == Some(current.as_str()) {
-            block.insert("status".into(), Value::String("done".into()));
-            serialized = Some(python_dumps(&Value::Object(block)));
-            found_index = Some(index as i64);
-            break;
-        }
-    }
-    if let (Some(index), Some(value)) = (found_index, serialized) {
-        redis.lset(&blocks_key, index, value).await?;
-        redis.del(key).await?;
+    if let Some((index, mut block)) = block_index::find(redis, subtask_id, &current).await? {
+        block.insert("status".into(), Value::String("done".into()));
+        redis
+            .lset(&blocks_key, index, python_dumps(&Value::Object(block)))
+            .await?;
         redis.expire(&blocks_key, STREAMING_TTL).await?;
-    } else {
-        redis.del(key).await?;
+        redis
+            .expire(block_index::key(subtask_id), STREAMING_TTL)
+            .await?;
     }
+    redis.del(key).await?;
     Ok(())
 }
 
@@ -314,27 +349,11 @@ pub(crate) async fn add_block<R: Redis>(
         .to_string();
 
     let blocks_key = blocks_key(subtask_id);
-    let raw = redis.lrange::<_, String>(&blocks_key, 0, -1).await?;
-    let mut existing_index = None;
-    let mut existing_block: Option<Map<String, Value>> = None;
-    for (index, entry) in raw.iter().enumerate() {
-        let Ok(Value::Object(candidate)) = serde_json::from_str::<Value>(entry) else {
-            // `json.loads` failure aborts the whole upsert in the source.
-            return Ok(());
-        };
-        if candidate.get("id").and_then(Value::as_str) == Some(block_id.as_str()) {
-            existing_index = Some(index as i64);
-            existing_block = Some(candidate);
-            break;
-        }
-    }
-
-    match existing_index {
-        Some(index) => {
+    match block_index::find(redis, subtask_id, &block_id).await? {
+        Some((index, existing_block)) => {
             let mut to_store = block.clone();
             let content_key = existing_block
-                .as_ref()
-                .and_then(|value| value.get(BLOCK_CONTENT_KEY_FIELD))
+                .get(BLOCK_CONTENT_KEY_FIELD)
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let content_delta = to_store.shift_remove("content_delta");
@@ -351,8 +370,7 @@ pub(crate) async fn add_block<R: Redis>(
                     to_store.insert("content".into(), Value::String(String::new()));
                 } else {
                     let existing_content = existing_block
-                        .as_ref()
-                        .and_then(|value| value.get("content"))
+                        .get("content")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string();
@@ -377,12 +395,16 @@ pub(crate) async fn add_block<R: Redis>(
                 .lset(&blocks_key, index, python_dumps(&Value::Object(to_store)))
                 .await?;
             redis.expire(&blocks_key, STREAMING_TTL).await?;
+            redis
+                .expire(block_index::key(subtask_id), STREAMING_TTL)
+                .await?;
         }
         None => {
-            redis
+            let length = redis
                 .rpush(&blocks_key, (python_dumps(&Value::Object(block.clone())),))
                 .await?;
             redis.expire(&blocks_key, STREAMING_TTL).await?;
+            block_index::record(redis, subtask_id, &block_id, length - 1).await?;
         }
     }
     Ok(())
@@ -426,6 +448,9 @@ pub(crate) async fn add_text_content<R: Redis>(
             redis.expire(&content_key, STREAMING_TTL).await?;
             redis.expire(&blocks_key, STREAMING_TTL).await?;
             redis.expire(&text_key, STREAMING_TTL).await?;
+            redis
+                .expire(block_index::key(subtask_id), STREAMING_TTL)
+                .await?;
         }
         None => {
             // `create_text_block` derives both the id and the timestamp from a
@@ -438,17 +463,18 @@ pub(crate) async fn add_text_content<R: Redis>(
                 BLOCK_CONTENT_KEY_FIELD.into(),
                 Value::String(content_key.clone()),
             );
-            redis
+            let length = redis
                 .rpush(&blocks_key, (python_dumps(&Value::Object(block.clone())),))
                 .await?;
             redis
-                .set_with(&text_key, block_id, set_ex_options())
+                .set_with(&text_key, &block_id, set_ex_options())
                 .await?;
             redis.append(&streaming_key, content).await?;
             redis.expire(&streaming_key, STREAMING_TTL).await?;
             redis.append(&content_key, content).await?;
             redis.expire(&content_key, STREAMING_TTL).await?;
             redis.expire(&blocks_key, STREAMING_TTL).await?;
+            block_index::record(redis, subtask_id, &block_id, length - 1).await?;
         }
     }
     Ok(())
@@ -477,6 +503,9 @@ pub(crate) async fn add_thinking_content<R: Redis>(
             redis.expire(&content_key, STREAMING_TTL).await?;
             redis.expire(&blocks_key, STREAMING_TTL).await?;
             redis.expire(&thinking_key, STREAMING_TTL).await?;
+            redis
+                .expire(block_index::key(subtask_id), STREAMING_TTL)
+                .await?;
         }
         None => {
             let timestamp = now_epoch_ms();
@@ -492,15 +521,16 @@ pub(crate) async fn add_thinking_content<R: Redis>(
                 BLOCK_CONTENT_KEY_FIELD.into(),
                 Value::String(content_key.clone()),
             );
-            redis
+            let length = redis
                 .rpush(&blocks_key, (python_dumps(&Value::Object(block.clone())),))
                 .await?;
             redis
-                .set_with(&thinking_key, block_id, set_ex_options())
+                .set_with(&thinking_key, &block_id, set_ex_options())
                 .await?;
             redis.append(&content_key, content).await?;
             redis.expire(&content_key, STREAMING_TTL).await?;
             redis.expire(&blocks_key, STREAMING_TTL).await?;
+            block_index::record(redis, subtask_id, &block_id, length - 1).await?;
         }
     }
     Ok(())
@@ -576,12 +606,6 @@ pub(crate) async fn add_tool_block<R: Redis>(
     tool_protocol: Option<&str>,
     server_label: Option<&str>,
 ) -> RedisResult<()> {
-    // `add_tool_block` finalizes the current text and thinking blocks itself
-    // (`session.py:930-931`) and then `add_block` repeats the same pair
-    // (`session.py:1041-1042`), so one tool-block upsert reads both keys twice.
-    finalize_current_text_block(redis, subtask_id).await;
-    finalize_current_thinking_block(redis, subtask_id).await;
-
     let mut block = create_tool_block(
         tool_use_id,
         tool_name,
@@ -607,11 +631,21 @@ pub(crate) async fn update_tool_block_status<R: Redis>(
     tool_protocol: Option<&str>,
     server_label: Option<&str>,
 ) -> RedisResult<()> {
-    let blocks = get_blocks(redis, subtask_id).await;
-    let Some(mut existing) = blocks.into_iter().find(|block| {
+    let matches_tool = |block: &Map<String, Value>| {
         block.get("type").and_then(Value::as_str) == Some("tool")
             && block.get("tool_use_id").and_then(Value::as_str) == Some(tool_use_id)
-    }) else {
+    };
+    let indexed = get_block(redis, subtask_id, tool_use_id)
+        .await?
+        .filter(matches_tool);
+    let existing = match indexed {
+        Some(block) => Some(block),
+        None => get_blocks(redis, subtask_id)
+            .await
+            .into_iter()
+            .find(matches_tool),
+    };
+    let Some(mut existing) = existing else {
         return Ok(());
     };
     if let Some(status) = status {
@@ -783,6 +817,7 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     let mut keys = vec![
         streaming_key(subtask_id),
         blocks_key,
+        block_index::key(subtask_id),
         text_block_key(subtask_id),
         thinking_block_key(subtask_id),
         context_metrics_key(subtask_id),
@@ -791,6 +826,32 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     redis.del_many(keys).await?;
     if let Some(task_id) = task_id {
         clear_task_streaming_status(redis, task_id).await?;
+    }
+    Ok(())
+}
+
+/// A late consumer may clean its own keys without clearing a newer turn's marker.
+pub(crate) async fn cleanup_settled_streaming_state<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    task_id: i64,
+) -> RedisResult<()> {
+    cleanup_streaming_state(redis, subtask_id, None).await?;
+    let key = task_streaming_key(task_id);
+    let Some(raw) = redis.get::<_, String>(&key).await? else {
+        return Ok(());
+    };
+    let owner = serde_json::from_str::<Value>(&raw)
+        .ok()
+        .and_then(|value| value.get("subtask_id").and_then(Value::as_i64));
+    if owner == Some(subtask_id) {
+        let _: i64 = redis
+            .eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0",
+                [key],
+                [raw],
+            )
+            .await?;
     }
     Ok(())
 }

@@ -178,3 +178,23 @@ fn role_priorities_map_to_the_role_hierarchy() {
     }
     assert_eq!(role_for_priority(6), None);
 }
+
+/// `collaboration_revocation.execution_permission`'s per-project check
+/// (`project_access_query(db, user_id, project_id)`): the single-project
+/// derived-table aggregate keeps the source's authority classes, so the
+/// permission read is distinguishable from the list CTE. The shared point
+/// statement used by the project-read endpoints keeps its own rendering.
+#[test]
+fn the_permission_check_statement_keeps_the_authority_classes() {
+    let sql = normalize(&super::project_permission_statement(
+        52,
+        8308220868516891581,
+    ));
+    assert!(
+        sql.contains("coalesce(min(CASE WHEN (anon_4.authority = 0) THEN anon_4.priority END)")
+    );
+    assert!(sql.contains("1 AS authority"));
+    assert!(sql.contains("CASE WHEN (CASE WHEN (kinds.user_id = 52"));
+    assert!(sql.contains("3 AS authority"));
+    assert!(!sql.contains("WITH parents AS ("));
+}

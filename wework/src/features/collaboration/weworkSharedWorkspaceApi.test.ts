@@ -238,6 +238,29 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it('reads every my-work page and surfaces provider failures instead of empty success', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const list = vi.mocked(deliveryApi.listMyWork)
+    list
+      .mockResolvedValueOnce({ items: [issue], next_cursor: 'page-2' })
+      .mockResolvedValueOnce({ items: [{ ...issue, id: 'issue-2' }] })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    await expect(api.myWork.list()).resolves.toEqual([
+      { ...issue, task_bindings: [] },
+      { ...issue, id: 'issue-2', task_bindings: [] },
+    ])
+    expect(list).toHaveBeenNthCalledWith(2, { cursor: 'page-2' })
+    list.mockResolvedValueOnce({ items: [], errors: ['Project unavailable'] })
+    await expect(api.myWork.list()).rejects.toThrow('Project unavailable')
+  })
+
+  it('rejects a repeated my-work cursor instead of looping forever', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    vi.mocked(deliveryApi.listMyWork).mockResolvedValue({ items: [issue], next_cursor: 'same' })
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    await expect(api.myWork.list()).rejects.toThrow('pagination did not advance')
+    expect(deliveryApi.listMyWork).toHaveBeenCalledTimes(2)
+  })
   it.each(['renamed', null])(
     'maps atomic tag change target %s to the delivery API',
     async target => {
@@ -373,7 +396,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       },
     })
     await api.projects.archive('project-1', 2)
-    await expect(api.myWork.list()).resolves.toEqual([issue])
+    await expect(api.myWork.list()).resolves.toEqual([{ ...issue, task_bindings: [] }])
 
     await api.issues.list('project-1', { assigneeType: 'user', assigneeId: 8 })
     await expect(
@@ -685,7 +708,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       'update',
       'archive',
     ])
-    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list'])
+    expect(WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS.myWork).toEqual(['list', 'page'])
     expect(WEWORK_DELIVERY_SHARED_WORKSPACE_MISSING_METHODS).toEqual({
       projects: ['importMessages'],
       comments: ['list', 'create'],
@@ -710,7 +733,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'setProjectDefault',
         'selectExecution',
       ],
-      agents: ['list', 'create', 'update'],
+      agents: ['list', 'create', 'update', 'remove'],
     })
     expect('comments' in api).toBe(false)
   })
@@ -1010,6 +1033,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'gitRepositories',
         'projects',
         'myWork',
+        'metrics',
         'milestones',
         'issues',
         'comments',
@@ -1029,6 +1053,16 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       ].sort()
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])
+
+    const metrics = { definition_version: 'collab-v2' }
+    client.get.mockResolvedValueOnce(metrics)
+    await expect(api.metrics.project('project/1')).resolves.toEqual(metrics)
+    expect(client.get).toHaveBeenLastCalledWith(
+      '/v1/cloud-projects/project%2F1/collaboration-metrics'
+    )
+    client.get.mockResolvedValueOnce(metrics)
+    await expect(api.metrics.personal()).resolves.toEqual(metrics)
+    expect(client.get).toHaveBeenLastCalledWith('/v1/collaboration-metrics/me')
 
     await expect(api.workspaces?.list()).resolves.toEqual([mappedWorkspace])
     await expect(api.workspaces?.get('workspace-1')).resolves.toEqual(mappedWorkspace)

@@ -60,13 +60,13 @@ fn column(name: &str, value: &Value) -> Vec<u8> {
 async fn definitions(stream: &mut TcpStream, sequence: &mut u8, row: &Row) {
     for (name, value) in row {
         packet(stream, *sequence, &column(name, value)).await;
-        *sequence += 1;
+        *sequence = sequence.wrapping_add(1);
     }
     packet(stream, *sequence, EOF).await;
-    *sequence += 1;
+    *sequence = sequence.wrapping_add(1);
 }
 
-async fn result(stream: &mut TcpStream, columns: Row, rows: Vec<Row>) {
+async fn result(stream: &mut TcpStream, columns: Row, rows: Vec<Row>, status: u8) {
     packet(stream, 1, &[columns.len() as u8]).await;
     let mut sequence = 2;
     definitions(stream, &mut sequence, &columns).await;
@@ -85,15 +85,16 @@ async fn result(stream: &mut TcpStream, columns: Row, rows: Vec<Row>) {
             }
         }
         packet(stream, sequence, &bytes).await;
-        sequence += 1;
+        sequence = sequence.wrapping_add(1);
     }
-    packet(stream, sequence, EOF).await;
+    packet(stream, sequence, &[0xfe, 0, 0, status, 0]).await;
 }
 
 async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<String>>>) {
     stream.set_nodelay(true).unwrap();
     handshake(&mut stream).await;
     let mut statements = HashMap::new();
+    let mut status = 2;
     while let Some(request) = read_packet(&mut stream).await {
         match request[0] {
             0x01 => return,
@@ -113,7 +114,9 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
                     let parameters = (0..parameters).map(|_| ("?", Value::Null)).collect();
                     definitions(&mut stream, &mut sequence, &parameters).await;
                 }
-                definitions(&mut stream, &mut sequence, &row).await;
+                if !row.is_empty() {
+                    definitions(&mut stream, &mut sequence, &row).await;
+                }
                 statements.insert(id, query);
             }
             0x17 => {
@@ -121,10 +124,25 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
                 let query = &statements[&id];
                 queries.lock().unwrap().push(query.clone());
                 let (columns, results) = rows(query);
-                result(&mut stream, columns, results).await;
+                if columns.is_empty() && query.starts_with("UPDATE ") {
+                    packet(&mut stream, 1, &[0, 1, 0, status, 0, 0, 0]).await;
+                } else {
+                    result(&mut stream, columns, results, status).await;
+                }
             }
             0x19 => {}
-            0x03 | 0x0e => packet(&mut stream, 1, &[0, 0, 0, 2, 0, 0, 0]).await,
+            0x03 => {
+                let sql = String::from_utf8_lossy(&request[1..]);
+                // SQLx checks SERVER_STATUS_IN_TRANS in the BEGIN response.
+                if sql.eq_ignore_ascii_case("BEGIN") {
+                    status = 3;
+                } else if sql.eq_ignore_ascii_case("COMMIT") || sql.eq_ignore_ascii_case("ROLLBACK")
+                {
+                    status = 2;
+                }
+                packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await;
+            }
+            0x0e => packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await,
             command => panic!("unexpected MySQL fixture command: {command}"),
         }
     }
@@ -132,6 +150,7 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
 
 pub struct MysqlRows {
     pub mysql: brz_mysql::MysqlService,
+    pub url: String,
     server: tokio::task::JoinHandle<()>,
     queries: Arc<Mutex<Vec<String>>>,
 }
@@ -169,6 +188,7 @@ impl MysqlRows {
         });
         Self {
             mysql: brz_mysql::MysqlService::connect_lazy(&url).unwrap(),
+            url,
             server,
             queries,
         }

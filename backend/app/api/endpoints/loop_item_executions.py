@@ -35,6 +35,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionHeartbeat,
     LoopItemExecutionListResponse,
     LoopItemExecutionManagerDecision,
+    LoopItemExecutionManagerStatus,
     LoopItemExecutionRuntimeStart,
     LoopItemExecutionView,
 )
@@ -612,6 +613,19 @@ def enqueue_execution_batch(
         should_push_assignment = True
     db.commit()
     if should_push_assignment and assignment_message is not None:
+        logger.info(
+            "Collaboration round recorded project=%s issue=%s execution=%s "
+            "round=%s manager_task=%s assignments=%s execution_status=%s "
+            "execution_sync_state=%s",
+            project_id,
+            values.loop_item_id,
+            manager_execution.id,
+            values.round_id,
+            values.manager_runtime_task_id,
+            len(assignment_activity),
+            manager_execution.status,
+            manager_execution.sync_state,
+        )
         db.refresh(assignment_message)
         push_project_chat_message(
             project_chat_service.to_view(assignment_message, db=db).model_dump(
@@ -628,20 +642,52 @@ def enqueue_execution_batch(
 @router.post("/{project_id}/executions/assignment-status")
 def report_collaboration_assignment_status(
     project_id: int,
-    values: LoopItemExecutionAssignmentStatus,
+    values: LoopItemExecutionManagerStatus | LoopItemExecutionAssignmentStatus,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
-    """Bind the member session and record progress; Executor owns the round."""
+    """Bind collaboration sessions and record progress; Executor owns the round."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
-    message, changed = project_collaboration_member_activity(
-        db,
-        project_id=project_id,
-        values=values,
-    )
+    try:
+        if isinstance(values, LoopItemExecutionManagerStatus):
+            from app.services.collaboration_manager_activity import (
+                project_collaboration_manager_activity,
+            )
+
+            message, changed = project_collaboration_manager_activity(
+                db, project_id=project_id, user_id=current_user.id, values=values
+            )
+        else:
+            message, changed = project_collaboration_member_activity(
+                db, project_id=project_id, values=values
+            )
+    except HTTPException as exc:
+        logger.warning(
+            "Collaboration activity rejected project=%s issue=%s dispatch=%s "
+            "round=%s runtime_task=%s http_status=%s reason=%s",
+            project_id,
+            values.loop_item_id,
+            values.dispatch_id,
+            values.round_id,
+            values.runtime_task_id,
+            exc.status_code,
+            exc.detail,
+        )
+        raise
     view = project_chat_service.to_view(message, db=db).model_dump(by_alias=True)
     if changed:
+        logger.info(
+            "Collaboration activity recorded project=%s issue=%s dispatch=%s "
+            "round=%s runtime_task=%s activity_type=%s activity_status=%s",
+            project_id,
+            values.loop_item_id,
+            values.dispatch_id,
+            values.round_id,
+            values.runtime_task_id,
+            (message.metadata_json or {}).get("activity_type"),
+            message.status,
+        )
         push_project_chat_message(view)
     return {"message": view, "changed": changed}
 

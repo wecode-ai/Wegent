@@ -6,7 +6,11 @@ import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 import { RuntimeInteractionNotice } from './RuntimeInteractionNotice'
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
-import { InteractionProbe, UnrelatedForm } from './RuntimeInteractionTestComponents'
+import {
+  InteractionProbe,
+  UnrelatedForm,
+  type InteractionProbeHandle,
+} from './RuntimeInteractionTestComponents'
 import {
   interactionQuestion,
   interactionTask,
@@ -31,6 +35,7 @@ const harness = vi.hoisted(() => ({
   focusListeners: new Set<(focused: boolean) => void>(),
   host: vi.fn(),
   flushStorage: vi.fn(),
+  commitStorage: vi.fn(),
   hostListeners: new Set<(event: { type: string }) => void>(),
   transcript: vi.fn(),
   send: vi.fn(),
@@ -42,6 +47,8 @@ const harness = vi.hoisted(() => ({
 export { harness }
 vi.mock('@/desktop/localStoragePersistence', () => ({
   flushDesktopLocalStoragePersistence: harness.flushStorage,
+  readCommittedLocalStorageValue: async (key: string) => localStorage.getItem(key),
+  commitLocalStorageValue: (...args: unknown[]) => harness.commitStorage(...args),
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: harness.t }) }))
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
@@ -68,10 +75,10 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 export let context: ReturnType<typeof useRuntimeInteractions>
-const captureContext = (value: ReturnType<typeof useRuntimeInteractions>) => {
-  context = value
+const captureContext = (handle: InteractionProbeHandle | null) => {
+  if (handle) context = handle.value
 }
-export const probe = <InteractionProbe onChange={captureContext} />
+export const probe = <InteractionProbe ref={captureContext} />
 export const unrelatedForm = <UnrelatedForm />
 
 export function view(
@@ -100,7 +107,7 @@ export function view(
     refresh: harness.refresh,
   }
   const tree = (taskSource: TaskSource, accountKey = 'test:1') => (
-    <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: () => {} }}>
+    <NotificationTaskContext.Provider value={{ taskSource }}>
       <RuntimeInteractionsProvider accountKey={accountKey}>
         {probe}
         <RuntimeInteractionNotice />
@@ -137,6 +144,10 @@ beforeEach(() => {
   harness.hostListeners.clear()
   harness.host.mockReset()
   harness.flushStorage.mockReset().mockResolvedValue(undefined)
+  harness.commitStorage.mockReset().mockImplementation(async (key: string, value: string) => {
+    await harness.flushStorage()
+    localStorage.setItem(key, value)
+  })
   localStorage.clear()
   harness.send.mockResolvedValue({ accepted: true })
   harness.guide.mockResolvedValue({ accepted: true })

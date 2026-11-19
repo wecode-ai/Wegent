@@ -8,9 +8,10 @@ export {
 } from './RuntimeTaskLifecycleStore'
 export { RuntimeTaskLifecycleProvider } from './RuntimeTaskLifecycleProvider'
 export { registerRuntimeTaskLifecycleAutomation } from './automation'
-export { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+export { createRuntimeTaskLifecycleStream } from './runtimeTaskLifecycleStream'
 export {
   useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleResolver,
   useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
   useRuntimeTaskSummaryResolver,

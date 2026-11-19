@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type {
   RuntimeTaskSummary,
@@ -11,10 +11,11 @@ import {
   cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationQueuedMessages,
+  getRuntimeConversationMessages,
 } from '../runtimeConversationCache'
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+import { renderRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 
 const address = (taskId: string) => ({
   deviceId: 'responsive-device',
@@ -82,7 +83,7 @@ test('one stalled history repair does not block another task or its authoritativ
       runtime: { listRuntimeWork: vi.fn().mockResolvedValue(work(false)), getRuntimeTranscript },
     },
   } as unknown as WorkbenchServices
-  render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+  renderRuntimeTaskLifecycle({ services: services, store: store })
   await act(async () => {
     handlers.onRuntimeEventLagged?.({ skipped: 10 })
   })
@@ -107,7 +108,9 @@ test('a complete live turn and authoritative terminal task do not read history a
   const store = new RuntimeTaskLifecycleStore('complete-live-turn')
   store.syncRuntimeWork(work(true))
   store.turnStarted(address('fast'), 'fast-turn')
-  await synchronizeRuntimeConversation(async () => transcript('fast'), address('fast'))
+  await synchronizeRuntimeConversation(async () => transcript('fast'), address('fast'), {
+    authorityScope: store.notificationScope,
+  })
   let handlers: ChatStreamHandlers = {}
   const getRuntimeTranscript = vi.fn()
   const services = {
@@ -119,7 +122,7 @@ test('a complete live turn and authoritative terminal task do not read history a
     },
     executorClient: { runtime: { getRuntimeTranscript } },
   } as unknown as WorkbenchServices
-  render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+  renderRuntimeTaskLifecycle({ services: services, store: store })
   await act(async () => {
     handlers.onChatDone?.({
       taskId: 'fast',
@@ -131,6 +134,47 @@ test('a complete live turn and authoritative terminal task do not read history a
   })
   expect(getRuntimeTranscript).not.toHaveBeenCalled()
   expect(store.getTask(address('fast'))?.execution.phase).toBe('idle')
+  expect(store.getTask(address('fast'))?.turn.outcome).toBe('succeeded')
+})
+
+test('repairs a cancelled history snapshot when the native turn subsequently succeeds', async () => {
+  const store = new RuntimeTaskLifecycleStore('conflicting-terminal-history')
+  store.syncRuntimeWork(work(true))
+  store.turnStarted(address('fast'), 'fast-turn')
+  await synchronizeRuntimeConversation(
+    async () => ({
+      ...transcript('fast'),
+      running: true,
+      turns: [{ id: 'fast-turn', status: 'cancelled', items: [] }],
+    }),
+    address('fast')
+  )
+  let handlers: ChatStreamHandlers = {}
+  const getRuntimeTranscript = vi.fn().mockResolvedValue(transcript('fast'))
+  const services = {
+    chatStream: {
+      subscribe: (next: ChatStreamHandlers) => {
+        handlers = next
+        return () => {}
+      },
+    },
+    executorClient: { runtime: { getRuntimeTranscript } },
+  } as unknown as WorkbenchServices
+  renderRuntimeTaskLifecycle({ services: services, store: store })
+  await act(async () => {
+    handlers.onChatDone?.({
+      taskId: 'fast',
+      deviceId: 'responsive-device',
+      subtaskId: 'fast-turn',
+      task: task('fast', false),
+      result: {},
+    })
+  })
+  expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+  expect(getRuntimeConversationMessages(address('fast')).at(-1)).toMatchObject({
+    content: 'Complete answer',
+    status: 'done',
+  })
   expect(store.getTask(address('fast'))?.turn.outcome).toBe('succeeded')
 })
 
@@ -156,7 +200,7 @@ test('confirms execution idle through a point lookup while history is still pend
     },
     executorClient: { runtime: { getRuntimeTranscript, getRuntimeTask } },
   } as unknown as WorkbenchServices
-  render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+  renderRuntimeTaskLifecycle({ services: services, store: store })
   await act(async () => {
     handlers.onChatDone?.({
       taskId: 'fast',
@@ -199,7 +243,7 @@ test('releases a terminal history subscriber when its coordinator is disposed', 
     },
     executorClient: { runtime: { getRuntimeTranscript } },
   } as unknown as WorkbenchServices
-  const view = render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+  const view = renderRuntimeTaskLifecycle({ services: services, store: store })
   await act(async () => {
     handlers.onChatDone?.({
       taskId: 'fast',
@@ -258,7 +302,7 @@ test.each(
           },
         },
       } as unknown as WorkbenchServices
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      renderRuntimeTaskLifecycle({ services: services, store: store })
       await act(async () => {
         if (reason === 'event_lagged') {
           handlers.onRuntimeEventLagged?.({ skipped: 1 })

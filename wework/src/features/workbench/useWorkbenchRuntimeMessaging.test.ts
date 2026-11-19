@@ -1,7 +1,8 @@
 import i18n from '@/i18n'
-import type { Attachment, DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, DeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
+import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
@@ -25,7 +26,12 @@ import {
 import { initialWorkbenchState } from './workbenchReducer'
 
 function messagingFixture(
-  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {}
+  modelState: {
+    models?: UnifiedModel[]
+    isSelectionReady?: boolean
+    isConfiguredModelUnavailable?: boolean
+  } = {},
+  taskSelectionState: Partial<RuntimeTaskModelSelectionControls> = {}
 ) {
   const address = { deviceId: 'cancel-device', taskId: 'cancel-task' }
   const store = new RuntimeTaskLifecycleStore('messaging-cancellation-test')
@@ -55,6 +61,15 @@ function messagingFixture(
     isOptionsLocked: false,
     attachmentSelection: { attachments: [], resetAttachments: vi.fn() },
     modelSelection: { models: [], selectedModel: null, selectedModelOptions: {}, ...modelState },
+    resolveRuntimeTaskModelSelection: () => ({
+      selectionResolved: false,
+      selectionReady: false,
+      taskSelection: null,
+      selectedModel: null,
+      activeModel: null,
+      selectedModelOptions: {},
+      ...taskSelectionState,
+    }),
     skillSelection: { selectedSkills: [] },
     refreshWorkLists: refresh,
   }
@@ -172,7 +187,13 @@ test.each(['accepted', 'queued'] as const)(
     let delivered = false
     const sending = messaging
       .sendRuntimePaneMessage(
-        { address, message: 'Continue', modelId: 'test-model' },
+        {
+          address,
+          message: 'Continue',
+          modelId: 'test-model',
+          queueIfBusy: true,
+          clientUserMessageId: 'durable-follow-up',
+        },
         { onQueued: queued }
       )
       .then(accepted => {
@@ -181,6 +202,15 @@ test.each(['accepted', 'queued'] as const)(
     try {
       await waitFor(() => expect(refresh).toHaveBeenCalledOnce())
       await waitFor(() => expect(delivered).toBe(true))
+      expect(send).toHaveBeenCalledOnce()
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address,
+          message: 'Continue',
+          queueIfBusy: true,
+          clientUserMessageId: 'durable-follow-up',
+        })
+      )
       expect(queued).toHaveBeenCalledTimes(status === 'queued' ? 1 : 0)
     } finally {
       finishRefresh()
@@ -218,6 +248,127 @@ describe('runtime pane cancellation', () => {
       }
     }
   )
+
+  test('settles a send rejected after its optimistic cancellation', async () => {
+    const { address, store, cancel, send, messaging } = messagingFixture()
+    let finishSend!: (value: { accepted: boolean; taskId: string; code: string }) => void
+    send.mockReturnValueOnce(
+      new Promise(resolve => {
+        finishSend = resolve
+      })
+    )
+    const optimisticUserMessage = {
+      id: 'cancelled-before-dispatch',
+      role: 'user' as const,
+      content: 'Old prompt',
+      status: 'done' as const,
+    }
+    try {
+      const sending = messaging.sendRuntimePaneMessage(
+        {
+          address,
+          message: 'Old prompt',
+          clientUserMessageId: optimisticUserMessage.id,
+          modelId: 'test-model',
+        },
+        { optimisticUserMessage }
+      )
+      await waitFor(() => expect(send).toHaveBeenCalledOnce())
+      await messaging.cancelRuntimePaneTask(address, {
+        pendingClientUserMessageId: optimisticUserMessage.id,
+      })
+      finishSend({ accepted: false, code: 'cancelled', taskId: address.taskId })
+
+      await expect(sending).resolves.toBe(true)
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({
+        ...address,
+        clientUserMessageId: optimisticUserMessage.id,
+      })
+      expect(store.getTask(address)).toMatchObject({
+        execution: { phase: 'idle' },
+        turn: { active: false, outcome: 'cancelled' },
+      })
+      expect(getRuntimeConversationTurns(address)).toEqual([])
+    } finally {
+      store.remove(address)
+      clearRuntimeConversationCacheForTests()
+    }
+  })
+
+  test('does not let a late cancelled send clear a newer send', async () => {
+    const { address, store, send, messaging } = messagingFixture()
+    const responses: Array<(value: { accepted: boolean; taskId: string; code?: string }) => void> =
+      []
+    send.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          responses.push(resolve)
+        })
+    )
+    const firstMessage = {
+      id: 'cancelled-before-dispatch',
+      role: 'user' as const,
+      content: 'Old prompt',
+      status: 'done' as const,
+    }
+    const replacementMessage = {
+      id: 'replacement-prompt',
+      role: 'user' as const,
+      content: 'Replacement prompt',
+      status: 'done' as const,
+    }
+    let firstSending: Promise<boolean> | null = null
+    let replacementSending: Promise<boolean> | null = null
+    try {
+      firstSending = messaging.sendRuntimePaneMessage(
+        {
+          address,
+          message: firstMessage.content,
+          clientUserMessageId: firstMessage.id,
+          modelId: 'test-model',
+        },
+        { optimisticUserMessage: firstMessage }
+      )
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+      await messaging.cancelRuntimePaneTask(address, {
+        pendingClientUserMessageId: firstMessage.id,
+      })
+
+      replacementSending = messaging.sendRuntimePaneMessage(
+        {
+          address,
+          message: replacementMessage.content,
+          clientUserMessageId: replacementMessage.id,
+          modelId: 'test-model',
+        },
+        { optimisticUserMessage: replacementMessage }
+      )
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+      expect(store.getTask(address)?.execution.phase).toBe('starting')
+
+      responses[0]({ accepted: false, code: 'cancelled', taskId: address.taskId })
+      await expect(firstSending).resolves.toBe(true)
+
+      expect(store.getTask(address)?.execution.phase).toBe('starting')
+      expect(getRuntimeConversationTurns(address)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ clientUserMessageId: replacementMessage.id }),
+        ])
+      )
+
+      responses[1]({ accepted: true, taskId: address.taskId })
+      await expect(replacementSending).resolves.toBe(true)
+    } finally {
+      responses[0]?.({ accepted: false, code: 'cancelled', taskId: address.taskId })
+      responses[1]?.({ accepted: true, taskId: address.taskId })
+      await Promise.allSettled([
+        firstSending ?? Promise.resolve(false),
+        replacementSending ?? Promise.resolve(false),
+      ])
+      store.remove(address)
+      clearRuntimeConversationCacheForTests()
+    }
+  })
 })
 
 describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true }])(
@@ -320,8 +471,189 @@ describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true
         store.remove(address)
       }
     })
+
+    test('allows a send when the destination task has a ready pane selection', async () => {
+      const { address, store, send, messaging } = messagingFixture(modelState, {
+        selectionResolved: true,
+        selectionReady: true,
+      })
+      const onError = vi.fn()
+      try {
+        await expect(
+          messaging.sendRuntimePaneMessage(
+            { address, message: 'Continue', modelId: 'replacement-model' },
+            { onError }
+          )
+        ).resolves.toBe(true)
+        expect(send).toHaveBeenCalledOnce()
+        expect(onError).not.toHaveBeenCalled()
+      } finally {
+        store.remove(address)
+      }
+    })
   }
 )
+
+test('prepares a model-less send with the ready pane selection', async () => {
+  const replacement = {
+    name: 'replacement-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { isSelectionReady: false, isConfiguredModelUnavailable: true },
+    {
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: replacement,
+      activeModel: replacement,
+      selectedModelOptions: { collaborationMode: 'plan' },
+    }
+  )
+  const onError = vi.fn()
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage({ address, message: 'Continue' }, { onError })
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0]).toMatchObject({
+      modelId: 'replacement-model',
+      modelType: 'runtime',
+      modelOptions: expect.objectContaining({ collaborationMode: 'plan' }),
+    })
+    expect(onError).not.toHaveBeenCalled()
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('keeps explicit request options over the ready pane selection options', async () => {
+  const replacement = {
+    name: 'replacement-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { isSelectionReady: false, isConfiguredModelUnavailable: true },
+    {
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: replacement,
+      activeModel: replacement,
+      selectedModelOptions: { collaborationMode: 'default' },
+    }
+  )
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelOptions: { collaborationMode: 'plan' } },
+        { onError: vi.fn() }
+      )
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0]).toMatchObject({
+      modelId: 'replacement-model',
+      modelOptions: expect.objectContaining({ collaborationMode: 'plan' }),
+    })
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('promotes an explicit request collaboration_mode alias over the task default', async () => {
+  const replacement = {
+    name: 'replacement-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { isSelectionReady: false, isConfiguredModelUnavailable: true },
+    {
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: replacement,
+      activeModel: replacement,
+      selectedModelOptions: { collaborationMode: 'default' },
+    }
+  )
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelOptions: { collaboration_mode: 'plan' } },
+        { onError: vi.fn() }
+      )
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0]).toMatchObject({
+      modelId: 'replacement-model',
+      modelOptions: expect.objectContaining({
+        collaboration_mode: 'plan',
+        collaborationMode: 'plan',
+      }),
+    })
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('blocks a current-task send whose resolved model is compatibility-disabled', async () => {
+  const disabled = {
+    name: 'disabled-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+    compatibilityDisabled: true,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { models: [disabled] },
+    {
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: disabled,
+      activeModel: disabled,
+    }
+  )
+  const onError = vi.fn()
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelId: 'disabled-model' },
+        { onError }
+      )
+    ).resolves.toBe(false)
+    expect(send).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith(i18n.t('workbench.harness_model_required'))
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('keeps a current-task send with a stale catalog model sendable', async () => {
+  const missing = {
+    name: 'missing-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { models: [] },
+    {
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: missing,
+      activeModel: missing,
+    }
+  )
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelId: 'missing-model' },
+        { onError: vi.fn() }
+      )
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+  } finally {
+    store.remove(address)
+  }
+})
 
 describe('runtimeSendError', () => {
   test('localizes an unsupported remote Team backend', () => {
@@ -533,6 +865,50 @@ describe('friendlyTitleForTask', () => {
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
+  test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {
+    await expect(
+      prepareRuntimeAttachmentsForDevice(
+        'local-device',
+        [],
+        [],
+        [
+          attachment({
+            id: -42,
+            status: 'uploading',
+            filename: 'unfinished.png',
+            local_path: undefined,
+          }),
+        ]
+      )
+    ).rejects.toThrow(
+      i18n.t('workbench.attachment_preparation_unavailable', { filename: 'unfinished.png' })
+    )
+  })
+
+  test('resolves a pending cloud upload into its remote ID before local-device transport', async () => {
+    const { createPreparingAttachment, localRuntimeAttachments } =
+      await import('@/lib/runtime-attachments')
+    let finish!: (value: Attachment) => void
+    const ready = new Promise<Attachment>(resolve => {
+      finish = resolve
+    })
+    const pending = createPreparingAttachment(new File(['image'], 'pending.png'), ready)
+    let delivered = false
+    const preparing = prepareRuntimeAttachmentsForDevice(
+      'local-device',
+      [],
+      [],
+      localRuntimeAttachments([pending])
+    ).then(result => {
+      delivered = true
+      return result
+    })
+    await Promise.resolve()
+    expect(delivered).toBe(false)
+    finish(attachment({ id: 42, local_path: undefined }))
+    await expect(preparing).resolves.toEqual({ attachmentIds: [42], attachments: [] })
+  })
+
   test.each(['cloud', 'remote'] as const)(
     'uploads a source file before sending to a %s device',
     async deviceType => {

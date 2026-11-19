@@ -177,6 +177,27 @@ describe('desktop process lifecycle', () => {
     expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
   })
 
+  test('preserves Windows application arguments containing spaces, quotes and trailing slashes', async () => {
+    const moduleUrl = pathToFileURL(
+      resolve(import.meta.dirname, '../../e2e/desktop/windows-owned-process.mjs')
+    ).href
+    const { windowsApplicationCommandLine } = await import(/* @vite-ignore */ moduleUrl)
+    const executable = String.raw`C:\Program Files\Wework\wework.exe`
+    expect(
+      windowsApplicationCommandLine(executable, [
+        '',
+        'space value',
+        '中文',
+        'C:\\work\\',
+        'say"hello',
+        String.raw`before\"after`,
+      ])
+    ).toBe(
+      String.raw`"C:\Program Files\Wework\wework.exe" "" "space value" "中文" "C:\work\\" "say\"hello" "before\\\"after"`
+    )
+    expect(() => windowsApplicationCommandLine(executable, ['bad\0argument'])).toThrow('NUL')
+  })
+
   test.each(['degraded', 'unowned', 'missing identity', 'future identity', 'stale'])(
     'rejects a %s crash snapshot before signaling any process',
     async invalid => {
@@ -331,7 +352,18 @@ describe('desktop process lifecycle', () => {
     'requires a native exit after a macOS teardown signal is denied: exits=%s',
     async exits => {
       const { stopProcessGroup } = await loadProcessLifecycle()
-      const processId = process.pid
+      let processId = process.pid
+      // macOS inspects the real group after EPERM. Keep an owned live group
+      // so this fixture represents a rejected signal rather than an absent group.
+      if (process.platform === 'darwin') {
+        const owned = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          detached: true,
+          stdio: 'ignore',
+        })
+        expect(owned.pid).toBeTypeOf('number')
+        processId = owned.pid!
+        ownedProcessGroups.add(processId)
+      }
       const child = Object.assign(new EventEmitter(), {
         pid: processId,
         exitCode: null as number | null,

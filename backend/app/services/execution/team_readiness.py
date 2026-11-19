@@ -11,9 +11,11 @@ from app.schemas.kind import Bot, Ghost, Shell, Team, TeamMember
 from app.services.adapters.shell_utils import get_shell_by_name
 from app.services.chat.config.model_resolver import get_model_config_for_bot
 from app.services.execution.readiness_context import TeamReadinessContext
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.readers import KindType, kindReader
 
 
+@execution_resource_scope()
 def validate_team_execution_readiness(
     db: Session,
     *,

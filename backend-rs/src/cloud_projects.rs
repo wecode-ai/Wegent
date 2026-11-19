@@ -33,9 +33,16 @@ mod workflow_definition;
 /// Execution-environment route for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
 mod execution_environments;
 
+mod agent_deletion;
+#[cfg(test)]
+mod agent_deletion_mysql_tests;
 /// Collaboration-group route for
 /// `GET /api/v1/cloud-projects/{project_id}/collaboration-groups`.
 mod collaboration_groups;
+
+/// Project assistant roster and one-transaction Issue fan-out.
+mod assistant_roster;
+mod collaboration_metrics;
 
 mod access;
 mod collaboration_access;
@@ -64,11 +71,12 @@ pub(crate) async fn authorized_project<M: Mysql>(
 
 pub(crate) use access::{
     LOOP_ITEMS_COLUMNS, WORKSPACE_ID_COLUMN, entity_columns, project_access_point_statement,
-    role_for_priority,
+    project_permission_statement, role_for_priority,
 };
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
 mod update;
+pub(crate) use update::metadata_board_statuses;
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]

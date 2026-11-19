@@ -5,6 +5,7 @@
 """Authenticated project TODO and delivery endpoints."""
 
 import logging
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -76,12 +77,12 @@ from app.schemas.project_incoming_hook import (
     ChangeRequestBindingInput,
     ChangeRequestBindingView,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import (
     IssueAction,
     require_cloud_project_role,
     require_issue_action,
 )
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_events import publish_loop_item_changed
@@ -191,11 +192,26 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
 def list_my_work(
     limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
     cursor: str | None = Query(default=None, max_length=2048),
+    scope: Literal["assigned", "created", "participating"] = Query(
+        default="participating"
+    ),
+    include_completed: bool = Query(default=True),
+    order: Literal["recent", "attention", "activity", "assignment", "priority"] = Query(
+        default="recent"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
     items, next_cursor = loop_item_service.list_my_work_page(
-        db, current_user.id, limit=limit, cursor=cursor
+        db,
+        current_user.id,
+        limit=limit,
+        cursor=cursor,
+        assigned_only=scope == "assigned",
+        created_only=scope == "created",
+        include_completed=include_completed,
+        attention=order == "attention",
+        order=order,
     )
     return MyWorkListResponse(
         items=[MyWorkItemResponse.model_validate(item) for item in items],
@@ -538,11 +554,8 @@ async def update_loop_item(
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
     previous_tags = set(existing.tags)
-    project = cloud_project_service.get(
-        db,
-        int(existing.cloud_project_id),
-        current_user.id,
-    )
+    access = loop_item_service._require_item_access(db, existing, current_user.id)
+    project = access.project
     selected_status_automation_id: str | None = None
     selected_tag_automation_id: str | None = None
     requested_status = (
@@ -725,7 +738,9 @@ async def update_loop_item(
         reason="user_update",
         actor_user_id=current_user.id,
     )
-    return _loop_item_response(db, item, current_user)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
 
 
 @router.delete("/loop-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -883,12 +898,7 @@ async def create_issue_assignment(
         issue_id=item_id,
         user_id=current_user.id,
     )
-    access = require_cloud_project_role(
-        db,
-        int(project.id),
-        current_user.id,
-        BaseRole.Viewer,
-    )
+    access = loop_item_service._require_item_access(db, item, current_user.id)
     require_issue_action(
         access,
         action=IssueAction.ASSIGN,
@@ -991,7 +1001,9 @@ async def create_issue_assignment(
         except Exception:
             db.rollback()
             raise
-        issue_values = loop_item_service.response_values(db, item, current_user.id)
+        issue_values = loop_item_service.response_values(
+            db, item, current_user.id, access=access
+        )
         publish_loop_item_changed(
             db,
             item=item,

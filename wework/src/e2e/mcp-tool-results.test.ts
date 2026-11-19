@@ -2,6 +2,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { readMcpToolOutput } from '../../e2e/desktop/modules/mcp-tool-results.mjs'
+import { toolOutputText } from '../../e2e/desktop/modules/response-protocol.mjs'
 
 const callId = 'native-mcp-call'
 const header = 'Wall time: 0.0042 seconds\nOutput:'
@@ -10,6 +11,19 @@ const request = (output: unknown) => ({
 })
 
 describe('native MCP result text', () => {
+  test.each(['function_call_output', 'custom_tool_call_output'])(
+    'reads the exact bound-Issue call through %s',
+    type => {
+      const body = {
+        input: [
+          { type, call_id: 'another-call', output: 'wrong Issue' },
+          { type, call_id: callId, output: [{ type: 'input_text', text: 'BOUND_ISSUE_READ_OK' }] },
+        ],
+      }
+      expect(toolOutputText(body, callId)).toBe('BOUND_ISSUE_READ_OK')
+      expect(toolOutputText(body, 'missing-call')).toBeNull()
+    }
+  )
   test('reads the timed text projection of a real Codex MCP result', () => {
     const result = { bound: false, description: 'Wall time: is part of the Issue text' }
     const output = `${header}\n${JSON.stringify(result)}`

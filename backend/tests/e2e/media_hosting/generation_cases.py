@@ -47,10 +47,16 @@ class GenerationCases:
                     db.commit()
         return ids
 
-    def chat(self, attachment_ids: list[int]) -> dict:
-        return asyncio.run(self.send_chat(attachment_ids))
+    def chat(
+        self, attachment_ids: list[int], *, generate_params: dict | None = None
+    ) -> dict:
+        return asyncio.run(
+            self.send_chat(attachment_ids, generate_params=generate_params)
+        )
 
-    async def send_chat(self, attachment_ids: list[int]) -> dict:
+    async def send_chat(
+        self, attachment_ids: list[int], *, generate_params: dict | None = None
+    ) -> dict:
         client = socketio.AsyncClient(reconnection=False)
         try:
             await client.connect(
@@ -67,6 +73,7 @@ class GenerationCases:
                     "attachment_ids": attachment_ids,
                     "task_type": "video",
                     "enable_deep_thinking": False,
+                    **({"generate_params": generate_params} if generate_params else {}),
                 },
                 namespace="/chat",
                 timeout=30,
@@ -183,9 +190,30 @@ class GenerationCases:
 
     def test_chat_resolves_hosted_references_without_public_url(self) -> None:
         ids = self.references()
-        ack = self.chat(ids)
+        options = {"resolution": "1080p", "ratio": "9:16", "duration": 8}
+        ack = self.chat(ids, generate_params=options)
         self.assertFalse(ack.get("error"), ack)
-        self.assert_job(self.chat_assistant_id(ack), ids)
+        job = self.assert_job(self.chat_assistant_id(ack), ids)
+        self.assertEqual(self.model.jobs[job["job_id"]]["options"], options)
+
+    def test_chat_rejects_an_unsupported_video_option_after_admission(self) -> None:
+        jobs_before = set(self.model.jobs)
+        ack = self.chat([], generate_params={"size": "1024x1024"})
+        self.assertFalse(ack.get("error"), ack)
+        subtask_id = self.chat_assistant_id(ack)
+        deadline = time.monotonic() + 15
+        while True:
+            with SessionLocal() as db:
+                subtask = db.get(Subtask, subtask_id)
+                if subtask.status.value == "FAILED":
+                    self.assertIn(
+                        "Video generation does not support option: size",
+                        subtask.error_message or "",
+                    )
+                    break
+            self.assertLess(time.monotonic(), deadline, "The assistant did not fail")
+            time.sleep(0.05)
+        self.assertEqual(set(self.model.jobs), jobs_before)
 
     def test_chat_resolves_legacy_fids_without_public_url(self) -> None:
         ids = self.references(legacy=True)

@@ -95,6 +95,29 @@ function createApis(devices: DeviceInfo[] = [createDevice()]) {
 }
 
 describe('executor access layer', () => {
+  test('resolves current reachability instead of retaining a cached offline or removed owner', async () => {
+    const { deviceApi, runtimeWorkApi } = createApis([createDevice({ status: 'offline' })])
+    const resolveDevice = vi.fn().mockResolvedValue(createDevice({ status: 'offline' }))
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+      resolveDevice,
+    })
+    await expect(
+      client.commands.executeCommand('device-1', { command_key: 'git_status_porcelain' })
+    ).rejects.toThrow('executor-offline:device-1')
+    resolveDevice.mockResolvedValue(createDevice({ status: 'online' }))
+    await expect(
+      client.commands.executeCommand('device-1', { command_key: 'git_status_porcelain' })
+    ).resolves.toMatchObject({ success: true })
+    resolveDevice.mockResolvedValue(null)
+    await expect(
+      client.commands.executeCommand('device-1', { command_key: 'git_status_porcelain' })
+    ).rejects.toThrow('executor-not-found:device-1')
+    expect(deviceApi.executeCommand).toHaveBeenCalledTimes(1)
+  })
+
   test('refreshes the registry from the configured transport device list', async () => {
     const { deviceApi, runtimeWorkApi } = createApis()
     const client = createExecutorClientFromApis({

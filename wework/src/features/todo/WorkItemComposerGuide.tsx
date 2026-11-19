@@ -1,10 +1,12 @@
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
+import { createWorkItemGuideSource } from './workItemGuideSource'
+import { Button } from '@/components/ui/button'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
@@ -12,6 +14,7 @@ interface WorkItemComposerGuideProps {
   project?: CloudProject | null
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
+  taskOwnerKey?: string | null
   currentTask?: RuntimeTaskAddress | null
   goalPresent?: boolean
   integrated?: boolean
@@ -41,6 +44,7 @@ function WorkItemComposerGuideContent({
   item,
   api,
   currentTask,
+  taskOwnerKey,
   goalPresent = false,
   integrated = false,
   toolbar = false,
@@ -54,32 +58,47 @@ function WorkItemComposerGuideContent({
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const [open, setOpen] = useState(false)
-  const [refreshedItem, setRefreshedItem] = useState<CloudLoopItem | null>(null)
-  const [taskBindings, setTaskBindings] = useState<TaskBinding[] | null>(item ? null : [])
-  const canChangeProject = projects.length > 0 && Boolean(onSelectProject)
+  const canChangeProject = Boolean(onSelectProject)
+  const pickerStoreKey =
+    taskOwnerKey ??
+    (currentTask ? `task:${currentTask.deviceId}:${currentTask.taskId}` : (item?.id ?? null))
+  const scope = project ? projectKey(project) : ''
+  const itemId = item?.id
+  const source = useMemo(
+    () => createWorkItemGuideSource(api, itemId, canChangeProject ? pickerStoreKey : null, scope),
+    [api, itemId, canChangeProject, pickerStoreKey, scope]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      source.subscribe(listener, {
+        refreshKey,
+        projectId: project?.id,
+        projectStore: project?.project_store,
+        taskId: currentTask?.taskId,
+        deviceId: currentTask?.deviceId,
+        canChangeProject,
+      }),
+    [
+      source,
+      refreshKey,
+      project?.id,
+      project?.project_store,
+      currentTask?.taskId,
+      currentTask?.deviceId,
+      canChangeProject,
+    ]
+  )
+  const {
+    open,
+    bindings: taskBindings,
+    failed: readFailed,
+    loading: bindingsPending,
+  } = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const setOpen = source.setOpen
   const menuOpen = open && canChangeProject
-  const closeMenu = useCallback(() => setOpen(false), [])
+  const closeMenu = useCallback(() => source.setOpen(false), [source])
+  const resolvedItem = item ?? null
 
-  useEffect(() => {
-    if (!api || !item) return
-    let active = true
-    void Promise.allSettled([
-      api.listTaskBindings(item.id),
-      currentTask ? api.findCloudContextForTask(currentTask) : Promise.resolve(null),
-    ]).then(([bindingsResult, contextResult]) => {
-      if (!active) return
-      if (bindingsResult.status === 'fulfilled') setTaskBindings(bindingsResult.value)
-      if (contextResult.status === 'fulfilled' && contextResult.value?.loop_item) {
-        setRefreshedItem(contextResult.value.loop_item)
-      }
-    })
-    return () => {
-      active = false
-    }
-  }, [api, currentTask, item, refreshKey])
-
-  const resolvedItem = refreshedItem?.id === item?.id ? refreshedItem : (item ?? null)
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
     taskBindings == null
@@ -90,10 +109,11 @@ function WorkItemComposerGuideContent({
             (taskBindings.some(binding => isCurrentBinding(binding, currentTask)) ? 1 : 0)
         )
 
+  const readFailedText = t('workbench.runtime_work_load_failed')
   const taskSummary =
-    taskCount == null
+    taskCount == null && api && !readFailed
       ? t('workbench.loading_task_count', '任务同步中')
-      : taskCount > 1
+      : taskCount != null && taskCount > 1
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
         : null
 
@@ -164,6 +184,19 @@ function WorkItemComposerGuideContent({
               </span>
             ) : null}
           </button>
+          {readFailed ? (
+            <Button
+              variant="ghost"
+              type="button"
+              data-testid="work-item-guide-retry-task-count"
+              disabled={bindingsPending}
+              onClick={() => void source.reload()}
+              title={readFailedText}
+              className="h-6 shrink-0 px-1 py-0 text-xs text-text-muted"
+            >
+              {t('workbench.task_count_load_failed_retry', '任务数加载失败，重试')}
+            </Button>
+          ) : null}
           {onOpen ? (
             <button
               type="button"

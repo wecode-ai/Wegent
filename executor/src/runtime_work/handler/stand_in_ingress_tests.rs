@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn every_collection_failure_resumes_without_editing_settings_or_discarding_progress() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let source = json!({"providerId":"example.source","profile":"account","kind":"direct","id":"*","scope":"all"});
+    let version = json!(39);
+    for code in [
+        "stand_in_settings",
+        "connection_configuration_changed",
+        "dingtalk_response_invalid",
+        "email_message_invalid",
+        "email_connection_failed",
+        "connector_auth_required",
+        "forbidden",
+        "connection_tool_denied",
+        "unknown_failure",
+    ] {
+        let previous = json!({"version":39,"checkpoint":{"after":"2026-11-16T07:31:58.616Z","cursor":"0"},"error":{"code":code,"message":"local task database error: database is locked"}});
+        assert!(!collection_retry_pending(&previous, &version));
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &previous,
+            Err(AppIpcError::new(code, "Source is still unavailable")),
+        )
+        .unwrap();
+        let failed = store.stand_in_source(7, &source).unwrap();
+        assert_eq!(failed["checkpoint"], previous["checkpoint"]);
+        assert_eq!(failed["error"]["code"], code);
+        assert_eq!(failed["error"]["retryable"], true);
+        assert!(!collection_retry_pending(&failed, &version));
+        save_collection_result(
+            &store,
+            7,
+            &source,
+            &version,
+            &failed,
+            Ok(json!({"checkpoint":{"after":"2026-11-16T07:33:00Z","cursor":"0"}})),
+        )
+        .unwrap();
+        let recovered = store.stand_in_source(7, &source).unwrap();
+        assert!(recovered["error"].is_null());
+        assert_eq!(recovered["version"], version);
+    }
+}
+
+#[test]
 fn generic_cli_legacy_failure_recovers_original_checkpoint_with_bounded_backoff() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
@@ -9,7 +57,7 @@ fn generic_cli_legacy_failure_recovers_original_checkpoint_with_bounded_backoff(
     let legacy = json!({"version":20,"checkpoint":{"after":"2026-11-09T07:59:44.720Z","cursor":"0"},"error":{"code":"connection_cli_request_failed","message":"Plugin tool request failed (request_failed)"}});
     store.save_stand_in_source(7, &source, &legacy).unwrap();
     let mut state = store.stand_in_source(7, &source).unwrap();
-    assert!(!collection_error_latched(&state, &version));
+    assert!(!collection_retry_pending(&state, &version));
     for attempt in 1..=10 {
         let mut failure = AppIpcError::new(
             "connection_cli_request_unavailable",
@@ -29,9 +77,9 @@ fn generic_cli_legacy_failure_recovers_original_checkpoint_with_bounded_backoff(
         assert!(
             state["retryAt"].as_i64().unwrap() <= chrono::Utc::now().timestamp_millis() + delay
         );
-        assert!(collection_error_latched(&state, &version));
+        assert!(collection_retry_pending(&state, &version));
         state["retryAt"] = json!(before - 1);
-        assert!(!collection_error_latched(&state, &version));
+        assert!(!collection_retry_pending(&state, &version));
     }
     save_collection_result(
         &store,
@@ -58,28 +106,28 @@ fn generic_cli_legacy_failure_recovers_original_checkpoint_with_bounded_backoff(
     ] {
         let mut rejection = legacy.clone();
         rejection["error"]["message"] = json!(message);
-        assert!(collection_error_latched(&rejection, &version));
+        assert!(!collection_retry_pending(&rejection, &version));
     }
     let mut structured_rejection = legacy.clone();
     structured_rejection["error"]["providerCode"] = json!("FORBIDDEN");
-    assert!(collection_error_latched(&structured_rejection, &version));
+    assert!(!collection_retry_pending(&structured_rejection, &version));
     let mut rejection = AppIpcError::new(
         "connection_cli_request_failed",
         "Plugin tool request failed (FORBIDDEN)",
     );
     rejection.provider_code = Some("FORBIDDEN".to_owned());
     save_collection_result(&store, 7, &source, &version, &state, Err(rejection)).unwrap();
-    let stopped = store.stand_in_source(7, &source).unwrap();
-    assert!(collection_error_latched(&stopped, &version));
-    assert_eq!(stopped["checkpoint"], legacy["checkpoint"]);
-    assert_eq!(stopped["error"]["providerCode"], "FORBIDDEN");
-    assert!(stopped["error"]["retryable"].is_null());
-    assert!(stopped["retryAt"].is_null());
-    assert!(stopped["failures"].is_null());
+    let rejected = store.stand_in_source(7, &source).unwrap();
+    assert!(!collection_retry_pending(&rejected, &version));
+    assert_eq!(rejected["checkpoint"], legacy["checkpoint"]);
+    assert_eq!(rejected["error"]["providerCode"], "FORBIDDEN");
+    assert_eq!(rejected["error"]["retryable"], true);
+    assert!(rejected["retryAt"].is_null());
+    assert!(rejected["failures"].is_null());
 }
 
 #[test]
-fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures() {
+fn runtime_collection_timeout_preserves_progress_and_backs_off_new_failures() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
     let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"account","kind":"direct","id":"own"});
@@ -87,7 +135,7 @@ fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures
     let legacy = json!({"version":version,"checkpoint":{"after":"2026-11-08T22:57:19.411Z","cursor":"0"},"error":{"code":"request_timeout","message":"Executor request runtime.connections.cli timed out"}});
     store.save_stand_in_source(7, &source, &legacy).unwrap();
     let state = store.stand_in_source(7, &source).unwrap();
-    assert!(!collection_error_latched(&state, &version));
+    assert!(!collection_retry_pending(&state, &version));
     let before = chrono::Utc::now().timestamp_millis();
     save_collection_result(
         &store,
@@ -106,10 +154,10 @@ fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures
     assert_eq!(failed["version"], version);
     assert_eq!(failed["error"]["retryable"], true);
     assert!(failed["retryAt"].as_i64().unwrap() >= before + 30_000);
-    assert!(collection_error_latched(&failed, &version));
+    assert!(collection_retry_pending(&failed, &version));
     let mut due = failed.clone();
     due["retryAt"] = json!(before - 1);
-    assert!(!collection_error_latched(&due, &version));
+    assert!(!collection_retry_pending(&due, &version));
     let recovered = json!({"checkpoint":{"after":"2026-11-09T00:00:00Z","cursor":"0"}});
     save_collection_result(&store, 7, &source, &version, &due, Ok(recovered.clone())).unwrap();
     let resumed = store.stand_in_source(7, &source).unwrap();
@@ -122,9 +170,9 @@ fn runtime_collection_timeout_recovers_legacy_latches_and_backs_off_new_failures
         "forbidden",
         "dingtalk_response_invalid",
     ] {
-        let mut permanent = legacy.clone();
-        permanent["error"]["code"] = json!(code);
-        assert!(collection_error_latched(&permanent, &version));
+        let mut failure = legacy.clone();
+        failure["error"]["code"] = json!(code);
+        assert!(!collection_retry_pending(&failure, &version));
     }
 }
 
@@ -145,9 +193,9 @@ fn declared_cli_read_process_failure_retries_from_the_original_cursor_then_clear
     assert_eq!(failed["checkpoint"], state["checkpoint"]);
     assert_eq!(failed["version"], version);
     assert_eq!(failed["error"]["retryable"], true);
-    assert!(collection_error_latched(&failed, &version));
+    assert!(collection_retry_pending(&failed, &version));
     failed["retryAt"] = json!(chrono::Utc::now().timestamp_millis() - 1);
-    assert!(!collection_error_latched(&failed, &version));
+    assert!(!collection_retry_pending(&failed, &version));
     save_collection_result(
         &store,
         7,
@@ -168,7 +216,7 @@ fn declared_cli_read_process_failure_retries_from_the_original_cursor_then_clear
 }
 
 #[test]
-fn explicit_source_retry_clears_the_latch_without_resetting_collection_progress() {
+fn explicit_source_retry_clears_the_error_without_resetting_collection_progress() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
     handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
@@ -181,7 +229,7 @@ fn explicit_source_retry_clears_the_latch_without_resetting_collection_progress(
     let source = &role["connections"][0];
     let state = json!({"version":settings["version"],"checkpoint":{"partition":"generation-1","cursor":"page-two"},"error":{"code":"connection_cli_response_invalid","message":"Old failed process"}});
     store.save_stand_in_source(7, source, &state).unwrap();
-    assert!(collection_error_latched(&state, &settings["version"]));
+    assert!(!collection_retry_pending(&state, &settings["version"]));
     assert_eq!(
         handler
             .retry_connection_source(json!({"userId":7,"source":source}))
@@ -190,7 +238,7 @@ fn explicit_source_retry_clears_the_latch_without_resetting_collection_progress(
     );
     let restored = store.stand_in_source(7, source).unwrap();
     assert!(restored["error"].is_null());
-    assert!(!collection_error_latched(&restored, &settings["version"]));
+    assert!(!collection_retry_pending(&restored, &settings["version"]));
     assert_eq!(restored["checkpoint"], state["checkpoint"]);
     assert_eq!(restored["version"], settings["version"]);
     assert_eq!(
@@ -388,18 +436,18 @@ fn declared_transport_failure_retains_progress_and_retries_without_settings_chan
     let failed = store.stand_in_source(7, &source).unwrap();
     assert_eq!(failed["checkpoint"], state["checkpoint"]);
     assert_eq!(failed["error"]["code"], "email_transport_failed");
-    assert!(collection_error_latched(&failed, &version));
+    assert!(collection_retry_pending(&failed, &version));
     let mut due = failed.clone();
     due["retryAt"] = json!(chrono::Utc::now().timestamp_millis() - 1);
-    assert!(!collection_error_latched(&due, &version));
+    assert!(!collection_retry_pending(&due, &version));
     for code in [
         "email_auth_failed",
         "email_message_invalid",
         "email_connection_failed",
     ] {
-        let mut permanent = failed.clone();
-        permanent["error"] = json!({"code":code,"message":"Permanent failure"});
-        assert!(collection_error_latched(&permanent, &version));
+        let mut failure = failed.clone();
+        failure["error"] = json!({"code":code,"message":"Collection failure"});
+        assert!(!collection_retry_pending(&failure, &version));
     }
     save_collection_result(
         &store,
@@ -807,4 +855,67 @@ async fn collection_partition_changes_cannot_reuse_another_partitions_ordered_bo
     assert!(changed["roles"][0]["connections"][0]
         .get("boundary")
         .is_none());
+}
+
+#[tokio::test]
+async fn dingtalk_blacklist_filters_shared_pages_per_role_for_manual_and_automatic_intake() {
+    for kind in ["group", "direct"] {
+        for automatic in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+            handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+            let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+            let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":kind,"id":"*","scope":"all","name":"All","policy":{"automatic":automatic,"askBeforeAct":true}});
+            let mut restricted = source.clone();
+            restricted["excludedResources"] = json!([{"id":"blocked","name":"Blocked"}]);
+            let roles =
+                [("restricted", restricted), ("unrestricted", source)].map(|(id, source)| {
+                    let mut role = settings["roles"][0].clone();
+                    role["id"] = json!(id);
+                    role["enabled"] = json!(true);
+                    role["connections"] = json!([source]);
+                    role
+                });
+            settings["roles"] = json!(roles);
+            let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            let roles = stand_in_identities(&settings);
+            let sources = collection_sources(&roles);
+            assert_eq!(
+                sources.len(),
+                1,
+                "Blacklist edits must not duplicate polling"
+            );
+            let (source, receiving) = sources.values().next().unwrap();
+            let messages = ["blocked", "allowed"].map(|id| json!({"id":id,"text":"New matter","at":"2099-01-01T00:00:00Z","resource":{"kind":kind,"id":id,"name":id}}));
+            let checkpoint = json!({"checkpoint":{"after":"2099-01-01T00:00:00Z","cursor":"0"}});
+            assert_eq!(
+                handler
+                    .collect_connection_page(
+                        &store,
+                        7,
+                        source,
+                        receiving,
+                        (messages.to_vec(), checkpoint.clone())
+                    )
+                    .await
+                    .unwrap(),
+                checkpoint
+            );
+            if automatic {
+                let events = store.stand_in_events(7).unwrap();
+                assert_eq!(events.len(), 3);
+                assert!(
+                    !events.iter().any(|event| event["source"]["id"] == "blocked"
+                        && event["roleIds"] == json!(["restricted"]))
+                );
+            } else {
+                let works = store.list_stand_in_work(7, None).unwrap();
+                assert_eq!(works.len(), 3);
+                assert!(!works.iter().any(
+                    |work| work["source"]["id"] == "blocked" && work["roleId"] == "restricted"
+                ));
+            }
+        }
+    }
 }

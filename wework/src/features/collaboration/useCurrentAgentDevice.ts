@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 
 import type {
   ProjectPluginCatalogApi,
@@ -6,6 +11,8 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/devices'
+
+const EMPTY_PLUGIN_NAMES: string[] = []
 
 type DeviceApi = Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
 
@@ -28,42 +35,55 @@ export function useCurrentAgentDevice(
   enabled = true
 ) {
   const { t } = useTranslation()
-  const [device, setDevice] = useState<DeviceInfo | null>(null)
-  const [pluginNames, setPluginNames] = useState<string[]>([])
-  const [skillCount, setSkillCount] = useState(0)
-  const [loading, setLoading] = useState(Boolean(deviceApi))
-
-  useEffect(() => {
-    if (!enabled || !deviceApi) return
-
-    let active = true
-    void deviceApi
-      .listDevices()
-      .then(async devices => {
-        const currentDevice = selectCurrentDevice(devices)
-        if (!active) return
-        setDevice(currentDevice)
-        if (!currentDevice) return
-
-        const [skills, plugins] = await Promise.all([
-          deviceApi.listSkills(currentDevice.device_id).catch(() => []),
-          pluginApi?.listPlugins(currentDevice.device_id).catch(() => []) ?? Promise.resolve([]),
-        ])
-        if (!active) return
-        setSkillCount(skills.length)
-        setPluginNames(plugins.map(plugin => plugin.displayName || plugin.pluginName).slice(0, 3))
-      })
-      .catch(() => {
-        if (active) setDevice(null)
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [deviceApi, enabled, pluginApi])
+  const deviceResource = useMemo(
+    () =>
+      createAsyncResource(
+        'current-device',
+        async () => selectCurrentDevice(await deviceApi!.listDevices()),
+        { refreshOnSubscribe: true }
+      ),
+    [deviceApi]
+  )
+  const deviceQuery = useSyncExternalStore(
+    enabled && deviceApi ? deviceResource.subscribe : subscribeIdleResource,
+    deviceResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const device = deviceQuery.status === 'error' ? null : (deviceQuery.data ?? null)
+  const deviceId = device?.device_id
+  const capabilities = useMemo(
+    () =>
+      createAsyncResource(
+        deviceId ?? '',
+        async () => {
+          const [skills, plugins] = await Promise.all([
+            deviceApi!.listSkills(deviceId!).catch(() => []),
+            pluginApi?.listPlugins(deviceId!).catch(() => []) ?? Promise.resolve([]),
+          ])
+          return {
+            skillCount: skills.length,
+            pluginNames: plugins.map(plugin => plugin.displayName || plugin.pluginName).slice(0, 3),
+          }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [deviceApi, pluginApi, deviceId]
+  )
+  const capabilityQuery = useSyncExternalStore(
+    enabled && deviceId && deviceQuery.status === 'ready'
+      ? capabilities.subscribe
+      : subscribeIdleResource,
+    capabilities.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const pluginNames = capabilityQuery.data?.pluginNames ?? EMPTY_PLUGIN_NAMES
+  const skillCount = capabilityQuery.data?.skillCount ?? 0
+  const loading = Boolean(
+    deviceApi &&
+    (deviceQuery.status === 'idle' ||
+      deviceQuery.status === 'loading' ||
+      (device && (capabilityQuery.status === 'idle' || capabilityQuery.status === 'loading')))
+  )
 
   return useMemo(
     () => ({

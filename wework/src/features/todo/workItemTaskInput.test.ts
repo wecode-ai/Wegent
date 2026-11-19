@@ -1,57 +1,124 @@
 // @vitest-environment node
 
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { describe, expect, it, vi } from 'vitest'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
+import { prepareIssueStartStatus, workItemAssociationUpdate } from './workItemTaskInput'
 
-const source = { id: 'issue-1', status: 'pending', tags: [], version: 3 }
-const conflict = { code: 'version_conflict' }
-
-function issuesFor(latest: Partial<typeof source>, error: unknown = conflict) {
-  const get = vi
-    .fn()
-    .mockResolvedValueOnce(source)
-    .mockResolvedValue({ ...source, ...latest })
-  const update = vi
-    .fn()
-    .mockRejectedValueOnce(error)
-    .mockResolvedValue({ ...source, ...latest })
-  return { get, update }
-}
-
-const start = (issues: ReturnType<typeof issuesFor>) =>
-  updateIssueWhenPersonalTaskStarts(issues as unknown as SharedWorkspaceApi['issues'], source.id)
-
-describe('personal task Issue start', () => {
-  it('preserves a concurrent delivery when rebasing its start transition', async () => {
-    const issues = issuesFor({ version: 4 })
-    await expect(start(issues)).resolves.toBeNull()
-    expect(issues.update.mock.calls).toEqual([
-      [source.id, { version: 3, status: 'in_progress' }],
-      [source.id, { version: 4, status: 'in_progress' }],
-    ])
+describe('personal task project association', () => {
+  it('preserves an Issue status when attaching project tags', () => {
+    const issue = { status: 'in_review', version: 4, tags: ['existing'] }
+    expect(workItemAssociationUpdate(issue, ['existing', 'project:7'])).toEqual({
+      version: 4,
+      tags: ['existing', 'project:7'],
+    })
   })
 
-  it.each(['completed', 'done'])('does not overwrite a concurrent %s status edit', async status => {
-    const issues = issuesFor({ version: 4, status })
-    await expect(start(issues)).resolves.not.toBeNull()
-    expect(issues.update).toHaveBeenCalledTimes(1)
+  it('does not write an Issue when its project association is unchanged', () => {
+    expect(workItemAssociationUpdate({ version: 4, tags: ['project:7'] }, ['project:7'])).toBeNull()
+  })
+})
+
+describe('personal task Issue status ownership', () => {
+  it.each([
+    { projectStore: 'local' as const },
+    { projectStore: 'backend' as const, dispatchRoundId: 'human-round' },
+  ])('leaves lifecycle and manager-owned status untouched: %j', async context => {
+    const issues = { get: vi.fn(), update: vi.fn() }
+    await expect(prepareIssueStartStatus(issues, 'issue', context)).resolves.toMatchObject({
+      error: null,
+    })
+    expect(issues.get).not.toHaveBeenCalled()
+    expect(issues.update).not.toHaveBeenCalled()
   })
 
-  it('does not rebase permission denials', async () => {
-    const issues = issuesFor({ version: 4 }, new Error('Forbidden'))
-    await expect(start(issues)).resolves.toBe('Forbidden')
-    expect(issues.get).toHaveBeenCalledTimes(1)
-    expect(issues.update).toHaveBeenCalledTimes(1)
+  it.each(['inbox', 'pending', 'in_review'])(
+    'starts an ordinary cloud Issue from %s',
+    async status => {
+      const source = { id: 'issue', status, tags: [], version: 3 }
+      const issues = {
+        get: vi.fn().mockResolvedValue(source),
+        update: vi.fn().mockResolvedValue({ ...source, status: 'in_progress', version: 4 }),
+      }
+      await expect(
+        prepareIssueStartStatus(issues, source.id, { projectStore: 'backend' })
+      ).resolves.toMatchObject({ error: null })
+      expect(issues.update).toHaveBeenCalledExactlyOnceWith(source.id, {
+        version: 3,
+        status: 'in_progress',
+      })
+    }
+  )
+
+  it('starts a direct human assignment without treating it as a manager round', async () => {
+    const issues = {
+      get: vi.fn().mockResolvedValue({ id: 'issue', status: 'pending', tags: [], version: 3 }),
+      update: vi.fn().mockResolvedValue({}),
+    }
+    await expect(
+      prepareIssueStartStatus(issues, 'issue', {
+        projectStore: 'backend',
+        dispatchRoundId: 'direct',
+      })
+    ).resolves.toMatchObject({ error: null })
+    expect(issues.update).toHaveBeenCalledExactlyOnceWith('issue', {
+      version: 3,
+      status: 'in_progress',
+    })
   })
 
-  it('does not rebase an unrelated HTTP 409 response', async () => {
-    const issues = issuesFor(
-      { version: 4 },
-      Object.assign(new Error('Action unavailable'), { status: 409 })
-    )
-    await expect(start(issues)).resolves.toBe('Action unavailable')
-    expect(issues.get).toHaveBeenCalledTimes(1)
-    expect(issues.update).toHaveBeenCalledTimes(1)
+  it('reports a cloud permission denial without rejecting the accepted task', async () => {
+    const issues = {
+      get: vi.fn().mockResolvedValue({ id: 'issue', status: 'pending', tags: [], version: 3 }),
+      update: vi.fn().mockRejectedValue(new Error('Forbidden')),
+    }
+    await expect(
+      prepareIssueStartStatus(issues, 'issue', { projectStore: 'backend' })
+    ).resolves.toMatchObject({ error: 'Forbidden' })
+    expect(issues.get).toHaveBeenCalledOnce()
+    expect(issues.update).toHaveBeenCalledOnce()
   })
+})
+
+it('restores a rejected start only while its own status write is current', async () => {
+  const before = { id: 'issue', status: 'pending', tags: [], version: 3 }
+  const started = { ...before, status: 'in_progress', version: 4 }
+  const issues = {
+    get: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(started),
+    update: vi
+      .fn()
+      .mockResolvedValueOnce(started)
+      .mockResolvedValueOnce({ ...before, version: 5 }),
+  }
+  const preparation = await prepareIssueStartStatus(issues, before.id, { projectStore: 'backend' })
+  await preparation.rollback!()
+  expect(issues.update).toHaveBeenNthCalledWith(2, before.id, { version: 4, status: 'pending' })
+})
+
+it.each([
+  { status: 'in_progress', version: 5 },
+  { status: 'in_review', version: 4 },
+])('does not undo a concurrent Issue change after a rejected start: %j', async change => {
+  const before = { id: 'issue', status: 'pending', tags: [], version: 3 }
+  const started = { ...before, status: 'in_progress', version: 4 }
+  const issues = {
+    get: vi
+      .fn()
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce({ ...started, ...change }),
+    update: vi.fn().mockResolvedValue(started),
+  }
+  const preparation = await prepareIssueStartStatus(issues, before.id, { projectStore: 'backend' })
+  await preparation.rollback!()
+  expect(issues.update).toHaveBeenCalledOnce()
+})
+
+it('keeps the rollback compare-and-swap failure without retrying a newer revision', async () => {
+  const before = { id: 'issue', status: 'pending', tags: [], version: 3 }
+  const started = { ...before, status: 'in_progress', version: 4 }
+  const issues = {
+    get: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(started),
+    update: vi.fn().mockResolvedValueOnce(started).mockRejectedValueOnce(new Error('Conflict')),
+  }
+  const preparation = await prepareIssueStartStatus(issues, before.id, { projectStore: 'backend' })
+  await expect(preparation.rollback!()).rejects.toThrow('Conflict')
+  expect(issues.update).toHaveBeenCalledTimes(2)
 })

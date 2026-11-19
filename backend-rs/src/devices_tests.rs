@@ -175,6 +175,42 @@ fn absent_project_editing_does_not_mask_legacy_runtime_contracts() {
 }
 
 #[test]
+fn remote_task_access_requires_explicit_typed_consent() {
+    for enabled in [false, true] {
+        let info = json!({"runtime_features": {"schemaVersion": 4,
+            "remoteTaskAccess": {"version": 1, "enabled": enabled}}});
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert_eq!(
+            projected["remoteTaskAccess"],
+            json!({"version": 1, "enabled": enabled, "taskCreation": false})
+        );
+    }
+    for access in [
+        Value::Null,
+        json!({}),
+        json!({"version": true, "enabled": true}),
+        json!({"version": 1, "enabled": "true"}),
+        json!({"version": 2, "enabled": true}),
+        json!({"version": 1, "enabled": true, "taskCreation": "true"}),
+    ] {
+        let info = json!({"runtime_features": {"schemaVersion": 4, "remoteTaskAccess": access}});
+        let projected =
+            crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+        assert!(projected.get("remoteTaskAccess").is_none());
+    }
+}
+
+#[test]
+fn remote_task_creation_capability_survives_device_projection() {
+    let access = json!({"version": 1, "enabled": true, "taskCreation": true});
+    let info = json!({"runtime_features": {"schemaVersion": 4, "remoteTaskAccess": access}});
+    let projected =
+        crate::json_contract_tests::serialized(runtime_features(&info).unwrap()).unwrap();
+    assert_eq!(projected["remoteTaskAccess"], access);
+}
+
+#[test]
 fn malformed_explicit_project_editing_is_preserved_conservatively() {
     for editing in [
         Value::Null,
@@ -280,6 +316,8 @@ fn runtime_features_extensions_follow_the_known_members() {
         worktrees: None,
         project_editing: None,
         plugin_sync: None,
+        connection_events: None,
+        remote_task_access: None,
         extensions: std::iter::once((
             "desktop".to_string(),
             json!({
@@ -309,4 +347,26 @@ fn runtime_features_extensions_follow_the_known_members() {
             },
         })
     );
+}
+
+#[test]
+fn connection_event_protocol_projection_is_explicit_and_preserves_denials() {
+    for advertisement in [
+        json!(null),
+        json!({}),
+        json!({"protocolVersion": "1"}),
+        json!({"protocolVersion": true}),
+        json!({"protocolVersion": 0}),
+    ] {
+        let projected = crate::json_contract_tests::serialized(runtime_features(&json!({"runtime_features": {"schemaVersion": 4, "connectionEvents": advertisement, "projectEditing": {"plugins": false}}})).unwrap()).unwrap();
+        assert!(projected.get("connectionEvents").is_none());
+        assert_eq!(projected["projectEditing"]["plugins"], false);
+    }
+    let projected = crate::json_contract_tests::serialized(runtime_features(&json!({"runtime_features": {"schemaVersion": 4, "connectionEvents": {"protocolVersion": 1, "unknown": true}}})).unwrap()).unwrap();
+    assert_eq!(projected["connectionEvents"], json!({"protocolVersion": 1}));
+    let old = crate::json_contract_tests::serialized(
+        runtime_features(&json!({"runtime_features": {"schemaVersion": 4}})).unwrap(),
+    )
+    .unwrap();
+    assert!(old.get("connectionEvents").is_none());
 }

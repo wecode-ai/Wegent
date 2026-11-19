@@ -162,6 +162,7 @@ export interface TaskRunStats {
 export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
 export type ConnectorVisibility = 'all' | 'roles'
 export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
+export type ConnectorToolLoadingMode = 'static' | 'lazy'
 
 export interface ConnectorHttpToolDefinition {
   name: string
@@ -195,6 +196,42 @@ export interface ConnectorToolCallResponse {
   is_error: boolean
 }
 
+export interface ConnectorConnection {
+  status: 'disconnected' | 'pending' | 'connected' | 'expired' | 'error'
+  external_account_name?: string | null
+  granted_scopes?: string[]
+  expires_at?: string | null
+  last_error?: string | null
+  last_discovered_at?: string | null
+  tool_count?: number
+}
+
+export interface UserConnectorApp {
+  id: number
+  slug: string
+  name: string
+  description: string
+  icon_url: string | null
+  auth_type: ConnectorAuthType
+  tool_loading_mode: ConnectorToolLoadingMode
+  connection: ConnectorConnection
+  keywords?: string[]
+}
+
+export interface ConnectorOAuthSession {
+  session_id: string
+  poll_token: string
+  authorize_url: string
+  expires_at: number
+  poll_interval_seconds: number
+}
+
+export interface ConnectorOAuthPollResult {
+  status: 'pending' | 'success' | 'declined' | 'failed'
+  connection?: ConnectorConnection | null
+  error?: string | null
+}
+
 export interface AdminConnectorApp {
   id: number
   slug: string
@@ -205,8 +242,12 @@ export interface AdminConnectorApp {
   visibility: ConnectorVisibility
   allowed_roles: string[]
   auth_type: ConnectorAuthType
+  oauth_scope: string | null
+  oauth_client_registered: boolean
   transport: ConnectorTransport
   mcp_url: string
+  tool_loading_mode: ConnectorToolLoadingMode
+  keywords: string[]
   provider_header_names: string[]
   provider_headers_configured: boolean
   forward_user_context_headers: boolean
@@ -226,8 +267,11 @@ export interface AdminConnectorAppCreate {
   visibility: ConnectorVisibility
   allowed_roles: string[]
   auth_type: ConnectorAuthType
+  oauth_scope?: string | null
   transport: ConnectorTransport
   mcp_url: string
+  tool_loading_mode: ConnectorToolLoadingMode
+  keywords: string[]
   provider_headers: Record<string, string>
   forward_user_context_headers?: boolean
   tool_allowlist: string[]
@@ -239,6 +283,7 @@ export type AdminConnectorAppUpdate = Partial<
 > & {
   provider_headers?: Record<string, string>
   clear_provider_headers?: boolean
+  clear_oauth_client?: boolean
 }
 
 // Chat Slogan & Tips Types
@@ -742,7 +787,7 @@ export interface IMChannelStatus {
 
 // Device Monitor Types
 export type DeviceStatus = 'online' | 'offline' | 'busy'
-export type DeviceType = 'local' | 'cloud'
+export type DeviceType = 'local' | 'app' | 'cloud' | 'remote'
 export type BindShell = 'claudecode' | 'openclaw'
 export type VersionFilterOperator = 'gt' | 'gte' | 'eq' | 'lt' | 'lte'
 
@@ -1616,8 +1661,14 @@ export const adminApis = {
   /**
    * Get device statistics (admin only)
    */
-  async getDeviceStats(): Promise<AdminDeviceStats> {
-    return apiClient.get('/admin/device-monitor/stats')
+  async getDeviceStats(refresh = false): Promise<AdminDeviceStats> {
+    return apiClient.get(
+      refresh ? '/admin/device-monitor/stats?refresh=true' : '/admin/device-monitor/stats'
+    )
+  },
+
+  async deleteDeviceRecord(recordId: number): Promise<{ message: string }> {
+    return apiClient.delete(`/admin/device-monitor/devices/records/${recordId}`)
   },
 
   /**
@@ -1670,6 +1721,10 @@ export const adminApis = {
     return apiClient.get('/admin/connector-apps')
   },
 
+  async getUserConnectorApps(): Promise<UserConnectorApp[]> {
+    return apiClient.get('/connector-apps')
+  },
+
   async createConnectorApp(data: AdminConnectorAppCreate): Promise<AdminConnectorApp> {
     return apiClient.post('/admin/connector-apps', data)
   },
@@ -1681,12 +1736,16 @@ export const adminApis = {
     return apiClient.patch(`/admin/connector-apps/${appId}`, data)
   },
 
-  async disableConnectorApp(appId: number): Promise<void> {
+  async deleteConnectorApp(appId: number): Promise<void> {
     return apiClient.delete(`/admin/connector-apps/${appId}`)
   },
 
   async discoverConnectorAppTools(appId: number): Promise<ConnectorToolListResponse> {
-    return apiClient.post(`/admin/connector-apps/${appId}/tools/discover`, {})
+    return apiClient.post(
+      `/admin/connector-apps/${appId}/tools/discover`,
+      {},
+      { redirectOnUnauthorized: false }
+    )
   },
 
   async testConnectorAppTool(
@@ -1694,10 +1753,40 @@ export const adminApis = {
     name: string,
     argumentsValue: Record<string, unknown> = {}
   ): Promise<ConnectorToolCallResponse> {
-    return apiClient.post(`/admin/connector-apps/${appId}/tools/test`, {
-      name,
-      arguments: argumentsValue,
-    })
+    return apiClient.post(
+      `/admin/connector-apps/${appId}/tools/test`,
+      {
+        name,
+        arguments: argumentsValue,
+      },
+      { redirectOnUnauthorized: false }
+    )
+  },
+
+  async createConnectorOAuthSession(slug: string): Promise<ConnectorOAuthSession> {
+    return apiClient.post(`/connector-apps/${encodeURIComponent(slug)}/oauth/sessions`, {})
+  },
+
+  async disconnectConnectorApp(slug: string): Promise<void> {
+    return apiClient.delete(`/connector-apps/${encodeURIComponent(slug)}/connection`)
+  },
+
+  async refreshConnectorApp(slug: string): Promise<ConnectorConnection> {
+    return apiClient.post(
+      `/connector-apps/${encodeURIComponent(slug)}/connection/refresh`,
+      {},
+      { redirectOnUnauthorized: false }
+    )
+  },
+
+  async pollConnectorOAuthSession(
+    sessionId: string,
+    pollToken: string
+  ): Promise<ConnectorOAuthPollResult> {
+    const params = new URLSearchParams({ poll_token: pollToken })
+    return apiClient.get(
+      `/connector-apps/oauth/sessions/${encodeURIComponent(sessionId)}/poll?${params.toString()}`
+    )
   },
 
   // ==================== Template Management ====================

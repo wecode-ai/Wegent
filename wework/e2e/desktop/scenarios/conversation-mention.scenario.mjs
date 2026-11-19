@@ -1,6 +1,9 @@
+import { conversationReferenceReadEvents } from '../modules/conversation-reference-model.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import { runtimeCompletionReceiptPatterns } from '../modules/runtime-task-evidence.mjs'
 
 import {
   functionCall,
@@ -9,7 +12,11 @@ import {
   selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
 import { sendPrompt } from '../modules/conversation-navigation.mjs'
-import { ACTIVE_SEND_BUTTON_SELECTOR, selectE2EModel } from '../modules/shared.mjs'
+import {
+  ACTIVE_SEND_BUTTON_SELECTOR,
+  selectE2EModel,
+  waitForLogPattern,
+} from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -200,6 +207,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workspacePath,
+  resultDir,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
@@ -264,13 +272,32 @@ export function createDesktopScenario({
 
       if (
         serialized.includes('wework-conversation://') &&
-        serialized.includes(LARGE_SOURCE_PROMPT)
+        requestContainsToolOutput(body, 'read-large-reference')
       ) {
         largeTargetRequest = body
         completion = LARGE_TARGET_COMPLETION
-      } else if (serialized.includes('wework-conversation://')) {
+      } else if (
+        serialized.includes('wework-conversation://') &&
+        requestContainsToolOutput(body, 'read-reference')
+      ) {
         targetRequest = body
         completion = TARGET_COMPLETION
+      } else if (serialized.includes('wework-conversation://')) {
+        const isLarge = largeSourceToolRequested
+        assert.equal(
+          serialized.includes(SOURCE_COMPLETION),
+          false,
+          'Referenced text must not be embedded before the tool read'
+        )
+        assert.equal(
+          serialized.includes(LARGE_SOURCE_COMPLETION),
+          false,
+          'Large referenced text must not be embedded before the tool read'
+        )
+        output = conversationReferenceReadEvents(
+          body,
+          isLarge ? 'read-large-reference' : 'read-reference'
+        )
       } else if (requestContainsToolOutput(body, LARGE_TOOL_CALL_ID)) {
         completion = LARGE_SOURCE_COMPLETION
       } else if (serialized.includes(LARGE_SOURCE_PROMPT) && requestAdvertisesShellTool(body)) {
@@ -282,6 +309,20 @@ export function createDesktopScenario({
         completion = SOURCE_COMPLETION
       }
 
+      console.info(
+        '[conversation-mention-model-wire]',
+        JSON.stringify({
+          completion,
+          outputs: output.map(event => ({ type: event.item?.type, callId: event.item?.call_id })),
+          input: Array.isArray(body.input)
+            ? body.input.map(item => ({
+                type: item.type,
+                callId: item.call_id,
+                outputLength: typeof item.output === 'string' ? item.output.length : null,
+              }))
+            : [],
+        })
+      )
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
         sse([
@@ -487,6 +528,11 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      for (const key of ['wework:debug-runtime-chat-stream', 'wework:debug-runtime']) {
+        await control.command('setLocalStorageItem', 'body', {
+          value: JSON.stringify({ key, value: '1' }),
+        })
+      }
       await sendPrompt(control, COMPOSER_SELECTOR, LARGE_SOURCE_PROMPT)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LARGE_SOURCE_COMPLETION,
@@ -496,6 +542,19 @@ export function createDesktopScenario({
       assert.ok(
         largeSourceToolRequested,
         'The large referenced conversation did not execute the real shell tool'
+      )
+      const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const largeSourceTaskId = debug.workbench?.currentRuntimeTask?.taskId
+      assert.ok(largeSourceTaskId, 'The large source conversation has no owning Runtime task')
+      // History refresh can render a completed answer even after losing the live connection.
+      await Promise.all(
+        runtimeCompletionReceiptPatterns(largeSourceTaskId).map(pattern =>
+          waitForLogPattern(
+            join(resultDir, 'electron-user-data', 'logs', 'runtime-launch.log'),
+            pattern,
+            { timeoutMs: uiTimeoutMs }
+          )
+        )
       )
 
       await control.command('click', '[data-testid="new-chat-button"]')

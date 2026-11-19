@@ -26,45 +26,31 @@ use super::skill_generation;
 use crate::http_compat::FastApiError;
 use crate::task_store::TaskStore;
 
-/// `subtask_store.list_by_task_unfiltered`: the task's subtask ids, in the
-/// store's order, feeding `context_service.get_attachments_by_task`
-/// (`backend/app/services/context/context_service.py:2042`). The source call
-/// passes no `owner_user_id`, so the sharded store's `_owner_matches_task_id`
-/// probe returns true
-/// before any query and the read carries no `user_id` filter.
-async fn subtask_ids(task_store: &dyn TaskStore, task_id: i64) -> Result<Vec<i64>, FastApiError> {
-    let rows = task_store
-        .list_subtasks_by_task_unfiltered(task_id, None)
-        .await
-        .map_err(super::request::dependency)?;
-    Ok(rows
-        .iter()
-        .filter_map(|row| {
-            let index = crate::task_store::subtask_column_index("id")?;
-            row.get_at::<Option<i64>>(index).ok().flatten()
-        })
-        .collect())
-}
-
 /// `prepare_execution_request`'s generation-context enrichment inputs
 /// (`request_preparation.py:868-878`): the current subtask's attachment
 /// contexts and the task's ready attachment contexts.
-pub(super) async fn generation_context<M: brz_mysql::Mysql>(
-    mysql: &M,
+pub(super) async fn generation_context(
+    mysql: &brz_mysql::MysqlService,
     task_store: &dyn TaskStore,
     task_id: i64,
     user_subtask_id: i64,
     user_id: i64,
+    generation: Option<&Value>,
 ) -> Result<Option<Value>, FastApiError> {
     let current_attachments = contexts::attachments_by_subtask(mysql, user_subtask_id)
         .await
         .map_err(super::request::dependency)?;
-    let task_subtask_ids = subtask_ids(task_store, task_id).await?;
-    let task_attachments = contexts::attachments_by_task(mysql, &task_subtask_ids)
+    use brz_mysql::FromMysqlRow;
+    let task_attachments = task_store
+        .list_task_attachment_contexts_on(&mut &*mysql, task_id)
         .await
+        .map_err(super::request::dependency)?
+        .into_iter()
+        .map(contexts::SubtaskContextRow::from_mysql_row)
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()
         .map_err(super::request::dependency)?;
     Ok(skill_generation::enrich_skill_generation_context(
-        None,
+        generation,
         &current_attachments,
         &task_attachments,
         user_subtask_id,
@@ -86,9 +72,14 @@ pub(super) async fn workspace<M: brz_mysql::Mysql>(
     task_json: &Value,
     project_id: i64,
     user_id: i64,
+    created_git_repository: Option<&Value>,
 ) -> WorkspaceReads {
-    let workspace_resource =
-        super::project_workspace::workspace_repository(task_store, task_json, user_id).await;
+    let workspace_resource = if let Some(repository) = created_git_repository {
+        let branch = repository["branchName"].as_str().unwrap_or_default();
+        Some((repository.clone(), branch.to_owned()))
+    } else {
+        super::project_workspace::workspace_repository(task_store, task_json, user_id).await
+    };
     let project_config =
         super::project_workspace::load_project_config(mysql, project_id, user_id).await;
     WorkspaceReads {

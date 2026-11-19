@@ -13,14 +13,47 @@ pub(super) fn mcp_thread_configuration(params: &Value) -> Map<String, Value> {
         .collect()
 }
 
-/// Admission identity covers both tool authority and compaction's live policy baseline.
+/// Admission identity covers tool authority, inference profiles and native policy.
 pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value> {
     use sha2::{Digest, Sha256};
     let mut configuration = mcp_thread_configuration(params);
+    for key in [
+        "agents.enabled",
+        "features.multi_agent",
+        "features.multi_agent_v2",
+        "features.multi_agent_v2.root_agent_usage_hint_text",
+        "features.multi_agent_v2.multi_agent_mode_hint_text",
+        "features.multi_agent_v2.usage_hint_text",
+    ] {
+        if let Some(value) = params["config"].get(key) {
+            configuration.insert(key.into(), value.clone());
+        }
+    }
     if let Some(instructions) = params["developerInstructions"].as_str() {
         configuration.insert(
             "developerInstructions.sha256".into(),
             json!(format!("{:x}", Sha256::digest(instructions.as_bytes()))),
+        );
+    }
+    let providers: Map<String, Value> = params["config"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(key, _)| key.starts_with("model_providers."))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    if !providers.is_empty() || params.get("modelProvider").is_some() {
+        configuration.insert(
+            "inferenceProfile.sha256".into(),
+            json!(format!(
+                "{:x}",
+                Sha256::digest(
+                    serde_json::to_vec(
+                        &json!({"provider":params["modelProvider"],"profiles":providers})
+                    )
+                    .expect("JSON inference profiles serialize")
+                )
+            )),
         );
     }
     configuration
@@ -79,15 +112,9 @@ impl CodexAppServerClient {
                 tokio::pin!(notified);
                 notified.as_mut().enable();
                 let guard = Arc::clone(&gate).lock_owned().await;
-                let active = self
-                    .state
-                    .lock()
-                    .await
-                    .active_threads_snapshot()
-                    .get(thread_id)
-                    .copied()
-                    .unwrap_or(0)
-                    > 0;
+                // Goal continuation eligibility protects idle restarts, but its
+                // next turn may require this resume before it can start.
+                let active = self.state.lock().await.thread_has_active_turn(thread_id);
                 if active
                     && matches!(
                         plan.start,
@@ -134,6 +161,89 @@ impl CodexAppServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_delegation_policy_changes_and_removal_reload_an_existing_thread() {
+        for key in [
+            "root_agent_usage_hint_text",
+            "multi_agent_mode_hint_text",
+            "usage_hint_text",
+        ] {
+            let key = format!("features.multi_agent_v2.{key}");
+            let mut params = json!({"threadId":"issue-thread", "config":{}});
+            params["config"][&key] = json!("previous policy");
+            let previous = thread_context_configuration(&params);
+            params["config"][&key] = json!("delegate assigned Issue work");
+            let updated = thread_context_configuration(&params);
+            let plan = |params| CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params,
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(
+                    &plan(params.clone()),
+                    &ExecutionRequest::default(),
+                    Some(&previous)
+                ),
+                Some("issue-thread")
+            );
+            assert_eq!(
+                config_reload_resume_thread_id(
+                    &plan(params.clone()),
+                    &ExecutionRequest::default(),
+                    Some(&updated)
+                ),
+                None
+            );
+            params["config"].as_object_mut().unwrap().remove(&key);
+            assert_eq!(
+                config_reload_resume_thread_id(
+                    &plan(params),
+                    &ExecutionRequest::default(),
+                    Some(&updated)
+                ),
+                Some("issue-thread")
+            );
+        }
+    }
+
+    #[test]
+    fn inference_profile_changes_and_removal_require_native_reload() {
+        let params = json!({"threadId":"thread-1","modelProvider":"~", "config":{
+            "model_providers.~":{"name":"OpenAI","base_url":"http://localhost/discovery","experimental_bearer_token":"synthetic"}
+        }});
+        let loaded = thread_context_configuration(&params);
+        assert!(!serde_json::to_string(&loaded)
+            .unwrap()
+            .contains("synthetic"));
+        assert!(!serde_json::to_string(&loaded)
+            .unwrap()
+            .contains("localhost"));
+        let mut native = params.clone();
+        native["config"]["model_providers.~"] =
+            json!({"name":"OpenAI","requires_openai_auth":true});
+        let mut different_provider = params.clone();
+        different_provider["modelProvider"] = json!("another");
+        for desired in [native, different_provider, json!({"threadId":"thread-1"})] {
+            let plan = CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params: desired,
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &ExecutionRequest::default(), Some(&loaded)),
+                Some("thread-1")
+            );
+        }
+        assert_eq!(loaded, thread_context_configuration(&params));
+    }
 
     #[test]
     fn resumes_reload_changed_removed_or_unknown_mcp_configuration() {
@@ -183,6 +293,40 @@ mod tests {
             .insert("thread-1".into(), Map::new());
         stop_codex_app_server_process(&mut state, None).await;
         assert!(state.thread_context_configurations.is_empty());
+    }
+
+    #[test]
+    fn collaboration_changes_reload_the_native_agent_family_before_resume() {
+        let mut loaded = json!({"threadId":"thread-1", "config":{
+            "agents.enabled":false, "features.multi_agent":false, "features.multi_agent_v2":false
+        }});
+        let previous = thread_context_configuration(&loaded);
+        let request = ExecutionRequest::default();
+        for key in [
+            "agents.enabled",
+            "features.multi_agent",
+            "features.multi_agent_v2",
+        ] {
+            loaded["config"][key] = json!(true);
+            let plan = CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params: loaded.clone(),
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &request, Some(&previous)),
+                Some("thread-1")
+            );
+            let current = thread_context_configuration(&loaded);
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &request, Some(&current)),
+                None
+            );
+            loaded["config"][key] = json!(false);
+        }
     }
 
     #[test]

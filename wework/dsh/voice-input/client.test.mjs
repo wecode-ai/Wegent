@@ -11,6 +11,9 @@ async function fixture() {
   const contributions = []
   const refs = []
   let hookIndex = 0
+  let locale = 'en'
+  const windowListeners = new Map()
+  const subscriptions = new Set()
   const ctx = {
     effect(factory) {
       cleanups.push(factory())
@@ -34,12 +37,20 @@ async function fixture() {
       },
     },
     wework: {
-      localization: { translate: value => value.en },
+      localization: { translate: value => value[locale] ?? value.en },
       contributions: { register: (...args) => contributions.push(args.slice(1)) },
     },
   }
   vm.runInNewContext(await readFile(new URL('./client.js', import.meta.url), 'utf8'), {
     window: {
+      addEventListener(type, listener) {
+        const current = windowListeners.get(type) ?? new Set()
+        current.add(listener)
+        windowListeners.set(type, current)
+      },
+      removeEventListener(type, listener) {
+        windowListeners.get(type)?.delete(listener)
+      },
       __ModuleLoader__: {
         load: value => {
           registration = value
@@ -53,6 +64,13 @@ async function fixture() {
       : {
           createElement: (component, props, ...children) => ({ component, props, children }),
           useMemo: fn => fn(),
+          useSyncExternalStore(subscribe, getSnapshot) {
+            if (!subscriptions.has(subscribe)) {
+              subscriptions.add(subscribe)
+              cleanups.push(subscribe(() => {}))
+            }
+            return getSnapshot()
+          },
           useRef: value => (refs[hookIndex++] ??= { current: value }),
         }
   )
@@ -73,6 +91,13 @@ async function fixture() {
     contributions,
     publish,
     renderComposer,
+    showSetup: () => {
+      entries.get('wework.shell.overlay')[0].component({})
+      for (const listener of windowListeners.get('wework:voice-input:settings') ?? []) listener()
+    },
+    setLocale: value => {
+      locale = value
+    },
   }
 }
 
@@ -168,4 +193,68 @@ test('forwards voice activity changes to the owning composer', async () => {
   voice.onActiveChange(false)
   voice.onActiveChange(true)
   assert.deepEqual(activity, [true, false, true])
+})
+
+test('updates settings copy for the same mounted component when the host language changes', async () => {
+  const f = await fixture()
+  f.setLocale('zh-CN')
+  f.publish('plugins.bundle.config', [
+    {
+      component() {},
+      locale: 'voice-input',
+      options: { key: '@deepseek-ai/dsh-experimental-voice-input-bundle' },
+    },
+  ])
+  const Settings = f.entries.get('wework.settings.section')[0].component
+  const Overlay = f.entries.get('wework.shell.overlay')[0].component
+  f.showSetup()
+  assert.equal(Settings({}).children[0].children[0], '语音输入')
+  assert.equal(Overlay({}).props.closeLabel, '关闭')
+  f.setLocale('en')
+  const english = Settings({})
+  assert.equal(english.children[0].children[0], 'Voice input')
+  assert.equal(Overlay({}).props.title, 'Voice input')
+  assert.equal(Overlay({}).props.closeLabel, 'Close')
+  assert.ok(JSON.stringify(english).includes('Smaller download and lower memory use'))
+  f.setLocale('zh-CN')
+  const chinese = Settings({})
+  assert.equal(chinese.children[0].children[0], '语音输入')
+  assert.equal(Overlay({}).props.title, '语音输入')
+  assert.equal(Overlay({}).props.closeLabel, '关闭')
+  assert.ok(JSON.stringify(chinese).includes('轻量版'))
+})
+
+test('keeps official preparation and local dismissal inside the owning modal layout', async () => {
+  const f = await fixture()
+  const Official = () => {}
+  const props = { prepare() {}, useSpeechReadiness() {} }
+  f.publish('plugins.bundle.config', [
+    {
+      component: Official,
+      locale: 'voice-input',
+      options: { key: '@deepseek-ai/dsh-experimental-voice-input-bundle' },
+    },
+  ])
+  const Settings = f.entries.get('wework.settings.section')[0].component
+  const Overlay = f.entries.get('wework.shell.overlay')[0].component
+  const inline = Settings(props).children[1]
+  assert.equal(inline.props['data-testid'], 'voice-input-preparation')
+  assert.ok(inline.props.className.includes('wework-voice-preparation'))
+  assert.equal(inline.children[0].component, Official)
+  assert.equal(inline.children[0].props.prepare, props.prepare)
+  assert.equal(inline.children[0].props.useSpeechReadiness, props.useSpeechReadiness)
+  f.showSetup()
+  const modal = Overlay(props)
+  assert.equal(modal.props.className, 'wework-voice-setup-modal')
+  assert.equal(modal.props.contentClassName, 'wework-voice-setup-content')
+  const preparation = modal.children[0].children[0]
+  assert.equal(preparation.props['data-testid'], 'voice-input-preparation')
+  assert.equal(preparation.children[0].component, Official)
+  assert.equal(preparation.children[0].props.prepare, props.prepare)
+  assert.equal(preparation.children[0].props.useSpeechReadiness, props.useSpeechReadiness)
+  modal.props.onClose()
+  assert.equal(Overlay(props), null)
+  f.showSetup()
+  Overlay(props).props.footer.props.onClick()
+  assert.equal(Overlay(props), null)
 })

@@ -1,0 +1,82 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { createConversationSearchInput } from './conversationSearchInput'
+
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => vi.useRealTimers())
+
+test('typing retains the last committed query until the final input has settled for 150ms', () => {
+  const input = createConversationSearchInput('a')
+  const stop = input.subscribeActive(vi.fn())
+  input.change('first')
+  input.commit()
+  const completed = input.getSnapshot().completed
+  input.change('second')
+  vi.advanceTimersByTime(100)
+  const latest = input.change('latest')
+  vi.advanceTimersByTime(149)
+  expect(input.getSnapshot().request).toBe(latest)
+  expect(input.getSnapshot().completed).toBe(completed)
+  vi.advanceTimersByTime(1)
+  expect(input.getSnapshot().completed).toBe(latest)
+  stop()
+})
+
+test('an inactive observer sees input changes without starting a debounce timer', () => {
+  const input = createConversationSearchInput(null)
+  const listener = vi.fn()
+  const stop = input.subscribe(listener)
+  input.change('pending')
+  expect(listener).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(0)
+  expect(input.getSnapshot().request.query).toBe('pending')
+  expect(input.getSnapshot().completed.query).toBe('')
+  stop()
+})
+
+test('deactivation cancels pending work and activation starts a complete debounce interval', () => {
+  const input = createConversationSearchInput(1)
+  const stop = input.subscribeActive(vi.fn())
+  input.change('pending')
+  vi.advanceTimersByTime(100)
+  stop()
+  vi.advanceTimersByTime(500)
+  expect(input.getSnapshot().completed.query).toBe('')
+  const again = input.subscribeActive(vi.fn())
+  vi.advanceTimersByTime(149)
+  expect(input.getSnapshot().completed.query).toBe('')
+  vi.advanceTimersByTime(1)
+  expect(input.getSnapshot().completed.query).toBe('pending')
+  again()
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('explicit submission commits immediately and an empty query cancels old timers', () => {
+  const input = createConversationSearchInput(undefined)
+  const stop = input.subscribeActive(vi.fn())
+  input.change('submit')
+  const submitted = input.commit()
+  expect(input.getSnapshot().completed).toBe(submitted)
+  expect(vi.getTimerCount()).toBe(0)
+  input.change('cancelled')
+  const empty = input.change('')
+  const cleared = input.getSnapshot()
+  expect(cleared.request).toBe(empty)
+  expect(cleared.completed).toBe(empty)
+  vi.advanceTimersByTime(1000)
+  expect(input.getSnapshot()).toBe(cleared)
+  stop()
+})
+
+test('active consumers share the pending interval until the last one leaves', () => {
+  const input = createConversationSearchInput('a')
+  const first = input.subscribeActive(vi.fn())
+  input.change('pending')
+  vi.advanceTimersByTime(100)
+  const second = input.subscribeActive(vi.fn())
+  first()
+  vi.advanceTimersByTime(50)
+  expect(input.getSnapshot().completed.query).toBe('pending')
+  second()
+  expect(vi.getTimerCount()).toBe(0)
+})

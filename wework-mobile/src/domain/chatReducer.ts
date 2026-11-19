@@ -1,13 +1,39 @@
+import { mergeFileChangesSummaries } from './mobileFileChanges'
 import type {
   ChatBlockStatus,
   ChatFileChangesSummary,
   ChatMessage,
   ChatProcessingBlock,
+  ChatSubagentBlock,
   ChatTextItem,
   RuntimeTranscriptMessage,
+  RequestUserInputResponse,
 } from '@/types/runtime'
+import {
+  applyMobileUserInputResponse,
+  preserveMobileUserInput,
+  resolveMobileUserInput,
+  settleMobileUserInput,
+} from './requestUserInput'
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
+import { eventBase } from '../../../packages/chat-core/src/response-api-decoder'
+import {
+  bindStreamUser,
+  mergeLatestMessages,
+  uniqueMessages,
+  updateStreamAssistant as updateAssistant,
+  type StreamIdentity,
+} from './mobileMessageOrdering'
+import { normalizeTurnFileChanges } from '../../../packages/chat-core/src/turn-file-changes'
+import { normalizeProcessingBlock } from '../../../packages/chat-core/src/runtime-transcript-blocks'
+import { mergeProcessingBlockUpdate } from '../../../packages/chat-core/src/workbench-message-reducer'
+import {
+  finalizeBlocks,
+  isActiveStatus,
+  isTerminalBlockStatus,
+  normalizeBlockStatus,
+} from './mobileProcessingBlocks'
 
 export interface RuntimeStreamEvent {
   name: string
@@ -18,14 +44,15 @@ export type ChatAction =
   | { type: 'replace'; messages: RuntimeTranscriptMessage[] }
   | { type: 'prepend'; messages: RuntimeTranscriptMessage[] }
   | { type: 'merge-latest'; messages: RuntimeTranscriptMessage[] }
-  | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
+  | ({ type: 'optimistic-user' } & Pick<
+      ChatMessage,
+      'id' | 'content' | 'createdAt' | 'attachments'
+    >)
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
-
-interface StreamIdentity {
-  taskId?: string
-  subtaskId: string
-}
+  | { type: 'user-delivered'; id: string }
+  | { type: 'user-input-response'; response: RequestUserInputResponse }
+  | { type: 'user-input-cancelled'; key: string }
 
 interface BlockUpdates {
   content?: string
@@ -38,22 +65,43 @@ interface BlockUpdates {
   status?: ChatBlockStatus
   completedAt?: number
   durationMs?: number
+  output?: string
+  summary?: string
+  parentToolUseId?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
 }
 
 export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
+  return resolveMobileUserInput(preserveMobileUserInput(state, reduceChat(state, action)))
+}
+
+function reduceChat(state: ChatMessage[], action: ChatAction): ChatMessage[] {
   switch (action.type) {
     case 'replace':
       return uniqueMessages(transcriptMessages(action.messages))
     case 'prepend':
       return uniqueMessages([...transcriptMessages(action.messages), ...state])
     case 'merge-latest':
-      return uniqueMessages([...state, ...transcriptMessages(action.messages)])
+      return preserveMobileUserInput(
+        state,
+        mergeLatestMessages(state, transcriptMessages(action.messages))
+      )
+    case 'user-delivered':
+      return state.map(message =>
+        message.id === action.id ? { ...message, pendingDelivery: false } : message
+      )
+    case 'user-input-response':
+      return applyMobileUserInputResponse(state, action.response)
+    case 'user-input-cancelled':
+      return settleMobileUserInput(state, action.key)
     case 'optimistic-user':
       return upsertMessage(state, {
         id: action.id,
         role: 'user',
         content: visibleRuntimeUserMessage(action.content),
+        ...(action.attachments && { attachments: action.attachments }),
         status: 'completed',
+        pendingDelivery: true,
         createdAt: action.createdAt,
       })
     case 'fail':
@@ -90,10 +138,17 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
         ? (message.clientUserMessageId ?? message.client_user_message_id ?? message.id)
         : message.id || `history-${index}`,
     role,
+    ...(message.runtimeItemId && { runtimeItemId: message.runtimeItemId }),
     ...(subtaskId && { subtaskId }),
     ...(turnId && { turnId }),
     content:
       role === 'user' ? visibleRuntimeUserMessage(message.content ?? '') : (message.content ?? ''),
+    ...(message.attachments && { attachments: message.attachments }),
+    ...(message.runtimeItems && {
+      textItems: message.runtimeItems.flatMap(item =>
+        item.type === 'assistant_text' ? [{ id: item.id, content: item.content }] : []
+      ),
+    }),
     ...(blocks?.length && { blocks }),
     ...(fileChanges && { fileChanges }),
     status: terminalStatus(message.status),
@@ -109,6 +164,7 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
 function applyRuntimeEvent(state: ChatMessage[], event: RuntimeStreamEvent): ChatMessage[] {
   const identity = streamIdentity(event.payload)
   if (!identity) return state
+  state = bindStreamUser(state, identity)
   const data = eventData(event.payload)
 
   if (event.name === 'response.created' || event.name === 'response.in_progress') {
@@ -134,7 +190,13 @@ function applyRuntimeEvent(state: ChatMessage[], event: RuntimeStreamEvent): Cha
     if (!content) return state
     const itemId = idValue(data.itemId) ?? idValue(data.item_id) ?? `text-${identity.subtaskId}`
     return updateAssistant(state, identity, message =>
-      appendTextItem(message, itemId, content, eventOffset(event.payload), 'delta')
+      appendTextItem(
+        message,
+        itemId,
+        content,
+        finiteNumber(data.block_offset) ?? eventOffset(event.payload),
+        'delta'
+      )
     )
   }
 
@@ -265,6 +327,12 @@ function appendTextItem(
   offset: number | undefined,
   mode: 'delta' | 'snapshot'
 ): ChatMessage {
+  const block = message.blocks?.find(block => block.id === itemId && block.type === 'text')
+  if (block?.type === 'text')
+    return updateBlock(message, itemId, {
+      content: mode === 'snapshot' ? incoming : appendDelta(block.content, incoming, offset),
+      ...(mode === 'snapshot' && { status: 'done' }),
+    })
   const items = [...(message.textItems ?? initialTextItems(message))]
   const index = items.findIndex(item => item.id === itemId)
   const current = index >= 0 ? items[index] : { id: itemId, content: '' }
@@ -296,26 +364,23 @@ function initialTextItems(message: ChatMessage): ChatTextItem[] {
 
 function createBlock(message: ChatMessage, incoming: ChatProcessingBlock): ChatMessage {
   let blocks = finalizeNarrativeBlocks(message.blocks, incoming.createdAt)
-  let content = message.content
-  let textItems = message.textItems
-  if (incoming.type !== 'text' && content.trim()) {
+  // A completed commentary block can reuse an ID that first arrived as output
+  // deltas. Promote the pending representation without inventing another ID.
+  for (const item of message.textItems ?? initialTextItems(message))
     blocks = mergeBlock(blocks, {
-      id: `text-${message.subtaskId}-${blocks.filter(block => block.type === 'text').length + 1}`,
+      id: item.id,
       subtaskId: message.subtaskId ?? incoming.subtaskId,
       type: 'text',
-      content,
+      content: item.content,
       status: 'done',
       createdAt: incoming.createdAt,
       completedAt: incoming.createdAt,
     })
-    content = ''
-    textItems = undefined
-  }
   blocks = mergeBlock(blocks, incoming)
   return {
     ...clearError(message),
-    content,
-    textItems,
+    content: '',
+    textItems: undefined,
     blocks,
     ...(incoming.type === 'file_changes' && { fileChanges: incoming.fileChanges }),
     status: isActiveStatus(incoming.status) ? 'streaming' : message.status,
@@ -350,7 +415,16 @@ function blockUpdates(updates: Record<string, unknown>): BlockUpdates {
   const completedAt = finiteNumber(updates.completedAt ?? updates.completed_at)
   const durationMs = finiteNumber(updates.durationMs ?? updates.duration_ms)
   const fileChanges = normalizeFileChanges(updates.fileChanges ?? updates.file_changes)
+  const agentStatus = updates.agentStatus ?? updates.agent_status
   return {
+    ...(typeof updates.output === 'string' && { output: updates.output }),
+    ...(typeof updates.summary === 'string' && { summary: updates.summary }),
+    ...(typeof (updates.parentToolUseId ?? updates.parent_tool_use_id) === 'string' && {
+      parentToolUseId: String(updates.parentToolUseId ?? updates.parent_tool_use_id),
+    }),
+    ...((agentStatus === 'running' || agentStatus === 'done' || agentStatus === 'interrupted') && {
+      agentStatus,
+    }),
     ...(typeof updates.content === 'string' && { content: updates.content }),
     ...(typeof contentDelta === 'string' && { contentDelta }),
     ...(toolInput && { toolInput }),
@@ -375,8 +449,11 @@ function updateBlock(message: ChatMessage, blockId: string, updates: BlockUpdate
   if (!current) return message
   const blocks = (message.blocks ?? []).map(block => {
     if (block.id !== blockId) return block
+    if (block.type === 'subagent')
+      return mergeProcessingBlockUpdate(block, updates) as ChatSubagentBlock
     const status = updates.status ?? block.status
     const timing = {
+      ...(updates.parentToolUseId !== undefined && { parentToolUseId: updates.parentToolUseId }),
       ...(updates.durationMs !== undefined && { durationMs: Math.max(0, updates.durationMs) }),
       ...((updates.completedAt !== undefined || isTerminalBlockStatus(status)) && {
         completedAt:
@@ -500,6 +577,15 @@ function normalizeBlock(
 ): ChatProcessingBlock | null {
   const block = record(value)
   const type = stringValue(block.type)
+  if (type === 'subagent') {
+    const normalized = normalizeProcessingBlock(
+      subtaskId,
+      block,
+      0,
+      fallbackTimestamp || Date.now()
+    )
+    return normalized?.type === 'subagent' ? normalized : null
+  }
   const id = idValue(block.id) ?? idValue(block.tool_use_id) ?? idValue(block.toolUseId)
   if (!type || !id) return null
   const createdAt = timestamp(
@@ -516,6 +602,9 @@ function normalizeBlock(
         : undefined
   const status = normalizeBlockStatus(stringValue(block.status))
   const timing = {
+    ...(typeof (block.parentToolUseId ?? block.parent_tool_use_id) === 'string' && {
+      parentToolUseId: String(block.parentToolUseId ?? block.parent_tool_use_id),
+    }),
     status,
     createdAt,
     ...(durationMs !== undefined && { durationMs: Math.max(0, durationMs) }),
@@ -574,35 +663,6 @@ function normalizeBlock(
   return null
 }
 
-function updateAssistant(
-  state: ChatMessage[],
-  identity: StreamIdentity,
-  update: (message: ChatMessage) => ChatMessage
-): ChatMessage[] {
-  const index = state.findIndex(
-    message => message.role === 'assistant' && message.subtaskId === identity.subtaskId
-  )
-  if (index < 0) {
-    return [
-      ...state,
-      update({
-        id: `assistant-${identity.subtaskId}`,
-        taskId: identity.taskId,
-        subtaskId: identity.subtaskId,
-        role: 'assistant',
-        content: '',
-        status: 'pending',
-        createdAt: Date.now(),
-      }),
-    ]
-  }
-  return state.map((message, messageIndex) =>
-    messageIndex === index
-      ? update({ ...message, taskId: identity.taskId ?? message.taskId })
-      : message
-  )
-}
-
 function updateAssistantById(
   state: ChatMessage[],
   id: string,
@@ -626,11 +686,21 @@ function updateAssistantById(
 
 function streamIdentity(payload: Record<string, unknown>): StreamIdentity | null {
   const data = eventData(payload)
-  const subtaskId = idValue(payload.subtaskId) ?? idValue(data.subtaskId)
+  const base = eventBase(payload)
+  const subtaskId = base.subtaskId
   if (!subtaskId) return null
   return {
     subtaskId,
-    taskId: idValue(payload.taskId) ?? idValue(data.taskId),
+    taskId: base.taskId,
+    clientUserMessageId: base.clientUserMessageId,
+    itemId:
+      idValue(data.itemId) ??
+      idValue(data.item_id) ??
+      idValue(data.blockId) ??
+      idValue(data.block_id) ??
+      idValue(record(data.block).id) ??
+      idValue(record(data.item).id) ??
+      idValue(data.call_id),
   }
 }
 
@@ -763,62 +833,7 @@ function fileChangesFromBlocks(
   )
   if (!summaries.length) return undefined
 
-  const files = new Map<string, ChatFileChangesSummary['files'][number]>()
-  for (const summary of summaries) {
-    for (const file of summary.files) {
-      const key = `${file.oldPath ?? ''}\0${file.path}`
-      const current = files.get(key)
-      files.set(
-        key,
-        current
-          ? {
-              ...file,
-              additions: current.additions + file.additions,
-              deletions: current.deletions + file.deletions,
-              binary: current.binary || file.binary,
-            }
-          : file
-      )
-    }
-  }
-  return {
-    fileCount: files.size,
-    additions: summaries.reduce((sum, summary) => sum + summary.additions, 0),
-    deletions: summaries.reduce((sum, summary) => sum + summary.deletions, 0),
-    files: [...files.values()],
-  }
-}
-
-function finalizeBlocks(
-  blocks: ChatProcessingBlock[] | undefined,
-  status: 'done' | 'error'
-): ChatProcessingBlock[] | undefined {
-  return blocks?.map(block =>
-    isTerminalBlockStatus(block.status)
-      ? block
-      : { ...block, status, completedAt: block.completedAt ?? Date.now() }
-  )
-}
-
-function normalizeBlockStatus(status?: string): ChatBlockStatus {
-  const normalized = status
-    ?.trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-  if (normalized === 'generating_arguments') return 'generating_arguments'
-  if (normalized === 'streaming') return 'streaming'
-  if (['done', 'completed', 'complete', 'success', 'succeeded'].includes(normalized ?? ''))
-    return 'done'
-  if (['error', 'failed', 'failure'].includes(normalized ?? '')) return 'error'
-  return 'pending'
-}
-
-function isActiveStatus(status: ChatBlockStatus): boolean {
-  return ['generating_arguments', 'pending', 'streaming'].includes(status)
-}
-
-function isTerminalBlockStatus(status: ChatBlockStatus): boolean {
-  return status === 'done' || status === 'error'
+  return mergeFileChangesSummaries(summaries)
 }
 
 function clearError(message: ChatMessage): ChatMessage {
@@ -830,10 +845,6 @@ function upsertMessage(state: ChatMessage[], message: ChatMessage): ChatMessage[
   const index = state.findIndex(current => current.id === message.id)
   if (index < 0) return [...state, message]
   return state.map((current, currentIndex) => (currentIndex === index ? message : current))
-}
-
-function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.reduce<ChatMessage[]>(upsertMessage, [])
 }
 
 export function appendDelta(current: string, delta: string, offset?: number): string {
@@ -893,7 +904,13 @@ function normalizeFileChanges(value: unknown): ChatFileChangesSummary | undefine
   const additions = finiteNumber(summary.additions) ?? 0
   const deletions = finiteNumber(summary.deletions) ?? 0
   if (!fileCount && !additions && !deletions && !files.length) return undefined
-  return { fileCount, additions, deletions, files }
+  return {
+    fileCount,
+    additions,
+    deletions,
+    files,
+    source: normalizeTurnFileChanges(summary.source ?? value),
+  }
 }
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {

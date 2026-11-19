@@ -13,6 +13,7 @@ import type {
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAssignment,
+  DirectHumanAssignmentReceipt,
   CollaborationExecution,
   CollaborationExecutionEnvironment,
   CollaborationOwnedAgent,
@@ -69,6 +70,11 @@ export function mapWorkspaceTaskBindingDto(
     taskId: String(row.task_id ?? row.taskId ?? ""),
     taskTitle: nullableString(row.task_title ?? row.taskTitle),
     backendTaskId: nullableNumber(row.backend_task_id ?? row.backendTaskId),
+    ...((row.stand_in_pending ?? row.standInPending) == null
+      ? {}
+      : {
+          standInPending: (row.stand_in_pending ?? row.standInPending) === true,
+        }),
     humanAssignmentId: nullableString(
       row.human_assignment_id ?? row.humanAssignmentId,
     ),
@@ -252,6 +258,9 @@ export function mapCollaborationWorkspaceDto(
   const setupSteps =
     executionEnvironment.setup_steps ?? executionEnvironment.setupSteps;
   return {
+    ...(typeof row.is_system_default === "boolean"
+      ? { is_system_default: row.is_system_default }
+      : {}),
     id: String(row.id),
     location: "cloud",
     ...((row.owner_user_id ?? row.ownerUserId) === undefined
@@ -470,6 +479,43 @@ export function mapWorkspaceGitBranchDto(
   };
 }
 
+function dispatchReceipt(input: unknown): DirectHumanAssignmentReceipt | null {
+  if (!input || typeof input !== "object") return null;
+  const row = asRecord(input);
+  const states: DirectHumanAssignmentReceipt["state"][] = [
+    "queued",
+    "waiting_device",
+    "blocked_policy",
+    "running",
+    "waiting_user",
+    "completed",
+    "failed",
+    "cancelled",
+  ];
+  const state = states.find((state) => state === row.state);
+  if (
+    !state ||
+    typeof row.projectId !== "string" ||
+    typeof row.issueId !== "string" ||
+    typeof row.humanAssignmentId !== "string" ||
+    typeof row.ownerUserId !== "number" ||
+    typeof row.updatedAt !== "string"
+  )
+    return null;
+  return {
+    projectId: row.projectId,
+    issueId: row.issueId,
+    humanAssignmentId: row.humanAssignmentId,
+    ownerUserId: row.ownerUserId,
+    state,
+    reasonCode: nullableString(row.reasonCode),
+    runtimeTaskId: nullableString(row.runtimeTaskId),
+    deliveryId: nullableString(row.deliveryId),
+    publicMessageId: nullableString(row.publicMessageId),
+    updatedAt: row.updatedAt,
+  };
+}
+
 export function mapCollaborationAssignmentDto(
   input: WorkspaceDto,
 ): CollaborationAssignment {
@@ -477,6 +523,9 @@ export function mapCollaborationAssignmentDto(
   const rawType = row.target_type ?? row.targetType;
   const createdAt = String(row.created_at ?? row.createdAt ?? "");
   return {
+    ...(row.dispatch_receipt !== undefined
+      ? { dispatch_receipt: dispatchReceipt(row.dispatch_receipt) }
+      : {}),
     id: String(row.id),
     issue_id: String(row.issue_id ?? row.issueId ?? row.loop_item_id ?? ""),
     target_type: rawType === "agent" ? "agent" : "human",

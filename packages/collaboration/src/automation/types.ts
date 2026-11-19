@@ -56,6 +56,7 @@ export interface AutomationBackendRule {
   eventType: AutomationEventType | null;
   eventConfig: AutomationEventConfig;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -231,6 +232,7 @@ export interface AutomationBackendInput {
   eventType: AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;

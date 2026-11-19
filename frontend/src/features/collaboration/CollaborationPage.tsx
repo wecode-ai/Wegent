@@ -8,6 +8,10 @@ import { createBrowserRuntimeDeviceAccess } from './runtimeDeviceAccess'
 import type { InstalledPlugin } from '@wegent/chat-core/installed-plugin-types'
 
 import { deviceApis } from '@/apis/devices'
+import {
+  projectViewFromQuery,
+  type ProjectSurfaceFeatureFlags,
+} from '@wegent/collaboration/project-shell'
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -52,6 +56,7 @@ import LoadingState from '@/features/common/LoadingState'
 import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
   templateIdentity,
+  localizeBuiltinTemplateRecord,
   templateMessages,
   type CollaborationTemplate,
 } from '@wegent/collaboration/templates'
@@ -129,7 +134,9 @@ function CollaborationWebShell({ main, sidebar }: { main: ReactNode; sidebar: Re
   )
 }
 
-export function CollaborationPage() {
+export function CollaborationPage({
+  featureFlags,
+}: { featureFlags?: ProjectSurfaceFeatureFlags } = {}) {
   const theme = useDocumentTheme()
   const { user, isLoading: userLoading } = useUser()
   const accountScope = String(apiClient.getCacheScope())
@@ -163,7 +170,7 @@ export function CollaborationPage() {
           setTemplateRequest({
             key: requestedTemplate,
             scope: templateStore.library.scope,
-            document: record.document,
+            document: localizeBuiltinTemplateRecord(record, templateLocale).document,
           })
       })
       .catch(() => {
@@ -284,7 +291,11 @@ export function CollaborationPage() {
     legacyProjectId && segments[2] === 'issues' && segments[3]
       ? decodeURIComponent(segments[3])
       : null
-  const projectView = (searchParams.get('view') || 'board') as CollaborationView
+  const projectView = projectViewFromQuery(searchParams, {
+    'collab.projectSurfaces.v1':
+      featureFlags?.['collab.projectSurfaces.v1'] ??
+      process.env.NEXT_PUBLIC_COLLAB_PROJECT_SURFACES_V1 === 'true',
+  }) as CollaborationView
   const section = searchParams.get('section')
   const projectSettingsSection =
     projectView === 'manage' &&

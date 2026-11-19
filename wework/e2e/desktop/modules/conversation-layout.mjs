@@ -1,4 +1,5 @@
 import { readNativeToolCallId } from './native-tool-call-id.mjs'
+import { waitForClosedStartupSplash } from './native-window-state.mjs'
 import { readFile, readdir } from 'node:fs/promises'
 import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
@@ -301,6 +302,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
   )
   control.setScenario('fresh_chat')
   await restartDesktopApp()
+  await waitForClosedStartupSplash(control, DEFAULT_STEP_TIMEOUT_MS)
   await control.command('focusMainWindow', 'body')
   await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
@@ -1340,6 +1342,21 @@ async function verifyWorktreeCreationStatus({
   await captureVerificationScreenshot(control, 'worktree-status-06-fork-follow-up-complete.png')
 
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
+  await control.command('waitFor', `[data-testid="runtime-local-task-row-${worktreeTaskId}"]`, {
+    visible: false,
+  })
+  assert.equal(
+    await pathExists(worktreePath),
+    true,
+    'Archiving the source removed a live fork workspace'
+  )
+  assert.equal(
+    await pathExists(worktreeContainer),
+    true,
+    'Archiving the source removed a live fork container'
+  )
+  await ensureTaskRowVisible(control, forkTaskRowTestId)
+  await control.command('click', `[data-testid="runtime-local-task-archive-${forkTaskId}"]`)
   await withTimeout(
     (async () => {
       while ((await pathExists(worktreePath)) || (await pathExists(worktreeContainer))) {
@@ -1347,7 +1364,7 @@ async function verifyWorktreeCreationStatus({
       }
     })(),
     DEFAULT_STEP_TIMEOUT_MS,
-    'Archiving the worktree task left its repository or runtime container on disk'
+    'Archiving the last worktree task left its repository or runtime container on disk'
   )
 }
 

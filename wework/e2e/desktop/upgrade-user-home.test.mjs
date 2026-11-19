@@ -1,7 +1,30 @@
 import assert from 'node:assert/strict'
 import { basename, dirname, join, resolve, win32 } from 'node:path'
 import { test } from 'node:test'
-import { resolveUpgradeUserHome } from './modules/upgrade-user-home.mjs'
+import {
+  desktopApplicationDataDirectory,
+  resolveUpgradeUserHome,
+} from './modules/upgrade-user-home.mjs'
+
+test(
+  'macOS fixture paths follow the same isolated native Home as Foundation',
+  { skip: process.platform !== 'darwin' },
+  () => {
+    const previous = process.env.CFFIXED_USER_HOME
+    try {
+      process.env.CFFIXED_USER_HOME = resolve('isolated-native-home')
+      assert.equal(
+        desktopApplicationDataDirectory(),
+        join(resolve('isolated-native-home'), 'Library/Application Support')
+      )
+      process.env.CFFIXED_USER_HOME = 'relative-home'
+      assert.throws(() => desktopApplicationDataDirectory(), /must be absolute/)
+    } finally {
+      if (previous === undefined) delete process.env.CFFIXED_USER_HOME
+      else process.env.CFFIXED_USER_HOME = previous
+    }
+  }
+)
 
 test('keeps default-layout fixtures inside results when native data shares the filesystem', async () => {
   const result = resolve('fixtures/result-id')

@@ -47,9 +47,15 @@ pub(super) async fn create(
         user_id: runner,
         owner_user_id: runner.try_into()?,
         continuation: None,
+        history_window: None,
         team_id: team.id,
         bot_ids: &bots.bot_ids,
+        create_assistant: true,
+        model_override_type: None,
+        model_options: None,
         input_text: prompt,
+        user_result: None,
+        additional_skills: &[],
         crd: TaskCrdInput {
             task_id: 0,
             team_name: &team.name,
@@ -149,6 +155,9 @@ pub(super) async fn create(
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
+            web_runtime_guidance: false,
+            subtask_bot_resolved: false,
+            attachment_ids: &[],
         },
     )
     .await
@@ -157,26 +166,20 @@ pub(super) async fn create(
     super::super::execution::mark_running(app, setup.task_id, setup.assistant_subtask_id, runner)
         .await?;
     if let Err(error) = super::super::super::project::managed::dispatch(app, &request).await {
-        if let Some(redis) = app.redis.as_ref() {
-            let ctx = crate::internal_callback::completion::Completion {
-                app: Some(app),
-                mysql: &app.mysql,
-                redis,
-                tables: crate::internal_callback::tables(app),
-                executor_manager: &app.executor_manager,
-            };
-            crate::internal_callback::completion::complete_terminal(
-                &ctx,
-                setup.task_id,
-                setup.assistant_subtask_id,
-                "FAILED",
-                None,
-                Some(&error.to_string()),
-                None,
-                None,
-                None,
-            )
-            .await;
+        use crate::internal_callback::event::{EventType, ExecutionEvent};
+        let mut event =
+            ExecutionEvent::new(EventType::Error, setup.task_id, setup.assistant_subtask_id);
+        event.error = Some(error.to_string());
+        if let Err(failure) = Box::pin(crate::internal_callback::process_dispatch_failure(
+            app, event,
+        ))
+        .await
+        {
+            tracing::warn!(
+                ?failure,
+                task_id = setup.task_id,
+                "Code Wiki failure awaits terminal recovery"
+            );
         }
         return Err(error);
     }

@@ -17,6 +17,7 @@ use crate::owned_statements::tasks_by_ids_statement;
 
 pub use crate::request_sql::{RequestSql, RouteKey, StatementArgs, fetch_optional_as};
 pub use crate::task_store_default::DefaultTaskStore;
+pub use crate::task_store_history::SubtaskHistoryWindow;
 pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     order_assistant_subtasks, order_subtasks_by_message, ordered_subtasks_for_user,
@@ -26,6 +27,7 @@ pub use crate::task_store_personal::{
     PERSONAL_TASK_HISTORY_LIMIT, PersonalTaskIndexes, personal_task_candidates,
     personal_task_candidates_statement,
 };
+pub use crate::task_store_pipeline::handoff_message;
 pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
     active_project_task_statement, fetch_active_project_task, task_by_id_refresh_statement,
@@ -312,7 +314,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     ) -> MysqlResult<Option<MysqlRow>> {
         sql.fetch_optional_row(
             crate::request_sql::RouteKey::Task(task_id as u64),
-            &active_task_owned_statement(TASKS_TABLE),
+            &crate::task_store_statements::active_task_owned_labeled_statement(TASKS_TABLE),
             vec![
                 StatementArg::Int(task_id),
                 StatementArg::Int(i64::from(owner_user_id)),
@@ -608,7 +610,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     ) -> MysqlResult<Option<MysqlRow>> {
         sql.fetch_optional_row(
             crate::request_sql::RouteKey::Task(task_id as u64),
-            &owner_matches_task_id_statement(TASKS_TABLE),
+            &crate::task_store_statements::owner_matches_task_id_labeled_statement(TASKS_TABLE),
             vec![StatementArg::Int(task_id), StatementArg::Int(owner_user_id)],
         )
         .await
@@ -765,6 +767,14 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     }
 
     async fn message_edit_tables(&self, _task_id: i64) -> MysqlResult<MessageEditTables> {
+        #[cfg(feature = "test-support")]
+        if let Some(tables) = self.migrated_tables {
+            return Ok(MessageEditTables {
+                tasks: tables.tasks.to_owned(),
+                subtasks: tables.subtasks.to_owned(),
+                ownership: MessageEditOwnership::StatementFilter,
+            });
+        }
         // The single-table store has no model selection to run: every id reads
         // the base tables, and `_filter_owner_user_id` is part of each
         // statement.

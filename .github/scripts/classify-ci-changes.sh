@@ -27,6 +27,10 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    .github/scripts/verify-native-event-goal.sh)
+      changed[executor]=true
+      return
+      ;;
     # Known leaf actions select their actual consumers; unknown actions retain full validation.
     .github/ci/wework-unit-test-durations.json | .github/scripts/balance-wework-unit-tests.* | \
       wework/scripts/ci-test-sequencer.*)
@@ -59,6 +63,7 @@ classify_path() {
       return
       ;;
     .github/actions/build-wework-core-e2e/* | .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/setup-wework-native-test-dependencies/* | \
       .github/actions/build-wework-macos-e2e/* | .github/actions/build-minio-e2e/* | \
       .github/actions/setup-minio-e2e/* | .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | .github/scripts/macos-e2e-source-digest.mjs | \
@@ -135,6 +140,7 @@ classify_path() {
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
+      .github/ci/wework-native-test-ubuntu.sources | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/core-runner-slots.* | \
@@ -187,6 +193,15 @@ classify_path() {
       changed[wework_e2e]=true
       ;;
     shared/*)
+      if [[ "$path" == shared/assets/codex-models/* ]]; then
+        changed[backend_rs]=true
+        changed[wework_e2e]=true
+      fi
+      if [[ "$path" == shared/assets/calendars/* ]]; then
+        changed[backend_rs]=true
+        changed[executor]=true
+        changed[wework_e2e]=true
+      fi
       changed[backend]=true
       changed[executor_manager]=true
       changed[shared]=true
@@ -214,6 +229,31 @@ classify_path() {
       ;;
     packages/process-explorer/*)
       changed[wework]=true
+      changed[wework_e2e]=true
+      ;;
+    # Phone-local payloads reuse the existing real native lifecycle checkpoint.
+    wework-mobile/src/services/localRuntimeApi*)
+      changed[wework_e2e]=true
+      ;;
+    # Mobile subagent views reuse the existing runtime lifecycle/history checkpoint.
+    wework-mobile/src/components/ConversationAgentsPill* | \
+      wework-mobile/src/domain/mobileSubagents* | \
+      wework-mobile/src/domain/mobileProcessingBlocks* | \
+      wework-mobile/src/services/mobileTranscriptTransfer*)
+      changed[wework_e2e]=true
+      ;;
+    # Mobile file browsing reuses the real cloud-device file protocol checkpoint.
+    wework-mobile/src/components/files/* | wework-mobile/src/domain/mobileFile* | \
+      wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
+      wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
+      wework-mobile/src/services/runtimeStream* | wework-mobile/src/types/runtimeCommand.ts | \
+      wework-mobile/src/services/mobileAbort.ts | \
+      wework-mobile/src/hooks/useMobileRuntime* | \
+      wework-mobile/src/types/files.ts | wework-mobile/src/types/workspaceGit.ts | \
+      wework-mobile/src/domain/mobileWorkspaceGit* | wework-mobile/src/services/mobileWorkspaceGit* | \
+      wework-mobile/src/components/ConversationChangesPill* | wework-mobile/preview/* | \
+      wework-mobile/src/components/ConversationMenu* | wework-mobile/src/hooks/useConversationActions* | \
+      wework-mobile/src/domain/conversationActions* | wework-mobile/src/services/mobileConversationArchive*)
       changed[wework_e2e]=true
       ;;
     wework/*)

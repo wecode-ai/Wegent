@@ -1,4 +1,4 @@
-import { CuaDriver } from '@trycua/cua-driver'
+import { CuaDriver, GetWindowStateInput, ListWindowsInput } from '@trycua/cua-driver'
 import {
   isDriverRequest,
   type DriverRequest,
@@ -41,7 +41,9 @@ function respond(response: DriverResponse): void {
 /** Keep cancellation controllers in the process that owns their native calls. */
 async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }>) {
   if (request.method === 'start') {
-    driver = CuaDriver.create(undefined)
+    // Keep native work and TCC attribution in Wework's isolated helper; never
+    // discover or launch an independently installed CuaDriver.app daemon.
+    driver = CuaDriver.create({ embedded: true, claudeCodeCompatibility: false })
     const catalog = JSON.parse(await driver.listToolsJson()) as {
       tools?: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }>
     }
@@ -67,11 +69,23 @@ async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }
   // the parent terminates this generation if the cancellation deadline expires.
   actions.set(request.id, {
     controller,
-    cancellable: request.method === 'listTools' || readOnlyTools.has(request.name),
+    cancellable:
+      request.method === 'listTools' ||
+      request.method === 'listWindows' ||
+      request.method === 'getWindowState' ||
+      readOnlyTools.has(request.name),
   })
   try {
     if (request.method === 'listTools')
       return await driver.listToolsJson({ signal: controller.signal })
+    if (request.method === 'listWindows')
+      return await driver.listWindows(ListWindowsInput.new(request.input), {
+        signal: controller.signal,
+      })
+    if (request.method === 'getWindowState')
+      return await driver.getWindowState(GetWindowStateInput.new(request.input), {
+        signal: controller.signal,
+      })
     return await driver.callTool(request.name, request.argumentsJson, { signal: controller.signal })
   } finally {
     actions.delete(request.id)

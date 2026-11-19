@@ -133,6 +133,7 @@ export interface WorkbenchContentLoadRef {
 type ProcessingBlockUpdate = {
   content?: string
   contentDelta?: string
+  contentOffset?: number
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   toolOutputDelta?: string
@@ -536,7 +537,7 @@ export function mergeProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
-  const { contentDelta, toolOutputDelta, durationMs, ...directUpdates } =
+  const { contentDelta, contentOffset, toolOutputDelta, durationMs, ...directUpdates } =
     updates
   let nextBlock = withBlockCompletionTime(block, {
     ...block,
@@ -566,11 +567,17 @@ export function mergeProcessingBlockUpdate<TFileChanges>(
   ) {
     const previousContentChars =
       nextBlock.contentOriginalChars ?? textCodePointLength(nextBlock.content)
+    const merged = mergeWorkbenchChunkContent(
+      nextBlock.content,
+      previousContentChars,
+      previousContentChars,
+      contentDelta,
+      contentOffset
+    )
     nextBlock = {
       ...nextBlock,
-      content: `${nextBlock.content}${contentDelta}`,
-      contentOriginalChars:
-        previousContentChars + textCodePointLength(contentDelta)
+      content: merged.content,
+      contentOriginalChars: merged.contentOriginalChars
     } as WorkbenchProcessingBlock<TFileChanges>
   }
 
@@ -1592,6 +1599,9 @@ export function settleWorkbenchProcessingBlock<TFileChanges>(
   finalStatus: 'done' | 'error' = 'done'
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.status === 'done' || block.status === 'error') return block
+
+  // Native child threads complete independently of their initiating turn.
+  if (block.type === 'subagent' && block.agentThreadId) return block
 
   // A turn completing does not prove that its terminal process has exited.
   if (commandExecutionPayload(block)?.status === 'inProgress') return block

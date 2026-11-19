@@ -239,6 +239,51 @@ impl LocalTaskStore {
         Ok(())
     }
 
+    pub fn delete_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+        version: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let agent = get_item_from(&transaction, agent_id, "chat_agent")?
+            .filter(|agent| agent.cloud_project_id.as_deref() == Some(project_id))
+            .ok_or_else(|| TaskRuntimeError::Invalid("Robot is not in this project".into()))?;
+        if wegent_protocol::collaboration::is_managed_project_agent(
+            agent.name.as_deref().unwrap_or_default(),
+        ) {
+            return Err(TaskRuntimeError::Invalid(
+                "PROJECT_AGENT_MANAGED: the current-device Agent cannot be deleted".into(),
+            ));
+        }
+        if agent.version != version {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        let project = get_item_from(&transaction, project_id, "project")?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if project.metadata["collaboration_groups"]
+            .as_array()
+            .is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    wegent_protocol::collaboration::group_references_agent(
+                        group,
+                        agent_id,
+                        agent.metadata["wegent_team_id"].as_i64(),
+                    )
+                })
+            })
+        {
+            return Err(TaskRuntimeError::Invalid("PROJECT_AGENT_IN_USE: replace or remove the Agent from its collaboration groups first".into()));
+        }
+        let changed = transaction.execute("UPDATE loop_items SET status='archived',deleted_at=?1,updated_at=?1,version=version+1 WHERE id=?2 AND cloud_project_id=?3 AND resource_type='chat_agent' AND version=?4 AND deleted_at IS NULL", params![now(), agent_id, project_id, version])?;
+        if changed != 1 {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     fn get_chat_agent(
         &self,
         project_id: &str,

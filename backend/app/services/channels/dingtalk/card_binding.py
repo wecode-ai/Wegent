@@ -38,6 +38,11 @@ async def save_binding(out_track_id: str, binding: CardBinding) -> None:
         raise RuntimeError("Could not persist DingTalk card conversation binding")
 
 
+async def delete_binding(channel_id: int, out_track_id: str) -> bool:
+    """Drop an address that was written before its card could be registered."""
+    return await cache_manager.delete(binding_key(channel_id, out_track_id))
+
+
 async def load_binding(channel_id: int, out_track_id: str) -> CardBinding | None:
     data = await cache_manager.get(binding_key(channel_id, out_track_id))
     return CardBinding.model_validate(data) if data else None

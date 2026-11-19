@@ -11,7 +11,7 @@ async fn fresh_schema_and_historical_upgrade_round_trip() -> Result<()> {
     isolated(verify).await
 }
 
-async fn isolated(test: impl AsyncFnOnce(&MysqlService) -> Result<()>) -> Result<()> {
+pub(crate) async fn isolated(test: impl AsyncFnOnce(&MysqlService) -> Result<()>) -> Result<()> {
     // Share the existing service without multiplying simultaneous DDL workloads.
     static DATABASE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
     let _permit = DATABASE.acquire().await?;
@@ -54,6 +54,16 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
     assert_eq!(tables.len(), 50);
+    assert!(
+        !tables
+            .iter()
+            .any(|table| table.name == "plugin_local_sync_operations")
+    );
+    assert!(
+        !tables
+            .iter()
+            .any(|table| table.name == "plugin_sync_outbox")
+    );
     upgrade(mysql).await?;
     // Exercise JSON/permission, plugin-publication, merge, notification and transcript migrations.
     downgrade(mysql, "d47dd270f4b6").await?;
@@ -61,6 +71,12 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     check(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
+    crate::socketio::issue_timestamp_tests::verify(mysql).await?;
+    crate::socketio::project_chat_messages::verify_source_resolution(mysql).await?;
+    crate::background_jobs::robot::verify_issue_activity_projection(mysql).await?;
+    crate::socketio::verify_reconnect_projection(mysql).await?;
+    crate::socketio::verify_late_human_reply_projection(mysql).await?;
+    crate::stand_in_issue_events::verify_mentions(mysql).await?;
     Ok(())
 }
 
@@ -68,6 +84,9 @@ async fn verify_initialization(mysql: &MysqlService) -> Result<()> {
     use brz_mysql::Json;
     use serde_json::{Value, json};
     crate::initialization::yaml(mysql).await?;
+    verify_connector_failure_recovery(mysql).await?;
+    crate::initialization::connectors(mysql).await?;
+    verify_connector_initialization(mysql).await?;
     #[derive(FromMysqlRow)]
     struct Count {
         n: i64,
@@ -115,6 +134,82 @@ async fn verify_initialization(mysql: &MysqlService) -> Result<()> {
     let after:Skill=mysql.fetch_one("SELECT k.json AS payload,b.binary_data AS package_bytes FROM kinds k JOIN skill_binaries b ON b.kind_id=k.id WHERE k.user_id=0 AND k.namespace='default' AND k.kind='Skill' AND k.name='wegent-knowledge'",()).await?;
     assert_eq!(before.payload.0, after.payload.0);
     assert_eq!(before.package_bytes, after.package_bytes);
+    Ok(())
+}
+
+async fn verify_connector_initialization(mysql: &MysqlService) -> Result<()> {
+    use brz_mysql::Json;
+    use serde_json::{Value, json};
+    #[derive(FromMysqlRow)]
+    struct App {
+        name: String,
+        payload: Json<Value>,
+    }
+    let read = async || -> Result<Vec<App>> {
+        Ok(mysql.fetch_all("SELECT name,json AS payload FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 ORDER BY name", ()).await?)
+    };
+    let before = read().await?;
+    assert_eq!(before.len(), 4);
+    for app in &before {
+        assert_eq!(app.payload.0["spec"]["enabled"], true);
+        assert_eq!(app.payload.0["spec"]["authType"], "oauth2");
+        assert_eq!(app.payload.0["spec"]["toolLoadingMode"], "lazy");
+    }
+    crate::initialization::verify_admin_edits_during_backfill(mysql).await?;
+    mysql.execute("UPDATE kinds SET json=JSON_SET(json,'$.spec.enabled',false,'$.spec.toolLoadingMode','static','$.spec.keywords',JSON_ARRAY('custom')) WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 AND name='dingtalk_docs'", ()).await?;
+    crate::initialization::connectors(mysql).await?;
+    let after = read().await?;
+    assert_eq!(after.len(), 4);
+    let docs = after
+        .iter()
+        .find(|app| app.name == "dingtalk_docs")
+        .unwrap();
+    assert_eq!(docs.payload.0["spec"]["enabled"], false);
+    assert_eq!(docs.payload.0["spec"]["toolLoadingMode"], "static");
+    assert_eq!(docs.payload.0["spec"]["keywords"], json!(["custom"]));
+    mysql.execute("DELETE FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 AND name='dingtalk_docs'", ()).await?;
+    crate::initialization::connectors(mysql).await?;
+    let deleted = read().await?;
+    assert_eq!(deleted.len(), 3);
+    assert!(deleted.iter().all(|app| app.name != "dingtalk_docs"));
+    // A new bootstrap still scopes catalog identity to the system owner.
+    mysql
+        .execute(
+            "DELETE FROM system_configs WHERE config_key='builtin_connector_apps_initialized'",
+            (),
+        )
+        .await?;
+    mysql.execute("INSERT INTO kinds (kind,name,namespace,user_id,json,is_active,created_at,updated_at) VALUES ('ConnectorApp','dingtalk_docs','system',7,?,1,NOW(),NOW())", (Json(json!({"spec":{"mcpUrl":"https://foreign.example/mcp"}})),)).await?;
+    crate::initialization::connectors(mysql).await?;
+    let restored = read().await?;
+    assert_eq!(restored.len(), 4);
+    let docs = restored
+        .iter()
+        .find(|app| app.name == "dingtalk_docs")
+        .unwrap();
+    assert_eq!(docs.payload.0["spec"]["enabled"], true);
+    assert_eq!(docs.payload.0["spec"]["toolLoadingMode"], "lazy");
+    Ok(())
+}
+
+async fn verify_connector_failure_recovery(mysql: &MysqlService) -> Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Count {
+        n: i64,
+    }
+    // Fail the third app after two inserts to verify the production rollback.
+    mysql.execute("CREATE TRIGGER reject_builtin_connector BEFORE INSERT ON kinds FOR EACH ROW BEGIN IF NEW.kind='ConnectorApp' AND NEW.name='dingtalk_aitable' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test connector publication failure'; END IF; END", ()).await?;
+    assert!(crate::initialization::connectors(mysql).await.is_err());
+    let count: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0", ()).await?;
+    assert_eq!(count.n, 0);
+    let marker: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM system_configs WHERE config_key='builtin_connector_apps_initialized'", ()).await?;
+    assert_eq!(marker.n, 0);
+    mysql
+        .execute("DROP TRIGGER reject_builtin_connector", ())
+        .await?;
+    crate::initialization::verify_concurrent_completion(mysql).await?;
+    let marker: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM system_configs WHERE config_key='builtin_connector_apps_initialized' AND JSON_EXTRACT(config_value,'$.completed')=true", ()).await?;
+    assert_eq!(marker.n, 1);
     Ok(())
 }
 
@@ -185,5 +280,21 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
     }
     let grants:Count=mysql.fetch_one("SELECT COUNT(*) AS n FROM resource_members WHERE resource_type='CloudProject' AND resource_id=101 AND entity_type='authenticated_users' AND entity_id='*'",()).await?;
     assert_eq!(grants.n, 0);
+    Ok(())
+}
+
+/// Exercise collaboration writes against the checked-in deployment schema.
+pub(crate) async fn seed_collaboration(mysql: &MysqlService) -> Result<()> {
+    upgrade(mysql).await?;
+    mysql.execute("INSERT INTO users (id,user_name,password_hash,role,auth_source,preferences,is_active) VALUES (7,'qa-owner','fixture','user','local','{}',true),(8,'qa-observer','fixture','user','local','{}',true)", ()).await?;
+    mysql.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,json,is_active) VALUES (2001,7,'qa-space','CollaborationWorkspace','default',JSON_OBJECT(),true)", ()).await?;
+    mysql.execute("INSERT INTO loop_items (id,resource_type,description,status,metadata,created_at,updated_at) VALUES ('1001','project','','active',JSON_OBJECT('membership_mode','direct'),NOW(),NOW()),('root','task','','pending',JSON_OBJECT('security_level','open'),NOW(),NOW())", ()).await?;
+    mysql
+        .execute(
+            "UPDATE loop_items SET cloud_project_id='1001',created_by_user_id=7 WHERE id='root'",
+            (),
+        )
+        .await?;
+    mysql.execute("INSERT INTO resource_members (resource_type,resource_id,entity_type,entity_id,role,status,requested_at,created_at,updated_at) VALUES ('CloudProject',1001,'workspace','2001','Owner','approved',NOW(),NOW(),NOW()),('CloudProject',1001,'user','7','Maintainer','approved',NOW(),NOW(),NOW()),('CloudProject',1001,'user','8','Developer','approved',NOW(),NOW(),NOW())", ()).await?;
     Ok(())
 }

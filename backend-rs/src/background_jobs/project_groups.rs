@@ -26,6 +26,27 @@ struct Group {
 }
 type Id = (i64,);
 
+pub(crate) fn current_dispatch(assigned: &Value, context: &Value) -> bool {
+    let snapshot = &context["collaboration_group"];
+    let assignment_key = assigned["collaboration_group_assignment_key"]
+        .as_str()
+        .filter(|key| !key.is_empty());
+    let group_id = authority::integer(&snapshot["id"]).filter(|id| *id > 0);
+    let dispatch_key = context["assignment_key"].as_str().or_else(|| {
+        context["run_id"].as_str().map(|run_id| {
+            run_id
+                .strip_prefix("collaboration-group:")
+                .unwrap_or(run_id)
+        })
+    });
+    context["dispatch_kind"] == "collaboration_group"
+        && group_id.is_some()
+        && group_id == authority::integer(&assigned["collaboration_group"]["id"])
+        && group_id == authority::integer(&context["collaboration_group_id"])
+        && assignment_key.is_some()
+        && assignment_key == dispatch_key
+}
+
 async fn authorized_definition(
     state: &AppState,
     project_id: &str,
@@ -136,15 +157,6 @@ async fn validate_member_on(
     Ok(())
 }
 
-pub(crate) async fn authorize_snapshot(
-    state: &AppState,
-    project_id: &str,
-    snapshot: &Value,
-    actor: i64,
-) -> Result<()> {
-    authorize_snapshot_on(&mut &state.mysql, project_id, snapshot, actor).await
-}
-
 pub(crate) async fn authorize_snapshot_on(
     query: &mut impl PluginQuery,
     project_id: &str,
@@ -173,7 +185,7 @@ pub(crate) async fn authorize_snapshot_on(
     Ok(())
 }
 
-async fn resolve_agent(state: &AppState, project_id: &str, id: &str) -> Result<Node> {
+pub(crate) async fn resolve_agent(state: &AppState, project_id: &str, id: &str) -> Result<Node> {
     resolve_agent_on(&mut &state.mysql, project_id, id).await
 }
 
@@ -185,6 +197,8 @@ async fn resolve_agent_on(
     query.fetch_optional(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE} AND (id=? OR CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.wegent_team_id')) AS CHAR)=?) ORDER BY (id=?) DESC LIMIT 1"),(project_id,id,id,id)).await?.context("Collaboration group member Agent is unavailable")
 }
 
+// Keep the same independent routing inputs for every group member.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn runner_requirements(
     state: &AppState,
     project_id: &str,
@@ -193,6 +207,7 @@ pub(crate) async fn runner_requirements(
     user: i64,
     selection: &Value,
     automatic: bool,
+    session_environment_id: Option<&str>,
 ) -> Result<Value> {
     let mut requirements = serde_json::Map::new();
     let mut intersection: Option<std::collections::BTreeSet<i64>> = None;
@@ -208,19 +223,30 @@ pub(crate) async fn runner_requirements(
             continue;
         }
         let mut choices = json!({});
-        for key in ["execution_policy", "model"] {
+        for key in ["execution_policy", "model", "recovery_from_environment_id"] {
             if (key == "execution_policy" && config["execution_policy"]["mode"] == "user_select")
                 || (key == "model" && config["model_policy"]["mode"] == "user_select")
+                || key == "recovery_from_environment_id"
             {
                 choices[key] = selection[key].clone();
             }
         }
         let route = routing::resolve(
-            state, &config, &agent.id, project_id, issue, user, &choices, automatic,
+            state,
+            &config,
+            &agent.id,
+            project_id,
+            issue,
+            user,
+            &choices,
+            automatic,
+            session_environment_id,
+            true,
         )
         .await?;
         let candidates =
-            routing::candidates_for_snapshot(state, project_id, &agent.id, &route).await?;
+            routing::candidates_for_snapshot(state, project_id, &agent.id, &route, user, automatic)
+                .await?;
         intersection = Some(match intersection {
             None => candidates,
             Some(current) => current.intersection(&candidates).copied().collect(),
@@ -232,7 +258,26 @@ pub(crate) async fn runner_requirements(
             "ISSUE_RUNNER_CONFLICT: No authorized runner satisfies all group members' environment and model policies"
         )
     }
+    retain_compatible_binding(&mut requirements, intersection.as_ref());
     Ok(Value::Object(requirements))
+}
+
+fn retain_compatible_binding(
+    requirements: &mut serde_json::Map<String, Value>,
+    intersection: Option<&std::collections::BTreeSet<i64>>,
+) {
+    let recovery_from = requirements.values().find_map(|route| {
+        route["recovery_from_environment_id"]
+            .as_str()
+            .and_then(|id| id.parse::<i64>().ok())
+    });
+    if recovery_from.is_some_and(|bound| intersection.is_some_and(|ids| ids.contains(&bound))) {
+        for route in requirements.values_mut() {
+            if let Some(route) = route.as_object_mut() {
+                route.remove("recovery_from_environment_id");
+            }
+        }
+    }
 }
 
 pub(crate) struct GroupAssignment {
@@ -298,6 +343,7 @@ pub(crate) async fn prepare_assignment(
             actor,
             &context["runner_selection"],
             true,
+            None,
         )
         .await?;
         context["dispatch_kind"] = json!("collaboration_group");
@@ -394,7 +440,7 @@ pub(crate) async fn apply_assignment_on(
             last["trigger"] = json!("collaboration_group_assignment");
         }
     }
-    tx.execute("UPDATE loop_items SET assignee_user_id=0,assignee_agent_id='',assignee_team_id=0,status='in_progress',completed_at=?,sort_order=0,metadata=?,version=version+1,updated_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(store::UNSET,Json(metadata),actor,issue.id.as_str())).await?;
+    tx.execute("UPDATE loop_items SET assignee_user_id=0,assignee_agent_id='',assignee_team_id=0,status='in_progress',completed_at=?,sort_order=0,metadata=?,version=version+1,updated_by_user_id=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",(store::UNSET,Json(metadata),actor,issue.id.as_str())).await?;
     Ok(())
 }
 
@@ -466,4 +512,57 @@ fn human_instructions(project: &Node, issue: &Node, group: &Value) -> Result<Str
                 .unwrap_or(&json!({}))
         )?
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_recovery_moves_only_when_the_common_policy_excludes_the_bound_device() {
+        for (common, recovers) in [(vec![2, 3], false), (vec![3], true)] {
+            let mut requirements = json!({
+                "leader":{"execution_policy":{"mode":"project_pool"},"recovery_from_environment_id":"2"},
+                "member":{"execution_policy":if recovers {json!({"mode":"fixed","environment_id":"3"})} else {json!({"mode":"project_pool"})},"recovery_from_environment_id":"2"}
+            }).as_object().unwrap().clone();
+            let policies = requirements
+                .values()
+                .map(|route| route["execution_policy"].clone())
+                .collect::<Vec<_>>();
+            retain_compatible_binding(&mut requirements, Some(&common.into_iter().collect()));
+            for route in requirements.values() {
+                assert_eq!(
+                    route["recovery_from_environment_id"].as_str(),
+                    recovers.then_some("2")
+                );
+            }
+            assert_eq!(
+                requirements
+                    .values()
+                    .map(|route| route["execution_policy"].clone())
+                    .collect::<Vec<_>>(),
+                policies
+            );
+        }
+    }
+
+    #[test]
+    fn group_reply_requires_the_current_group_and_assignment() {
+        let mut issue = json!({
+            "collaboration_group": {"id": "42"},
+            "collaboration_group_assignment_key": "current",
+        });
+        let dispatch = json!({
+            "dispatch_kind": "collaboration_group",
+            "collaboration_group": {"id": 42},
+            "collaboration_group_id": "42",
+            "assignment_key": "current",
+        });
+        assert!(current_dispatch(&issue, &dispatch));
+        issue["collaboration_group_assignment_key"] = json!("reassigned");
+        assert!(!current_dispatch(&issue, &dispatch));
+        issue["collaboration_group_assignment_key"] = json!("current");
+        issue["collaboration_group"]["id"] = json!("43");
+        assert!(!current_dispatch(&issue, &dispatch));
+    }
 }

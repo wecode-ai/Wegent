@@ -23,12 +23,14 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::internal_callback::session as chat_streaming;
+use crate::request_sql::{RouteKey, fetch_optional_as};
+use crate::sql_support::StatementArg;
 use crate::state::AppState;
 use crate::task_detail_api::assembly::{
     build_task_detail, extract_display_prompt, sanitize_client_payload,
 };
 use crate::task_detail_api::repository::{
-    ContextRow, accessible_task_ids, get_accessible_task_owner, is_approved_member,
+    ContextRow, accessible_task_ids, get_task_owner_for_caller, is_approved_member,
     list_subtasks_by_task,
 };
 use crate::task_detail_api::views::{context_brief, conversation_task_id};
@@ -216,16 +218,57 @@ pub async fn join_task(
     Ok(Reply::payload(ack).join(room))
 }
 
-/// `can_access_task` -> `task_access_store.is_member`.
-async fn can_access_task(
+/// `task:join`'s access probe statements in Source order:
+/// `_get_accessible_task`'s active-task read (`kind = 'Task' AND is_active IN
+/// (1, 2)`, the `db.query(TaskResource)` projection) followed by the
+/// approved-membership read only when the caller is not the owner.
+#[cfg(test)]
+fn join_access_statements() -> [String; 2] {
+    [
+        crate::task_store_statements::active_task_projection_statement(
+            crate::task_store::TASKS_TABLE,
+        ),
+        wegent_access::task_membership::member_access_statement().to_string(),
+    ]
+}
+
+/// `is_member`'s decision order: the task row's owner grants access without
+/// the membership read; only a non-owner runs it.
+fn owner_grants_access(owner_user_id: i64, user_id: i64) -> bool {
+    owner_user_id == user_id
+}
+
+/// `can_access_task` -> `task_access_store.is_member`:
+/// `_get_accessible_task` first (a missing/inactive task denies access), then
+/// the Python owner check on the returned row, then the approved-membership
+/// read for a non-owner.
+///
+/// `_get_accessible_task` runs `db.query(TaskResource)`, so its read carries
+/// the ORM's labeled projection (`tasks_0357.id AS tasks_0357_id, ...`) and no
+/// JSON-delete predicate. The physical table and every alias come from the
+/// deployment's template, which the routing layer expands to the task id's
+/// shard; both recorded joins use this same shape.
+pub(crate) async fn can_access_task(
     state: &AppState,
     user_id: i64,
     task_id: i64,
 ) -> Result<bool, brz_mysql::MysqlError> {
-    let Some(row) = state.task_store.get_accessible_task(task_id).await? else {
+    let mut handle = &state.mysql;
+    let task = fetch_optional_as(
+        &mut handle,
+        RouteKey::Task(task_id as u64),
+        &crate::task_store_statements::active_task_projection_statement(
+            state.task_store.table_templates().tasks,
+        ),
+        vec![StatementArg::Int(task_id)],
+    )
+    .await?;
+    let Some(task) = task else {
         return Ok(false);
     };
-    if row.get_required::<i64>("user_id")? == user_id {
+    let owner_user_id = crate::internal_callback::completion::task_column::<i64>(&task, "user_id")
+        .unwrap_or_default();
+    if owner_grants_access(owner_user_id, user_id) {
         return Ok(true);
     }
     is_approved_member(&state.mysql, task_id, user_id).await
@@ -313,7 +356,7 @@ fn subtask_value_on_failure(result: Result<Value, String>, user_id: i64, task_id
 
 /// Full sync: `task_kinds_service.get_task_detail(...).get("subtasks")`.
 async fn full_sync_subtasks(state: &AppState, user_id: i64, task_id: i64) -> Result<Value, String> {
-    let outcome = build_task_detail(state, task_id, user_id, None)
+    let outcome = build_task_detail(state, task_id, user_id, None, true)
         .await
         .map_err(|error| error.to_string())?;
     let body = serde_json::to_value(outcome.body).map_err(|error| error.to_string())?;
@@ -328,11 +371,15 @@ async fn incremental_subtasks(
     task_id: i64,
     cursor: i64,
 ) -> Result<Value, String> {
-    let owner_id = get_accessible_task_owner(&*state.task_store, task_id)
+    // `task_fork_history_resolver._lineage_task` (depth 0) reads the task with
+    // the caller as the owner filter; a missing row raises the source's
+    // fork-history error, which `task:join` catches and acknowledges with
+    // `subtasks: null`.
+    let owner_id = get_task_owner_for_caller(state, task_id, user_id)
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Task not found".to_string())?;
-    let listing = list_subtasks_by_task(&*state.task_store, task_id, owner_id)
+        .ok_or_else(|| format!("Task {task_id} not found while resolving fork history"))?;
+    let listing = list_subtasks_by_task(&*state.task_store, task_id, owner_id, true)
         .await
         .map_err(|error| error.to_string())?;
     let rows: Vec<_> = listing
@@ -591,6 +638,40 @@ fn normalize_streaming_timestamp(value: Option<&Value>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `is_member` reads the accessible active task first (Source
+    /// `_get_accessible_task`), then runs the membership read only for a
+    /// non-owner.
+    #[test]
+    fn the_join_access_probe_matches_the_source_is_member_order() {
+        let [task, member] = join_access_statements();
+        // `_get_accessible_task`'s `db.query(TaskResource)` projection: the
+        // labeled ORM form with table-prefixed predicates, not a flat read.
+        assert!(task.starts_with("SELECT tasks.id AS tasks_id, "));
+        assert!(task.contains("tasks.user_id AS tasks_user_id"));
+        assert!(task.contains("FROM tasks"));
+        assert!(
+            task.contains(
+                "WHERE tasks.id = ? AND tasks.kind = 'Task' AND tasks.is_active IN (1, 2)"
+            )
+        );
+        assert!(task.contains("LIMIT 1"));
+        assert!(!task.contains("SELECT id, user_id"));
+        assert!(member.starts_with("SELECT 1 \nFROM resource_members"));
+        assert!(member.contains("resource_members.resource_type = 'Task'"));
+        assert!(member.contains("resource_members.entity_id = ?"));
+        assert!(member.contains("resource_members.status = 'approved'"));
+        assert!(member.contains("resource_members.copied_resource_id = 0"));
+        assert!(!task.contains("JSON_EXTRACT"));
+    }
+
+    /// Owner path: the accessible row's owner grants access and the membership
+    /// read is skipped. Member path: only a non-owner runs the membership read.
+    #[test]
+    fn the_owner_path_skips_the_membership_read() {
+        assert!(owner_grants_access(6501, 6501));
+        assert!(!owner_grants_access(6501, 6502));
+    }
 
     #[test]
     fn payload_requires_an_integer_task_id() {

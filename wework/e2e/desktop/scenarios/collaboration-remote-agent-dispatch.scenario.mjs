@@ -1,4 +1,5 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { verifyExecutionEnvironmentConflict } from '../modules/execution-environment-conflict.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
@@ -27,6 +28,7 @@ import {
   responseCompleted,
   responseCreated,
   selectProgrammaticExec,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
   REMOTE_DOCKER_DEVICE_ID,
@@ -122,7 +124,14 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
+export async function createAutoTaggedIssue(
+  control,
+  request,
+  projectId,
+  agent,
+  timeoutMs,
+  onCreated
+) {
   const rule = await request(`/api/v1/cloud-projects/${projectId}/automations`, {
     method: 'POST',
     body: JSON.stringify({
@@ -151,6 +160,8 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     'The auto-tagged Issue was not persisted',
     timeoutMs
   )
+  // The tag can dispatch the model before the remaining UI commands finish.
+  onCreated(issue)
   // Persistence can be visible before the create dialog becomes the saved Issue.
   await waitForControlValue(
     control,
@@ -159,14 +170,15 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     'The newly created Issue detail was not opened',
     timeoutMs
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
+  await control.command('waitFor', scoped('[data-testid="issue-primary-metadata"]'), {
+    visible: true,
     timeoutMs,
   })
   await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
   await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
-    visible: false,
+  await control.command('waitFor', scoped('[data-testid="issue-primary-metadata"]'), {
+    visible: true,
     timeoutMs,
   })
   return { issue, rule }
@@ -345,6 +357,7 @@ async function verifyConfiguredExecutionEnvironment(
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
   const repositoryUrl = pathToFileURL(join(resultDir, 'workspace')).href
+  await verifyExecutionEnvironmentConflict(control, request, projectId, CONTENT)
   await control.command(
     'waitFor',
     scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"]:not([open])`)
@@ -394,6 +407,7 @@ async function verifyConfiguredExecutionEnvironment(
   assert.equal(failedProject.execution_environment.repositories[0].url, repositoryUrl)
   const environmentError = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-environment-error"]`)
   await control.command('waitFor', environmentError, { timeoutMs })
+  await control.command('waitFor', environmentError, { text: '第 1 个初始化步骤失败' })
   await control.command('scrollIntoView', environmentError)
   await control.command('waitFor', environmentError, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-environment-01-setup-failed.png', CONTENT)
@@ -523,6 +537,15 @@ async function verifyAutomaticProcessingControls(
     scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
     { timeoutMs }
   )
+  await control.command('waitFor', scoped('[data-testid="automatic-processing-delete-dialog"]'), {
+    visible: true,
+    timeoutMs,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="automatic-processing-delete-confirm"]'),
+    { timeoutMs }
+  )
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => !rules.some(candidate => candidate.id === rule.id),
@@ -626,16 +649,17 @@ export function createDesktopScenario({
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
-          const event = selectedToolCall(MANUAL_READ_CALL, { codeMode: selection }).at(-1)
-          writeEvents(response, responseId, [event])
+          writeEvents(
+            response,
+            responseId,
+            selectedToolCall(MANUAL_READ_CALL, { codeMode: selection })
+          )
           return true
         }
-        const output = body.input.find(
-          item => item.type === 'custom_tool_call_output' && item.call_id === MANUAL_READ_CALL
-        )?.output
+        const output = toolOutputText(body, MANUAL_READ_CALL)
         assert.ok(
           JSON.stringify(output)?.includes(MANUAL_READ_OK),
-          `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
+          `The real bound Issue read did not succeed: ${JSON.stringify(output)}; input identities: ${JSON.stringify(body.input.map(item => ({ type: item.type, callId: item.call_id })))}`
         )
         await dispatchBoundary.verify()
         await completeModelTurn(response, responseId, serialized)
@@ -880,8 +904,16 @@ export function createDesktopScenario({
         'Direct assignment entered a manager/group execution path'
       )
       assert.equal(modelRequests, 1, 'Direct agent assignment invoked the model more than once')
-      const tagged = await createAutoTaggedIssue(control, request, project.id, agent, uiTimeoutMs)
-      issue = tagged.issue
+      const tagged = await createAutoTaggedIssue(
+        control,
+        request,
+        project.id,
+        agent,
+        uiTimeoutMs,
+        createdIssue => {
+          issue = createdIssue
+        }
+      )
       const autoExecution = await waitForValue(
         async () => {
           const result = await request(

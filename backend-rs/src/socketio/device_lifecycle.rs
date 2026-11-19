@@ -25,7 +25,7 @@ use brz_socket_io::{ClientError, Reply};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::device_identity_lock::IdentityLock;
+use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
 use crate::json_compat::python_json_value;
 use crate::socketio::device::{self, DeviceType, RegisterPayload};
 use crate::socketio::runtime::{DeviceJob, SocketEmitters, SocketRuntime};
@@ -37,13 +37,15 @@ const DISCONNECT_GRACE: Duration = Duration::from_secs(2);
 
 /// The source's raw registration ACK (`_register_device_session`'s return).
 ///
-/// The recorded source image (`wegent-backend-web:1.0.558`, recording
-/// 20261028141154) returns only `success` and `device_id`; the later
-/// `device_route_id` addition is not part of this compatibility contract.
+/// Source `device_namespace.py:1840-1844` returns the reported `device_id` and
+/// the canonical record-scoped `device_route_id` (`route_id`) alongside
+/// `success`; recording `20261105033227` ACKs all ten successful registrations
+/// with that third field.
 #[derive(Serialize)]
 struct RegisterAck<'a> {
     success: bool,
     device_id: &'a str,
+    device_route_id: &'a str,
 }
 
 /// The source's business rejection ACK (`{"error": str}`).
@@ -64,99 +66,9 @@ pub async fn register(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
-    // `on_device_register` wraps App registrations in `app_identity_lock`
-    // before the session handler parses the payload, so deletion cannot race
-    // the database-to-online transition.
-    if data.get("device_type").and_then(Value::as_str) != Some("app") {
-        return register_session(state, runtime, session, socket_id, data).await;
-    }
-    register_app_with_identity_lock(state, runtime, session, socket_id, data).await
-}
-
-/// The source's unavailable ACK when the lock cannot be taken or released.
-fn identity_lock_unavailable() -> Reply<Value> {
-    Reply::payload(error_ack(
-        "Device identity operation is temporarily unavailable; reconnect to retry",
-    ))
-}
-
-/// `app_identity_lock` + `asyncio.timeout(20)` around one App registration.
-async fn register_app_with_identity_lock(
-    state: &AppState,
-    runtime: &Arc<SocketRuntime>,
-    session: &DeviceSession,
-    socket_id: &str,
-    data: Value,
-) -> Result<Reply<Value>, ClientError> {
-    let user_id = session.snapshot().user_id;
-    let Some(redis) = state.redis.as_ref() else {
-        tracing::error!("device identity lock unavailable: no Redis service");
-        return Ok(identity_lock_unavailable());
+    let Some(_online_write) = session.online_write().await else {
+        return Ok(Reply::payload(error_ack("Device connection is closed")));
     };
-    with_identity_lock(redis, user_id, || {
-        register_session(state, runtime, session, socket_id, data)
-    })
-    .await
-}
-
-/// `async with app_identity_lock(user_id): async with asyncio.timeout(20): …`.
-///
-/// The lock is acquired before the body (so an App registration validates its
-/// payload only while holding it), the body's error ACK is still produced under
-/// the lock, and the release happens before the ACK is returned. Acquisition
-/// exhaustion, a Redis failure, the 20 s body timeout and a failed release all
-/// take the source's "temporarily unavailable" branch.
-async fn with_identity_lock<R, F, Fut>(
-    redis: &R,
-    user_id: i64,
-    body: F,
-) -> Result<Reply<Value>, ClientError>
-where
-    R: brz_redis::Redis,
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<Reply<Value>, ClientError>>,
-{
-    let lock = match IdentityLock::acquire(redis, user_id).await {
-        Ok(Some(lock)) => lock,
-        // `Lock.__aenter__` raises `LockError` (a `RedisError`) when the
-        // blocking budget expires; `acquire` propagates a request failure.
-        Ok(None) => {
-            tracing::warn!(user_id, "device identity lock is held by another worker");
-            return Ok(identity_lock_unavailable());
-        }
-        Err(error) => {
-            tracing::error!(%error, user_id, "device identity lock acquisition failed");
-            return Ok(identity_lock_unavailable());
-        }
-    };
-    // `async with asyncio.timeout(20):` wraps only the session handler body.
-    let outcome = tokio::time::timeout(IDENTITY_LOCK_BODY_TIMEOUT, body()).await;
-    // `Lock.__aexit__` releases before the body's outcome escapes; a release
-    // failure is a `RedisError` and takes the source's unavailable branch.
-    if let Err(error) = lock.release().await {
-        tracing::warn!(%error, user_id, "device identity lock release failed");
-        return Ok(identity_lock_unavailable());
-    }
-    match outcome {
-        Ok(reply) => reply,
-        Err(_) => {
-            tracing::warn!(user_id, "device identity registration timed out");
-            Ok(identity_lock_unavailable())
-        }
-    }
-}
-
-/// `asyncio.timeout(20)` inside `app_identity_lock`.
-const IDENTITY_LOCK_BODY_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// `_register_device_session`: the registration body (no identity lock).
-async fn register_session(
-    state: &AppState,
-    runtime: &Arc<SocketRuntime>,
-    session: &DeviceSession,
-    socket_id: &str,
-    data: Value,
-) -> Result<Reply<Value>, ClientError> {
     let payload = match RegisterPayload::parse(&data) {
         Ok(payload) => payload,
         Err(error) => {
@@ -173,6 +85,94 @@ async fn register_session(
             "Runner credential is scoped to its registered device",
         )));
     }
+    let Some(redis) = state.redis.as_ref() else {
+        tracing::error!("device identity lock unavailable: no Redis service");
+        return Ok(identity_lock_unavailable());
+    };
+    with_identity_lock(redis, snapshot.user_id, || {
+        register_session(state, runtime, session, socket_id, payload)
+    })
+    .await
+}
+
+/// The source's unavailable ACK when the lock cannot be taken or released.
+pub(super) fn identity_lock_unavailable() -> Reply<Value> {
+    Reply::payload(error_ack(
+        "Device identity operation is temporarily unavailable; reconnect to retry",
+    ))
+}
+
+/// Hold the shared identity lock across registration and online publication.
+///
+/// The body's error ACK is still produced under the lock, and the release
+/// happens before the ACK is returned. Acquisition
+/// exhaustion, a Redis failure, the 20 s body timeout and a failed release all
+/// take the source's "temporarily unavailable" branch.
+async fn with_identity_lock<R, F, Fut>(
+    redis: &R,
+    user_id: i64,
+    body: F,
+) -> Result<Reply<Value>, ClientError>
+where
+    R: brz_redis::Redis,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Reply<Value>, ClientError>>,
+{
+    match with_device_identity_lock(redis, user_id, body).await {
+        Ok(reply) => reply,
+        Err(()) => Ok(identity_lock_unavailable()),
+    }
+}
+
+pub(super) async fn with_device_identity_lock<R, F, Fut, T>(
+    redis: &R,
+    user_id: i64,
+    body: F,
+) -> Result<T, ()>
+where
+    R: brz_redis::Redis,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let lock = match IdentityLock::acquire(redis, user_id).await {
+        Ok(Some(lock)) => lock,
+        // `Lock.__aenter__` raises `LockError` (a `RedisError`) when the
+        // blocking budget expires; `acquire` propagates a request failure.
+        Ok(None) => {
+            tracing::warn!(user_id, "device identity lock is held by another worker");
+            return Err(());
+        }
+        Err(error) => {
+            tracing::error!(%error, user_id, "device identity lock acquisition failed");
+            return Err(());
+        }
+    };
+    // `async with asyncio.timeout(20):` wraps only the session handler body.
+    let outcome = tokio::time::timeout(IDENTITY_LOCK_BODY_TIMEOUT, body()).await;
+    // `Lock.__aexit__` releases before the body's outcome escapes; a release
+    // failure is a `RedisError` and takes the source's unavailable branch.
+    if let Err(error) = lock.release().await {
+        tracing::warn!(%error, user_id, "device identity lock release failed");
+        return Err(());
+    }
+    match outcome {
+        Ok(result) => Ok(result),
+        Err(_) => {
+            tracing::warn!(user_id, "device identity operation timed out");
+            Err(())
+        }
+    }
+}
+
+/// `_register_device_session`: the registration body (no identity lock).
+async fn register_session(
+    state: &AppState,
+    runtime: &Arc<SocketRuntime>,
+    session: &DeviceSession,
+    socket_id: &str,
+    payload: RegisterPayload,
+) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
     let user_id = snapshot.user_id;
     let client_ip = snapshot.client_ip.clone();
     let runtime_transfer_host = device::normalize_runtime_transfer_host(
@@ -193,9 +193,12 @@ async fn register_session(
         {
             Ok(Some(row)) => {
                 is_cloud_device = true;
-                route_id = row.name.clone();
-                logical_device_id = Some(row.name.clone());
-                persisted_display_name = Some(payload.name.clone());
+                // Cloud registrations route by the executor's validated id.
+                // Keep the Kind name for reads and writes to the owned record.
+                let registered = device::registered(&row, &payload, true);
+                route_id = registered.route_id;
+                logical_device_id = Some(row.name);
+                persisted_display_name = Some(registered.display_name);
             }
             Ok(None) => {}
             Err(mismatch) => {
@@ -219,7 +222,12 @@ async fn register_session(
             payload.device_type,
             DeviceType::App | DeviceType::Cloud | DeviceType::Remote
         );
-        if persisted_display_name.is_none() || requires_identity_check {
+        if persisted_display_name.is_none()
+            || requires_identity_check
+            || device::get_online(state, user_id, &payload.device_id)
+                .await
+                .is_none()
+        {
             match device::upsert_device(
                 state,
                 user_id,
@@ -314,32 +322,45 @@ async fn register_session(
     let ack = serde_json::to_value(RegisterAck {
         success: true,
         device_id: &payload.device_id,
+        // `_register_device_session` returns the canonical record-scoped route
+        // so the Runtime can address this exact installation even when
+        // historical records share its name.
+        device_route_id: &route_id,
     })
     .expect("a registration acknowledgement serializes");
     // Source `_schedule_background_task` runs the capability sync and then the
-    // execution reconciliation after the handler returns; each gets its own
-    // task. `after_reply` enqueues them only after the successful room actions
-    // and the ACK send attempt, matching that order without a timing guess; the
-    // callbacks only hand work to their bounded queues.
-    let sync_runtime = Arc::clone(runtime);
-    let sync_device_id = route_id.clone();
-    let reconcile_device_id = route_id.clone();
+    // execution reconciliation before the handler returns its ACK
+    // (`device_namespace.py:1815-1826`); `asyncio.create_task` does not depend
+    // on ACK delivery. Scheduling them here, on the handler's guaranteed path,
+    // reproduces that. Hanging them on `after_reply` instead would silently
+    // drop them when the reply is applied after the socket closed, because
+    // `complete_event` only runs those continuations for a completed reply
+    // (`brz-socket-io business.rs:352-385`).
+    enqueue_registration_follow_ups(runtime, user_id, &route_id);
     Ok(Reply::payload(ack)
         .join(format!("device:{user_id}:{route_id}"))
-        .join(format!("execution-target:{user_id}:{execution_target_id}"))
-        .after_reply(move || {
-            sync_runtime.enqueue(DeviceJob::RegisterSync {
-                user_id,
-                device_id: sync_device_id,
-            });
-            // `reconcile_device_executions(...)` with the registration
-            // path's `needs_confirmation_only=false`.
-            sync_runtime.enqueue_reconcile(super::device_reconcile::ReconcileJob {
-                user_id,
-                device_id: reconcile_device_id,
-                needs_confirmation_only: false,
-            });
-        }))
+        .join(format!("execution-target:{user_id}:{execution_target_id}")))
+}
+
+/// `_schedule_background_task` after a successful registration: one capability
+/// sync and one execution reconciliation, each on its own bounded queue.
+///
+/// The enqueue happens on the handler's guaranteed path rather than in
+/// `after_reply`, because `brz-socket-io` only runs those continuations for a
+/// reply that applied to a live session (`business.rs:352-385`), while Source
+/// schedules them before the ACK is sent.
+fn enqueue_registration_follow_ups(runtime: &Arc<SocketRuntime>, user_id: i64, route_id: &str) {
+    runtime.enqueue(DeviceJob::RegisterSync {
+        user_id,
+        device_id: route_id.to_owned(),
+    });
+    // `reconcile_device_executions(...)` with the registration path's
+    // `needs_confirmation_only=false`.
+    runtime.enqueue_reconcile(super::device_reconcile::ReconcileJob {
+        user_id,
+        device_id: route_id.to_owned(),
+        needs_confirmation_only: false,
+    });
 }
 
 /// `DeviceRegistrationFingerprint` for the reconnect debounce.
@@ -539,6 +560,45 @@ pub async fn disconnect(
     session: &DeviceSession,
     socket_id: &str,
 ) {
+    // The transport is gone even if its stable route already points to a new SID.
+    let close = session.close_online_writes();
+    publish_peer_closed(state, socket_id).await;
+    let _closed = close.await;
+    // Start retention after the last permitted heartbeat or registration write.
+    publish_peer_closed(state, socket_id).await;
+    disconnect_projection(state, runtime, session, socket_id).await;
+}
+
+async fn publish_peer_closed(state: &AppState, socket_id: &str) {
+    use brz_redis::Redis as _;
+    if let Some(rpc) = state.socketio_rpc.as_ref() {
+        rpc.disconnect(
+            socket_id,
+            "/local-executor",
+            Duration::from_secs(device::ONLINE_TTL_SECONDS),
+        );
+    }
+    if let Some(redis) = state.redis.as_ref() {
+        let message = serde_json::json!({"method":"runtime_peer_closed","sid":socket_id,"namespace":"/local-executor","retain_ms":device::ONLINE_TTL_SECONDS * 1000,"host_id":crate::socketio_emit::host_id()});
+        if redis
+            .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message.to_string())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                code = "runtime_peer_close_publish_failed",
+                "Device RPC disconnect notification deferred"
+            );
+        }
+    }
+}
+
+async fn disconnect_projection(
+    state: &AppState,
+    runtime: &Arc<SocketRuntime>,
+    session: &DeviceSession,
+    socket_id: &str,
+) {
     let snapshot = session.snapshot();
     let user_id = snapshot.user_id;
     let Some(device_id) = snapshot.device.device_id.clone() else {
@@ -557,6 +617,26 @@ pub async fn disconnect(
     };
     if !online_cleanup_permitted(redis, user_id, &device_id, socket_id, DISCONNECT_GRACE).await {
         return;
+    }
+    if let Some(online) = device::get_online(state, user_id, &device_id).await
+        && online["socket_id"] == socket_id
+        && let Some(observed) = online["last_heartbeat"]
+            .as_str()
+            .and_then(crate::device_presence::parse_observed_time)
+    {
+        super::device_upsert::persist_observation(
+            state,
+            user_id,
+            snapshot
+                .device
+                .logical_device_id
+                .as_deref()
+                .unwrap_or(&device_id),
+            snapshot.device.runtime_instance_id.as_deref(),
+            observed,
+            true,
+        )
+        .await;
     }
     if !device::clear_online(state, user_id, &device_id).await {
         // `delete_or_raise` surfaces the failure to `on_disconnect`'s outer

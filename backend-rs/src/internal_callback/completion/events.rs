@@ -11,7 +11,6 @@ use brz_mysql::{Mysql, MysqlRow};
 use brz_redis::Redis;
 
 use super::Completion;
-use super::Tables;
 use super::TaskCompletedEvent;
 use super::handlers;
 use super::sql;
@@ -23,12 +22,12 @@ use super::task_column;
 /// published so every handler receives it.
 pub(super) async fn resolve_owner_user_id<M: Mysql>(
     mysql: &M,
-    tables: Tables,
+    task_table: &str,
     task_id: i64,
 ) -> Option<i64> {
     let row: MysqlRow = mysql
         .route(crate::task_routing::ByTaskId(task_id as u64))
-        .fetch_optional(sql::resolve_owner_statement(tables.tasks), (task_id,))
+        .fetch_optional(sql::resolve_owner_statement(task_table), (task_id,))
         .await
         .ok()
         .flatten()?;
@@ -47,10 +46,36 @@ pub(crate) async fn publish_task_completed<M: Mysql, R: Redis>(
     result: Option<&serde_json::Value>,
     error: Option<&str>,
 ) {
-    let Some(user_id) = resolve_owner_user_id(ctx.mysql, ctx.tables, task_id).await else {
+    let task_table = match super::resolve_tables(ctx.app, ctx.tables, task_id).await {
+        Ok((task_table, _)) => task_table,
+        Err(error) => {
+            tracing::warn!(%error, task_id, "task completion table read failed");
+            return;
+        }
+    };
+    let Some(user_id) = resolve_owner_user_id(ctx.mysql, &task_table, task_id).await else {
         tracing::warn!(task_id, "no task owner; TaskCompletedEvent not published");
         return;
     };
+    publish_task_completed_for_owner(ctx, task_id, subtask_id, user_id, status, result, error)
+        .await;
+}
+
+/// `DeviceNamespace._publish_task_completed_event`: publish with the owner the
+/// caller already knows.
+///
+/// The device path takes `user_id` from the authenticated session and does not
+/// read the task owner before publishing, so this variant keeps that exact
+/// statement sequence.
+pub(crate) async fn publish_task_completed_for_owner<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+    status: &str,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
+) {
     let event = TaskCompletedEvent {
         task_id,
         user_id,
@@ -59,14 +84,19 @@ pub(crate) async fn publish_task_completed<M: Mysql, R: Redis>(
         result,
         error,
     };
+    dispatch(ctx, &event).await;
+}
+
+/// `event_bus.publish(TaskCompletedEvent(...))`'s handler fan-out.
+async fn dispatch<M: Mysql, R: Redis>(ctx: &Completion<'_, M, R>, event: &TaskCompletedEvent<'_>) {
     // `main.py:419 register_pet_event_handlers`
-    handlers::pet::handle_task_completed_for_pet(ctx, &event).await;
+    handlers::pet::handle_task_completed_for_pet(ctx, event).await;
     // `main.py:422 event_bus.subscribe(TaskCompletedEvent, handle_task_completed)`
-    handlers::subscription::handle_task_completed(ctx, &event).await;
+    handlers::subscription::handle_task_completed(ctx, event).await;
     // `main.py:429 event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)`
-    handlers::channel::handle_channel_task_completed(ctx, &event).await;
+    handlers::channel::handle_channel_task_completed(ctx, event).await;
     // `main.py:437 register_project_automation_task_completion_handler`
-    handlers::project_automation::handle_project_automation_task_completed(ctx, &event).await;
+    handlers::project_automation::handle_project_automation_task_completed(ctx, event).await;
     // `main.py:446 event_bus.subscribe(TaskCompletedEvent, conclude_code_wiki_run)`
-    handlers::code_wiki::conclude_code_wiki_run(ctx, &event).await;
+    handlers::code_wiki::conclude_code_wiki_run(ctx, event).await;
 }

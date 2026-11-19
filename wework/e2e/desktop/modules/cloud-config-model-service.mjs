@@ -11,10 +11,13 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
+  selectedToolCall,
+  selectTool,
 } from './response-protocol.mjs'
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
 const ACCESS = 'synthetic-cloud-config-recovery-access'
+const REFRESH = 'synthetic-cloud-config-recovery-refresh'
 
 async function authFileMetadata(path) {
   try {
@@ -34,7 +37,7 @@ async function authFileMetadata(path) {
 
 // The failure belongs to the model subscription service. Executor IPC, native
 // Codex requests, notifications, persistence and restart are never substituted.
-export function createCloudConfigModelService() {
+export function createCloudConfigModelService({ readUsage } = {}) {
   let server
   let codexHome
   let nativeHome
@@ -43,6 +46,7 @@ export function createCloudConfigModelService() {
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
+  let tokenRefreshes = 0
   const plans = new Map()
   const requests = []
   const authSnapshots = []
@@ -60,13 +64,37 @@ export function createCloudConfigModelService() {
           : null
         return { ...response, held, release }
       })
-      const plan = { marker, rounds, count: 0 }
+      const plan = { marker, rounds, count: 0, calls: [] }
       plans.set(marker, plan)
       return plan
     },
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
-      server = createServer((request, response) => {
+      server = createServer(async (request, response) => {
+        if (request.method === 'POST' && request.url === '/oauth/token') {
+          const body = await readRequestBody(request)
+          assert.equal(body.grant_type, 'refresh_token')
+          assert.equal(body.refresh_token, REFRESH)
+          tokenRefreshes += 1
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ access_token: ACCESS, refresh_token: REFRESH }))
+          return
+        }
+        if (readUsage && request.url?.includes('/wham/usage')) {
+          try {
+            const usage = await readUsage()
+            if (response.destroyed) return
+            response.writeHead(200, { 'content-type': 'application/json' })
+            response.end(JSON.stringify(usage))
+          } catch (error) {
+            console.error('[desktop-e2e] Model usage fixture failed', error)
+            if (!response.destroyed) {
+              response.writeHead(500, { 'content-type': 'application/json' })
+              response.end(JSON.stringify({ error: 'Model usage fixture failed' }))
+            }
+          }
+          return
+        }
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1
           response.writeHead(200, { 'content-type': 'application/json' })
@@ -123,7 +151,7 @@ export function createCloudConfigModelService() {
           tokens: {
             account_id: ACCOUNT,
             access_token: ACCESS,
-            refresh_token: 'synthetic-cloud-config-recovery-refresh',
+            refresh_token: REFRESH,
             id_token: `header.${claims}.signature`,
           },
           last_refresh: new Date().toISOString(),
@@ -133,6 +161,7 @@ export function createCloudConfigModelService() {
       await rm(join(codexHome, 'auth.json'), { force: true })
       appEnvironment.CODEX_HOME = nativeHome
       appEnvironment.WEWORK_E2E_NATIVE_CODEX_HOME = nativeHome
+      appEnvironment.CODEX_REFRESH_TOKEN_URL_OVERRIDE = `http://127.0.0.1:${server.address().port}/oauth/token`
       // This checkpoint selects its configured native provider through real RPC.
       // Avoid unrelated custom catalog reconciliation: its restart endpoint must
       // preflight model/list, which would consume the failure before thread/resume.
@@ -150,12 +179,13 @@ export function createCloudConfigModelService() {
         rejectModelWebSocketUpgrade(modelServer, socket)
       })
     },
-    async failBundle() {
+    async failBundle({ allowBootstrap = true } = {}) {
       unavailable = true
       // Codex first loads bootstrap settings, then installs its long-lived cloud
       // loader. Drop the service between those two real requests so the configured
       // local origin survives and the second loader caches the genuine failure.
-      bootstrapBundles = 1
+      // Disable that success to cover the defaults used after a startup failure.
+      bootstrapBundles = allowBootstrap ? 1 : 0
       // This is solely the isolated fixture's Codex cache. A cold process must
       // consult the failing service instead of reusing an identity-matched bundle.
       await rm(join(codexHome, 'cloud-config-bundle-cache.json'), { force: true })
@@ -178,6 +208,7 @@ export function createCloudConfigModelService() {
       assert.ok(plan, 'A foreground model request did not belong to the recovery fixture')
       const round = plan.rounds[plan.count++]
       assert.ok(round, `Unexpected model continuation for ${plan.marker}: ${plan.count}`)
+      plan.calls.push({ body, at: Date.now() })
       const subscription = url.pathname === '/backend-api/codex/responses'
       if (subscription) {
         const [nativeAuth, managedAuth, nativeMarker, managedMarker] = await Promise.all([
@@ -199,6 +230,22 @@ export function createCloudConfigModelService() {
         assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
       }
       requests.push({ marker: plan.marker, round: plan.count, subscription })
+      if (round.usageLimit) {
+        const resetsAt = round.usageLimit()
+        response.writeHead(429, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            error: {
+              type: 'usage_limit_reached',
+              code: 'usage_limit_reached',
+              message: 'Synthetic subscription usage limit reached',
+              plan_type: 'enterprise',
+              resets_at: resetsAt,
+            },
+          })
+        )
+        return true
+      }
       const id = `cloud-config-${requests.length}`
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.write(createSse([responseCreated(id)]))
@@ -209,7 +256,12 @@ export function createCloudConfigModelService() {
       await round.beforeComplete?.()
       response.end(
         createSse([
-          assistantMessage(round.text ?? `${plan.marker}_COMPLETE`),
+          ...(round.tool
+            ? selectedToolCall(
+                `${id}-tool`,
+                selectTool(body, round.tool.name, round.tool.arguments)
+              )
+            : [assistantMessage(round.text ?? `${plan.marker}_COMPLETE`)]),
           responseCompleted(id),
         ])
       )
@@ -221,6 +273,7 @@ export function createCloudConfigModelService() {
         bundleFailures,
         bundleSuccesses,
         accountChecks,
+        tokenRefreshes,
         requests,
         authSnapshots,
       }

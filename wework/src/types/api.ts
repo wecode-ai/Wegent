@@ -29,7 +29,6 @@ import type {
   ProjectGitConfig,
   ProjectConfig,
   ProjectWithTasks,
-  RuntimeWorktreeCapability,
 } from '@wegent/chat-core/execution-project'
 export type {
   ProjectExecutionConfig,
@@ -49,7 +48,10 @@ export type {
 import type { RuntimeTaskCreateIntent } from '@wegent/chat-core/runtime-task-api-types'
 export type { RuntimeTaskCreateResponse } from '@wegent/chat-core/runtime-task-api-types'
 import type { RuntimeTaskCancelResponse } from '@wegent/chat-core/runtime-task-api-types'
-export type { RuntimeTaskCancelResponse } from '@wegent/chat-core/runtime-task-api-types'
+export type {
+  RuntimeTaskCancelRequest,
+  RuntimeTaskCancelResponse,
+} from '@wegent/chat-core/runtime-task-api-types'
 import type {
   RuntimeProjectSpaceRef,
   RuntimeProjectAiSettings,
@@ -504,43 +506,6 @@ export interface RuntimeWorkspaceOpenRequest {
   label?: string | null
 }
 
-export interface RuntimeLocalProjectUpsertRequest {
-  deviceId: string
-  projectKey: string
-  name: string
-  roots: string[]
-  defaultProjectSpace?: RuntimeProjectSpaceRef | null
-  aiSettings?: RuntimeProjectAiSettings | null
-  runtime: 'codex'
-}
-
-export interface RuntimeLocalProjectUpsertResponse {
-  accepted: boolean
-  deviceId: string
-  projectKey: string
-  name: string
-  roots: string[]
-  defaultProjectSpace?: RuntimeProjectSpaceRef | null
-  aiSettings?: RuntimeProjectAiSettings | null
-  runtime: 'codex'
-  error?: string | null
-}
-
-export interface RuntimeWorkspaceRenameRequest {
-  deviceId: string
-  projectKey?: string | null
-  workspacePath: string
-  runtime: RuntimeName
-  name: string
-}
-
-export interface RuntimeWorkspaceRemoveRequest {
-  deviceId: string
-  projectKey?: string | null
-  workspacePath: string
-  runtime: RuntimeName
-}
-
 export interface RuntimeWorkspaceOpenResponse {
   accepted: boolean
   deviceId: string
@@ -561,13 +526,6 @@ export interface RuntimeProjectReorderRequest {
   projectKey: string
   beforeProjectKey?: string | null
   insertAtEnd?: boolean
-}
-
-export interface RuntimeProjectPinRequest {
-  deviceId: string
-  projectKey: string
-  pinned: boolean
-  beforeProjectKey?: string | null
 }
 
 export interface RuntimeProjectAppearanceRequest {
@@ -612,19 +570,6 @@ export interface RuntimeTaskPinRequest {
   threadId: string
   pinned: boolean
   beforeThreadId?: string | null
-}
-
-export interface BindRuntimeTaskIMSessionsRequest {
-  address: RuntimeTaskAddress
-  taskTitle: string
-  sessionKeys: string[]
-  modelSelection?: ModelSelectionConfig | null
-}
-
-export interface BindRuntimeTaskIMSessionsResponse {
-  address: RuntimeTaskAddress
-  boundSessionKeys: string[]
-  notifiedCount: number
 }
 
 export interface RuntimeIMNotificationSession {
@@ -684,6 +629,7 @@ export interface RuntimeTaskArchiveResponse {
   accepted: boolean
   taskId: string
   workspacePath?: string | null
+  cleanupError?: string | null
   error?: string | null
 }
 
@@ -695,42 +641,12 @@ export interface RuntimeWorktreeSettings {
   keepCount: number
 }
 
-export interface RuntimeWorktreeCapabilitiesRequest {
-  deviceId: string
-}
-
-export interface RuntimeWorktreeCapabilitiesResponse {
-  success: boolean
-  deviceId: string
-  runtimeWorktrees: RuntimeWorktreeCapability | null
-}
-
-export interface RuntimeWorktreePreflightRequest {
-  deviceId: string
-  sourcePath: string
-  ref?: string | null
-}
-
-export interface RuntimeWorktreePreflightResponse {
-  success: boolean
-  deviceId: string
-  supported: boolean
-  sourcePath: string
-  sourceExists: boolean
-  sourceDirectory: boolean
-  gitRepository: boolean
-  gitCommonDirValid: boolean
-  gitCommonDirWritable: boolean
-  writable: boolean
-  repoRoot?: string | null
-  gitCommonDir?: string | null
-  repoRootFingerprint?: string | null
-  gitRef?: string | null
-  refValid?: boolean | null
-  resolvedWorktreeRoot?: string | null
-  errorCode?: string | null
-  error?: string | null
-}
+export type {
+  RuntimeWorktreeCapabilitiesRequest,
+  RuntimeWorktreeCapabilitiesResponse,
+  RuntimeWorktreePreflightRequest,
+  RuntimeWorktreePreflightResponse,
+} from '@wegent/chat-core/worktree-types'
 
 export interface RuntimeWorktreeSettingsPatch {
   deviceId: string
@@ -800,49 +716,6 @@ export interface RuntimeWorktreeDeleteRequest {
   deviceId: string
   path: string
   preserveSnapshot?: boolean
-}
-
-export interface ArchivedConversationsListRequest {
-  deviceId?: string | null
-  workspacePath?: string | null
-  projectId?: number | null
-  runtimeProjectKey?: string | null
-  search?: string | null
-  source?: 'all' | 'local' | 'cloud'
-  sort?: 'updated' | 'created' | 'alphabetical'
-}
-
-export interface ArchivedConversationItem {
-  id: string
-  taskId: string
-  threadId?: string | null
-  title: string
-  projectId?: number | null
-  projectKey?: string | null
-  projectName?: string | null
-  workspacePath: string
-  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
-  runtimeHandle?: Record<string, unknown> | null
-  deviceId: string
-  deviceName?: string | null
-  deviceAddress?: string | null
-  source: 'local' | 'cloud'
-  runtime?: RuntimeName | null
-  createdAt?: string | null
-  updatedAt?: string | null
-}
-
-export interface ArchivedConversationProjectGroup {
-  projectId?: number | null
-  projectKey?: string | null
-  projectName: string
-  count: number
-}
-
-export interface ArchivedConversationsListResponse {
-  items: ArchivedConversationItem[]
-  projectGroups: ArchivedConversationProjectGroup[]
-  total: number
 }
 
 export interface RuntimeArchiveProjectConversationsRequest {
@@ -1007,7 +880,14 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export interface IMStandInBinding {
+  deviceId: string
+  roleId: string | null
+}
+
 export interface IMPrivateSession {
+  mode: 'chat' | 'stand_in'
+  stand_in?: IMStandInBinding | null
   session_key: string
   channel_type: string
   channel_label: string
@@ -1015,9 +895,6 @@ export interface IMPrivateSession {
   conversation_id: string
   sender_id: string
   display_name: string
-  mode: 'chat' | 'task'
-  state: 'idle' | 'pending_new_flow' | 'pending_task_switch' | 'pending_task_creation'
-  active_task_id?: string | null
   last_seen_at: string
 }
 
@@ -1640,6 +1517,8 @@ export interface PluginMarketplaceInstallResponse {
 
 export interface PluginDeviceSyncResponse {
   reconciled?: boolean
+  /** Local HTTP execution changed the observed account snapshot. */
+  localChanged?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse
@@ -1996,3 +1875,15 @@ export interface MultiAttachmentUploadState {
   uploadingFiles: Map<string, AttachmentUploadProgress>
   errors: Map<string, string>
 }
+
+export type {
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
+  RuntimeWorkspaceRenameRequest,
+  RuntimeWorkspaceRemoveRequest,
+  RuntimeProjectPinRequest,
+  ArchivedConversationsListRequest,
+  ArchivedConversationItem,
+  ArchivedConversationProjectGroup,
+  ArchivedConversationsListResponse,
+} from '../../../packages/chat-core/src/runtime-management-types'

@@ -220,6 +220,15 @@ impl RuntimeWorkRpcHandler {
             .automation_store
             .get(&run.automation_id)
             .ok_or_else(|| arrangement_error("The arrangement was cancelled"))?;
+        if !self
+            .automation_store
+            .allow_dispatch(&automation, run, chrono::Utc::now())
+            .map_err(arrangement_error)?
+        {
+            return Err(arrangement_error(
+                "Scheduled execution skipped on a China non-workday",
+            ));
+        }
         if automation.version != binding.automation_version
             || automation.task_request["standInOwner"]["userId"] != binding.user_id
             || automation.task_request["standInOwner"]["roleId"] != binding.role_id
@@ -299,13 +308,10 @@ impl RuntimeWorkRpcHandler {
         settings: &Value,
     ) -> Result<(), AppIpcError> {
         for mut action in store
-            .stand_in_actions(user)
+            .pending_stand_in_actions(user)
             .map_err(settings_error)?
             .into_iter()
-            .filter(|action| {
-                action["kind"] == "run_arrangement"
-                    && matches!(action["status"].as_str(), Some("pending" | "sending"))
-            })
+            .filter(|action| action["kind"] == "run_arrangement")
         {
             let Some(run) = self
                 .automation_store

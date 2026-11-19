@@ -52,8 +52,10 @@ export interface AppPreferences {
   terminalContextInjectionEnabled: boolean
   contextCompactionThreshold: number
   experimentalFeaturesEnabled: boolean
+  collaborationExperienceEnabled: boolean
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
+  telemetryConsentRevision: number
   telemetryEnabled: boolean
   performanceRecordingEnabled: boolean
   supervisorPrinciples: string
@@ -70,6 +72,7 @@ export interface AppPreferences {
   browserFullControl: boolean
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
+  appshotsShortcut: string | null
   computerUseEnabled?: boolean
   popoutWindowShortcut: string | null
   popoutWindowProjectlessDefaultEnabled: boolean
@@ -137,6 +140,7 @@ export interface AppPreferencesPatch {
   terminalContextInjectionEnabled?: boolean
   contextCompactionThreshold?: number
   experimentalFeaturesEnabled?: boolean
+  collaborationExperienceEnabled?: boolean
   localCodexSubscriptionEnabled?: boolean
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
@@ -155,6 +159,7 @@ export interface AppPreferencesPatch {
   browserFullControl?: boolean
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
+  appshotsShortcut?: string | null
   computerUseEnabled?: boolean
   popoutWindowShortcut?: string | null
   popoutWindowProjectlessDefaultEnabled?: boolean
@@ -187,8 +192,10 @@ export const defaultAppPreferences: AppPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
   experimentalFeaturesEnabled: false,
+  collaborationExperienceEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
+  telemetryConsentRevision: 0,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
   supervisorPrinciples: '',
@@ -205,6 +212,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserFullControl: false,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  appshotsShortcut: 'CommandOrControl+Shift+2',
   computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
@@ -351,6 +359,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled
         : defaultAppPreferences.experimentalFeaturesEnabled,
+    collaborationExperienceEnabled: record.collaborationExperienceEnabled === true,
     localCodexSubscriptionEnabled:
       typeof record.localCodexSubscriptionEnabled === 'boolean'
         ? record.localCodexSubscriptionEnabled
@@ -363,6 +372,12 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled
         : defaultAppPreferences.telemetryEnabled,
+    telemetryConsentRevision:
+      typeof record.telemetryConsentRevision === 'number' &&
+      Number.isSafeInteger(record.telemetryConsentRevision) &&
+      record.telemetryConsentRevision >= 0
+        ? record.telemetryConsentRevision
+        : 0,
     performanceRecordingEnabled:
       typeof record.performanceRecordingEnabled === 'boolean'
         ? record.performanceRecordingEnabled
@@ -415,6 +430,12 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.appshotsPlaySound === 'boolean'
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
+    appshotsShortcut:
+      typeof record.appshotsShortcut === 'string' && record.appshotsShortcut.trim()
+        ? record.appshotsShortcut.trim()
+        : Object.prototype.hasOwnProperty.call(record, 'appshotsShortcut')
+          ? null
+          : defaultAppPreferences.appshotsShortcut,
     computerUseEnabled:
       typeof record.computerUseEnabled === 'boolean'
         ? record.computerUseEnabled
@@ -569,13 +590,21 @@ export async function getAppPreferences(): Promise<AppPreferences> {
   return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))
 }
 
-export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
+export async function updateAppPreferences(
+  patch: AppPreferencesPatch,
+  expectedTelemetryConsentRevision?: number
+): Promise<AppPreferences> {
   if (typeof window === 'undefined') {
     const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
     return preferences
   }
   const preferences = mergeAppPreferences(
-    await invokeDesktopHost<Record<string, unknown>>('preferences.update', { patch })
+    await invokeDesktopHost<Record<string, unknown>>('preferences.update', {
+      patch,
+      ...(expectedTelemetryConsentRevision !== undefined
+        ? { expectedTelemetryConsentRevision }
+        : {}),
+    })
   )
   emitAppPreferencesChanged(preferences)
   return preferences

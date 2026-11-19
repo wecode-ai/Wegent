@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
-import { appendFile } from 'node:fs/promises'
+import { appendFile, readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { compareWeworkVersions, parseWeworkVersion } from './update-channel-manifests.mjs'
+import {
+  releasePublicationChannels,
+  validateReleaseUpgradeTarget,
+} from './lib/upgrade-evidence.mjs'
 
 const STABLE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 const BETA_VERSION_PATTERN = /^\d+\.\d+\.\d+-beta\.[1-9]\d*$/
@@ -57,7 +61,7 @@ function nextBetaVersion(tags) {
   return `${nextStable}-beta.1`
 }
 
-export function resolveReleaseVersion({
+function selectReleaseVersion({
   tags,
   inputChannel = 'stable',
   inputVersion = '',
@@ -106,6 +110,13 @@ export function resolveReleaseVersion({
   }
 }
 
+export function resolveReleaseVersion({ minSourceVersion, ...options }) {
+  const result = selectReleaseVersion(options)
+  if (minSourceVersion !== undefined)
+    validateReleaseUpgradeTarget({ version: result.version, minSourceVersion })
+  return result
+}
+
 function readTags() {
   const output = execFileSync('git', ['tag', '--list', 'wework-v*'], {
     encoding: 'utf8',
@@ -117,7 +128,11 @@ function readTags() {
 }
 
 async function main() {
+  const policy = JSON.parse(
+    await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
+  )
   const result = resolveReleaseVersion({
+    minSourceVersion: policy.minSourceVersion,
     tags: readTags(),
     inputChannel: process.env.INPUT_CHANNEL || 'stable',
     inputVersion: process.env.INPUT_VERSION || '',
@@ -125,6 +140,14 @@ async function main() {
     githubRefName: process.env.GITHUB_REF_NAME || '',
     publishRelease: process.env.PUBLISH_RELEASE === 'true',
   })
+  releasePublicationChannels(result.channel, policy)
+  if (policy.releasePurpose === 'bridge') {
+    const metadata = JSON.parse(
+      await readFile(new URL('../electron/package.json', import.meta.url), 'utf8')
+    )
+    if (metadata.weworkAfterStopPreparation !== undefined)
+      throw new Error('A bridge cannot require stopped migration')
+  }
   const output = [
     `value=${result.version}`,
     `release_tag=${result.releaseTag}`,

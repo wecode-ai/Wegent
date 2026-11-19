@@ -32,6 +32,9 @@ mod diagnostics;
 use diagnostics::measure_stage;
 
 #[cfg(test)]
+#[path = "worktrees/git_lifetime_tests.rs"]
+mod git_lifetime_tests;
+#[cfg(test)]
 mod persistence_tests;
 
 const STATE_VERSION: u64 = 5;
@@ -335,6 +338,40 @@ impl WorktreeManager {
             git_ref,
             Path::new(&state.settings.resolved_worktree_root),
         )
+    }
+
+    pub fn list_branches(&self, source_path: &Path) -> Result<Vec<String>, String> {
+        let output = git_output(
+            source_path,
+            &crate::local::command::GIT_BRANCH_LIST_ARGV[1..],
+            None,
+        )?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+
+    pub fn current_branch(&self, source_path: &Path) -> Result<Option<String>, String> {
+        let output = git_workspace_command(
+            source_path,
+            &crate::local::command::GIT_CURRENT_BRANCH_ARGV[1..],
+            None,
+        )
+        .output()
+        .map_err(|error| error.to_string())?;
+        if output.status.code() == Some(1) {
+            return Ok(None);
+        }
+        command_result(output).map(|branch| {
+            if branch.is_empty() {
+                None
+            } else {
+                Some(branch)
+            }
+        })
     }
 
     pub fn plan(
@@ -729,7 +766,7 @@ impl WorktreeManager {
             .lock()
             .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let key = normalized_path_key(path);
-        let mut record = {
+        let (mut record, known_roots) = {
             let _guard = self
                 .mutation_lock
                 .lock()
@@ -742,16 +779,35 @@ impl WorktreeManager {
                 .get(&key)
                 .cloned()
                 .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-            if path.exists() {
-                if preserve_snapshot {
-                    validate_record_worktree_identity(&record, path)?;
-                } else {
-                    validate_deletable_worktree_identity(&record, path)?;
-                }
-            }
-            record
+            (record, state.known_roots)
         };
-
+        let expected_path = if path.try_exists().map_err(|error| error.to_string())? {
+            Some(fs::canonicalize(path).map_err(|error| error.to_string())?)
+        } else {
+            None
+        };
+        // Wait without holding the registry lock, then validate the actual
+        // directory immediately before mutation under its lifetime lock.
+        let _directory = measure_stage(&record.worktree_id, "delete_directory_lock", || {
+            wegent_workspace::workspace_lifetime::remove_directory(path)
+        })?;
+        ensure_managed_path(path, &known_roots)?;
+        if path.try_exists().map_err(|error| error.to_string())? {
+            let actual_path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+            if expected_path
+                .as_ref()
+                .is_some_and(|expected| expected != &actual_path)
+            {
+                return Err(worktree_target_conflict(
+                    "Managed worktree path changed while waiting for deletion",
+                ));
+            }
+            if preserve_snapshot {
+                validate_record_worktree_identity(&record, path)?;
+            } else {
+                validate_deletable_worktree_identity(&record, path)?;
+            }
+        }
         operation(&mut record)?;
 
         record.state = if preserve_snapshot && record.snapshot_ref.is_some() {
@@ -1222,6 +1278,13 @@ fn git_command() -> Command {
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+    let output = git_workspace_command(path, args, envs)
+        .output()
+        .map_err(|error| error.to_string())?;
+    command_result(output)
+}
+
+fn git_workspace_command(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Command {
     let mut command = git_command();
     configure_git_common_dir(&mut command, path);
     command
@@ -1234,8 +1297,7 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
-    let output = command.output().map_err(|error| error.to_string())?;
-    command_result(output)
+    command
 }
 
 fn configure_git_common_dir(command: &mut Command, _path: &Path) {
@@ -2123,6 +2185,7 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
@@ -3107,6 +3170,7 @@ mod tests {
 
     fn task_link(id: &str) -> RuntimeTaskLink {
         RuntimeTaskLink {
+            snapshot_revision: None,
             local_task_id: id.to_owned(),
             thread_id: None,
             workspace_path: format!("/tmp/{id}"),

@@ -1,3 +1,7 @@
+import {
+  listWorkspaceBranches,
+  type WorktreePreflightReader,
+} from '@wegent/chat-core/workspace-branches'
 import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } from '@/types/api'
 import type {
   ChangeRequest,
@@ -132,9 +136,7 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
   throw new Error('Expected text stdout from device command')
 }
 
-export function outputAsRecord(
-  output: DeviceCommandResponse['stdout']
-): Record<string, unknown> | null {
+export function outputAsRecord(output: unknown): Record<string, unknown> | null {
   if (typeof output === 'string') {
     try {
       const parsed = JSON.parse(output)
@@ -357,6 +359,11 @@ export function parseChangeRequest(
     stringValue(record, 'headRefName', 'source_branch', 'sourceBranch') ||
     (head ? stringValue(head, 'ref') : '')
   const updatedAt = stringValue(record, 'updatedAt', 'updated_at')
+  const lastCommit = outputAsRecord(record.last_commit)
+  const headSha =
+    stringValue(record, 'headRefOid', 'sha') ||
+    (head ? stringValue(head, 'sha') : '') ||
+    (lastCommit ? stringValue(lastCommit, 'id') : '')
 
   return {
     provider,
@@ -371,6 +378,7 @@ export function parseChangeRequest(
     mergeability: normalizeMergeability(provider, record),
     mergeQueue: 'unknown',
     ...(headBranch ? { headBranch } : {}),
+    ...(headSha ? { headSha } : {}),
     ...(updatedAt ? { updatedAt } : {}),
   }
 }
@@ -660,21 +668,6 @@ export async function removeGitWorktree(
     timeoutSeconds: 30,
     maxOutputBytes: 8192,
   })
-}
-
-function prioritizeBranches(
-  branches: string[],
-  preferredBranches: Array<string | null | undefined>
-): string[] {
-  const preferred = preferredBranches
-    .map(branch => branch?.trim())
-    .filter((branch): branch is string => Boolean(branch))
-
-  const uniqueBranches = [...new Set(branches)].filter(Boolean)
-  const preferredSet = new Set(preferred)
-  const orderedPreferred = preferred.filter(branch => uniqueBranches.includes(branch))
-  const remaining = uniqueBranches.filter(branch => !preferredSet.has(branch))
-  return [...orderedPreferred, ...remaining]
 }
 
 async function runGitCommand(
@@ -1060,7 +1053,7 @@ export async function loadProjectEnvironment(
   try {
     return cloneEnvironmentInfo(await promise)
   } catch (error) {
-    environmentInfoCache.delete(cacheKey)
+    if (environmentInfoCache.get(cacheKey) === entry) environmentInfoCache.delete(cacheKey)
     throw error
   } finally {
     if (options.onPartialInfo) {
@@ -1169,24 +1162,15 @@ export async function commitAndPushProjectChanges(
 }
 
 export async function listProjectBranches(
-  api: DeviceCommandApi,
+  api: DeviceCommandApi & { preflightWorktree: WorktreePreflightReader },
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null
 ): Promise<string[]> {
   const { deviceId, path } = await commandContext(api, project, target)
-  const [output, currentBranch] = await Promise.all([
-    runGitCommand(api, deviceId, 'git_branch_list', path, {
-      timeoutSeconds: 15,
-      maxOutputBytes: 1024 * 64,
-    }),
-    runGitCommand(api, deviceId, 'git_branch', path).catch(() => ''),
-  ])
-
-  const branches = output
-    .split('\n')
-    .map(branch => branch.trim())
-    .filter(Boolean)
-  return prioritizeBranches(branches, [currentBranch])
+  return listWorkspaceBranches(input => api.preflightWorktree(input), {
+    deviceId,
+    sourcePath: path,
+  })
 }
 
 export async function checkoutProjectBranch(

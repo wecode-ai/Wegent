@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
@@ -73,8 +73,19 @@ async function waitForProcessExit(child, timeoutMs, { requireExitEvent = false }
   }
 }
 
-function processExitDiagnostics(child) {
+export function processExitDiagnostics(child) {
   const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
+  if (process.platform === 'darwin' && Number.isInteger(child.pid)) {
+    try {
+      diagnostics.macos = execFileSync(
+        'ps',
+        ['-p', String(child.pid), '-o', 'pid=,ppid=,pgid=,uid=,stat=,lstart=,comm='],
+        { encoding: 'utf8', timeout: 1_000 }
+      ).trim()
+    } catch (error) {
+      diagnostics.macos = { unavailable: error.code ?? error.status ?? error.name }
+    }
+  }
   if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
   try {
     const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')
@@ -87,6 +98,29 @@ function processExitDiagnostics(child) {
       parentProcessId: fields[1],
       processGroupId: fields[2],
       sessionId: fields[3],
+    }
+    try {
+      const directory = `/proc/${child.pid}/task`
+      const threadIds = readdirSync(directory)
+        .filter(id => /^\d+$/.test(id))
+        .sort((a, b) => Number(a) - Number(b))
+      const read = path => {
+        try {
+          return readFileSync(path, 'utf8').trim()
+        } catch (error) {
+          return `unavailable:${error.code ?? error.name}`
+        }
+      }
+      diagnostics.linux.threadCount = threadIds.length
+      diagnostics.linux.threads = threadIds.slice(0, 64).map(id => ({
+        id: Number(id),
+        name: read(`${directory}/${id}/comm`),
+        state: linuxProcessStateFromStat(read(`${directory}/${id}/stat`)),
+        waitChannel: read(`${directory}/${id}/wchan`),
+        kernelStack: read(`${directory}/${id}/stack`),
+      }))
+    } catch (error) {
+      diagnostics.linux.threadReadError = error.code ?? error.name
     }
   } catch (error) {
     diagnostics.linux = { readError: error.code ?? String(error) }
@@ -315,6 +349,32 @@ export function windowsTaskkillArguments(processId) {
   return ['/PID', String(processId), '/T', '/F']
 }
 
+/** A failed activation's recovery shell may never connect to the control channel. */
+export async function stopRecoveryProcess(
+  processId,
+  {
+    platform = process.platform,
+    execute = execFileAsync,
+    isAlive = processIsAlive,
+    signal = process.kill,
+  } = {}
+) {
+  if (!Number.isSafeInteger(processId) || processId <= 0)
+    throw new Error('Recovery cleanup requires its recorded process ID')
+  if (!isAlive(processId)) return
+  if (platform === 'win32') {
+    await execute('taskkill', windowsTaskkillArguments(processId), {
+      windowsHide: true,
+      timeout: PROCESS_STOP_TIMEOUT_MS,
+    })
+  } else signal(processId, 'SIGTERM')
+  const deadline = Date.now() + PROCESS_STOP_TIMEOUT_MS
+  while (isAlive(processId)) {
+    if (Date.now() >= deadline) throw new Error(`Recovery process ${processId} survived cleanup`)
+    await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
+}
+
 function ownedCrashTargets(child, snapshot) {
   if (
     !Number.isSafeInteger(child?.pid) ||
@@ -433,6 +493,19 @@ async function stopWindowsProcessTree(child) {
   await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
 }
 
+export function processGroupIsExitingFromDarwinRows(members, ownerUid) {
+  return (
+    Number.isInteger(ownerUid) &&
+    Array.isArray(members) &&
+    members.every(
+      fields =>
+        fields.length === 5 &&
+        Number(fields[3]) === ownerUid &&
+        (fields[4].startsWith('Z') || fields[4].includes('E'))
+    )
+  )
+}
+
 function signalProcessGroup(processGroupId, signal) {
   try {
     process.kill(-processGroupId, signal)
@@ -443,7 +516,41 @@ function signalProcessGroup(processGroupId, signal) {
       result: 'delivered',
     })
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error
+    if (error?.code !== 'ESRCH') {
+      let members
+      if (process.platform === 'darwin') {
+        try {
+          members = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,uid=,stat='], {
+            encoding: 'utf8',
+            timeout: 1000,
+            maxBuffer: 1024 * 1024,
+          })
+            .split('\n')
+            .map(line => line.trim().split(/\s+/))
+            .filter(fields => Number(fields[2]) === processGroupId)
+        } catch (diagnosticError) {
+          members = { error: diagnosticError.code }
+        }
+      }
+      const exiting =
+        error?.code === 'EPERM' &&
+        process.platform === 'darwin' &&
+        processGroupIsExitingFromDarwinRows(members, process.getuid?.())
+      logDesktopE2eSignal({
+        action: 'signal-group',
+        processGroupId,
+        signal,
+        result: exiting ? 'exiting' : 'rejected',
+        code: error?.code,
+        callerPid: process.pid,
+        callerUid: process.getuid?.(),
+        members,
+      })
+      // Zombies and P_WEXIT members cannot receive another signal. Keep the existing exit
+      // waits and deadlines; a live or unowned group still fails below.
+      if (exiting) return
+      throw error
+    }
     logDesktopE2eSignal({ action: 'signal-group', processGroupId, signal, result: 'absent' })
   }
 }

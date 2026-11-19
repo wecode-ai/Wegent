@@ -341,7 +341,7 @@ fn bot_refs_follow_member_order() {
     let team = serde_json::json!({
         "spec": {"members": [
             {"botRef": {"name": "Copy of team-beta-bot", "namespace": "ns-b"}},
-            {"botRef": {"name": "second", "namespace": "ns-b"}},
+            {"botRef": {"name": "second"}},
         ]}
     });
     assert_eq!(
@@ -352,7 +352,7 @@ fn bot_refs_follow_member_order() {
                 name: "Copy of team-beta-bot".to_string(),
             },
             BotRef {
-                namespace: "ns-b".to_string(),
+                namespace: "default".to_string(),
                 name: "second".to_string(),
             },
         ]
@@ -362,7 +362,7 @@ fn bot_refs_follow_member_order() {
 #[test]
 fn bot_refs_skip_malformed_members() {
     let team = serde_json::json!({
-        "spec": {"members": [{"name": "x"}, {"botRef": {"name": "y"}}]}
+        "spec": {"members": [{"name": "x"}, {"botRef": {"namespace": "ns-b"}}, {"botRef": {"name": "y", "namespace": null}}]}
     });
     assert!(bot_refs(&team).is_empty());
     assert!(bot_refs(&serde_json::json!({})).is_empty());

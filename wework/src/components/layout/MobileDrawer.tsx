@@ -130,7 +130,7 @@ export function MobileDrawer({
   onOpenRuntimeTask,
   onRefreshWorkLists,
 }: MobileDrawerProps) {
-  useSidebarRelativeTimeRefresh()
+  const nowMs = useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const workbench = useContext(WorkbenchContext)
@@ -529,7 +529,9 @@ export function MobileDrawer({
                                 >
                                   <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
                                 </span>
-                                <span>{formatRelativeSidebarTime(getRuntimeTaskTime(task))}</span>
+                                <span>
+                                  {formatRelativeSidebarTime(getRuntimeTaskTime(task), nowMs)}
+                                </span>
                               </span>
                             )}
                           </button>
@@ -650,7 +652,7 @@ export function MobileDrawer({
                           )
                           const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
                             taskItems,
-                            runtimeTaskVisibleLimit
+                            visibleTaskItems
                           )
                           const canCollapseTasks = hasExpandedRuntimeSidebarTaskItems(
                             taskItems,
@@ -735,7 +737,10 @@ export function MobileDrawer({
                                             />
                                           )}
                                           <span>
-                                            {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+                                            {formatRelativeSidebarTime(
+                                              getRuntimeTaskTime(task),
+                                              nowMs
+                                            )}
                                           </span>
                                         </span>
                                       )}
@@ -768,7 +773,7 @@ export function MobileDrawer({
                                       }
                                       className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
-                                      {t('workbench.expand_display', '展开显示')}
+                                      {t('workbench.show_more', '显示更多')}
                                     </button>
                                   ) : (
                                     <button
@@ -783,7 +788,7 @@ export function MobileDrawer({
                                       }
                                       className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
-                                      {t('workbench.collapse_display', '折叠显示')}
+                                      {t('workbench.show_less', '收起')}
                                     </button>
                                   )}
                                 </div>

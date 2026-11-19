@@ -11,7 +11,7 @@
 <img alt="LINUX DO"
             src="https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+" /></a>
 
-Wegent 让团队成员、AI 智能体和个人分身围绕同一个 Issue 协作：提出需求、分派工作、执行任务并交付成果，让讨论、执行记录与交付物保持关联。你既可以独自在本地项目中编码，也可以与团队在共享项目空间中接力推进工作。
+Wegent 让团队成员、AI 智能体和个人助理围绕同一个 Issue 协作：提出需求、分派工作、执行任务并交付成果，让讨论、执行记录与交付物保持关联。你既可以独自在本地项目中编码，也可以与团队在共享项目空间中接力推进工作。
 
 [下载最新版 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [快速开始](#快速开始) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
 
@@ -27,7 +27,7 @@ Wegent 让团队成员、AI 智能体和个人分身围绕同一个 Issue 协作
 2. **分派工作**：配置好的 AI 负责人可以将方案与实现工作分派给相应角色；成员收到通知后进入同一个 Issue。
 3. **执行并交付**：成员在 Wework 中创建关联任务，借助 AI 处理文件、运行命令和测试，选择成果交付回 Issue。
 4. **讨论与接力**：在评论中补充反馈并转派，下一位成员或智能体结合已有方案和文件继续处理。
-5. **分身接手，本人确认**：已配置的个人分身按接收范围和处理方式代为处理工作，完成后交回本人确认。
+5. **助理接手，本人确认**：已配置的个人助理按接收范围和处理方式代为处理工作，完成后交回本人确认。
 
 **分派不等于完成，AI 产出也不等于本人确认。** Issue 将责任人、执行过程、讨论和交付物关联起来，团队可以查看进展、追问和继续处理。
 
@@ -39,13 +39,13 @@ Wegent 让团队成员、AI 智能体和个人分身围绕同一个 Issue 协作
 
 - **人与 AI 协作**：围绕 Issue 分派、评论和转派，让成员、智能体和协作小组参与同一个项目。
 - **任务执行与成果交付**：从 Issue 创建关联任务，查看执行过程，将选定的文件和说明交付回项目。
-- **个人分身（Beta）**：按已授权的项目来源、职责和处理方式接收工作，保留执行记录与人工介入入口。
+- **个人助理（Beta）**：按已授权的项目来源、职责和处理方式接收工作，保留执行记录与人工介入入口。
 - **项目管理与自动化**：通过任务看板、共享文件、执行记录和交付物组织项目，配置自动处理规则与执行队列。
 - **本地编码工作台**：基于 Codex 直接使用项目代码、文件、命令和开发环境，集中审查工具活动、测试和 Diff。
 - **可复用智能体与多种执行位置**：组合模型、提示词、Skills、知识和工具，在本机、远程工作机或服务端执行器中运行任务。
 - **自托管服务**：部署 Wegent Web 和 Backend，由团队管理访问、权限、模型、调度、知识服务和远程设备。
 
-个人分身需要先配置来源授权、模型及可用执行设备；自动处理受项目权限和操作确认约束，不代表电脑关机后仍可执行。AI 负责人对话及自动处理的使用条件见[项目负责人指南](docs/zh/wework/personal-stand-in.md#project-lead-controls)，负责人对话目前需开启实验性功能。更多设置见[我的分身与场景角色](docs/zh/wework/personal-stand-in.md)。
+个人助理需要先配置来源授权、模型及可用执行设备；自动处理受项目权限和操作确认约束，不代表电脑关机后仍可执行。AI 负责人对话及自动处理的使用条件见[项目负责人指南](docs/zh/wework/personal-stand-in.md#project-lead-controls)，负责人对话目前需开启实验性功能。更多设置见[我的助理与场景角色](docs/zh/wework/personal-stand-in.md)。
 
 ## 快速开始
 
@@ -62,9 +62,9 @@ Wegent 让团队成员、AI 智能体和个人分身围绕同一个 Issue 协作
 2. 添加项目成员；需要 AI 执行时，显式添加智能体，并配置可用的执行环境和模型。
 3. 创建 Issue，填写目标并分配给成员、智能体或协作小组。
 4. 从 Issue 创建关联任务，执行后交付成果；在评论中反馈并转派给下一位处理者。
-5. 需要个人分身接手时，在“我的分身”中配置项目来源、职责与处理方式，按需处理人工问题和确认。
+5. 需要个人助理接手时，在“我的助理”中配置项目来源、职责与处理方式，按需处理人工问题和确认。
 
-新项目不会自动加入智能体，也不会自动启用分身。具体入口见[协作中的新建 Issue](docs/zh/wegent/user-guide/coding/collaboration-issue-home.md)与[个人分身指南](docs/zh/wework/personal-stand-in.md)。
+新项目不会自动加入智能体，也不会自动启用助理。具体入口见[协作中的新建 Issue](docs/zh/wegent/user-guide/coding/collaboration-issue-home.md)与[个人助理指南](docs/zh/wework/personal-stand-in.md)。
 
 ### 自托管 Wegent Web 和 Backend
 
@@ -228,6 +228,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/kissghosts">
                     <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
                     <br />
@@ -241,20 +248,13 @@ pnpm --filter wework dev:mac
                     <sub><b>junlong chen</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/cc-yafei">
                     <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
                     <br />
                     <sub><b>YaFei Liu</b></sub>
-                </a>
-            </td>
-		</tr>
-		<tr>
-            <td align="center">
-                <a href="https://github.com/sdadunderscoresdad">
-                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
-                    <br />
-                    <sub><b>+7</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -337,6 +337,13 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/DavidLeeUX">
+                    <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
+                    <br />
+                    <sub><b>Kva</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/fengkuizhi">
                     <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
                     <br />
@@ -348,13 +355,6 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
                     <br />
                     <sub><b>Jm.hu</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/DavidLeeUX">
-                    <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
-                    <br />
-                    <sub><b>Kva</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -416,26 +416,26 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/WangZhuo2015">
+                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
+                    <br />
+                    <sub><b>wang zhuo</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
                 <a href="https://github.com/flyhope">
                     <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
                     <br />
                     <sub><b>李枨煊</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/friendfei">
                     <img src="https://avatars.githubusercontent.com/u/5112004?v=4" width="80;" alt="friendfei"/>
                     <br />
                     <sub><b>friendfei</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/WangZhuo2015">
-                    <img src="https://avatars.githubusercontent.com/u/12570477?v=4" width="80;" alt="WangZhuo2015"/>
-                    <br />
-                    <sub><b>wang zhuo</b></sub>
                 </a>
             </td>
             <td align="center">

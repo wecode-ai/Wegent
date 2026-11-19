@@ -40,6 +40,7 @@ impl RuntimeWorkRpcHandler {
         // Return only the identity/configuration needed by a client to continue.
         // Execution profiles and transcript caches remain on the owning Runtime.
         let thread_id = link.thread_id.clone();
+        let active_provider = super::conversation_provider::active_provider(&link);
         let last_turn_id = crate::runtime_work::lifecycle::native_execution_state(&link)
             .and_then(|state| state.latest_turn_id);
         let mut task = crate::runtime_work::response::local_task_json(link);
@@ -54,11 +55,18 @@ impl RuntimeWorkRpcHandler {
                         | "origin"
                         | "changeRequests"
                         | "queuePosition"
+                        | "modelProviderRouting"
+                        | "quotaWait"
+                        | "connectionEventSubscriptions"
+                        | "startupFailure"
                 )
             });
             // The serializer originally adds this authoritative identity after
             // filtering the stored handle; preserve that response contract.
             handle.insert("threadId".to_owned(), json!(thread_id));
+            if let Some(provider) = active_provider {
+                handle.insert("activeModelProvider".to_owned(), provider);
+            }
             // Preserve the current-epoch lifecycle projection, not a stored handle value.
             if let Some(turn_id) = last_turn_id {
                 handle.insert("lastTurnId".to_owned(), json!(turn_id));
@@ -798,14 +806,17 @@ impl RuntimeWorkRpcHandler {
             return Ok(response);
         };
 
-        // Named Homes execute in a separate per-turn process. Resuming in the
-        // reader would retain the native writer lock and block the next turn.
+        // Archived sessions are readable without resuming them. Named Homes
+        // also stay read-only here: a resume would retain their writer lock.
         if refresh
             && !local_execution_running
             && !direct_thread_override
             && !codex_client.has_dedicated_home()
         {
-            if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
+            if let Some(link) = local_link
+                .as_ref()
+                .filter(|link| !link.ephemeral && link.status != "archived")
+            {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
                     .await

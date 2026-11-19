@@ -313,3 +313,14 @@ pub fn referenced_model_statement() -> String {
          AND kinds.is_active IS true \nORDER BY kinds.id ASC LIMIT 1"
     )
 }
+
+/// `db.refresh(team)`'s ORM refresh read: the labeled kind projection by id
+/// with no kind or active predicate.
+pub fn kind_by_id_statement() -> String {
+    format!("SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.id = ?")
+}
+
+/// One kind row by id, using the refresh projection.
+pub async fn kind_by_id<M: Mysql>(mysql: &M, id: i64) -> MysqlResult<Option<KindRow>> {
+    mysql.fetch_optional(kind_by_id_statement(), (id,)).await
+}

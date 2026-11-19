@@ -59,7 +59,104 @@ fn config_metadata(raw: &Value) -> Value {
     config
 }
 
+/// `validate_team_execution_readiness` (`execution/team_readiness.py`): every
+/// Team member's Bot, Ghost, Shell and (when the Bot declares no execution
+/// policy) Model must resolve for an authorized Team. Authorization itself is
+/// the caller's job, so this never re-queries the Team.
+pub(crate) async fn readiness(
+    state: &AppState,
+    team: &resolution::KindRow,
+    execution_user: i64,
+) -> Result<()> {
+    let resolvers = state.entity_resolvers.for_execution();
+    let directory = state
+        .entity_resolvers
+        .execution_directory(state.erp.as_ref());
+    let members = team.json.0["spec"]["members"]
+        .as_array()
+        .context("Team has no members")?;
+    if members.is_empty() {
+        bail!("Team has no members")
+    }
+    let cache = crate::task_skills::kinds::KindCacheStore {
+        mysql: &state.mysql,
+        redis: state.redis.as_ref(),
+        erp: Some(directory),
+        resolvers: Some(&resolvers),
+    };
+    // `_validate_team_member` reads the Bot and its single Ghost reference
+    // through `kindReader.get_by_name_and_namespace` (cached version/value
+    // reads), never the whole Ghost chain, then resolves the Shell and, when
+    // the Bot declares no execution policy, its Model.
+    let mut checked: Vec<(String, String)> = Vec::new();
+    for member in members {
+        let reference = &member["botRef"];
+        let namespace = reference["namespace"]
+            .as_str()
+            .unwrap_or("default")
+            .to_owned();
+        let name = reference["name"].as_str().unwrap_or("").to_owned();
+        if checked
+            .iter()
+            .any(|ref_| ref_.0 == namespace && ref_.1 == name)
+        {
+            continue;
+        }
+        checked.push((namespace.clone(), name.clone()));
+        let bot = cache
+            .get_by_name_and_namespace_row(team.user_id, "Bot", &namespace, &name)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .with_context(|| format!("Team member Bot '{namespace}/{name}' is unavailable"))?;
+        let bot_json = serde_json::to_value(&bot.kinds_json.0).unwrap_or_else(|_| json!({}));
+        let spec = &bot_json["spec"];
+        let ghost_namespace = spec["ghostRef"]["namespace"]
+            .as_str()
+            .unwrap_or("default")
+            .to_owned();
+        let ghost_name = spec["ghostRef"]["name"].as_str().unwrap_or("").to_owned();
+        cache
+            .get_by_name_and_namespace_row(team.user_id, "Ghost", &ghost_namespace, &ghost_name)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .with_context(|| {
+                format!(
+                    "Bot '{namespace}/{name}' Ghost '{ghost_namespace}/{ghost_name}' is unavailable"
+                )
+            })?;
+        shell::resolve_shell(
+            &state.mysql,
+            &resolvers,
+            state.redis.as_ref(),
+            team.user_id,
+            spec["shellRef"]["name"].as_str().unwrap_or(""),
+            spec["shellRef"]["namespace"].as_str().unwrap_or("default"),
+        )
+        .await?
+        .context("Wegent Team member Shell is unavailable")?;
+        if !spec["execution_policy"].is_object() {
+            let name = resolution::resolve_model_name(spec, false, None).unwrap_or_default();
+            let model = resolution::resolve_model_for_bot(
+                &state.mysql,
+                &resolvers,
+                state.redis.as_ref(),
+                execution_user,
+                &name,
+            )
+            .await?
+            .context("Wegent Team member Model is unavailable")?;
+            crate::responses::create::model_config::extract_model_config(&model.json.0["spec"])
+                .context("Wegent Team member Model configuration is unavailable")?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64) -> Result<Value> {
+    let resolvers = state.entity_resolvers.for_execution();
+    let directory = state
+        .entity_resolvers
+        .execution_directory(state.erp.as_ref());
     let mut config = config_metadata(&agent.metadata.0);
     let runtime = config["runtime"].as_str().unwrap_or("").to_owned();
     if !matches!(runtime.as_str(), "codex" | "claude_code" | "wegent") {
@@ -91,6 +188,7 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let team_id = authority::integer(&config["wegent_team_id"])
         .context("Project Agent has an invalid Team binding")?;
     let team = authority::team(state, &agent.cloud_project_id, team_id).await?;
+    readiness(state, &team, execution_user).await?;
     let members = team.json.0["spec"]["members"]
         .as_array()
         .context("Team has no members")?;
@@ -100,56 +198,9 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
+        erp: Some(directory),
+        resolvers: Some(&resolvers),
     };
-    // Validate every member, including managed/collaborative Teams.
-    for member in members {
-        let reference = &member["botRef"];
-        let bot = resolution::resolve_bot(
-            &state.mysql,
-            team.user_id,
-            reference["namespace"].as_str().unwrap_or("default"),
-            reference["name"].as_str().unwrap_or(""),
-        )
-        .await?
-        .context("Wegent Team member Bot is unavailable")?;
-        let spec = &bot.json.0["spec"];
-        let chain = ghost::load_ghost_chain(
-            &cache,
-            team.user_id,
-            spec["ghostRef"]["namespace"].as_str().unwrap_or("default"),
-            spec["ghostRef"]["name"].as_str().unwrap_or(""),
-        )
-        .await?;
-        if chain.is_empty() {
-            bail!("Wegent Team member Ghost is unavailable")
-        }
-        shell::resolve_shell(
-            &state.mysql,
-            &state.entity_resolvers,
-            state.redis.as_ref(),
-            team.user_id,
-            spec["shellRef"]["name"].as_str().unwrap_or(""),
-            spec["shellRef"]["namespace"].as_str().unwrap_or("default"),
-        )
-        .await?
-        .context("Wegent Team member Shell is unavailable")?;
-        if !spec["execution_policy"].is_object() {
-            let name = resolution::resolve_model_name(spec, false, None).unwrap_or_default();
-            let model = resolution::resolve_model_for_bot(
-                &state.mysql,
-                &state.entity_resolvers,
-                state.redis.as_ref(),
-                execution_user,
-                &name,
-            )
-            .await?
-            .context("Wegent Team member Model is unavailable")?;
-            crate::responses::create::model_config::extract_model_config(&model.json.0["spec"])
-                .context("Wegent Team member Model configuration is unavailable")?;
-        }
-    }
     if team.json.0["spec"]["collaborationModel"] != "solo" || members.len() != 1 {
         return Ok(config);
     }
@@ -166,7 +217,7 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let spec = &bot.json.0["spec"];
     let shell = shell::resolve_shell(
         &state.mysql,
-        &state.entity_resolvers,
+        &resolvers,
         state.redis.as_ref(),
         team.user_id,
         spec["shellRef"]["name"].as_str().unwrap_or(""),

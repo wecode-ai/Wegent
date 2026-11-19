@@ -224,7 +224,10 @@ pub(super) async fn invoke(
             .wait()
             .await
             .map_err(|_| AuthError("plugin_auth_execution_failed"))?;
-        child.tree.disarm();
+        child
+            .tree
+            .disarm()
+            .map_err(|_| AuthError("plugin_auth_execution_failed"))?;
         #[cfg(unix)]
         {
             child.group_id = None;

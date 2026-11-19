@@ -171,6 +171,7 @@ test('searches resources through declared generic CLI operations and preserves p
       async callTool(alias, input) {
         assert.equal(alias, 'dingtalk')
         calls.push(input)
+        if (input.tool === 'authStatus') return { authenticated: true, token_valid: true }
         if (input.tool === 'listProfiles') return { currentProfile: 'corp:user' }
         if (input.tool === 'searchGroups')
           return {
@@ -280,11 +281,66 @@ test('discovers authorization identity from the exact installed dependency', asy
   const status = await createProvider().check({
     cli: {
       describe: async () => target,
-      callTool: async () => ({ currentProfile: '' }),
+      callTool: async (_alias, input) =>
+        input.tool === 'authStatus' ? { authenticated: true } : { currentProfile: '' },
     },
   })
   assert.equal(status.status, 'auth_required')
   assert.deepEqual(status.authTarget, target)
+})
+
+test('requires reauthorization before contact search when the legacy token cannot refresh', async () => {
+  const calls = []
+  const target = { pluginKey: 'dingtalk', connectorSlug: 'dingtalk-local' }
+  const ctx = {
+    cli: {
+      describe: async () => target,
+      async callTool(_alias, input) {
+        calls.push(input.tool)
+        if (input.tool === 'authStatus')
+          return {
+            success: true,
+            authenticated: false,
+            reason: 'token_refresh_failed',
+          }
+        if (input.tool === 'listProfiles') return { currentProfile: 'corp:user' }
+        if (input.tool === 'searchUsers') return { result: [] }
+        assert.fail(`Unexpected operation: ${input.tool}`)
+      },
+    },
+  }
+  const provider = createProvider()
+  const status = await provider.check(ctx)
+  assert.equal(status.status, 'auth_required')
+  assert.deepEqual(status.authTarget, target)
+  await assert.rejects(provider.listResources(ctx, { kind: 'direct', query: 'qindi' }), {
+    code: 'connector_auth_required',
+  })
+  assert.equal(calls.includes('searchUsers'), false)
+})
+
+test('rechecks authorization after a failed contact search', async () => {
+  let authChecks = 0
+  const ctx = {
+    cli: {
+      async callTool(_alias, input) {
+        if (input.tool === 'listProfiles') return { currentProfile: 'corp:user' }
+        if (input.tool === 'authStatus') {
+          authChecks += 1
+          return { authenticated: authChecks === 1, token_valid: authChecks === 1 }
+        }
+        if (input.tool === 'searchUsers')
+          throw Object.assign(new Error('Plugin tool request failed (request_failed)'), {
+            code: 'connection_cli_request_unavailable',
+          })
+        assert.fail(`Unexpected operation: ${input.tool}`)
+      },
+    },
+  }
+  await assert.rejects(createProvider().listResources(ctx, { kind: 'direct', query: 'qindi' }), {
+    code: 'connector_auth_required',
+  })
+  assert.equal(authChecks, 2)
 })
 
 test('all-resource scopes retain the account and separate group and direct resources', async () => {
@@ -294,6 +350,7 @@ test('all-resource scopes retain the account and separate group and direct resou
       cli: {
         async callTool(_alias, input) {
           calls.push(input)
+          if (input.tool === 'authStatus') return { authenticated: true, token_valid: true }
           if (input.tool === 'listProfiles')
             return {
               currentProfile: 'corp:user',
@@ -409,6 +466,23 @@ test('source history directly queries only the exact group or direct peer throug
         kind === 'group' ? 'listConversation' : 'listDirectConversation',
       ]
     )
+  }
+})
+
+test('native history distinguishes self-chat from own messages to other people or groups', async () => {
+  for (const [kind, peer, sender, selfChat] of [
+    ['direct', 'own', 'own', true],
+    ['direct', 'alice', 'own', false],
+    ['direct', 'alice', 'alice', false],
+    ['group', 'selected', 'own', false],
+  ]) {
+    const source = { ...readSource(kind), id: peer, name: 'Same display name' }
+    const fixture = readFixture([
+      { messages: [nativeMessage('message', { senderId: sender, sender: source.name })] },
+    ])
+    const result = await createProvider().readSource(fixture.ctx, { source, query: { limit: 2 } })
+    assert.equal(result.items[0].isOwn, sender === 'own')
+    assert.equal(result.items[0].isSelfConversation, selfChat)
   }
 })
 

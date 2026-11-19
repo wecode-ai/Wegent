@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -63,6 +64,17 @@ test("dependency keys follow build inputs and survive application-only changes",
     assert.notEqual(key("backend-rs-deps"), backend);
     writeFileSync(sharedSource, originalSource);
     for (const input of [
+      "shared/assets/calendars/china-workdays.json",
+      "shared/assets/calendars/LICENSE.chinesecalendar",
+    ]) {
+      const source = join(directory, input);
+      const original = readFileSync(source, "utf8");
+      writeFileSync(source, `${original}\nChanged calendar build input\n`);
+      assert.notEqual(key(), executor, input);
+      assert.notEqual(key("backend-rs-deps"), backend, input);
+      writeFileSync(source, original);
+    }
+    for (const input of [
       "shared/assets/codex-models/openai.json",
       "shared/assets/codexDiscoveryInstructions.md",
       "sdk/plugin-auth/tool.py",
@@ -71,7 +83,11 @@ test("dependency keys follow build inputs and survive application-only changes",
       const source = join(directory, input);
       const original = readFileSync(source, "utf8");
       writeFileSync(source, `${original}\nChanged embedded build input\n`);
-      assert.notEqual(key(), executor, `${input} must invalidate compiled libraries`);
+      assert.notEqual(
+        key(),
+        executor,
+        `${input} must invalidate compiled libraries`,
+      );
       assert.equal(key("backend-rs-deps"), backend);
       writeFileSync(source, original);
     }
@@ -224,15 +240,111 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
           artifact !== "true" && exists !== "true",
         );
         assert.equal(
-          enabled("Restore published fork Executor runtime"),
-          artifact === "true" && exists === "true",
+          enabled("Restore published Executor runtime"),
+          exists === "true",
         );
+        assert.equal(enabled("Extract Executor binary"), true);
         assert.equal(enabled("Archive fork Executor E2E runtime"), archive);
         assert.equal(enabled("Upload fork Executor E2E runtime"), archive);
         assert.equal(enabled("Log in to GHCR"), artifact !== "true");
       }
     }
   }
+});
+
+test("new Executor builds yield a binary when registry readback is unavailable", () => {
+  const producer = workflow("e2e-tests").jobs["build-executor-e2e-runtime"];
+  const build = producer.steps.find(
+    (step) => step.name === "Build and publish Executor E2E image",
+  );
+  assert.equal(build.with.push, true);
+  assert.equal(build.with.load, true);
+  const extract = producer.steps.find(
+    (step) => step.name === "Extract Executor binary",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "executor-local-export-"));
+  try {
+    const docker = join(directory, "docker");
+    writeFileSync(
+      docker,
+      `#!${process.execPath}
+import { appendFileSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+appendFileSync(process.env.TEST_DOCKER_LOG, JSON.stringify(args) + '\\n')
+if (args[0] === 'pull') process.exit(37)
+if (args[0] === 'create') {
+  if (args[1] !== process.env.EXECUTOR_E2E_IMAGE) process.exit(38)
+  console.log('built-container')
+} else if (args[0] === 'cp') {
+  if (process.env.TEST_COPY_FAILURE) process.exit(39)
+  writeFileSync(args.at(-1), 'built-executor')
+} else if (args[0] !== 'rm') process.exit(40)
+`,
+    );
+    chmodSync(docker, 0o755);
+    const log = join(directory, "docker.log");
+    for (const copyFailure of ["", "true"]) {
+      writeFileSync(log, "");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", extract.run],
+        {
+          cwd: directory,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            EXECUTOR_E2E_IMAGE: "ghcr.io/example/executor:new-build",
+            TEST_DOCKER_LOG: log,
+            TEST_COPY_FAILURE: copyFailure,
+          },
+        },
+      );
+      assert.equal(result.status, copyFailure ? 39 : 0, result.stderr);
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map(JSON.parse);
+      assert.deepEqual(
+        calls.map((args) => args[0]),
+        ["create", "cp", "rm"],
+      );
+      assert.deepEqual(calls[1], [
+        "cp",
+        "built-container:/app/executor",
+        "executor/target/release/wegent-executor",
+      ]);
+      assert.equal(
+        readFileSync(
+          join(directory, "executor/target/release/wegent-executor"),
+          "utf8",
+        ),
+        "built-executor",
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Fork Executor consumers do not require a registry login for public images", () => {
+  const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
+  const login = consumer.steps.find((step) => step.name === "Log in to GHCR");
+  const enabled = (eventName, headRepository) =>
+    login.if === undefined ||
+    runInNewContext(login.if, {
+      github: {
+        event_name: eventName,
+        repository: "wecode-ai/Wegent",
+        event: {
+          pull_request: { head: { repo: { full_name: headRepository } } },
+        },
+      },
+    });
+  assert.equal(enabled("pull_request", "fork-owner/Wegent"), false);
+  assert.equal(enabled("pull_request", "wecode-ai/Wegent"), true);
+  assert.equal(enabled("workflow_dispatch"), true);
+  assert.equal(enabled("merge_group"), true);
 });
 
 test("Executor consumers pull public pins anonymously and propagate either image pull failure", () => {
@@ -266,26 +378,31 @@ if (image.includes(process.env.TEST_PULL_FAILURE || 'no-failure')) process.exit(
     const log = join(directory, "docker.log");
     const run = (archive, pinned, failure = "") => {
       writeFileSync(log, "");
-      const result = spawnSync("bash", ["-e", "-c", pull.run], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          TMPDIR: directory,
-          PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
-          EXECUTOR_E2E_IMAGE: pinned
-            ? pinnedBase
-            : "ghcr.io/example/executor:source",
-          USE_EXECUTOR_ARTIFACT: String(archive),
-          TEST_DOCKER_LOG: log,
-          TEST_PULL_FAILURE: failure,
+      // Host shell startup files must not put the real Docker ahead of this fixture.
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", pull.run],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            TMPDIR: directory,
+            PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
+            EXECUTOR_E2E_IMAGE: pinned
+              ? pinnedBase
+              : "ghcr.io/example/executor:source",
+            USE_EXECUTOR_ARTIFACT: String(archive),
+            TEST_DOCKER_LOG: log,
+            TEST_PULL_FAILURE: failure,
+          },
         },
-      });
+      );
+      assert.equal(result.status, failure ? 37 : 0, result.stderr);
       const calls = readFileSync(log, "utf8")
         .trim()
         .split("\n")
         .map(JSON.parse);
-      assert.equal(result.status, failure ? 37 : 0, result.stderr);
       for (const call of calls) {
         if (call.args[0] === "--config") {
           assert.deepEqual(call.config, { auths: {} });
@@ -502,6 +619,175 @@ test("native CI promotion uses the existing publisher on Linux without rebuildin
   }
 });
 
+test("Linux native probes restore verified Electron downloads before the official installer", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
+      ".github/workflows/wework-e2e.yml",
+      ".github/workflows/test.yml",
+      ".github/actions/prepare-electron-installer-cache/action.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const { core: steps, unit, action } = JSON.parse(result.stdout);
+  const primeIndex = steps.findIndex(
+    (step) => step.name === "Restore verified Electron installer cache",
+  );
+  const installIndex = steps.findIndex(
+    (step) =>
+      step.name ===
+      "Install Electron for native startup and schema verification",
+  );
+  assert(primeIndex >= 0 && primeIndex < installIndex);
+  const prime = steps[primeIndex];
+  assert.equal(prime.if, steps[installIndex].if);
+  assert.equal(
+    prime.uses,
+    "./.github/actions/prepare-electron-installer-cache",
+  );
+  const unitPrime = unit.find((step) => step.name === prime.name);
+  assert.equal(unitPrime.uses, prime.uses);
+  assert.equal(unitPrime.if, "matrix.shard == 1");
+  assert(
+    unit.indexOf(unitPrime) <
+      unit.findIndex(
+        (step) => step.name === "Prepare Wework Electron dependencies",
+      ),
+  );
+  const commands = action.map((step) => step.run).join("\n");
+  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
+  const restore = readFileSync(
+    ".github/scripts/restore-ci-downloads.sh",
+    "utf8",
+  );
+  assert(restore.includes("install_missing_apt_packages skopeo"));
+  assert(
+    restore.indexOf("skopeo inspect") <
+      restore.indexOf("install_missing_apt_packages umoci"),
+  );
+  assert(
+    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert(
+    commands.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  const moduleInstall = action.find((step) =>
+    step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
+  const installerPrime = action.find((step) =>
+    step.run?.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  assert.equal(installerPrime.env.GH_TOKEN, "${{ github.token }}");
+  assert.equal(
+    steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
+    "true",
+  );
+  assert(
+    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
+  );
+});
+
+for (const published of [false, true]) {
+  test(`download cache preparation defers extraction tools (published=${published})`, () => {
+    const parsed = spawnSync(
+      "ruby",
+      [
+        "-ryaml",
+        "-rjson",
+        "-e",
+        "puts JSON.generate(YAML.load_file(ARGV[0])['runs']['steps'])",
+        ".github/actions/prepare-electron-installer-cache/action.yml",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(parsed.status, 0, parsed.stderr);
+    const steps = JSON.parse(parsed.stdout);
+    const install = steps.findIndex(
+      (step) => step.name === "Install locked Electron package dependencies",
+    );
+    assert(install > 0);
+    const temporary = mkdtempSync(join(tmpdir(), "unused-oci-tools-"));
+    const bin = join(temporary, "bin");
+    mkdirSync(bin);
+    const tools = spawnSync(
+      "bash",
+      ["-c", "command -v bash; command -v dirname; command -v grep"],
+      { encoding: "utf8" },
+    );
+    assert.equal(tools.status, 0, tools.stderr);
+    const paths = tools.stdout.trim().split("\n");
+    for (const [index, name] of ["bash", "dirname", "grep"].entries()) {
+      symlinkSync(paths[index], join(bin, name));
+    }
+    const commands = {
+      node: 'if [[ "$1" == -p ]]; then echo ghcr.io/example/downloads:missing; else echo \'{"restoreImage":"ghcr.io/example/downloads:missing"}\'; fi',
+      "dpkg-query": '[[ "${@: -1}" == skopeo ]] && printf "ii "',
+      skopeo: `exit ${published ? 0 : 1}`,
+      "apt-get": 'echo "$*" >> "$APT_CALL_LOG"; exit 31',
+      sudo: 'exec "$@"',
+    };
+    try {
+      for (const [name, command] of Object.entries(commands)) {
+        const file = join(bin, name);
+        writeFileSync(file, `#!/usr/bin/env bash\n${command}\n`);
+        chmodSync(file, 0o755);
+      }
+      const log = join(temporary, "apt.log");
+      const result = spawnSync(
+        "bash",
+        [
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          steps
+            .slice(0, install)
+            .map((step) => step.run)
+            .join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: bin,
+            GITHUB_REPOSITORY_OWNER: "example",
+            WEWORK_CI_DOWNLOAD_CACHE_DIR: join(temporary, "cache"),
+            RUNNER_TEMP: temporary,
+            APT_CALL_LOG: log,
+          },
+        },
+      );
+      if (published) {
+        assert.equal(result.status, 31, result.stderr);
+        assert.equal(
+          readFileSync(log, "utf8"),
+          "-o APT::Update::Error-Mode=any update\n",
+        );
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /No published CI downloads/);
+        assert.equal(
+          existsSync(log),
+          false,
+          "An absent cache must not require an OCI unpacker",
+        );
+      }
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+}
+
 test("download bundles are restored once and reject unexpected archive paths", () => {
   const directory = mkdtempSync(join(tmpdir(), "wegent-ci-downloads-"));
   try {
@@ -518,6 +804,7 @@ test("download bundles are restored once and reject unexpected archive paths", (
       ".github/scripts/ci-prebuilt-images.mjs",
       ".github/scripts/resolve-ci-image.mjs",
       ".github/scripts/restore-ci-downloads.sh",
+      ".github/scripts/lib/apt-packages.sh",
       ".github/runtime-images/ci-downloads.Dockerfile",
       "wework/electron/package.json",
       "wework/electron/pnpm-lock.yaml",
@@ -550,13 +837,14 @@ test("download bundles are restored once and reject unexpected archive paths", (
       "minio",
     ]);
     executable(join(bin, "skopeo"), 'test "$TEST_IMAGE_EXISTS" = true');
+    executable(join(bin, "umoci"), "exit 0");
     executable(
       join(bin, "tar"),
       'if [[ "$1" == -tzf && "$TEST_UNSAFE" == true ]]; then echo ../unsafe; else exec /usr/bin/tar "$@"; fi',
     );
     executable(
       join(directory, ".github/scripts/restore-oci-runtime-binary.sh"),
-      'test -z "$GITHUB_TOKEN$GITHUB_ACTOR"\ncp "$TEST_ARCHIVE" "$3"\necho restored >> "$TEST_RESTORE_LOG"',
+      'test -z "$GITHUB_TOKEN$GITHUB_ACTOR"\nif [[ "${TEST_RESTORE_EXIT:-0}" != 0 ]]; then echo "synthetic restore failure" >&2; exit "$TEST_RESTORE_EXIT"; fi\ncp "$TEST_ARCHIVE" "$3"\necho restored >> "$TEST_RESTORE_LOG"',
     );
     const env = {
       ...process.env,
@@ -578,6 +866,19 @@ test("download bundles are restored once and reject unexpected archive paths", (
         encoding: "utf8",
       });
     assert.equal(run({ TEST_IMAGE_EXISTS: "false" }).status, 0);
+    assert.equal(existsSync(env.TEST_RESTORE_LOG), false);
+    const unavailable = run({ TEST_RESTORE_EXIT: "75" });
+    assert.equal(unavailable.status, 0, unavailable.stderr);
+    assert.match(unavailable.stderr, /synthetic restore failure/);
+    assert.match(unavailable.stdout, /CI download cache is unavailable/);
+    assert.equal(existsSync(env.TEST_RESTORE_LOG), false);
+    assert.equal(
+      existsSync(join(env.WEWORK_CI_DOWNLOAD_CACHE_DIR, "ci-downloads-image")),
+      false,
+    );
+    const broken = run({ TEST_RESTORE_EXIT: "1" });
+    assert.notEqual(broken.status, 0);
+    assert.match(broken.stderr, /synthetic restore failure/);
     assert.equal(existsSync(env.TEST_RESTORE_LOG), false);
     const success = run({});
     assert.equal(success.status, 0, success.stderr);

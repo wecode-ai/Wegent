@@ -10,20 +10,32 @@ use std::time::Duration;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlError, MysqlResult, MysqlTransaction};
 use brz_redis::{Redis, SetExpiration, SetOptions};
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::http_compat::FastApiError;
 
-const LEASE_SECONDS: u64 = 30;
+mod scoped;
+pub(crate) use scoped::installation_write_revision;
+
+const LEASE_SECONDS: u64 = 180;
 const ACQUIRE_WAIT: Duration = Duration::from_secs(3);
+/// redis-py `Lock.acquire`'s default `sleep` (`redis/lock.py`): a blocked
+/// acquisition retries one `SET ... NX PX` every 100ms and gives up when the
+/// next attempt would pass `blocking_timeout`. The recorded source lease
+/// polls at this cadence, so matching it keeps the replayed attempt count and
+/// phase identical to the recorded retry loop.
+const ACQUIRE_RETRY: Duration = Duration::from_millis(100);
 // A bounded operation avoids keeping a renewal task alive after cancellation.
 // Business-record revision checks reject conflicting suspended writers.
 const OPERATION_BUDGET: Duration = Duration::from_secs(20);
 /// redis-py `Lock.release`'s immutable Lua bytes, verbatim from
 /// `redis/lock.py` (`LUA_RELEASE_SCRIPT`); the recorded witness runs
 /// `EVALSHA c3f8721cbb97f72bc19e972846bd7aaf91901658 1 <key> <token>`.
-const RELEASE_SCRIPT: &str = "\n        local token = redis.call('get', KEYS[1])\n        if not token or token ~= ARGV[1] then\n            return 0\n        end\n        redis.call('del', KEYS[1])\n        return 1\n    ";
+/// Shared with the DingTalk writer lease so both releases send the same
+/// canonical bytes and digest.
+pub(crate) const RELEASE_SCRIPT: &str = "\n        local token = redis.call('get', KEYS[1])\n        if not token or token ~= ARGV[1] then\n            return 0\n        end\n        redis.call('del', KEYS[1])\n        return 1\n    ";
 /// `sha1(RELEASE_SCRIPT)`.
-const RELEASE_SHA: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
+pub(crate) const RELEASE_SHA: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
 const POLICY_QUERY: &str = "SELECT id, json, is_active FROM kinds WHERE user_id = ? AND kind = \
     'ConnectorAuthPolicy' AND namespace = 'plugin-auth' AND name = \
     'account' LIMIT 2";
@@ -33,6 +45,9 @@ pub(crate) struct PluginWriteLease<'a, R: Redis> {
     key: String,
     token: String,
     user_id: i64,
+    name: String,
+    additional: Vec<(String, String)>,
+    installations: Option<Vec<i64>>,
     pub deadline: Instant,
 }
 
@@ -43,8 +58,8 @@ struct PolicyRow {
     is_active: Option<bool>,
 }
 
-/// The existing account policy is the shared parent of this user's plugin
-/// writes. Its revision protects decisions spanning multiple business rows.
+/// The account policy revision only fences authentication decisions made
+/// against the global automatic-authentication preference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PluginWriteRevision {
     id: i64,
@@ -59,6 +74,20 @@ pub(crate) fn business_revision(document: &serde_json::Value) -> MysqlResult<i64
             .filter(|revision| *revision >= 0 && *revision < i64::MAX)
             .ok_or_else(|| coordination_error("plugin_write_conflict")),
     }
+}
+
+pub(crate) async fn complete_plugin_write<T, F>(operation: F) -> MysqlResult<T>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = MysqlResult<T>> + Send + 'static,
+{
+    // Client cancellation must not drop the transaction before its lease is released.
+    // The operation retains its existing acquisition, transaction and release bounds.
+    tokio::spawn(operation.in_current_span())
+        .await
+        .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+            reason: "plugin write task failed".into(),
+        })?
 }
 
 impl<'a, R: Redis> PluginWriteLease<'a, R> {
@@ -77,8 +106,33 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         token: String,
         wait: Duration,
     ) -> MysqlResult<Self> {
-        let key = format!("wegent:plugin-write:{user_id}");
-        let acquire_deadline = Instant::now() + wait;
+        let one_attempt = wait.is_zero();
+        let deadline = Instant::now()
+            + if one_attempt {
+                Duration::from_secs(1)
+            } else {
+                wait
+            };
+        Self::acquire_named_token(
+            redis,
+            user_id,
+            "@account-policy",
+            token,
+            deadline,
+            one_attempt,
+        )
+        .await
+    }
+
+    async fn acquire_named_token(
+        redis: &'a R,
+        user_id: i64,
+        name: &str,
+        token: String,
+        acquire_deadline: Instant,
+        one_attempt: bool,
+    ) -> MysqlResult<Self> {
+        let key = format!("wegent:plugin-write:{user_id}:{name}");
         loop {
             if Instant::now() >= acquire_deadline {
                 return Err(coordination_error("plugin_write_busy"));
@@ -101,6 +155,9 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                         key,
                         token,
                         user_id,
+                        name: name.to_owned(),
+                        additional: Vec::new(),
+                        installations: None,
                         deadline: Instant::now() + OPERATION_BUDGET,
                     });
                 }
@@ -108,10 +165,16 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 Ok(Err(_)) => return Err(coordination_error("plugin_write_unavailable")),
                 Err(_) => return Err(coordination_error("plugin_write_busy")),
             }
-            tokio::time::sleep_until(
-                (Instant::now() + Duration::from_millis(50)).min(acquire_deadline),
-            )
-            .await;
+            if one_attempt {
+                return Err(coordination_error("plugin_write_busy"));
+            }
+            // `Lock.acquire` computes `next_try_at` after each failed attempt
+            // and stops once that attempt would pass `stop_trying_at`.
+            let next_try_at = Instant::now() + ACQUIRE_RETRY;
+            if next_try_at > acquire_deadline {
+                return Err(coordination_error("plugin_write_busy"));
+            }
+            tokio::time::sleep_until(next_try_at).await;
         }
     }
 
@@ -119,9 +182,37 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
     /// First creation has no database uniqueness guarantee if leases overlap;
     /// later reads reject duplicates instead of choosing an arbitrary parent.
     pub async fn ensure_policy<M: Mysql>(&self, mysql: &M) -> MysqlResult<()> {
+        let bootstrap = if self.name != "@account-policy" {
+            let ready = tokio::time::timeout_at(
+                self.deadline,
+                mysql.with_transaction(async |tx| {
+                    Ok(load_policy(tx, self.user_id)
+                        .await?
+                        .is_some_and(|row| row.is_active == Some(true)))
+                }),
+            )
+            .await
+            .map_err(|_| coordination_error("plugin_write_busy"))??;
+            if ready {
+                return self.verify_owned().await;
+            }
+            Some(
+                tokio::time::timeout_at(
+                    self.deadline,
+                    Self::acquire(Some(self.redis), self.user_id),
+                )
+                .await
+                .map_err(|_| coordination_error("plugin_write_busy"))??,
+            )
+        } else {
+            None
+        };
         let deadline = (Instant::now() + ACQUIRE_WAIT).min(self.deadline);
-        tokio::time::timeout_at(deadline, async {
+        let Ok(result) = tokio::time::timeout_at(deadline, async {
             self.verify_owned().await?;
+            if let Some(lease) = &bootstrap {
+                lease.verify_owned().await?;
+            }
             mysql
                 .with_transaction(async |transaction| {
                     ensure_policy_in(transaction, self.user_id).await?;
@@ -130,7 +221,36 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 .await
         })
         .await
-        .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
+        else {
+            // COMMIT may still complete after cancellation. Keep bootstrap fencing
+            // until expiry instead of admitting another first-policy creator.
+            return Err(coordination_error("plugin_write_busy"));
+        };
+        if matches!(&result, Ok(_) | Err(MysqlError::InvalidQuery { .. }))
+            && let Some(lease) = bootstrap
+        {
+            lease.release().await;
+        }
+        result
+    }
+
+    /// Reuse an active transaction instead of waiting for a second pool slot.
+    pub(crate) async fn ensure_policy_on<T: MysqlTransaction>(
+        &mut self,
+        transaction: &mut T,
+    ) -> MysqlResult<()> {
+        if load_policy(transaction, self.user_id)
+            .await?
+            .is_none_or(|row| row.is_active != Some(true))
+        {
+            if self.name != "@account-policy" {
+                let bootstrap = Self::acquire(Some(self.redis), self.user_id).await?;
+                self.include(bootstrap.for_installations(Vec::new()));
+            }
+            self.verify_owned().await?;
+            ensure_policy_in(transaction, self.user_id).await?;
+        }
+        self.verify_owned().await
     }
 
     /// Read before any installation state. An ordinary read creates no row
@@ -151,31 +271,20 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         })
     }
 
-    /// One policy read for callers that need both the gate and the revision.
-    ///
-    /// The source's `reconcile` reads the account policy once and derives both
-    /// the enabled gate and the parent revision from that row, so this keeps
-    /// the recorded single `ConnectorAuthPolicy` read.
-    pub(crate) async fn read_policy_snapshot<T: MysqlTransaction>(
+    pub(crate) async fn validate_policy_revision<T: MysqlTransaction>(
         &self,
         transaction: &mut T,
-    ) -> MysqlResult<(Option<serde_json::Value>, Option<PluginWriteRevision>)> {
-        let rows: Vec<PolicyRow> = transaction.fetch_all(POLICY_QUERY, (self.user_id,)).await?;
-        let Ok(Some(row)) = unique_policy(rows) else {
-            return Ok((None, None));
-        };
-        let document = Some(row.json.clone());
-        if row.is_active != Some(true) {
-            return Ok((document, None));
+        expected: PluginWriteRevision,
+    ) -> MysqlResult<()> {
+        transaction.execute(
+            "UPDATE kinds SET json=json WHERE id=? AND user_id=? AND kind='ConnectorAuthPolicy' AND namespace='plugin-auth' AND name='account' AND is_active=1 AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)=?",
+            (expected.id, self.user_id, expected.revision),
+        ).await?;
+        let current = self.read_revision(transaction).await?;
+        if current != expected {
+            return Err(coordination_error("plugin_write_conflict"));
         }
-        let revision = business_revision(&row.json)?;
-        Ok((
-            document,
-            Some(PluginWriteRevision {
-                id: row.id,
-                revision,
-            }),
-        ))
+        self.verify_owned().await
     }
 
     pub async fn verify_owned(&self) -> MysqlResult<()> {
@@ -184,108 +293,39 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         }
         // Generic commands default to the primary. The typed GET reads a
         // replica, which can lag behind the SET that acquired this lease.
-        let mut get = brz_redis::cmd("GET");
-        get.arg(self.key.as_str());
-        let current: Option<brz_redis::RedisBytes> = self
-            .redis
-            .command(get)
-            .await
-            .map_err(|_| coordination_error("plugin_write_unavailable"))?;
-        if current.is_some_and(|value| value.as_ref() == self.token.as_bytes()) {
-            Ok(())
-        } else {
-            Err(coordination_error("plugin_write_lease_lost"))
-        }
-    }
-
-    /// `read_policy_revision` on a fresh pooled read.
-    ///
-    /// The source configures READ COMMITTED so this read sees committed state;
-    /// a pooled autocommit read is equivalent without leaking a session
-    /// isolation level onto later transactions. A missing, duplicated,
-    /// malformed or inactive policy yields `None` (the caller skips the
-    /// revision CAS); transport failures stay errors.
-    pub async fn read_policy_revision<T: MysqlTransaction>(
-        &self,
-        transaction: &mut T,
-    ) -> MysqlResult<Option<PluginWriteRevision>> {
-        // Read on the write transaction's primary connection: a pooled read can
-        // land on a replica whose lag would make the revision CAS conflict and
-        // degrade the registration snapshot.
-        let rows: Vec<PolicyRow> = transaction.fetch_all(POLICY_QUERY, (self.user_id,)).await?;
-        let row = match unique_policy(rows) {
-            Ok(row) => row,
-            Err(error) => {
-                tracing::warn!(user_id = self.user_id, "plugin write policy is invalid");
-                let _ = error;
-                return Ok(None);
-            }
-        };
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        if row.is_active != Some(true) {
-            tracing::warn!(user_id = self.user_id, "plugin write policy is inactive");
-            return Ok(None);
-        }
-        match business_revision(&row.json) {
-            Ok(revision) => Ok(Some(PluginWriteRevision {
-                id: row.id,
-                revision,
-            })),
-            Err(error) => {
-                let _ = error;
-                Ok(None)
+        for (key, token) in std::iter::once((&self.key, &self.token))
+            .chain(self.additional.iter().map(|(key, token)| (key, token)))
+        {
+            let mut get = brz_redis::cmd("GET");
+            get.arg(key.as_str());
+            let current: Option<brz_redis::RedisBytes> = self
+                .redis
+                .command(get)
+                .await
+                .map_err(|_| coordination_error("plugin_write_unavailable"))?;
+            if current.is_none_or(|value| value.as_ref() != token.as_bytes()) {
+                return Err(coordination_error("plugin_write_lease_lost"));
             }
         }
+        Ok(())
     }
 
-    /// Validate the shared business parent as the final statement before
-    /// COMMIT. A changed revision rolls back every write in the transaction.
-    pub async fn commit_revision<T: MysqlTransaction>(
-        &self,
-        transaction: &mut T,
-        expected: PluginWriteRevision,
-    ) -> MysqlResult<()> {
-        self.verify_owned().await?;
-        // `advance_policy_revision` keeps every predicate (`_identity` includes
-        // user_id/kind/namespace/name, plus `is_active IS true`) and compares
-        // `Kind.json["spec"]["revision"].as_integer()`, which SQLAlchemy renders
-        // as a nested `json_extract` with a `CASE ... CAST ... AS SIGNED`
-        // normalization before `coalesce`. Values stay bound parameters.
-        let statement = "UPDATE kinds SET json=json_set(kinds.json, '$.spec.revision', ?), \
-             updated_at=now() WHERE kinds.id = ? AND kinds.user_id = ? AND \
-             kinds.kind = 'ConnectorAuthPolicy' AND kinds.namespace = \
-             'plugin-auth' AND kinds.name = 'account' AND kinds.is_active IS true \
-             AND coalesce(CASE JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
-             '$.\"revision\"') WHEN 'null' THEN NULL ELSE \
-             CAST(JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
-             '$.\"revision\"') AS SIGNED INTEGER) END, 0) = ?";
-        let result = transaction
-            .execute(
-                statement,
-                (
-                    expected.revision + 1,
-                    expected.id,
-                    self.user_id,
-                    expected.revision,
-                ),
-            )
-            .await?;
-        if result.rows_affected == 1 {
-            Ok(())
-        } else {
-            Err(coordination_error("plugin_write_conflict"))
+    pub async fn release(mut self) {
+        let keys = std::iter::once((self.key.clone(), self.token.clone()))
+            .chain(self.additional.drain(..))
+            .collect::<Vec<_>>();
+        for (key, token) in keys {
+            self.release_key(&key, &token).await;
         }
     }
 
-    pub async fn release(self) {
+    async fn release_key(&self, key: &str, token: &str) {
         // redis-py `Script.__call__`: EVALSHA first, then load the same
         // canonical bytes with `SCRIPT LOAD` on NOSCRIPT and retry.
         let result = tokio::time::timeout(Duration::from_millis(500), async {
             let first = self
                 .redis
-                .evalsha::<_, _, _, i64>(RELEASE_SHA, [self.key.as_str()], [self.token.as_str()])
+                .evalsha::<_, _, _, i64>(RELEASE_SHA, [key], [token])
                 .await;
             // redis-py only loads the script on NOSCRIPT; transport, NOAUTH,
             // BUSY and ordinary errors must not add commands.
@@ -309,7 +349,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 return first;
             }
             self.redis
-                .evalsha::<_, _, _, i64>(RELEASE_SHA, [self.key.as_str()], [self.token.as_str()])
+                .evalsha::<_, _, _, i64>(RELEASE_SHA, [key], [token])
                 .await
         })
         .await;
@@ -406,17 +446,20 @@ pub(crate) fn coordination_error(code: &str) -> MysqlError {
 /// plugin sync and falls back to Skills/MCP-only desired state; every other
 /// failure aborts the best-effort follow-up.
 pub(crate) fn is_plugin_write_error(error: &MysqlError) -> bool {
-    matches!(
-        error,
-        MysqlError::InvalidQuery { reason }
-            if matches!(
-                reason.as_str(),
-                "plugin_write_busy"
-                    | "plugin_write_unavailable"
-                    | "plugin_write_lease_lost"
-                    | "plugin_write_conflict"
-            )
-    )
+    plugin_write_error_code(error).is_some()
+}
+
+pub(crate) fn plugin_write_error_code(error: &MysqlError) -> Option<&'static str> {
+    let MysqlError::InvalidQuery { reason } = error else {
+        return None;
+    };
+    match reason.as_str() {
+        "plugin_write_busy" => Some("plugin_write_busy"),
+        "plugin_write_unavailable" => Some("plugin_write_unavailable"),
+        "plugin_write_lease_lost" => Some("plugin_write_lease_lost"),
+        "plugin_write_conflict" => Some("plugin_write_conflict"),
+        _ => None,
+    }
 }
 
 pub(super) fn http_error(error: MysqlError) -> FastApiError {

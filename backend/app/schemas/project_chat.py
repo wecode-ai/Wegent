@@ -346,6 +346,17 @@ class LoopItemExecutionAssignmentStatus(ProjectChatSchema):
     error: str = Field(default="", max_length=2_000)
 
 
+class LoopItemExecutionManagerStatus(ProjectChatSchema):
+    """An Executor resuming the recorded manager after a completed round."""
+
+    role: Literal["manager"]
+    loop_item_id: str = Field(min_length=1, max_length=64)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    round_id: str = Field(min_length=1, max_length=128)
+    runtime_device_id: str = Field(min_length=1, max_length=255)
+    runtime_task_id: str = Field(min_length=1, max_length=255)
+
+
 class LoopItemExecutionView(ProjectChatSchema):
     runner_routing: dict[str, Any] | None = None
     id: int
@@ -469,6 +480,17 @@ class ProjectChatCommentExecution(ProjectChatSchema):
 
 
 class ProjectChatMessageView(ProjectChatSchema):
+    actor_user_id: str | None = None
+    actor_display_name: str | None = None
+    generation_source: Literal["human", "ai", "system"] = "human"
+    publication_source: Literal["human", "ai", "system"] = "human"
+    confirmation_state: Literal["pending", "not_required", "authorized", "unknown"] = (
+        "unknown"
+    )
+    trace_ref: str | None = None
+    trace_state: Literal["available", "restricted", "history-unavailable"] = (
+        "history-unavailable"
+    )
     sequence_number: int
     message_id: str
     client_message_id: str | None

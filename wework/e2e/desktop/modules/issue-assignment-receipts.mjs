@@ -6,7 +6,7 @@ import { waitForLocalStandInTask } from './stand-in-status-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const RECEIPTS = `${CONTENT} [data-testid="issue-assignment-receipts"]`
-const STAND_IN_RECEIPT = `${RECEIPTS} [title^="分身已接收"]`
+const STAND_IN_RECEIPT = `${RECEIPTS} [title^="助理已接收"]`
 
 export async function verifyIssueAssignmentReceipts(
   control,
@@ -39,7 +39,7 @@ export async function verifyIssueAssignmentReceipts(
   await rpc('runtime.stand_in.save', { ...params, settings: { ...settings, enabled: false } })
   let issue = await rpc('todos.create', {
     project_id: projectId,
-    todo: { title: '分配回执：本人和分身独立接收', assignee_user_id: peerUserId },
+    todo: { title: '分配回执：本人和助理独立接收', assignee_user_id: peerUserId },
   })
   const load = () => rpc('todos.assignment_receipts', { project_id: projectId, task_id: issue.id })
   const open = async () => {
@@ -85,10 +85,10 @@ export async function verifyIssueAssignmentReceipts(
   await capture('assignment-receipts-02-human-read.png')
 
   const delegated = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const both = (await load())[0]
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   assert.ok(both.human_read_at && both.stand_in_received_at)
   await control.command('waitFor', `${RECEIPTS} svg[data-figure="stand-in"]`)
   await capture('assignment-receipts-03-both-received.png')
@@ -99,11 +99,11 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-status"]`, {
     value: 'in_review',
   })
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   await dismissInbox()
   await control.command('waitFor', STAND_IN_RECEIPT)
   await control.command('hover', STAND_IN_RECEIPT)
-  await control.command('waitFor', '[role="tooltip"]', { text: '分身已接收' })
+  await control.command('waitFor', '[role="tooltip"]', { text: '助理已接收' })
   assert.equal(
     await control.command('getElementCount', '[data-testid="global-icon-button-tooltip"]'),
     '0'
@@ -119,9 +119,9 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('click', '[data-testid="appearance-mode-dark"]')
   await control.command('waitFor', 'html[data-theme="dark"]')
   await open()
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   await capture('assignment-receipts-03-dark.png')
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   await close()
   await control.command('navigate', 'body', { value: '/settings/appearance' })
   await control.command('waitFor', '[data-testid="appearance-settings-page"]')
@@ -131,10 +131,10 @@ export async function verifyIssueAssignmentReceipts(
   await close()
   await reloadMainWindow(control, 'Receipt verification must reconnect after reload')
   await open()
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   assert.deepEqual((await load())[0], both, 'Reload must preserve both first-reception timestamps')
   await capture('assignment-receipts-04-persisted.png')
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   await close()
 
   issue = await rpc('todos.get', { project_id: projectId, task_id: issue.id })
@@ -159,10 +159,10 @@ export async function verifyCloudAssignmentReceipts(
   captureScreenshot,
   cloud
 ) {
-  await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
+  await control.command('waitFor', RECEIPTS, { text: '助理已接收' })
   await control.command('waitFor', RECEIPTS, { text: '本人已读' })
   const assignments = await request(`/v1/loop-items/${issueId}/assignments`)
-  await verifyAssignmentActivityReceipts(control, '分身已接收')
+  await verifyAssignmentActivityReceipts(control, '助理已接收')
   assert.ok(assignments.items.some(row => row.human_read_at && row.stand_in_received_at))
   await captureScreenshot(control, 'assignment-receipts-cloud-both.png', CONTENT)
   await verifyIndexedReceipts(issueId, assignments, request, cloud.database)
@@ -185,8 +185,13 @@ async function verifyIndexedReceipts(issueId, expected, request, database) {
     [issueId]
   )
   const path = `/v1/loop-items/${issueId}/assignments`
+  // Execution dispatch may advance during reads; reception receipts remain immutable.
+  const receipts = result => ({
+    ...result,
+    items: result.items.map(({ dispatch_receipt: _dispatchReceipt, ...receipt }) => receipt),
+  })
   const results = await Promise.all([request(path), request(path)])
-  for (const result of results) assert.deepEqual(result, expected)
+  for (const result of results) assert.deepEqual(receipts(result), receipts(expected))
   const plan = await database.queryDatabase(
     `EXPLAIN SELECT event.id,event.metadata FROM loop_items active
      JOIN loop_items event ON event.id=active.loop_item_id
@@ -198,8 +203,8 @@ async function verifyIndexedReceipts(issueId, expected, request, database) {
   assert.ok(active?.key?.includes('parent') && active.type !== 'ALL', JSON.stringify(plan))
   assert.equal(event?.key, 'PRIMARY', JSON.stringify(plan))
   assert.deepEqual(
-    await request(path),
-    expected,
+    receipts(await request(path)),
+    receipts(expected),
     'Warm receipt reads preserve the first timestamps'
   )
 }
@@ -255,6 +260,31 @@ async function verifyReceiptPermissions(
     { kind: 'stand_in_received', device_id: 'unowned', task_id: 'unbound' },
     403
   )
+  await http(
+    authToken,
+    ack,
+    'POST',
+    {
+      kind: 'human_read',
+      dispatch: { state: 'running', observedAt: new Date().toISOString() },
+    },
+    422
+  )
+  await http(
+    authToken,
+    ack,
+    'POST',
+    {
+      kind: 'stand_in_state',
+      device_id: 'unowned',
+      dispatch: {
+        state: 'blocked_policy',
+        reasonCode: 'no_authorized_assistant',
+        observedAt: new Date().toISOString(),
+      },
+    },
+    403
+  )
   const device = `receipt-device-${process.pid}`
   const bindingId = `receipt-binding-${process.pid}`
   const [issue] = await database.queryDatabase(
@@ -281,6 +311,21 @@ async function verifyReceiptPermissions(
     )
     const payload = { kind: 'stand_in_received', device_id: device, task_id: bindingId }
     await http(authToken, ack, 'POST', payload)
+    await http(
+      authToken,
+      ack,
+      'POST',
+      {
+        ...payload,
+        kind: 'stand_in_state',
+        dispatch: {
+          state: 'completed',
+          observedAt: new Date().toISOString(),
+          publicMessageId: 'unpublished-result',
+        },
+      },
+      409
+    )
     await database.executeDatabase(
       "UPDATE kinds SET is_active=0 WHERE user_id=%s AND kind='Device' AND namespace='default' AND name=%s",
       [Number(assignment.target_id), device]

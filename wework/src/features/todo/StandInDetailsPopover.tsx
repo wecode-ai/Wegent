@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -19,6 +19,10 @@ import { useStandInProfileSchedules } from './useStandInProfileData'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import type { StandInInboxWork, StandInSourceError } from '@/api/standIn'
 import { AnchorPopover } from './AnchorPopover'
+import { StandInImConnections } from './StandInImConnections'
+import type { StandInRole } from '@/api/personalStandIn'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { findStandInProject } from './standInProjects'
 
 export function StandInDetailsPopover({
   anchor,
@@ -43,6 +47,9 @@ export function StandInDetailsPopover({
   roleId,
   onSchedule,
   suspended = false,
+  imConnections,
+  configuration,
+  projects = [],
 }: {
   anchor: HTMLElement
   name: string
@@ -66,9 +73,29 @@ export function StandInDetailsPopover({
   roleId?: string
   onSchedule?: (schedule: Automation, trigger: HTMLButtonElement) => void
   suspended?: boolean
+  imConnections?: Omit<ComponentProps<typeof StandInImConnections>, 'name' | 'onOpenChange'>
+  configuration?: {
+    connections?: StandInRole['connections']
+    collaboration?: StandInRole['collaboration']
+  }
+  projects?: CollaborationProject[]
 }) {
   const { t, i18n } = useTranslation('common')
+  const projectScope = configuration?.collaboration
+  const workSources = [
+    ...(projectScope?.allProjects
+      ? [
+          t('standIn.workspace.all_projects_with_exclusions', {
+            count: projectScope.excludedProjects.length,
+          }),
+        ]
+      : (projectScope?.projects ?? []).map(
+          ref => findStandInProject(projects, ref)?.name ?? ref.id
+        )),
+    ...(configuration?.connections ?? []).map(source => source.name),
+  ]
   const [selected, setSelected] = useState<RuntimeTaskReminderItem | null>(null)
+  const [imOpen, setImOpen] = useState(false)
   const [visibleCount, setVisibleCount] = useState(4)
   const [identityHeight, setIdentityHeight] = useState<number | null>(null)
   const identityRef = useRef<HTMLDivElement | null>(null)
@@ -109,14 +136,14 @@ export function StandInDetailsPopover({
     .sort()
     .at(-1)
   const activityTime = latestActivity ? new Date(latestActivity) : undefined
-  const identityStatus =
+  const lastActivity =
     activityTime && Number.isFinite(activityTime.getTime())
       ? t('standIn.workspace.details_last_active', {
           time: new Intl.DateTimeFormat(i18n.language, { month: 'short', day: 'numeric' }).format(
             activityTime
           ),
         })
-      : t(enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')
+      : null
   const rowClass =
     'flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-base hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9'
   return (
@@ -125,7 +152,7 @@ export function StandInDetailsPopover({
       title={t('standIn.workspace.details_title')}
       testId="stand-in-details-popover"
       profile
-      suspended={suspended}
+      suspended={suspended || imOpen}
       bodyRef={bodyRef}
       onBodyScroll={scrollTop => {
         if (!selected) {
@@ -192,7 +219,12 @@ export function StandInDetailsPopover({
               <h2 className={`truncate font-medium ${compact ? 'text-base' : 'text-lg'}`}>
                 {name}
               </h2>
-              <p className="mt-1 text-sm text-text-muted">{identityStatus}</p>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t(enabled ? 'standIn.workspace.receiving' : 'standIn.workspace.paused')}
+              </p>
+              {lastActivity && !compact && (
+                <p className="text-sm text-text-secondary">{lastActivity}</p>
+              )}
             </div>
             {onGuide && (
               <button
@@ -201,7 +233,7 @@ export function StandInDetailsPopover({
                 aria-label={t('standIn.onboarding.guide')}
                 title={t('standIn.onboarding.guide')}
                 onClick={onGuide}
-                className="flex h-8 w-8 shrink-0 items-center justify-center self-start rounded-md text-text-muted hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-11 w-11 shrink-0 items-center justify-center self-start rounded-md text-text-muted hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8 md:w-8"
               >
                 <HelpCircle aria-hidden="true" className="h-4 w-4" />
               </button>
@@ -209,6 +241,37 @@ export function StandInDetailsPopover({
           </div>
         </div>
         <div className="space-y-5 px-4 pb-4 pt-4">
+          <section aria-label={t('standIn.workspace.work_sources')}>
+            <button
+              type="button"
+              data-testid="stand-in-details-work-sources"
+              onClick={onSettings}
+              className="min-h-11 w-full rounded-lg border border-border bg-muted/30 p-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
+            >
+              <span className="mb-1 flex items-center justify-between gap-2 font-medium">
+                {t('standIn.workspace.work_sources')}
+                <span className="ml-auto shrink-0 rounded-md border border-border bg-background px-2 py-1 font-normal">
+                  {t('standIn.personal.manage')}
+                </span>
+                <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0" />
+              </span>
+              <span className="line-clamp-2 break-words text-text-secondary">
+                {workSources.length
+                  ? t('standIn.workspace.work_sources_configured', {
+                      names: workSources.slice(0, 2).join(' · '),
+                    })
+                  : t('standIn.workspace.work_sources_empty')}
+              </span>
+              {workSources.length > 1 && (
+                <span className="block text-text-secondary">
+                  {t('standIn.workspace.work_sources_count', { count: workSources.length })}
+                </span>
+              )}
+            </button>
+          </section>
+          {imConnections && (
+            <StandInImConnections {...imConnections} name={name} onOpenChange={setImOpen} />
+          )}
           <section aria-label={t('standIn.workspace.details_device')}>
             <h3 className="mb-2 text-sm font-medium text-text-secondary">
               {t('standIn.workspace.details_device')}
@@ -225,7 +288,7 @@ export function StandInDetailsPopover({
                   {device?.name || t('standIn.workspace.details_device_unknown')}
                 </p>
                 {device && (
-                  <p className="mt-0.5 text-sm text-text-muted">
+                  <p className="mt-0.5 text-sm text-text-secondary">
                     {t(`standIn.workspace.details_device_${device?.status ?? 'unknown'}`)}
                   </p>
                 )}
@@ -270,14 +333,14 @@ export function StandInDetailsPopover({
                   aria-label={t('standIn.workspace.details_all_activity')}
                   title={t('standIn.workspace.details_all_activity')}
                   onClick={onAllActivity}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted"
+                  className="flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted md:h-8 md:w-8"
                 >
                   <ChevronRight aria-hidden="true" className="h-4 w-4" />
                 </button>
               )}
             </div>
             {!activity.length && !schedules.loading && !schedules.error && (
-              <p className="py-2 text-sm text-text-muted">
+              <p className="py-2 text-sm text-text-secondary">
                 {t('standIn.workspace.details_activity_empty')}
               </p>
             )}
@@ -297,12 +360,7 @@ export function StandInDetailsPopover({
                       <span className="block truncate">{entry.item.name}</span>
                       <span className="mt-0.5 block truncate text-xs text-text-secondary">
                         {entry.item.enabled
-                          ? formatScheduleSummary(
-                              entry.item.schedule,
-                              i18n.language,
-                              t,
-                              entry.item.timezone
-                            )
+                          ? formatScheduleSummary(entry.item.schedule, i18n.language, t)
                           : t('todo.automation_status_paused')}
                       </span>
                     </span>
@@ -334,7 +392,7 @@ export function StandInDetailsPopover({
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate leading-5">{item.task.title}</span>
-                      <span className="block truncate text-xs leading-4 text-text-muted">
+                      <span className="block truncate text-xs leading-4 text-text-secondary">
                         {[
                           item.projectName !== item.task.title &&
                           item.projectName !== item.task.taskId
@@ -352,7 +410,7 @@ export function StandInDetailsPopover({
               )
             })}
             {schedules.loading && (
-              <p role="status" className="py-2 text-sm text-text-muted">
+              <p role="status" className="py-2 text-sm text-text-secondary">
                 {t('standIn.loading')}
               </p>
             )}
@@ -363,7 +421,7 @@ export function StandInDetailsPopover({
                   type="button"
                   data-testid="stand-in-details-schedules-retry"
                   onClick={schedules.retry}
-                  className="ml-2 min-h-8 underline"
+                  className="ml-2 min-h-11 min-w-11 underline md:min-h-8"
                 >
                   {t('standIn.reload')}
                 </button>

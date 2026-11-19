@@ -23,9 +23,36 @@ pub(crate) struct Xref {
     pub trailer: Dictionary,
 }
 
-/// Read every cross-reference section reachable from the last `startxref`.
-pub(crate) fn read(bytes: &[u8]) -> Result<Xref, String> {
+/// Return the byte slice used as the base for all offsets, together with its xref.
+pub(crate) fn read(bytes: &[u8]) -> Result<(&[u8], Xref), String> {
     let start = find_last_startxref(bytes).ok_or("missing startxref")?;
+    match read_sections(bytes, start) {
+        Ok(xref) => Ok((bytes, xref)),
+        Err(error) => {
+            // Some producers prepend bytes without updating the PDF offsets.
+            // Retry only from a real header and keep one base for the entire file.
+            let Some(header) = bytes
+                .windows(8)
+                .position(|window| {
+                    matches!(
+                        window,
+                        [b'%', b'P', b'D', b'F', b'-', b'0'..=b'9', b'.', b'0'..=b'9']
+                    )
+                })
+                .filter(|offset| *offset > 0)
+            else {
+                return Err(error);
+            };
+            let pdf = &bytes[header..];
+            read_sections(pdf, start)
+                .map(|xref| (pdf, xref))
+                .map_err(|_| error)
+        }
+    }
+}
+
+/// Read every cross-reference section reachable from the last `startxref`.
+fn read_sections(bytes: &[u8], start: usize) -> Result<Xref, String> {
     let mut pending = vec![start];
     let mut entries = HashMap::new();
     let mut trailer = Dictionary::new();
@@ -110,7 +137,7 @@ fn parse_stream_section(
     offset: usize,
     entries: &mut HashMap<u32, Entry>,
 ) -> Result<Dictionary, String> {
-    let object = parse_indirect(bytes, offset, &HashMap::new())?;
+    let object = parse_indirect(bytes, offset, &HashMap::new(), None)?;
     let Object::Stream(stream) = object else {
         return Err("unsupported cross-reference section".to_owned());
     };
@@ -200,20 +227,11 @@ fn read_width(bytes: &[u8], width: usize) -> u64 {
 
 fn find_last_startxref(bytes: &[u8]) -> Option<usize> {
     let marker = b"startxref";
-    let mut index = bytes.len().saturating_sub(marker.len());
-    loop {
-        if &bytes[index..index + marker.len()] == marker {
-            let mut cursor = Cursor::at(bytes, index + marker.len());
-            if let Ok(value) = cursor.read_integer() {
-                return Some(value as usize);
-            }
-            return None;
-        }
-        if index == 0 {
-            return None;
-        }
-        index -= 1;
-    }
+    let index = bytes
+        .windows(marker.len())
+        .rposition(|window| window == marker)?;
+    let mut cursor = Cursor::at(bytes, index + marker.len());
+    usize::try_from(cursor.read_integer().ok()?).ok()
 }
 
 /// Parse `number generation obj ... endobj` at a byte offset.
@@ -221,13 +239,19 @@ pub(crate) fn parse_indirect(
     bytes: &[u8],
     offset: usize,
     offsets: &HashMap<u32, usize>,
+    expected_number: Option<u32>,
 ) -> Result<Object, String> {
     if offset >= bytes.len() {
         return Err("object offset past end of file".to_owned());
     }
     let mut cursor = Cursor::at(bytes, offset);
     cursor.skip_whitespace();
-    let _number = cursor.read_integer()?;
+    let number = cursor.read_integer()?;
+    if let Some(expected) = expected_number
+        && number != i64::from(expected)
+    {
+        return Err(format!("expected object {expected}, found {number}"));
+    }
     let _generation = cursor.read_integer()?;
     cursor.skip_whitespace();
     if !cursor.match_keyword("obj") {

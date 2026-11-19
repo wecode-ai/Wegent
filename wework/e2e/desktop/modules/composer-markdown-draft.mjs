@@ -67,6 +67,18 @@ export async function verifyComposerMarkdownDraftAcknowledgement(control, compos
       'The caret must remain in the new empty paragraph after acknowledgement'
     )
     await verifyEditedHeadingTail(control, composerSelector)
+  } catch (error) {
+    console.error(
+      '[composer-markdown-failure]',
+      JSON.stringify({
+        value: await control.command('getValue', composerSelector).catch(() => null),
+        snapshot: await control.command('snapshot', composerSelector).catch(() => null),
+        caret: await control
+          .command('getSelectionOffset', `${composerSelector} > p:last-child`)
+          .catch(() => null),
+      })
+    )
+    throw error
   } finally {
     await control.command('fill', composerSelector, { value: '' })
     await waitForPersistedComposerInput(control, '', 'The Markdown test draft was not cleared')

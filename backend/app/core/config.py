@@ -169,6 +169,9 @@ class Settings(BaseSettings):
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
     WORKTREE_CLEANUP_RETENTION_DAYS: int = Field(default=7, ge=0)
+    # Operationally reversible canonicalization for GitHub pull-request URLs
+    # indexed in collaboration Issue content.
+    COLLAB_CHANGE_REQUEST_BADGE_CANONICALIZATION_V1: bool = True
 
     # Names assigned only when a default source group is first created.
     TASK_SOURCE_GROUP_NAMES: dict[str, str] = Field(
@@ -301,6 +304,10 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
     CONNECTOR_OAUTH_STATE_SECRET: str = ""
     CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
+    CONNECTOR_OAUTH_REDIRECT_URI: str = (
+        "http://localhost:8000/api/connector-apps/oauth/callback"
+    )
+
     # User-level MCP OAuth for provider servers such as DingTalk. These servers
     # expose RFC 9728 protected-resource metadata and an RFC 8414 authorization
     # server, so the platform authorizes and refreshes tokens on the user's behalf.
@@ -599,12 +606,6 @@ class Settings(BaseSettings):
     TASK_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
 
-    # AES encryption configuration for share tokens
-    SHARE_TOKEN_AES_KEY: str = (
-        "12345678901234567890123456789012"  # 32 bytes for AES-256
-    )
-    SHARE_TOKEN_AES_IV: str = "1234567890123456"  # 16 bytes for AES IV
-
     # Webhook notification configuration
     WEBHOOK_ENABLED: bool = False
     WEBHOOK_ENDPOINT_URL: str = ""
@@ -624,6 +625,10 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
     BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
+    # Create missing built-in DingTalk connector apps on every startup.
+    # A physically deleted built-in app is recreated; disable it instead when
+    # it should stay visible but non-callable.
+    CONNECTOR_BUILTIN_APPS_ENABLED: bool = True
 
     # Default headers forwarded to the model backend on every LLM call.
     # Keys are sent verbatim as HTTP headers (resolved by model_resolver against
@@ -673,6 +678,7 @@ class Settings(BaseSettings):
     EXTERNAL_WIKI_DOWNLOAD_TIMEOUT_SECONDS: int = Field(default=300, ge=1)
 
     # Plugin marketplace package storage and controlled publishing.
+    PLUGIN_LOCAL_SYNC_ENABLED: bool = False
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200

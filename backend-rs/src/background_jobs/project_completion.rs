@@ -11,6 +11,9 @@ use brz_redis::Redis;
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
+use crate::socketio::project_chat_messages::{
+    MessageRow, database_timestamp, message_view, shared_message_payload,
+};
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
 
 const TERMINAL: &[&str] = &["succeeded", "failed", "cancelled", "skipped"];
@@ -57,7 +60,7 @@ struct Subtask {
     error_message: Option<String>,
 }
 
-#[derive(Debug, FromMysqlRow)]
+#[derive(Debug, Clone, FromMysqlRow)]
 pub(crate) struct Message {
     pub(crate) id: i64,
     pub(crate) message_id: String,
@@ -83,27 +86,27 @@ pub(crate) struct Message {
 
 impl Message {
     pub(crate) fn view(&self) -> Value {
-        let optional = |value: &str| (!value.is_empty()).then(|| value.to_string());
-        json!({
-            "sequenceNumber": self.id,
-            "messageId": self.message_id,
-            "clientMessageId": optional(&self.client_message_id),
-            "projectId": self.project_id,
-            "taskId": optional(&self.task_id),
-            "sender": {"type": self.sender_type, "id": self.sender_id, "name": self.sender_name},
-            "type": self.message_type,
-            "content": self.content,
-            "metadata": self.metadata.0,
-            "triggerMessageId": optional(&self.trigger_message_id),
-            "replyToMessageId": optional(&self.reply_to_message_id),
-            "rootMessageId": optional(&self.thread_root_message_id),
-            "agentId": optional(&self.agent_id),
-            "runtimeAddress": if self.runtime_device_id.is_empty() || self.runtime_task_id.is_empty() {
-                Value::Null
-            } else { json!({"deviceId": self.runtime_device_id, "taskId": self.runtime_task_id}) },
-            "status": self.status,
-            "createdAt": self.created_at.and_utc().to_rfc3339(),
-            "updatedAt": self.updated_at.and_utc().to_rfc3339(),
+        message_view(&MessageRow {
+            id: self.id,
+            message_id: self.message_id.clone(),
+            client_message_id: self.client_message_id.clone(),
+            project_id: self.project_id.clone(),
+            task_id: self.task_id.clone(),
+            sender_type: self.sender_type.clone(),
+            sender_id: self.sender_id.clone(),
+            sender_name: self.sender_name.clone(),
+            message_type: self.message_type.clone(),
+            content: self.content.clone(),
+            metadata: Some(self.metadata.clone()),
+            trigger_message_id: self.trigger_message_id.clone(),
+            reply_to_message_id: self.reply_to_message_id.clone(),
+            thread_root_message_id: self.thread_root_message_id.clone(),
+            agent_id: self.agent_id.clone(),
+            runtime_device_id: self.runtime_device_id.clone(),
+            runtime_task_id: self.runtime_task_id.clone(),
+            status: self.status.clone(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         })
     }
 }
@@ -174,7 +177,7 @@ fn identity(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-fn final_text(result: Option<&Value>) -> Option<String> {
+pub(crate) fn final_text(result: Option<&Value>) -> Option<String> {
     let result = result?;
     for source in [Some(result), result.get("result")].into_iter().flatten() {
         for key in ["value", "text", "content", "output_text"] {
@@ -311,13 +314,13 @@ pub(crate) async fn complete<M: Mysql, R: Redis>(
         let now = Utc::now().naive_utc();
         transaction.execute(
             "UPDATE project_chat_messages SET content=?, status=?, message_type='text', metadata=?, updated_at=? WHERE id=?",
-            (message.content.as_str(), message.status.as_str(), Json(message.metadata.0.clone()), now, message.id),
+            (message.content.as_str(), message.status.as_str(), Json(message.metadata.0.clone()), database_timestamp(now), message.id),
         ).await?;
         transaction.execute(
             "UPDATE loop_items SET status=?, backend_task_id=?, completed_at=?, description=CASE WHEN ?='failed' THEN ? ELSE description END, version=version+1, updated_at=? WHERE id=? AND resource_type='automation_run'",
             (run_status, task_id, now, run_status, message.content.as_str(), now, run.id.as_str()),
         ).await?;
-        message.updated_at = now;
+        message.updated_at = database_timestamp(now);
         Ok(Some(message))
     }).await?;
     if let Some(message) = message {
@@ -357,8 +360,8 @@ pub(crate) async fn started<M: Mysql, R: Redis>(
         if !labels.matches(&run,&message,task_id,owner_id) || run.status.as_deref().is_some_and(|status|TERMINAL.contains(&status)) || matches!(message.status.as_str(),"completed"|"failed"|"cancelled") {return Ok(None)}
         let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();
         metadata.insert("backend_task_id".into(),json!(task_id));metadata.insert("run_status".into(),json!("running"));
-        message.status="streaming".into();message.metadata=Json(Value::Object(metadata));message.updated_at=Utc::now().naive_utc();
-        tx.execute("UPDATE loop_items SET status='running',backend_task_id=?,version=version+1,updated_at=? WHERE id=?",(task_id,message.updated_at,run.id.as_str())).await?;
+        message.status="streaming".into();message.metadata=Json(Value::Object(metadata));message.updated_at=database_timestamp(Utc::now().naive_utc());
+        tx.execute("UPDATE loop_items SET status='running',backend_task_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(task_id,run.id.as_str())).await?;
         tx.execute("UPDATE project_chat_messages SET status='streaming',metadata=?,updated_at=? WHERE id=?",(Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
         Ok(Some(message))
     }).await?;
@@ -378,6 +381,25 @@ pub(crate) async fn dispatch_failed<M: Mysql, R: Redis>(
     run_id: &str,
     error: &str,
 ) -> Result<()> {
+    finish_dispatch(mysql, redis, run_id, "failed", error).await
+}
+
+pub(crate) async fn dispatch_skipped<M: Mysql, R: Redis>(
+    mysql: &M,
+    redis: &R,
+    run_id: &str,
+    note: &str,
+) -> Result<()> {
+    finish_dispatch(mysql, redis, run_id, "skipped", note).await
+}
+
+async fn finish_dispatch<M: Mysql, R: Redis>(
+    mysql: &M,
+    redis: &R,
+    run_id: &str,
+    status: &str,
+    error: &str,
+) -> Result<()> {
     let changed=mysql.with_transaction(async |tx| {
         let Some(run)=super::store::locked(tx,"automation_run",run_id).await? else{return Ok(None)};
         if TERMINAL.contains(&run.status.as_str()){return Ok(None)}
@@ -385,17 +407,19 @@ pub(crate) async fn dispatch_failed<M: Mysql, R: Redis>(
         let message:Option<Message>=if message_id.is_empty(){None}else{tx.fetch_optional("SELECT * FROM project_chat_messages WHERE message_id=? FOR UPDATE",(message_id,)).await?};
         let mut message=message;
         if let Some(message)=message.as_mut(){
-            message.status="failed".into();message.message_type="text".into();message.content=if error.is_empty(){"AI 托管任务派发失败。".into()}else{error.into()};message.updated_at=Utc::now().naive_utc();
-            let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();metadata.insert("run_status".into(),json!("failed"));metadata.insert("error".into(),json!(message.content));message.metadata=Json(Value::Object(metadata));
-            tx.execute("UPDATE project_chat_messages SET status='failed',message_type='text',content=?,metadata=?,updated_at=? WHERE id=?",(message.content.as_str(),Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
+            message.status=status.into();message.message_type="text".into();message.content=if error.is_empty(){"AI 托管任务派发失败。".into()}else{error.into()};message.updated_at=database_timestamp(Utc::now().naive_utc());
+            let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();metadata.insert("run_status".into(),json!(status));
+            if status=="failed"{metadata.insert("error".into(),json!(message.content));}else{metadata.remove("error");}
+            message.metadata=Json(Value::Object(metadata));
+            tx.execute("UPDATE project_chat_messages SET status=?,message_type='text',content=?,metadata=?,updated_at=? WHERE id=?",(status,message.content.as_str(),Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
         }
-        tx.execute("UPDATE loop_items SET status='failed',description=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(error.chars().take(2000).collect::<String>(),run_id)).await?;
+        tx.execute("UPDATE loop_items SET status=?,description=?,completed_at=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(status,error.chars().take(2000).collect::<String>(),Utc::now().naive_utc(),run_id)).await?;
         Ok(message)
     }).await?;
     if let Some(message) = changed
         && let Err(error) = publish(redis, &message).await
     {
-        tracing::error!(%error,"project failed activity push failed after commit");
+        tracing::error!(%error,"project dispatch activity push failed after commit");
     }
     Ok(())
 }
@@ -409,7 +433,7 @@ pub(crate) async fn publish<R: Redis>(redis: &R, message: &Message) -> Result<()
             message.project_id, message.task_id
         )
     };
-    let data = serde_json::to_string(&json!([message.view()]))?;
+    let data = serde_json::to_string(&json!([shared_message_payload(&message.view())]))?;
     let payload = emit_message(
         "wework:project_chat:message:created",
         &data,
@@ -491,6 +515,47 @@ mod tests {
                 updated_at: now,
             },
         )
+    }
+
+    #[test]
+    fn live_activity_timestamps_match_database_reads_across_midnight() {
+        let (_, mut message) = activity();
+        message.created_at = chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+            .unwrap()
+            .and_hms_micro_opt(1, 2, 3, 123456)
+            .unwrap();
+        let updated_utc = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(17, 3, 4, 654321)
+            .unwrap();
+        message.updated_at = database_timestamp(updated_utc);
+
+        let view = message.view();
+        assert_eq!(view["createdAt"], "2026-01-01T17:02:03.123456+00:00");
+        assert_eq!(view["updatedAt"], "2026-01-01T17:03:04.654321+00:00");
+        assert_eq!(
+            crate::socketio::project_chat_messages::utc_timestamp(message.updated_at),
+            updated_utc
+        );
+    }
+
+    #[test]
+    fn background_activity_uses_the_canonical_provenance_and_room_source_contract() {
+        let (_, mut message) = activity();
+        message.runtime_device_id = "owner-device".into();
+        message.runtime_task_id = "private-task".into();
+        message.message_type = "agent_status".into();
+        message.content = "Private planning process".into();
+        message.metadata = Json(json!({"private_prompt":"secret","dispatch_role":"manager"}));
+        let shared = shared_message_payload(&message.view());
+        assert_eq!(shared["generationSource"], "ai");
+        assert_eq!(shared["confirmationState"], "pending");
+        assert_eq!(shared["traceState"], "restricted");
+        assert_eq!(shared["traceRef"].as_str().unwrap().len(), 64);
+        assert!(shared["runtimeAddress"].is_null());
+        assert_eq!(shared["content"], "");
+        assert_eq!(shared["metadata"], json!({"dispatch_role":"manager"}));
+        assert_eq!(message.content, "Private planning process");
     }
 
     #[test]

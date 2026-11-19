@@ -961,27 +961,29 @@ while IFS= read -r line; do
   esac
 done
 "#;
-    script
-        .replace("__ROOT__", root.to_str().unwrap())
-        .replace("__MODE__", mode)
-        .replace("__FIRST_QUESTION__", &interaction.to_string())
-        .replace(
-            "__NOTIFICATIONS__",
-            &interaction
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|value| {
-                    format!(
-                        "printf '%s\\n' '{}'",
-                        value.to_string().replace('\'', "'\"'\"'")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-        .replace(
-            "__SECOND_QUESTION__",
-            &question(json!("second-request")).to_string(),
-        )
+    wegent_executor_test_support::with_codex_bundled_catalog(
+        &script
+            .replace("__ROOT__", root.to_str().unwrap())
+            .replace("__MODE__", mode)
+            .replace("__FIRST_QUESTION__", &interaction.to_string())
+            .replace(
+                "__NOTIFICATIONS__",
+                &interaction
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|value| {
+                        format!(
+                            "printf '%s\\n' '{}'",
+                            value.to_string().replace('\'', "'\"'\"'")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .replace(
+                "__SECOND_QUESTION__",
+                &question(json!("second-request")).to_string(),
+            ),
+    )
 }

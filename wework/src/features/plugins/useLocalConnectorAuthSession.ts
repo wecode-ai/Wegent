@@ -1,6 +1,5 @@
-import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
-import { pluginTelemetryIdentityFromParts } from '@/telemetry/pluginIdentity'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import type { TFunction } from 'i18next'
 import {
   isLocalBrowserConnector,
@@ -12,26 +11,12 @@ import {
   type LocalConnectorAuthTarget,
   type LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
+import {
+  createLocalConnectorAuthSessionSource,
+  isBrowserAuthStatus,
+} from './localConnectorAuthSessionSource'
 
 export type LocalConnectorAuthTranslate = TFunction
-
-function startErrorMessage(startError: unknown, fallback: string): string {
-  if (typeof startError === 'string' && startError.trim()) return startError
-  if (startError instanceof Error) return startError.message
-  if (
-    typeof startError === 'object' &&
-    startError &&
-    'message' in startError &&
-    typeof (startError as { message: unknown }).message === 'string'
-  ) {
-    return (startError as { message: string }).message
-  }
-  return fallback
-}
-
-function isBrowserAuthStatus(status: LocalConnectorAuthResult | null | undefined): boolean {
-  return status?.status === 'waiting_browser' || status?.status === 'verifying'
-}
 
 export function localConnectorAuthStatusText(
   status: LocalConnectorAuthResult | null,
@@ -78,250 +63,60 @@ export function useLocalConnectorAuthSession({
   onSuccess,
   transport,
 }: UseLocalConnectorAuthSessionOptions) {
-  const startAuth = transport?.start ?? localConnectorAuthStart
-  const pollAuth = transport?.poll ?? localConnectorAuthPoll
-  const cancelAuth = transport?.cancel ?? localConnectorAuthCancel
-  const [status, setStatus] = useState<LocalConnectorAuthResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
-  const onSuccessRef = useRef(onSuccess)
-  const tRef = useRef(t)
-  const sessionRef = useRef(0)
-  const attemptRef = useRef<OperationAttempt | null>(null)
-  const activeAuthSessionRef = useRef<string | null>(null)
-  const cancelRequestedRef = useRef(false)
-  const cancelledAuthSessionsRef = useRef(new Set<string>())
-
-  useEffect(() => {
-    onSuccessRef.current = onSuccess
-    tRef.current = t
-  }, [onSuccess, t])
-
+  const start = transport?.start ?? localConnectorAuthStart
+  const poll = transport?.poll ?? localConnectorAuthPoll
+  const cancel = transport?.cancel ?? localConnectorAuthCancel
   const pluginKey = target.pluginKey
   const connectorSlug = target.connectorSlug
   const pluginRoot = target.pluginRoot ?? null
   const instance = target.instance ?? undefined
   const intervalMs = pollIntervalMs(target.localAuth)
-  // Prefer explicit localAuth from install dialogs; chat resume often omits it and
-  // the executor resolves the manifest. Infer browser mode from live status too.
   const targetUsesBrowser = isLocalBrowserConnector(target)
-  const usesBrowser = targetUsesBrowser || isBrowserAuthStatus(status)
-
-  const cancelAuthSession = useCallback(
-    (authTarget: LocalConnectorAuthTarget, sessionId: string) => {
-      if (cancelledAuthSessionsRef.current.has(sessionId)) return
-      cancelledAuthSessionsRef.current.add(sessionId)
-      void cancelAuth(authTarget, sessionId).catch(() => undefined)
-    },
-    [cancelAuth]
-  )
-
-  useEffect(() => {
-    if (!enabled) return
-    const attempt = beginOperation('plugin.authorize', {
-      properties: pluginTelemetryIdentityFromParts({
-        marketplace: 'local',
-        pluginKey,
-      }),
-    })
-    attemptRef.current = attempt
-    const session = ++sessionRef.current
-    const isCurrent = () => sessionRef.current === session
-    let startTimer: ReturnType<typeof setTimeout> | null = null
-    let pollTimer: ReturnType<typeof setTimeout> | null = null
-    let authSessionId: string | null = null
-    let disposed = false
-    let authenticated = false
-    const authTarget: LocalConnectorAuthTarget = {
+  const source = useMemo(
+    () =>
+      createLocalConnectorAuthSessionSource(
+        {
+          instance,
+          pluginKey,
+          connectorSlug,
+          ...(pluginRoot ? { pluginRoot } : {}),
+        },
+        { start, poll, cancel },
+        targetUsesBrowser,
+        intervalMs
+      ),
+    [
       instance,
       pluginKey,
       connectorSlug,
-      ...(pluginRoot ? { pluginRoot } : {}),
-    }
-    // Do not put status-derived browser mode in effect deps; restarting would
-    // cancel an in-flight browser session when waiting_browser arrives.
-    const browserMode = targetUsesBrowser
-
-    const start = async () => {
-      cancelRequestedRef.current = false
-      setBusy(true)
-      setError(null)
-      setStatus(null)
-      try {
-        // Always start: chat resume targets may omit localAuth and rely on the
-        // executor reading the installed plugin manifest by pluginKey/slug.
-        const started = await startAuth(authTarget)
-        if (!isCurrent()) {
-          if ((disposed || cancelRequestedRef.current) && started.sessionId) {
-            cancelAuthSession(authTarget, started.sessionId)
-          }
-          return
-        }
-        authSessionId = started.sessionId ?? null
-        activeAuthSessionRef.current = authSessionId
-        setError(null)
-        setStatus(started)
-        if (started.status === 'ok') {
-          authenticated = true
-          attempt.succeed()
-          onSuccessRef.current(started)
-          return
-        }
-        const startedAsBrowser = browserMode || isBrowserAuthStatus(started)
-        if (
-          started.status === 'error' ||
-          started.status === 'expired' ||
-          started.status === 'cancelled'
-        ) {
-          if (started.status === 'cancelled') attempt.cancel()
-          else attempt.fail('confirm')
-          setError(
-            started.hint ||
-              (startedAsBrowser
-                ? tRef.current(
-                    'workbench.plugins_local_browser_failed',
-                    '浏览器授权未完成，请重新开始登录'
-                  )
-                : tRef.current(
-                    'workbench.plugins_local_qr_expired',
-                    '二维码已失效，请重新开始登录'
-                  ))
-          )
-          return
-        }
-        const tick = async () => {
-          if (!isCurrent()) return
-          try {
-            const next = await pollAuth(authTarget, authSessionId)
-            if (!isCurrent()) return
-            setStatus(previous => ({
-              ...next,
-              qrImage: next.qrImage ?? previous?.qrImage ?? null,
-              qrPath: next.qrPath ?? previous?.qrPath ?? null,
-            }))
-            if (next.status === 'ok') {
-              authenticated = true
-              attempt.succeed()
-              onSuccessRef.current(next)
-              return
-            }
-            if (
-              next.status === 'expired' ||
-              next.status === 'error' ||
-              next.status === 'cancelled'
-            ) {
-              if (next.status === 'cancelled') attempt.cancel()
-              else attempt.fail('confirm')
-              setError(
-                next.hint ||
-                  (startedAsBrowser || isBrowserAuthStatus(next)
-                    ? tRef.current(
-                        'workbench.plugins_local_browser_failed',
-                        '浏览器授权未完成，请重新开始登录'
-                      )
-                    : tRef.current(
-                        'workbench.plugins_local_qr_expired',
-                        '二维码已失效，请重新开始登录'
-                      ))
-              )
-              return
-            }
-            pollTimer = setTimeout(tick, intervalMs)
-          } catch (pollError) {
-            if (!isCurrent()) return
-            attempt.fail('request')
-            setError(
-              pollError instanceof Error
-                ? pollError.message
-                : tRef.current('workbench.plugins_local_auth_poll_failed', '检查登录状态失败')
-            )
-          }
-        }
-        pollTimer = setTimeout(tick, intervalMs)
-      } catch (startError) {
-        if (!isCurrent()) return
-        attempt.fail('request')
-        setError(
-          startErrorMessage(
-            startError,
-            browserMode
-              ? tRef.current('workbench.plugins_local_browser_start_failed', '无法启动浏览器授权')
-              : tRef.current('workbench.plugins_local_qr_start_failed', '无法生成登录二维码')
-          )
-        )
-      } finally {
-        if (isCurrent()) setBusy(false)
-      }
-    }
-
-    // React StrictMode replays effects during development. Deferring the side
-    // effect lets the replay cleanup discard the first run before it creates a
-    // second authorization session or opens another browser window.
-    startTimer = setTimeout(() => void start(), 0)
-    return () => {
-      disposed = true
-      attempt.cancel()
-      if (sessionRef.current === session) {
-        sessionRef.current += 1
-      }
-      if (startTimer) clearTimeout(startTimer)
-      if (pollTimer) clearTimeout(pollTimer)
-      if (authSessionId && !authenticated) cancelAuthSession(authTarget, authSessionId)
-    }
-  }, [
-    enabled,
-    refreshKey,
-    pluginKey,
-    connectorSlug,
-    pluginRoot,
-    intervalMs,
-    targetUsesBrowser,
-    cancelAuthSession,
-    instance,
-    startAuth,
-    pollAuth,
-  ])
-
-  const retry = useCallback(() => {
-    setRefreshKey(value => value + 1)
-  }, [])
-
-  const cancelActiveSession = useCallback(() => {
-    attemptRef.current?.cancel()
-    cancelRequestedRef.current = true
-    const sessionId = activeAuthSessionRef.current
-    activeAuthSessionRef.current = null
-    if (!sessionId) return
-    cancelAuthSession(
-      {
-        pluginKey,
-        connectorSlug,
-        instance,
-        ...(pluginRoot ? { pluginRoot } : {}),
-      },
-      sessionId
-    )
-  }, [cancelAuthSession, connectorSlug, pluginKey, pluginRoot, instance])
-
-  const canRetry =
-    Boolean(error) ||
-    status?.status === 'expired' ||
-    status?.status === 'error' ||
-    status?.status === 'cancelled'
-
-  const statusText = localConnectorAuthStatusText(status, { usesBrowser, error, t })
-  const qrSrc = status?.qrImage?.dataUrl || null
-
+      pluginRoot,
+      start,
+      poll,
+      cancel,
+      targetUsesBrowser,
+      intervalMs,
+    ]
+  )
+  const view = source.observe({ t, onSuccess })
+  const { status, error, busy } = useSyncExternalStore(
+    enabled ? view.subscribe : subscribeIdleResource,
+    source.getSnapshot,
+    source.getSnapshot
+  )
+  const usesBrowser = targetUsesBrowser || isBrowserAuthStatus(status)
   return {
     status,
     error,
     busy,
     usesBrowser,
-    statusText,
-    qrSrc,
-    canRetry,
-    retry,
-    cancelActiveSession,
+    statusText: localConnectorAuthStatusText(status, { usesBrowser, error, t }),
+    qrSrc: status?.qrImage?.dataUrl || null,
+    canRetry:
+      Boolean(error) ||
+      status?.status === 'expired' ||
+      status?.status === 'error' ||
+      status?.status === 'cancelled',
+    retry: source.retry,
+    cancelActiveSession: source.cancelActiveSession,
   }
 }

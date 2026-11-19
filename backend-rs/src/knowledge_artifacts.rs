@@ -88,6 +88,87 @@ fn not_found(detail: &str) -> FastApiError {
     FastApiError::detail(brz_http_server::StatusCode::NOT_FOUND, detail)
 }
 
+pub(crate) async fn resolve_node_scope(
+    state: &AppState,
+    user_id: i64,
+    knowledge_base_id: i64,
+    artifact_id: &str,
+    node_id: &str,
+) -> Result<(String, Vec<i64>), FastApiError> {
+    let kb = access::knowledge_base_record(&state.mysql, knowledge_base_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("Knowledge base not found"))?;
+    if !access::knowledge_base_access(
+        &state.mysql,
+        state.redis.as_ref(),
+        &state.entity_resolvers,
+        &kb,
+        user_id,
+    )
+    .await
+    .map_err(internal)?
+    {
+        return Err(not_found("Knowledge base not found"));
+    }
+    #[derive(FromMysqlRow)]
+    struct NodeArtifact {
+        artifact_type: String,
+        status: String,
+        content: Option<String>,
+        source_document_ids: Option<brz_mysql::Json<Vec<i64>>>,
+    }
+    let artifact: NodeArtifact = state.mysql.fetch_optional(
+        "SELECT artifact_type, status, content, source_document_ids FROM knowledge_artifacts WHERE knowledge_base_id=? AND artifact_id=?",
+        (knowledge_base_id, artifact_id),
+    ).await.map_err(internal)?.ok_or_else(|| not_found("Artifact not found"))?;
+    let invalid = |message| FastApiError::detail(brz_http_server::StatusCode::BAD_REQUEST, message);
+    if artifact.status != "succeeded" || artifact.artifact_type != "mind_map" {
+        return Err(invalid("Interactive mind map is not available"));
+    }
+    let content: serde_json::Value =
+        serde_json::from_str(artifact.content.as_deref().unwrap_or_default())
+            .map_err(|_| invalid("This mind map does not support interactive questions"))?;
+    let nodes = content["nodes"]
+        .as_array()
+        .filter(|nodes| !nodes.is_empty())
+        .ok_or_else(|| invalid("This mind map does not support interactive questions"))?;
+    if !nodes
+        .iter()
+        .any(|node| node["id"].as_str().map(str::trim) == Some(node_id))
+    {
+        return Err(invalid("Mind map node not found"));
+    }
+    let mut sources = artifact
+        .source_document_ids
+        .map_or_else(Vec::new, |ids| ids.0);
+    let available: Vec<(i64,)> = state.mysql.fetch_all(
+        "SELECT id FROM knowledge_documents WHERE kind_id=? AND index_status='success' AND is_active=true AND JSON_CONTAINS(?, CAST(id AS JSON))",
+        (knowledge_base_id, serde_json::to_string(&sources).map_err(internal)?),
+    ).await.map_err(internal)?;
+    let available: std::collections::HashSet<i64> = available.into_iter().map(|(id,)| id).collect();
+    sources.retain(|id| available.contains(id));
+    if sources.is_empty() {
+        return Err(invalid("Mind map source documents are no longer available"));
+    }
+    let document = kb.kinds_json.to_value();
+    let name = match document["spec"]["name"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+    {
+        Some(name) => name.to_owned(),
+        None => {
+            let (name,): (String,) = state
+                .mysql
+                .fetch_one("SELECT name FROM kinds WHERE id=?", (knowledge_base_id,))
+                .await
+                .map_err(internal)?;
+            name
+        }
+    };
+    Ok((name, sources))
+}
+
 /// `ArtifactService.list`: read access, the stored rows, capabilities, and
 /// the document source counts.
 async fn list_artifacts_value<M, R>(

@@ -25,13 +25,13 @@ use crate::state::AppState;
 use brz_json::OpaqueJson;
 
 /// `USER_RUNTIME_CONFIG_KIND`.
-const RUNTIME_CONFIG_KIND: &str = "UserRuntimeConfig";
+pub const RUNTIME_CONFIG_KIND: &str = "UserRuntimeConfig";
 /// `USER_PROXY_CONFIG_KIND`.
-const PROXY_CONFIG_KIND: &str = "UserProxyConfig";
+pub const PROXY_CONFIG_KIND: &str = "UserProxyConfig";
 /// `USER_RUNTIME_CONFIG_NAMESPACE`.
 const CONFIG_NAMESPACE: &str = "default";
 /// `USER_PROXY_CONFIG_NAME`.
-const PROXY_CONFIG_NAME: &str = "default";
+pub const PROXY_CONFIG_NAME: &str = "default";
 /// `_get_encryption_key`'s `GIT_TOKEN_AES_KEY` default.
 const DEFAULT_AES_KEY: &str = "12345678901234567890123456789012";
 /// `cryptography`'s AES block size, also the PKCS#7 block size.
@@ -134,8 +134,21 @@ pub async fn get_execution_config<M: Mysql>(
     let normalized = normalize_runtime(runtime)?;
     let config = fetch_kind(mysql, RUNTIME_CONFIG_KIND, &normalized, user_id).await?;
     let proxy = fetch_kind(mysql, PROXY_CONFIG_KIND, PROXY_CONFIG_NAME, user_id).await?;
+    execution_config_from_documents(&normalized, config.as_ref(), preferences, proxy.as_ref())
+}
+
+/// `get_execution_config` from already-read kind documents: the pool request
+/// path and the heartbeat's transaction-scoped read share this projection so
+/// the status fields and the decrypted proxy URL are derived once.
+pub fn execution_config_from_documents(
+    runtime: &str,
+    config: Option<&KindDocumentRow>,
+    preferences: &str,
+    proxy: Option<&KindDocumentRow>,
+) -> Result<ExecutionRuntimeConfig, FastApiError> {
+    let normalized = normalize_runtime(runtime)?;
     let (status, proxy_url) =
-        build_response_with_proxy_url(&normalized, config.as_ref(), preferences, proxy.as_ref())?;
+        build_response_with_proxy_url(&normalized, config, preferences, proxy)?;
     Ok(ExecutionRuntimeConfig {
         use_user_config: status.use_user_config,
         configured: status.configured,
@@ -162,9 +175,23 @@ fn normalize_runtime(runtime: &str) -> Result<String, FastApiError> {
 
 /// One `kinds` row of a runtime-config lookup; only `kinds_json` is consumed.
 #[derive(Debug, FromMysqlRow)]
-struct KindDocumentRow {
+pub struct KindDocumentRow {
     #[mysql(rename = "kinds_json")]
     kinds_json: Json<OpaqueJson>,
+}
+
+/// Decode a saved auth file for a device sync. A decryption fallback that
+/// returns the input is never sent to the device.
+pub fn auth_file_for_sync(row: &KindDocumentRow) -> Result<Option<String>, FastApiError> {
+    let Some(LooseJson::String(encrypted)) = spec_of(Some(row))
+        .and_then(|spec| spec.auth)
+        .and_then(|auth| auth.encrypted_value)
+        .filter(truthy)
+    else {
+        return Ok(None);
+    };
+    let plain = decrypt_sensitive_data(&encrypted)?;
+    Ok((!plain.is_empty() && plain != encrypted).then_some(plain))
 }
 
 /// `UserRuntimeConfigService._get_kind` / `_get_proxy_kind`: the first active
@@ -185,18 +212,39 @@ async fn fetch_kind<M: Mysql>(
     name: &str,
     user_id: i64,
 ) -> Result<Option<KindDocumentRow>, FastApiError> {
-    let sql = format!(
+    mysql
+        .fetch_optional(kind_lookup_sql(kind, name, user_id), ())
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "runtime-config kind lookup failed");
+            FastApiError::unhandled()
+        })
+}
+
+/// `_get_kind` / `_get_proxy_kind` on a caller-owned transaction, so a
+/// background read keeps the source session's transaction membership.
+pub async fn fetch_kind_in_transaction<T: brz_mysql::MysqlTransaction>(
+    transaction: &mut T,
+    kind: &str,
+    name: &str,
+    user_id: i64,
+) -> brz_mysql::MysqlResult<Option<KindDocumentRow>> {
+    transaction
+        .fetch_optional(kind_lookup_sql(kind, name, user_id), ())
+        .await
+}
+
+/// The `db.query(Kind)` statement: every mapped column with its SQLAlchemy
+/// label, and the filter literals rendered exactly like the source.
+fn kind_lookup_sql(kind: &str, name: &str, user_id: i64) -> String {
+    format!(
         "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = {user_id} \
          AND kinds.kind = {} AND kinds.namespace = {} AND kinds.name = {} \
          AND kinds.is_active IS true \n LIMIT 1",
         quote_literal(kind),
         quote_literal(CONFIG_NAMESPACE),
         quote_literal(name),
-    );
-    mysql.fetch_optional(&sql, ()).await.map_err(|error| {
-        tracing::error!(%error, "runtime-config kind lookup failed");
-        FastApiError::unhandled()
-    })
+    )
 }
 
 /// SQL string literal, escaping like SQLAlchemy's rendering.

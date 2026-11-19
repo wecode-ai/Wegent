@@ -2,49 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::symlink;
 
 struct Fixture {
     binary: String,
     directory: tempfile::TempDir,
+    _catalog_environment: EnvRestore,
     _environment: LaunchEnvironment,
 }
 
 impl Fixture {
     fn new() -> Self {
         let environment = LaunchEnvironment::new();
+        let catalog_environment = EnvRestore::capture("WEGENT_TEST_CODEX_BUNDLED_CATALOG");
+        env::set_var(
+            "WEGENT_TEST_CODEX_BUNDLED_CATALOG",
+            crate::test_env::CODEX_BUNDLED_CATALOG,
+        );
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
-        fs::write(
-            &binary,
-            r#"#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"skills/config/write"'*)
-      printf '%s\n' written > "$CODEX_HOME/skill-written"
-      printf '{"id":%s,"result":{"effectiveEnabled":false}}\n' "$id" ;;
-    *'"method":"config/batchWrite"'*)
-      mode=success
-      if [ -f "$CODEX_HOME/reload-mode" ]; then
-        IFS= read -r mode < "$CODEX_HOME/reload-mode"
-      fi
-      case "$mode" in
-        failure) printf '{"id":%s,"error":{"code":-32603,"message":"skill reload rejected"}}\n' "$id" ;;
-        blocked) ;;
-        *) printf '{"id":%s,"result":{"status":"ok"}}\n' "$id" ;;
-      esac ;;
-  esac
-done
-"#,
-        )
-        .unwrap();
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        // A parallel fork can retain a freshly written script's writer and cause ETXTBSY.
+        let script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex-skill-config.sh");
+        symlink(script, &binary).unwrap();
         Self {
             binary: resolve_codex_binary(&binary.to_string_lossy()),
             directory,
+            _catalog_environment: catalog_environment,
             _environment: environment,
         }
     }
@@ -241,40 +225,6 @@ async fn reload_only_visits_running_processes_in_the_matching_home() {
     );
     assert!(cold.state.lock().await.process.is_none());
     assert!(requests(cold.home.as_deref().unwrap()).is_empty());
-}
-
-#[tokio::test]
-async fn default_clients_keep_the_home_recorded_at_process_start() {
-    let fixture = Fixture::new();
-    let _activation = crate::services::capability_activation::activate().await;
-    let previous = CodexAppServerClient::new(&fixture.binary);
-    previous.ensure_started().await.unwrap();
-    let previous_home = wework_codex_home();
-    let previous_pid = pid(&previous).await;
-    let _restore = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let home = fixture.directory.path().join("new-default-home");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &home);
-    let binary = fixture.directory.path().join("new-codex");
-    fs::copy(&fixture.binary, &binary).unwrap();
-    let current = CodexAppServerClient::new(binary.to_string_lossy().to_string());
-    current.ensure_started().await.unwrap();
-    let current_pid = pid(&current).await;
-
-    assert_eq!(reload_skill_configuration(&home).await.unwrap(), 1);
-
-    assert_eq!(pid(&previous).await, previous_pid);
-    assert_eq!(pid(&current).await, current_pid);
-    assert!(!requests(&previous_home)
-        .iter()
-        .any(|call| call["method"] == "config/batchWrite"));
-    assert_eq!(
-        requests(&home)
-            .iter()
-            .filter(|call| call["method"] == "config/batchWrite")
-            .count(),
-        1
-    );
-    current.restart().await;
 }
 
 #[tokio::test]

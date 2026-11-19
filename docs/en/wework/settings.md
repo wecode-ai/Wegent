@@ -23,6 +23,14 @@ immediately after quick phrases. Hover to see the active mode, or click to choos
 **Full access**. After selecting a project space, the composer chip shows only the board name;
 its hover text still explains that sending creates a task on that board.
 
+<a id="command-approval"></a>
+
+In a Codex conversation, select **Full access** in the permission menu. Choose how later messages handle risky commands in the confirmation dialog. You can change the choice from the permission menu after enabling Full access.
+
+- **Confirm risky commands manually** (default) shows an approval in the conversation.
+- **Review risky commands with AI** lets Codex decide whether to approve.
+- **Run risky commands automatically** opens a confirmation with all three choices. You can change your selection there. Eligible risky commands can run automatically once enabled.
+
 Under **Settings → General → General**, choose the Wework feature mode:
 
 - **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git
@@ -39,31 +47,48 @@ cannot be enabled or disabled separately from the plugin management page.
 <a id="settings-controls"></a>
 
 <!-- ui-source: src/components/settings/GeneralSettingsPage.tsx -->
+
+If General shows a preference loading error, choose Retry at the bottom. With experimental features enabled, a failed Smart app list for Fixed tabs has its own Retry; other general controls remain available. Cloud quota issues do not prevent saving local preferences.
 <!-- ui-source: src/components/settings/RuntimeConcurrencySettings.tsx -->
 
 Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
 
-| Feature                                    | Steps and result                                                                                             | Conditions or limitations                                                                                       |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Mode                                       | Select Focus or Developer mode and confirm                                                                   | Restarts the managed plugin runtime; Focus mode hides Git entries                                               |
-| Interface language                         | Select system language, Chinese or English                                                                   | Changes this device's UI, not task content                                                                      |
-| Message send shortcut                      | Select Enter or Command/Ctrl+Enter                                                                           | Check the option's newline behavior; composition input should not submit prematurely                            |
-| Follow-up behavior                         | Select queue or guide                                                                                        | Queue waits for the current turn; guide sends instructions to it. See [Task controls](./tasks.md#task-controls) |
-| Fixed tabs                                 | Add Tasks, Collaboration or Agent tabs, reorder with up/down, choose the startup item or remove a fixed item | Explicit page links override startup; this replaces the older Default page dropdown                             |
-| Show main window after launch              | Toggle whether startup displays the main window                                                              | Separate from closing the window to the background                                                              |
-| Experimental features                      | Enable, then look for experiment-marked entries                                                              | Does not authorize external accounts or remove OS restrictions                                                  |
-| Import work from other AI apps             | Open import, select a supported source and content, then confirm                                             | Do not share imported credential or session files in chat                                                       |
-| Task, stand-in and agent concurrency       | Select each concurrency limit in the runtime group                                                           | Controls scheduling, not reasoning effort; high limits increase device load                                     |
-| Keep running after closing the main window | Enable to retain background work when closing the window                                                     | Quitting the application stops managed local execution processes                                                |
-| Prevent sleep while tasks are running      | Enable the running-task sleep prevention preference                                                          | Does not allow execution through shutdown or loss of connectivity                                               |
-| Record performance data                    | Enable, reproduce the slowdown, then export diagnostics through Feedback                                     | See sampling and retention rules below                                                                          |
-| Tray display content                       | Select Unread tasks, running tasks, Codex quota and cloud quota separately                                   | Codex quota requires the local subscription; cloud quota labels can be server-defined                           |
-| Use friendly titles                        | Enable and select the task model or a specific model                                                         | Generates titles asynchronously; manual renames are preserved                                                   |
-| Help improve Wework                        | Change the privacy preference and read the collection notice                                                 | Separate from explicitly exporting diagnostic logs                                                              |
-| Popout Window shortcut                     | Record a new key combination or clear the binding                                                            | Opens the Wework popout, not the message-send action                                                            |
-| System drag panel                          | Toggle in the popout group                                                                                   | Availability depends on device and system capabilities                                                          |
+The workbench remains open when the settings file is damaged or unreadable, and the original file is preserved. This does not authorize importing or removing native Codex credentials or replacing the active shortcut with a default. Affected setting changes report a failure and can be retried after repairing the file.
+
+| Feature                                    | Steps and result                                                                                             | Conditions or limitations                                                                                                                           |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mode                                       | Select Focus or Developer mode and confirm                                                                   | Restarts the managed plugin runtime; Focus mode hides Git entries                                                                                   |
+| Interface language                         | Select system language, Chinese or English                                                                   | Changes this device's UI, not task content                                                                                                          |
+| Message send shortcut                      | Select Enter or Command/Ctrl+Enter                                                                           | Check the option's newline behavior; composition input should not submit prematurely                                                                |
+| Follow-up behavior                         | Select queue or guide                                                                                        | Queue waits for the current turn; guide sends instructions to it. See [Task controls](./tasks.md#task-controls)                                     |
+| Fixed tabs                                 | Add Tasks, Collaboration or Agent tabs, reorder with up/down, choose the startup item or remove a fixed item | Explicit page links override startup; this replaces the older Default page dropdown                                                                 |
+| Show main window after launch              | Toggle whether startup displays the main window                                                              | Separate from closing the window to the background                                                                                                  |
+| Experimental features                      | Enable, then look for experiment-marked entries                                                              | Does not authorize external accounts or remove OS restrictions                                                                                      |
+| Collaboration experience preview           | Enable Experimental features, then this switch; add Collaboration exp from Fixed tabs                        | Off by default and saved immediately; disabling retains hidden tabs and data. See [Collaboration experience preview](./collaboration-experience.md) |
+| Import work from other AI apps             | Open import, select a supported source and content, then confirm                                             | Do not share imported credential or session files in chat                                                                                           |
+| Task, stand-in and agent concurrency       | Select each concurrency limit in the runtime group                                                           | Controls scheduling, not reasoning effort; high limits increase device load                                                                         |
+| Keep running after closing the main window | Enable to retain background work when closing the window                                                     | Quitting the application stops managed local execution processes                                                                                    |
+| Prevent sleep while tasks are running      | Enable the running-task sleep prevention preference                                                          | Does not allow execution through shutdown or loss of connectivity                                                                                   |
+| Record performance data                    | Enable, reproduce the slowdown, then export diagnostics through Feedback                                     | See sampling and retention rules below                                                                                                              |
+| Tray display content                       | Select Unread tasks, running tasks, Codex quota and cloud quota separately                                   | Codex quota requires the local subscription; cloud quota labels can be server-defined                                                               |
+| Use friendly titles                        | Enable and select the task model or a specific model                                                         | Generates titles asynchronously; manual renames are preserved                                                                                       |
+| Help improve Wework                        | Change the privacy preference and read the collection notice                                                 | Separate from explicitly exporting diagnostic logs                                                                                                  |
+| Popout Window shortcut                     | Record a new key combination or clear the binding                                                            | Opens the Wework popout, not the message-send action                                                                                                |
+| System drag panel                          | Toggle in the popout group                                                                                   | Availability depends on device and system capabilities                                                                                              |
+
+Refusing data collection on first use or in privacy settings takes effect immediately. Enabling collection requires a successfully saved global preference, and a refusal saved by another window also applies. A failed save does not block the workbench; the next launch uses the saved preference or asks again. A later explicit choice takes precedence, so an older request completing late cannot re-enable collection after refusal.
+
+If saving the first choice fails, a notice at the top of the workbench offers **Retry** while the workbench remains usable. Retry reads the latest settings before saving again. After another window changes the preference, an opt-in based on an older revision is rejected. Refusing collection is allowed even from an older revision.
 
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
+
+### Voice input model
+
+Voice guidance, the model preparation dialog, and the General voice section follow the app's light, dark, or system appearance preference. Changing appearance does not require closing or reopening settings.
+
+<a id="voice-input-model"></a>
+
+Open **bottom-left account menu → Settings → Personal → General**, then find **Voice input** below the basic preferences. This section appears when the official voice plugin has loaded; Experimental features is not required. Choose a recognition model and follow the preparation prompts, then return to the task composer microphone to record. Opening settings does not download a model or start recording. See [Voice input](./tasks.md#voice-input) for model choices and transcription controls.
 
 ### System drag panel and stash
 
@@ -95,6 +120,8 @@ and per-process resource changes around that time.
 
 <!-- ui-source: src/components/settings/ArchivedConversationsSettingsPage.tsx -->
 <!-- ui-source: src/components/settings/WorktreesSettingsPage.tsx -->
+
+Local and remote archives load independently, so records appear as each source returns, with a loading indicator for pending sources. If one source fails, available records remain visible and you can retry. Delete all and delete project become available after the complete list loads successfully; individual records remain actionable. Switching API sources closes the previous deletion confirmation. If the device refuses a restore or deletion, the record remains visible with an error; deletion can be retried in the confirmation dialog.
 
 1. Open **Settings → Archived → Archived tasks** and search for a conversation by title.
 2. Restore it to continue, or delete it after reviewing the confirmation. Deletion, unlike archival, starts device-side cleanup.
@@ -137,6 +164,8 @@ The status badge shows the saved mode, while **Current connection** shows the co
 that mode. After saving a change, restart Codex when prompted. Running tasks are not interrupted
 immediately; new chats use the new network settings. Local device proxy settings stay on the current
 device and are not synced to cloud.
+
+Local and cloud proxies load independently; local settings stay editable when cloud reads are slow or fail. Retry beside a failed local connection resolution only rereads it, without saving or restarting Codex. Failed saves retain the input and saved configuration. Cloud account changes retain local drafts while resetting cloud input and results. Saving new local proxy settings during a restart keeps the restart prompt visible after the earlier restart completes.
 
 ## Node.js execution environment
 
@@ -222,6 +251,8 @@ harness. Under **Settings → Coding → Coding tools** (experimental), you can:
 - Choose Claude Code's default, plan, or bypass permission mode. Bypass mode passes
   `--dangerously-skip-permissions` and should be used only in a controlled environment where its
   risks are understood.
+
+Changes save automatically. Retry beside a detection error to detect again. If saving fails, the draft remains; use Retry beside the save error or edit again to save. Failed writes do not repeat automatically. Edits made during a write are retained when its earlier result arrives.
 
 After entering a task in a local project or development worktree, open the runtime selector in
 the composer to launch a harness. Wework passes the complete prompt according to the selected
@@ -322,9 +353,9 @@ board items receive the updated title.
 
 ## Custom Codex models
 
-In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, GLM, and MiniMax. After entering the corresponding platform API key, Wework discovers available models through the provider's model-list endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. MiniMax has separate **China mainland** and **Global** entries, and the selected region must match the platform that issued the Token Plan key. Both entries use the recommended Anthropic-compatible API and the `X-Api-Key` header for model discovery. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
+In **Settings → Models**, click **Add models**, choose a provider, and configure its connection and models in the same form. Save once to make the models available in tasks. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, GLM, and MiniMax. After entering the corresponding platform API key, Wework discovers available models through the provider's model-list endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. MiniMax has separate **China mainland** and **Global** entries, and the selected region must match the platform that issued the Token Plan key. Both entries use the recommended Anthropic-compatible API and the `X-Api-Key` header for model discovery. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
 
-One provider configuration can contain multiple models. Each model item has its own model selection, display name, vision proxy, enabled state, and connection test, while all items share the provider-level API key, group, and technical configuration. Clicking **Add model** automatically refreshes the provider catalog and adds an item, so **Load models** is needed only for a manual refresh. A model item's **Test** action tests only that selected model. After saving, every item appears as an independent choice in the model picker.
+One provider configuration can contain multiple models. Each model item has its own model selection, display name, vision proxy, enabled state, and connection test, while all items share the provider-level API key, group, and technical configuration. Use **Fetch models** to load candidates from the current connection, then select models, or use **Add model manually** to enter an upstream model ID. Discovery does not save the form. A model item's **Test** action tests only that selected model. After saving, every item appears as an independent choice in the model picker.
 
 Local custom APIs and cloud Responses models default to ordinary function-tool conversion, independently of provider profile IDs or model names. Existing configurations without tool capability fields use the same defaults. Native custom tools, namespaces/tool search, or full passthrough require explicit selection.
 
@@ -389,19 +420,29 @@ Open **Settings → Personal → Context**:
 | Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
 | Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
 
+<a id="hooks-controls"></a>
+
 ## Quick phrases, Runtime and Hooks
 
 <!-- ui-source: src/components/settings/QuickPhrasesSettingsPage.tsx -->
 <!-- ui-source: src/components/settings/RuntimeSettingsPage.tsx -->
 <!-- ui-source: src/features/hooks/HooksSettingsPage.tsx -->
 
-| Entry                                | Features and steps                                                                                                              | Limits                                                                      |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                       | Inserting a phrase does not execute a task                                  |
-| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action | A reusable execution configuration, not a Node.js version                   |
-| Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, tool matcher, command, Windows command, timeout, asynchronous execution and status message; save  | Runs external commands; only configure trusted commands                     |
-| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                   | Fix invalid configuration or missing commands first                         |
-| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                             | Testing actually executes the command, rather than merely validating syntax |
+| Entry                                | Features and steps                                                                                                               | Limits                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                        | Inserting a phrase does not execute a task                                  |
+| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action  | A reusable execution configuration, not a Node.js version                   |
+| Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, event, matcher, command, Windows command, timeout, asynchronous execution and status message; save | Lifecycle events always run asynchronously; configure trusted commands      |
+| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                    | Fix invalid configuration or missing commands first                         |
+| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                              | Testing actually executes the command, rather than merely validating syntax |
+
+Runtime profiles, project defaults, and devices load independently; models load when you open the create dialog. Use Retry beside a failed section to reload that data while retaining other sections and form drafts. A successful save closes the create dialog; if the following list refresh fails, retrying only reloads data and does not create another Runtime.
+
+Choose `PostToolUse`, `TurnStarted`, `TurnCompleted` or `ExecutionCompleted`. Tool events match tool names; lifecycle events match status, with `.*` accepting every status. Lifecycle commands always run in the background without making the main agent wait.
+
+To record Git changes, import `executor/examples/hooks/turn-diff-logger`. Logs default to `~/.wegent/logs/turn-diff/records/<event-digest>/`: `record.json` contains metadata and checksums, `files.jsonl` contains file statistics, and `diff.patch` contains the complete difference. Change the destination in the plugin's `config.json`; it must be outside the repository. The test button validates lifecycle input without creating change logs.
+
+The script owns all Git capture. Its initial snapshot is an internal comparison baseline and never produces a full repository log. Asynchronous snapshot boundaries can miss early writes or combine adjacent turns. Child agents and Shell writes in the same workspace are included. Non-Git directories produce no capture logs.
 
 ## Appshots and computer use
 
@@ -417,6 +458,8 @@ Open **Settings → Personal → Context**:
 | Settings → Integrations → Computer use → Enable computer use  | Enable and prepare the OS permissions requested by the page                         | Support depends on the platform status shown                            |
 | Computer use → Accessibility access / Screen recording access | Open the matching OS settings, authorize and return                                 | Changing chat permission mode cannot replace OS authorization           |
 | Computer use → Action approval                                | Read the confirmation policy for write operations                                   | A policy display, not a bypass switch                                   |
+
+After enabling computer use and granting OS permissions, continue the original conversation. Computer tools load when a conversation starts or resumes, without waiting for other tasks to finish or restarting the shared Codex process. Disabling the feature stops the bridge and revokes access immediately; after re-enabling, existing computer tools use the new bridge authorization on their next call. An active turn does not acquire new tools midway through execution.
 
 ## Narrow-window settings
 

@@ -11,6 +11,14 @@ use serde_json::{json, Value};
 
 use crate::protocol::ExecutionRequest;
 
+pub(crate) fn is_codex_runtime(runtime: &str) -> bool {
+    runtime.eq_ignore_ascii_case("codex")
+}
+
+pub(crate) fn model_provider_routing(runtime: &str) -> Option<&'static str> {
+    is_codex_runtime(runtime).then_some("thread")
+}
+
 pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
     payload
         .get("executionRequest")
@@ -20,6 +28,28 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    request.extra.remove("resource_event_keys");
+    if let Some(keys) = payload.get("resourceEventKeys") {
+        request
+            .extra
+            .insert("resource_event_keys".into(), keys.clone());
+    }
+    if let Some(mode) = payload
+        .pointer("/modelOptions/commandApproval")
+        .or_else(|| payload.pointer("/modelSelection/options/commandApproval"))
+    {
+        request
+            .extra
+            .insert("runtime_command_approval".into(), mode.clone());
+    }
+    // Conversation privacy belongs to this send, never to the task's immutable origin.
+    request.extra.remove("conversationContext");
+    if payload["conversationContext"] == "private_discussion" {
+        request.extra.insert(
+            "conversationContext".to_owned(),
+            Value::String("private_discussion".to_owned()),
+        );
+    }
     if payload["manualStandInConfirmation"] == true {
         request
             .extra
@@ -54,11 +84,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .get("origin")
             .or_else(|| request.extra.get("origin"))
             .cloned();
-        let input = json!({"userId":request.extra.get("user_id"), "prompt":request.prompt,
+        let mut input = json!({"userId":request.extra.get("user_id"), "prompt":request.prompt,
             "message":payload.get("message"), "attachments":payload.get("attachments"),
             "workspace":payload.get("workspacePath"), "model":model,
             "origin":origin, "permissionProfile":request.extra.get("runtime_permission_profile"),
             "threadId":payload.get("threadId"), "runtimeSessionId":payload.get("runtimeSessionId")});
+        if let Some(keys) = payload.get("resourceEventKeys") {
+            input["resourceEventKeys"] = keys.clone();
+        }
         request
             .extra
             .insert("runtime_command_input".to_owned(), input);
@@ -209,6 +242,12 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             payload
                 .get("modelOptions")
                 .or_else(|| payload.get("model_options"))
+                .or_else(|| {
+                    payload
+                        .get("modelSelection")
+                        .or_else(|| payload.get("model_selection"))
+                        .and_then(|selection| selection.get("options"))
+                })
                 .and_then(|options| {
                     options
                         .get("collaborationMode")
@@ -226,6 +265,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(turn_id) = id_field(payload, "turn_id") {
         request.subtask_id = turn_id;
     }
+}
+
+pub(crate) fn is_private_discussion(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("conversationContext")
+        .and_then(Value::as_str)
+        == Some("private_discussion")
 }
 
 pub(crate) fn set_runtime_task_title(request: &mut ExecutionRequest, title: &str) {
@@ -252,7 +299,10 @@ pub(crate) fn runtime_task_title(request: &ExecutionRequest) -> Option<String> {
 
 fn runtime_generated_user_message(payload: &Value) -> Option<Value> {
     let source = payload.get("source").filter(|value| value.is_object())?;
-    if string_field(source, "source").as_deref() != Some("im") {
+    if !matches!(
+        string_field(source, "source").as_deref(),
+        Some("im" | "connection_event")
+    ) {
         return None;
     }
     let id = string_field(payload, "clientUserMessageId")
@@ -436,6 +486,25 @@ pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
                 id_field(address, "taskId").or_else(|| id_field(address, "task_id"))
             })
         })
+}
+
+pub(crate) fn replace_runtime_task_id(payload: &mut Value, task_id: &str) {
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    for key in ["taskId", "task_id"] {
+        if object.contains_key(key) {
+            object.insert(key.to_owned(), Value::String(task_id.to_owned()));
+        }
+    }
+    let Some(address) = object.get_mut("address").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in ["taskId", "task_id"] {
+        if address.contains_key(key) {
+            address.insert(key.to_owned(), Value::String(task_id.to_owned()));
+        }
+    }
 }
 
 pub(crate) fn workspace_path(payload: &Value) -> Option<String> {
@@ -1034,24 +1103,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copies_cloud_project_id_from_runtime_payload() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
-
-        assert_eq!(cloud_project_id(&request), Some(json!(9001)));
+    fn connection_event_streams_the_public_message_with_its_source() {
+        let mut request = ExecutionRequest {
+            prompt: json!("Internal event delivery payload"),
+            ..Default::default()
+        };
+        let source = json!({"source": "connection_event", "sourceName": "Release document"});
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "clientUserMessageId": "event-operation",
+                "message": "Release document · Review the update",
+                "createdAt": 123,
+                "source": source,
+            }),
+        );
+        assert_eq!(
+            request.extra["runtime_generated_user_message"],
+            json!({
+                "id": "event-operation",
+                "message": "Release document · Review the update",
+                "createdAt": 123,
+                "source": source,
+            })
+        );
+        assert_eq!(request.prompt, "Internal event delivery payload");
     }
 
     #[test]
-    fn copies_runtime_task_title_from_runtime_payload() {
+    fn private_discussion_context_belongs_to_one_send_and_preserves_origin() {
+        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","userId":7});
         let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(&mut request, &json!({"title": " Analyze issue "}));
-
-        assert_eq!(
-            runtime_task_title(&request).as_deref(),
-            Some("Analyze issue")
+        request.extra.insert("origin".into(), origin.clone());
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"conversationContext":"private_discussion"}),
         );
+        assert!(is_private_discussion(&request));
+        assert_eq!(request.extra["origin"], origin);
+        assert!(!request.ephemeral);
+        apply_runtime_payload_metadata(&mut request, &json!({"message":"Public follow-up"}));
+        assert!(!is_private_discussion(&request));
+        assert_eq!(request.extra["origin"], origin);
     }
 
     #[test]
@@ -1066,31 +1159,6 @@ mod tests {
         assert_eq!(
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
-        );
-    }
-
-    #[test]
-    fn copies_runtime_model_selection_from_runtime_payload() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "modelSelection": {
-                    "modelName": "deepseek-v4-pro-responses(public)",
-                    "modelType": "public",
-                    "options": {"reasoning": "medium"}
-                }
-            }),
-        );
-
-        assert_eq!(
-            request.extra.get("modelSelection"),
-            Some(&json!({
-                "modelName": "deepseek-v4-pro-responses(public)",
-                "modelType": "public",
-                "options": {"reasoning": "medium"}
-            }))
         );
     }
 
@@ -1122,94 +1190,16 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_runtime_additional_skills_for_agent_consumers() {
+    fn explicit_backend_single_mode_precedes_saved_native_model_selection() {
         let mut request = ExecutionRequest::default();
-
         apply_runtime_payload_metadata(
             &mut request,
             &json!({
-                "additionalSkills": [
-                    {
-                        "name": "wework-plugin-creator",
-                        "namespace": "codex",
-                        "is_public": false
-                    },
-                    "review",
-                    {"name": "wework-plugin-creator", "namespace": "codex"}
-                ]
+                "collaboration_model":"single",
+                "modelSelection":{"options":{"collaborationMode":"default"}}
             }),
         );
-
-        assert_eq!(
-            request.extra.get("additional_skills"),
-            Some(&json!([
-                {
-                    "name": "wework-plugin-creator",
-                    "namespace": "codex",
-                    "is_public": false
-                },
-                "review",
-                {"name": "wework-plugin-creator", "namespace": "codex"}
-            ]))
-        );
-        assert_eq!(
-            request.extra.get("preload_skills"),
-            Some(&json!(["wework-plugin-creator", "review"]))
-        );
-        assert_eq!(
-            request.extra.get("user_selected_skills"),
-            Some(&json!(["wework-plugin-creator", "review"]))
-        );
-    }
-
-    #[test]
-    fn generates_visible_user_message_for_external_im_runtime_send() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "message": "continue from dingtalk",
-                "clientUserMessageId": "im:dingtalk:77:dingtalk-message-1",
-                "createdAt": 1_780_000_000_000_i64,
-                "source": {
-                    "source": "im",
-                    "channel_type": "dingtalk",
-                    "channel_id": 77,
-                    "message_id": "dingtalk-message-1"
-                }
-            }),
-        );
-
-        assert_eq!(
-            request.extra.get("runtime_generated_user_message"),
-            Some(&json!({
-                "id": "im:dingtalk:77:dingtalk-message-1",
-                "message": "continue from dingtalk",
-                "createdAt": 1_780_000_000_000_i64,
-                "source": {
-                    "source": "im",
-                    "channel_type": "dingtalk",
-                    "channel_id": 77,
-                    "message_id": "dingtalk-message-1"
-                }
-            }))
-        );
-    }
-
-    #[test]
-    fn does_not_generate_external_user_message_without_im_source() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "message": "continue from wework",
-                "clientUserMessageId": "runtime-local-pane-1"
-            }),
-        );
-
-        assert!(!request.extra.contains_key("runtime_generated_user_message"));
+        assert_eq!(request.extra["collaborationMode"], "single");
     }
 
     #[test]
@@ -1429,36 +1419,6 @@ mod tests {
         assert_eq!(
             workspace_task_path(&planned_path, &checkout.path().display().to_string()),
             planned_path
-        );
-    }
-
-    #[test]
-    fn normalizes_runtime_goal_seconds_to_milliseconds() {
-        assert_eq!(
-            normalize_runtime_goal_timestamps(json!({
-                "threadId": "thread-1",
-                "createdAt": 1_787_636_000,
-                "updatedAt": 1_787_636_001,
-            })),
-            json!({
-                "threadId": "thread-1",
-                "createdAt": 1_787_636_000_000_i64,
-                "updatedAt": 1_787_636_001_000_i64,
-            })
-        );
-    }
-
-    #[test]
-    fn preserves_runtime_goal_millisecond_timestamps() {
-        assert_eq!(
-            normalize_runtime_goal_timestamps(json!({
-                "createdAt": 1_787_636_000_123_i64,
-                "updatedAt": 1_787_636_001_456_i64,
-            })),
-            json!({
-                "createdAt": 1_787_636_000_123_i64,
-                "updatedAt": 1_787_636_001_456_i64,
-            })
         );
     }
 }

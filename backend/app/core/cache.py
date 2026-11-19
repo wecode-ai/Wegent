@@ -5,7 +5,7 @@
 import asyncio
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from threading import Lock
 from typing import Any, Dict, List, Optional
@@ -26,6 +26,13 @@ if value then
     redis.call('DEL', KEYS[1])
 end
 return value
+"""
+
+
+REPLACE_UNCHANGED_SCRIPT = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
 """
 
 
@@ -301,6 +308,33 @@ class RedisCache:
                 ok = await client.set(key, payload, ex=expire)
         return bool(ok)
 
+    async def update_json_if_present(
+        self,
+        key: str,
+        update: Callable[[dict[str, Any]], bool],
+        *,
+        expire: int,
+    ) -> bool:
+        """Update the current JSON object without replacing a newer value."""
+        async with self._client_context() as client:
+            for _ in range(3):
+                current = await client.get(key)
+                if current is None:
+                    return False
+                document = self._decode(current)
+                if not isinstance(document, dict) or not update(document):
+                    return False
+                if await client.eval(
+                    REPLACE_UNCHANGED_SCRIPT,
+                    1,
+                    key,
+                    current,
+                    orjson.dumps(document),
+                    expire,
+                ):
+                    return True
+        return False
+
     async def setnx(
         self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME
     ) -> bool:
@@ -327,6 +361,19 @@ class RedisCache:
         async with self._client_context() as client:
             deleted = await client.delete(key)
         return deleted > 0
+
+    async def expire(self, key: str, expire: int) -> bool:
+        """Refresh the TTL of an existing key without rewriting its value."""
+        try:
+            return await self.expire_or_raise(key, expire)
+        except Exception as e:
+            logger.error("Error expiring cache key %s: %s", key, e)
+            return False
+
+    async def expire_or_raise(self, key: str, expire: int) -> bool:
+        """Refresh a key's TTL without hiding Redis failures."""
+        async with self._client_context() as client:
+            return bool(await client.expire(key, expire))
 
     async def pop(self, key: str) -> Optional[Any]:
         """Atomically return and delete one cache value."""

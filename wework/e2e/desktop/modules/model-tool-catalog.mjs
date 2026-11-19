@@ -3,11 +3,9 @@ import { wireDeclarations } from './model-wire-contract.mjs'
 
 export function programmaticExecTools(request) {
   const declarations = new Map()
-  // Lite history is incremental; current top-level declarations take precedence.
-  for (const tool of [
-    ...wireDeclarations({ input: request.input }, 'responses'),
-    ...wireDeclarations({ tools: request.tools }, 'responses'),
-  ])
+  // Current declarations are authoritative; only Lite reconstructs its incremental history.
+  const catalog = request.tools === undefined ? { input: request.input } : { tools: request.tools }
+  for (const tool of wireDeclarations(catalog, 'responses'))
     declarations.set(JSON.stringify([tool.namespace ?? null, tool.name]), tool)
   return [...declarations.values()].filter(
     tool =>
@@ -41,14 +39,30 @@ export function programmaticInput(name, args) {
   ].join('\n')
 }
 
-export function discoverySelection(request, query) {
+export function discoverySelection(request, query, qualifiedName) {
   const entries = programmaticExecTools(request)
-  assert.equal(entries.length, 1)
+  assert.equal(
+    entries.length,
+    1,
+    `Expected exactly one native Code Mode discovery declaration: ${JSON.stringify({
+      current: wireDeclarations({ tools: request.tools }, 'responses').map(tool => ({
+        name: tool.name,
+        namespace: tool.namespace,
+        type: tool.type,
+      })),
+      historical: wireDeclarations({ input: request.input }, 'responses').map(tool => ({
+        name: tool.name,
+        namespace: tool.namespace,
+        type: tool.type,
+      })),
+    })}`
+  )
   const input = [
     `const query = ${JSON.stringify(query.toLowerCase())}`,
+    `const qualifiedName = ${JSON.stringify(qualifiedName?.replace(/^mcp__/, '') ?? null)}`,
     'const words = query.split(/[^a-z0-9_]+/).filter(Boolean)',
-    'const matches = ALL_TOOLS.filter(tool => { const text = (tool.name + " " + tool.description).toLowerCase(); return words.every(word => text.includes(word)) || words.some(word => word.includes("_") && tool.name.endsWith("__" + word)) })',
-    'if (!matches.length || matches.length > 8) throw new Error("Discovery must select between one and eight real native capabilities")',
+    'const matches = ALL_TOOLS.filter(tool => { if (qualifiedName) return tool.name.replace(/^mcp__/, "") === qualifiedName; const text = (tool.name + " " + tool.description).toLowerCase(); return words.every(word => text.includes(word)) || words.some(word => word.includes("_") && tool.name.endsWith("__" + word)) })',
+    'if (qualifiedName ? matches.length !== 1 : !matches.length || matches.length > 8) throw new Error("Native discovery requires " + (qualifiedName ? "one exact capability" : "between one and eight capabilities") + ": " + JSON.stringify({ query, qualifiedName, matchedNames: matches.map(tool => tool.name), availableNames: ALL_TOOLS.map(tool => tool.name) }))',
     'text({ tools: matches })',
   ].join('\n')
   return { name: entries[0].name, codeMode: { ...entries[0], input } }

@@ -23,10 +23,23 @@ impl RuntimeWorkRpcHandler {
         let Some(quoted) = event["message"]["quotedMessageId"].as_str() else {
             return Ok(None);
         };
-        Ok(store
+        let target = store
             .known_stand_in_message(user, required(role, "id")?, &event["source"], quoted)
             .map_err(settings_error)?
-            .and_then(|message| message["workId"].as_str().map(str::to_owned)))
+            .and_then(|message| message["workId"].as_str().map(str::to_owned));
+        if target
+            .as_deref()
+            .is_some_and(|id| self.connection_session_archived(id))
+        {
+            return self.connection_session_target(
+                store,
+                user,
+                role,
+                &event["source"],
+                &event["message"],
+            );
+        }
+        Ok(target)
     }
 
     pub(in crate::runtime_work::handler) fn connection_session_target(
@@ -38,14 +51,19 @@ impl RuntimeWorkRpcHandler {
         message: &Value,
     ) -> Result<Option<String>, AppIpcError> {
         let role_id = required(role, "id")?;
-        // Redelivery and explicit replies retain their original conversation.
+        // Redelivery retains its original conversation; new replies cannot reopen archives.
         let known = store
             .known_stand_in_event_message(user, role_id, source, message)
             .map_err(settings_error)?;
         let known = match (known, message["quotedMessageId"].as_str()) {
             (None, Some(quoted)) => store
                 .known_stand_in_message(user, role_id, source, quoted)
-                .map_err(settings_error)?,
+                .map_err(settings_error)?
+                .filter(|known| {
+                    !known["workId"]
+                        .as_str()
+                        .is_some_and(|id| self.connection_session_archived(id))
+                }),
             (known, _) => known,
         };
         // Provider revisions belong to the same work even with independent events.
@@ -74,10 +92,24 @@ impl RuntimeWorkRpcHandler {
             source["kind"],
             source["id"]
         ]);
-        Ok(Some(format!(
+        let mut target = format!(
             "stand-in-work-source-{}",
             LocalTaskStore::coordination_event_version(&identity)
-        )))
+        );
+        while self.connection_session_archived(&target) {
+            target = format!(
+                "stand-in-work-source-{}",
+                LocalTaskStore::coordination_event_version(&json!([identity, target]))
+            );
+        }
+        Ok(Some(target))
+    }
+
+    fn connection_session_archived(&self, id: &str) -> bool {
+        self.store.is_deleted_archived_task_id(id)
+            || self
+                .local_task_link(id)
+                .is_some_and(|link| link.status == "archived")
     }
 
     pub(super) fn validate_connection_session_target(
@@ -278,6 +310,108 @@ mod tests {
 
     fn message(id: &str) -> Value {
         json!({"id":id,"text":"Incoming work","at":chrono::Utc::now().to_rfc3339()})
+    }
+
+    #[tokio::test]
+    async fn archived_sources_roll_over_and_reuse_the_new_work_without_replaying_history() {
+        for immediate in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (handler, store, role, source) = fixture(root.path(), immediate, "reuse");
+            let mut previous = None;
+            for generation in 0..3 {
+                let mut incoming = message(&format!("first-{generation}"));
+                if generation > 0 {
+                    incoming["quotedMessageId"] = json!(format!("first-{}", generation - 1));
+                }
+                let target = handler
+                    .connection_session_target(&store, 7, &role, &source, &incoming)
+                    .unwrap()
+                    .unwrap();
+                assert_ne!(Some(&target), previous.as_ref());
+                let event = json!({"kind":"connection","source":source,"message":incoming});
+                let binding = handler
+                    .connection_binding_target(&store, 7, &role, &event, immediate)
+                    .unwrap();
+                if immediate || generation > 0 {
+                    assert_eq!(binding.as_deref(), Some(target.as_str()));
+                }
+                handler
+                    .collect_connection_message(&store, 7, &role, &source, &incoming)
+                    .await
+                    .unwrap();
+                handler
+                    .collect_connection_message(
+                        &store,
+                        7,
+                        &role,
+                        &source,
+                        &message(&format!("followup-{generation}")),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(store.stand_in_messages(7, &target).unwrap().len(), 2);
+                handler.upsert_local_task(RuntimeTaskLink {
+                    local_task_id: target.clone(),
+                    status: "archived".into(),
+                    ..Default::default()
+                });
+                // A repeated delivery still belongs to the archived original work.
+                assert_eq!(
+                    handler
+                        .connection_session_target(&store, 7, &role, &source, &incoming)
+                        .unwrap(),
+                    Some(target.clone())
+                );
+                previous = Some(target);
+            }
+            let (restarted, _, _, _) = fixture(root.path(), immediate, "reuse");
+            let target = restarted
+                .connection_session_target(&store, 7, &role, &source, &message("after-restart"))
+                .unwrap()
+                .unwrap();
+            assert_ne!(Some(&target), previous.as_ref());
+            for work in store.list_stand_in_work(7, None).unwrap() {
+                let id = work["id"].as_str().unwrap();
+                assert_eq!(restarted.local_task_link(id).unwrap().status, "archived");
+                assert_eq!(store.stand_in_messages(7, id).unwrap().len(), 2);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn independent_replies_to_archives_create_new_work() {
+        let root = tempfile::tempdir().unwrap();
+        let (handler, store, role, source) = fixture(root.path(), false, "independent");
+        handler
+            .collect_connection_message(&store, 7, &role, &source, &message("first"))
+            .await
+            .unwrap();
+        let work = store.list_stand_in_work(7, None).unwrap().remove(0);
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: work["id"].as_str().unwrap().into(),
+            status: "archived".into(),
+            ..Default::default()
+        });
+        let mut reply = message("reply");
+        reply["quotedMessageId"] = json!("first");
+        assert_eq!(
+            handler
+                .connection_session_target(&store, 7, &role, &source, &reply)
+                .unwrap(),
+            None
+        );
+        let event = json!({"kind":"connection","source":source,"message":reply});
+        assert_eq!(
+            handler
+                .connection_binding_target(&store, 7, &role, &event, false)
+                .unwrap(),
+            None
+        );
+        handler
+            .collect_connection_message(&store, 7, &role, &source, &reply)
+            .await
+            .unwrap();
+        assert_eq!(store.list_stand_in_work(7, None).unwrap().len(), 2);
     }
 
     #[test]

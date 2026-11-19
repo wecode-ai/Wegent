@@ -18,8 +18,10 @@ from app.models.kind import Kind
 from app.services.execution.team_readiness import (
     validate_team_execution_readiness,
 )
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.project_event_sources import supported_event_type
 from app.services.share import team_share_service
+from app.utils.schedule_time import next_cron_datetime
 
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled", "skipped"}
 ACTIVE_RUN_STATUSES = {
@@ -76,7 +78,12 @@ def status_automation_target(context: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def next_run(expression: str, timezone_name: str, after: datetime) -> datetime:
+def next_run(
+    expression: str,
+    timezone_name: str,
+    after: datetime,
+    workday_only: bool = False,
+) -> datetime:
     try:
         tz = ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError as exc:
@@ -87,9 +94,28 @@ def next_run(expression: str, timezone_name: str, after: datetime) -> datetime:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid cron expression"
         )
-    aware = after.replace(tzinfo=timezone.utc).astimezone(tz)
-    result = croniter(expression, aware).get_next(datetime)
+    aware = (
+        after.replace(tzinfo=timezone.utc) if after.tzinfo is None else after
+    ).astimezone(tz)
+    from shared.utils.workday import WorkdayCalendarError
+
+    try:
+        result = next_cron_datetime(expression, aware, workday_only)
+    except WorkdayCalendarError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     return result.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def permits_scheduled_run(rule_metadata: dict, trigger: str, at: datetime) -> bool:
+    """Keep manual and event work independent from a scheduled workday filter."""
+    if trigger != "scheduled" or not rule_metadata.get("workday_only", False):
+        return True
+    from shared.utils.workday import WorkdayCalendarError, is_china_workday
+
+    try:
+        return is_china_workday(at)
+    except WorkdayCalendarError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
 
 def integer(value: object) -> int | None:
@@ -118,6 +144,7 @@ def project_agent(
     )
 
 
+@execution_resource_scope()
 def wegent_team(
     db: Session,
     user_id: int,

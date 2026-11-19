@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  clearMemberResultsForEmptyQuery,
-  runActiveMemberSearch,
-} from '../project-manage/memberSearch'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
@@ -29,8 +26,8 @@ const copy = {
     developer: '成员',
     viewer: '只读成员',
     reporter: '参与者',
-    noMembers: '空间中还没有成员',
-    memberHint: '项目默认继承空间成员；受限项目仅继承空间管理员。',
+    noMembers: '分组中还没有成员',
+    memberHint: '项目默认继承分组成员；受限项目仅继承分组管理员。',
     operationFailed: '操作失败，请稍后重试',
   },
   en: {
@@ -48,7 +45,7 @@ const copy = {
     reporter: 'Reporter',
     noMembers: 'No members in this workspace',
     memberHint:
-      'Projects inherit space members. Restricted projects inherit only space administrators.',
+      'Projects inherit group members. Restricted projects inherit only group administrators.',
     operationFailed: 'Operation failed. Please try again.',
   },
 } as const
@@ -82,31 +79,28 @@ function MemberInviteDialog({
   onClose(): void
 }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<CollaborationUser[]>([])
   const [role, setRole] = useState<MemberRole>('Developer')
-  const [error, setError] = useState<string | null>(null)
+  const [operationError, setError] = useState<string | null>(null)
   const [savingUserId, setSavingUserId] = useState<number | null>(null)
-  const searchVersion = useRef(0)
   const existingUserIds = useMemo(() => new Set(members.map(member => member.user_id)), [members])
 
-  useEffect(() => {
-    const version = ++searchVersion.current
-    if (clearMemberResultsForEmptyQuery(query, setResults)) return
-    const timeout = window.setTimeout(() => {
-      void runActiveMemberSearch({
-        query,
-        existingUserIds,
-        search: async value => ({
-          users: await commands.searchUsers(value),
-        }),
-        userId: user => user.id,
-        isActive: () => searchVersion.current === version,
-        onResults: setResults,
-        onError: () => setError(messages.operationFailed),
-      })
-    }, 180)
-    return () => window.clearTimeout(timeout)
-  }, [commands, existingUserIds, messages.operationFailed, query])
+  const searchResource = useMemo(
+    () =>
+      createAsyncResource<CollaborationUser[]>(
+        'workspace-member-search',
+        () => commands.searchUsers(query),
+        { delayMs: 180 }
+      ),
+    [commands, query]
+  )
+  const searchSnapshot = useSyncExternalStore(
+    query.trim() ? searchResource.subscribe : subscribeIdleResource,
+    searchResource.getSnapshot,
+    searchResource.getSnapshot
+  )
+  const results = (searchSnapshot.data ?? []).filter(user => !existingUserIds.has(user.id))
+  const error =
+    operationError ?? (searchSnapshot.status === 'error' ? messages.operationFailed : null)
 
   return (
     <div className="collaboration-dialog-backdrop">
@@ -197,7 +191,7 @@ export function WorkspaceMembersConfiguration({
   commands: WorkspaceResourceCommands
 }) {
   const messages = copy[locale]
-  const [dialogOpen, setDialogOpen] = useState(false)
+  const [inviteDialog, setInviteDialog] = useState<symbol | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingUserId, setPendingUserId] = useState<number | null>(null)
   const [transferUserId, setTransferUserId] = useState('')
@@ -210,7 +204,7 @@ export function WorkspaceMembersConfiguration({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="heading-base text-text-primary">
-                {locale === 'zh-CN' ? '空间成员' : 'Space members'}
+                {locale === 'zh-CN' ? '分组成员' : 'Group members'}
               </h2>
               <span className="rounded-md bg-surface px-2 py-0.5 text-sm text-text-muted">
                 {members.length}
@@ -223,7 +217,9 @@ export function WorkspaceMembersConfiguration({
               type="button"
               className="collaboration-primary-button"
               data-testid="collaboration-workspace-member-invite"
-              onClick={() => setDialogOpen(true)}
+              onClick={() =>
+                setInviteDialog(current => current ?? Symbol('workspace-member-invite'))
+              }
             >
               ＋ {messages.inviteMember}
             </button>
@@ -248,8 +244,8 @@ export function WorkspaceMembersConfiguration({
           >
             <label className="flex flex-wrap items-center gap-3">
               {locale === 'zh-CN'
-                ? '转交空间所有权（你将保留管理员权限）'
-                : 'Transfer space ownership (you remain an administrator)'}
+                ? '转交分组所有权（你将保留管理员权限）'
+                : 'Transfer group ownership (you remain an administrator)'}
               <select
                 className="min-h-11 rounded-md border border-border bg-base px-3 md:min-h-8"
                 data-testid="collaboration-workspace-transfer-user"
@@ -353,12 +349,12 @@ export function WorkspaceMembersConfiguration({
           <div className="collaboration-resource-empty">{messages.noMembers}</div>
         )}
       </section>
-      {dialogOpen ? (
+      {inviteDialog ? (
         <MemberInviteDialog
           members={members}
           messages={messages}
           commands={commands}
-          onClose={() => setDialogOpen(false)}
+          onClose={() => setInviteDialog(current => (current === inviteDialog ? null : current))}
         />
       ) : null}
     </>

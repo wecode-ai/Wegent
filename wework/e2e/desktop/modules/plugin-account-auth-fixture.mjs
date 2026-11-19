@@ -32,6 +32,7 @@ export async function createAccountAuthFixture({
   oauthSecret,
   transferSecret,
   recordPythonRuntime = false,
+  accountConnectorSlugs,
 }) {
   await mkdir(join(fixtureRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(fixtureRoot, 'scripts'), { recursive: true })
@@ -189,7 +190,12 @@ print(json.dumps(result))
             exportMode: 'exclusive',
           },
         },
-      ],
+      ].filter(
+        connector =>
+          !accountConnectorSlugs ||
+          !connector.accountAuth ||
+          accountConnectorSlugs.includes(connector.slug)
+      ),
     })
   )
   await writeFile(
@@ -337,6 +343,18 @@ from wegent_plugin_auth import delegate_cloud_command
 import provider
 delegated = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", sys.argv[1:])
 raise SystemExit(delegated if delegated is not None else provider.execute(provider.export(), sys.argv[1:]))
+`
+  )
+  await writeFile(
+    join(fixtureRoot, 'scripts/native-cli.py'),
+    `
+import os, sys
+from pathlib import Path
+from wegent_plugin_auth import delegate_cloud_command
+assert os.environ.get("WEGENT_PLUGIN_AUTH_MODE") == "local", "Expected a real local conversation"
+result = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", sys.argv[1:], account_id="alice@example.test")
+assert result is not None
+raise SystemExit(result)
 `
   )
   await run(

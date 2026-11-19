@@ -1,13 +1,12 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
 import {
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
   type Ref,
   type ReactNode,
+  useSyncExternalStore,
 } from 'react'
 import { dequal } from 'dequal'
 import {
@@ -16,7 +15,7 @@ import {
   type PersonalStandInSettings,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { CollaborationProject } from '@wegent/collaboration'
+import { createTagDraft, type CollaborationProject } from '@wegent/collaboration'
 import {
   StandInConnectionSettings,
   type StandInConnectionNavigationHandle,
@@ -25,11 +24,13 @@ import {
   StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
+  StandInSettingsError,
 } from './StandInSettingsLayout'
 import { StandInComposer } from './StandInComposer'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { DeviceInfo } from '@/types/api'
+import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -39,6 +40,7 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 export function StandInPrimaryProfile({
   settings,
   saving,
+  loading = false,
   error,
   onSave,
   onClose,
@@ -49,6 +51,7 @@ export function StandInPrimaryProfile({
   services,
   devices,
   onSelectDevice,
+  deviceReadOnly = false,
   initialCalendar = false,
   onCalendarViewChange,
   onReload,
@@ -57,6 +60,7 @@ export function StandInPrimaryProfile({
 }: {
   settings: PersonalStandInSettings
   saving: boolean
+  loading?: boolean
   error: string | null
   onSave(settings: PersonalStandInSettings): Promise<void>
   onClose(): void
@@ -67,6 +71,7 @@ export function StandInPrimaryProfile({
   services: WorkbenchServices
   devices: DeviceInfo[]
   onSelectDevice(deviceId: string): void
+  deviceReadOnly?: boolean
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onReload?(): void
@@ -74,9 +79,11 @@ export function StandInPrimaryProfile({
   footerLeading?: ReactNode
 }) {
   const { t } = useTranslation('common')
+  const blocked = saving || loading
   const saved = settings.primary ?? { enabled: true, prompt: '', preferences: '' }
+  const defaultRole = newStandInRole(settings.executionDeviceId, '@primary')
   const defaultCollaboration = {
-    ...newStandInRole(settings.executionDeviceId).collaboration,
+    ...defaultRole.collaboration,
     policy: { automatic: true, askBeforeAct: true, immediate: false },
   }
   // Consolidate the old two-field profile without dropping either saved value.
@@ -107,44 +114,52 @@ export function StandInPrimaryProfile({
     [onCalendarViewChange]
   )
   const [discard, setDiscard] = useState(false)
-  const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
-  const [runtimeError, setRuntimeError] = useState<string | null>(null)
-  const [reload, setReload] = useState(0)
-  useEffect(() => {
-    if (!services.runtimeWorkApi) return
-    let active = true
-    void services.runtimeWorkApi
-      .listRuntimeWork({ deviceId: settings.executionDeviceId })
-      .then(value => {
-        if (active) {
-          setRuntimeWork(value)
-          setRuntimeError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) {
-          reportStandInError('load_environment', cause, settings.executionDeviceId)
-          setRuntimeError(getStandInErrorMessage(cause, 'load_environment_failed'))
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
+  const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
+    services.runtimeWorkApi,
+    settings.executionDeviceId
+  )
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const dirty = !dequal(original, draft) || scheduleDirty
+  const [tagOwner, setTagOwner] = useState(() => ({
+    api,
+    userId: settings.userId,
+    deviceId: settings.executionDeviceId,
+    store: createTagDraft(),
+  }))
+  if (
+    tagOwner.api !== api ||
+    tagOwner.userId !== settings.userId ||
+    tagOwner.deviceId !== settings.executionDeviceId
+  ) {
+    setDraft(original)
+    setBaseline(original)
+    setTagOwner({
+      api,
+      userId: settings.userId,
+      deviceId: settings.executionDeviceId,
+      store: createTagDraft(),
+    })
+  }
+  const tagDraft = tagOwner.store
+  const connectionDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
+  const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
 
   const role = {
-    ...newStandInRole(settings.executionDeviceId, '@primary'),
+    ...defaultRole,
     ...draft,
   }
-  const navigation = useStandInPanelNavigation(!dequal(original, draft), saving, () =>
+  const navigation = useStandInPanelNavigation(!dequal(original, draft), blocked, () =>
     setDiscard(true)
   )
   const connectionRef = useRef<StandInConnectionNavigationHandle>(null)
   const requestLeave = (action: () => void) => {
     if (connectionRef.current)
-      connectionRef.current.requestLeave(() => navigation.requestLeave(action))
+      connectionRef.current.requestLeave(discarded =>
+        discarded ? action() : navigation.requestLeave(action)
+      )
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)
@@ -188,7 +203,7 @@ export function StandInPrimaryProfile({
         title={t(
           connections ? 'standIn.workspace.connections' : 'standIn.workspace.primary_profile'
         )}
-        disabled={saving}
+        disabled={blocked}
         back={
           connections
             ? {
@@ -216,14 +231,14 @@ export function StandInPrimaryProfile({
               <textarea
                 data-testid="stand-in-preferences"
                 value={draft.preferences}
-                disabled={saving}
+                disabled={blocked}
                 onChange={event => setDraft({ ...draft, preferences: event.target.value })}
                 placeholder={t('standIn.workspace.profile_instructions_placeholder')}
                 rows={5}
-                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none"
+                className="block w-full resize-y appearance-none rounded-lg border-0 bg-transparent p-3 text-sm outline-none placeholder:text-text-secondary"
               />
             </div>
-            <span className="text-xs text-text-muted">
+            <span className="text-xs text-text-secondary">
               {t('standIn.workspace.profile_instructions_help')}
             </span>
           </label>
@@ -232,7 +247,7 @@ export function StandInPrimaryProfile({
               label={t('standIn.workspace.connections')}
               description={t('standIn.workspace.connections_help')}
               testId="stand-in-primary-connections-open"
-              disabled={saving}
+              disabled={blocked}
               onClick={() => setConnections(true)}
             />
           </div>
@@ -249,6 +264,9 @@ export function StandInPrimaryProfile({
             onDetailViewChange={setConnectionDetailOpen}
             onDetailTitleChange={setConnectionTitle}
             role={role}
+            projectScopeConfigured={Boolean(
+              saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+            )}
             savedConfiguration={{
               connections: original.connections,
               collaboration: original.collaboration,
@@ -256,11 +274,12 @@ export function StandInPrimaryProfile({
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
+            tagDraft={tagDraft}
             projects={projects}
             api={api}
             deviceId={settings.executionDeviceId}
             localDeviceId={localDeviceId}
-            disabled={saving}
+            disabled={blocked}
             onChange={value =>
               setDraft({
                 ...draft,
@@ -280,7 +299,7 @@ export function StandInPrimaryProfile({
         >
           <div>
             <h3 className="font-medium">{t('standIn.workspace.execution_settings')}</h3>
-            <p className="mt-1 text-xs text-text-muted">
+            <p className="mt-1 text-xs text-text-secondary">
               {t('standIn.workspace.execution_settings_help')}
             </p>
           </div>
@@ -299,35 +318,29 @@ export function StandInPrimaryProfile({
               })
             }}
             onSave={async () => {}}
-            disabled={saving}
-            submitDisabled={saving}
+            disabled={blocked}
+            submitDisabled={blocked}
             services={services}
             devices={devices}
             runtimeWork={runtimeWork}
             deviceControl={
               <StandInDeviceSelect
+                readOnly={deviceReadOnly}
                 value={settings.executionDeviceId}
                 currentDeviceId={localDeviceId}
                 devices={devices}
-                disabled={saving || dirty}
+                disabled={blocked || dirty}
                 onChange={onSelectDevice}
               />
             }
           />
-          <p className="text-xs text-text-muted">{t('standIn.workspace.execution_device_help')}</p>
-          {runtimeError && (
-            <div role="alert" className="text-sm text-error">
-              <p>{runtimeError}</p>
-              <button
-                type="button"
-                data-testid="stand-in-primary-environment-retry"
-                className="min-h-8 underline"
-                onClick={() => setReload(value => value + 1)}
-              >
-                {t('standIn.reload')}
-              </button>
-            </div>
-          )}
+          <p className="text-xs text-text-secondary">
+            {t('standIn.workspace.execution_device_help')}
+          </p>
+          <StandInSettingsError
+            error={runtimeError}
+            retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
+          />
         </section>
       )}
       <ConfirmDialog
@@ -353,25 +366,38 @@ export function StandInPrimaryProfile({
         <StandInSettingsActions
           prefix="stand-in-primary"
           leading={footerLeading}
-          disabled={saving}
-          saveDisabled={saving || !dirty || scheduleDirty}
+          busy={blocked}
+          saveLabel={saving ? t('standIn.saving') : loading ? t('standIn.loading') : undefined}
+          disabled={blocked}
+          saveDisabled={blocked || !dirty || scheduleDirty || connectionDraftDirty}
           onCancel={close}
-          onSave={() => void onSave({ ...settings, primary: draft })}
+          onSave={() =>
+            void onSave({
+              ...settings,
+              primary: {
+                ...draft,
+                collaboration:
+                  saved.collaboration || !dequal(draft.collaboration, original.collaboration)
+                    ? draft.collaboration
+                    : undefined,
+              },
+            })
+          }
         >
           {error && (
-            <div role="alert" className="w-full text-sm text-destructive">
-              <p>{error}</p>
-              {onReload && (
-                <button
-                  type="button"
-                  data-testid="stand-in-primary-settings-retry"
-                  disabled={saving}
-                  onClick={onReload}
-                  className="min-h-8 underline"
-                >
-                  {t('standIn.reload')}
-                </button>
-              )}
+            <div className="w-full">
+              <StandInSettingsError
+                error={error}
+                retry={
+                  onReload
+                    ? {
+                        testId: 'stand-in-primary-settings-retry',
+                        disabled: blocked,
+                        onClick: onReload,
+                      }
+                    : undefined
+                }
+              />
             </div>
           )}
         </StandInSettingsActions>

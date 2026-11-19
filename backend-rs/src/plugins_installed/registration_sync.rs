@@ -16,7 +16,9 @@
 //! resolution and result persistence for the socket-owned follow-up.
 
 use std::time::Duration;
+use tokio::time::Instant;
 
+use brz_mysql::FromMysqlRow;
 use serde_json::Value;
 
 use crate::state::AppState;
@@ -25,7 +27,7 @@ use super::desired_capabilities::{
     build_desired_capabilities_for_registration, capability_snapshot,
 };
 use super::online_route::{OnlineRouteResolution, resolve_online_route, supports_plugin_delta};
-use super::record_sync_result::{SyncResult, record_device_sync_result};
+use super::record_sync_result::SyncResult;
 use super::sync_device::{DESIRED_STATE_SYNC_ATTEMPTS, ack_argument, log_build_error};
 
 /// `REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS`: the registration-time deadline.
@@ -49,63 +51,92 @@ pub(crate) async fn prepare_plugins_for_registered_device(
     user_id: i64,
     device_id: &str,
 ) -> PluginPreparation {
-    // `reconcile_stale_installed_catalog_refs` holds the plugin write lease
-    // (`plugin_marketplace_service.py:173`) and the source's `before_commit`
-    // hook flushes the pending writes and then advances the policy revision in
-    // the same transaction (`plugin_write_coordination.py:243-256`).
-    let lease =
-        match super::write_coordination::PluginWriteLease::acquire(state.redis.as_ref(), user_id)
-            .await
-        {
-            Ok(lease) => lease,
-            Err(error) if super::write_coordination::is_plugin_write_error(&error) => {
-                return PluginPreparation::Deferred;
-            }
-            Err(error) => {
-                tracing::error!(%error, user_id, "Plugin write lease acquisition failed");
-                return PluginPreparation::Failed;
-            }
-        };
-    let outcome = state
-        .mysql
-        .with_transaction_options(
+    prepare_plugins_for_registered_device_until(
+        state,
+        user_id,
+        device_id,
+        Instant::now() + super::plugin_sync_protocol::WRITE_BUDGET,
+    )
+    .await
+}
+
+pub(super) async fn prepare_plugins_for_registered_device_until(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    deadline: Instant,
+) -> PluginPreparation {
+    // Catalog repair and pending device rows share the selected installation
+    // leases and commit their parent revisions in one short transaction.
+    let lease = match async {
+        ensure_registration_state(state, user_id, deadline).await?;
+        super::write_coordination::PluginWriteLease::acquire_installed_until(
+            &state.mysql,
+            state.redis.as_ref(),
+            user_id,
+            None,
+            deadline,
+        )
+        .await
+    }
+    .await
+    {
+        Ok(mut lease) => {
+            lease.deadline = lease.deadline.min(deadline);
+            lease
+        }
+        Err(error) if super::write_coordination::is_plugin_write_error(&error) => {
+            return PluginPreparation::Deferred;
+        }
+        Err(error) => {
+            tracing::error!(%error, user_id, "Plugin write lease acquisition failed");
+            return PluginPreparation::Failed;
+        }
+    };
+    let outcome = tokio::time::timeout_at(
+        deadline,
+        state.mysql.with_transaction_options(
             brz_mysql::MysqlTransactionOptions::default()
                 .with_isolation_level(brz_mysql::MysqlIsolationLevel::ReadCommitted),
             async |transaction| {
                 let mut session = &mut *transaction;
-                // `read_policy_revision` runs before the writes on the primary
-                // connection the transaction already owns; a missing, duplicated,
-                // malformed or inactive policy skips only the revision CAS, while
-                // transport failures stay errors.
-                let revision = lease.read_policy_revision(&mut *session).await?;
-                // Source initial acquire: the policy read is followed by the
-                // lease's `owned` GET before any business read.
+                let revisions = lease.read_plugin_revisions(&mut *session).await?;
                 lease.verify_owned().await?;
-                super::catalog_reconcile::reconcile_stale_installed_catalog_refs(
+                let changed = super::catalog_reconcile::reconcile_installed_catalog_refs(
                     &mut session,
                     state.redis.as_ref(),
                     &state.entity_resolvers,
                     user_id,
+                    lease.installation_ids(),
                 )
                 .await?;
                 // `ensure_pending_for_device` enters
                 // `reconcile_plugin_device_rows`, whose reentrant acquire only
                 // checks ownership again (no second SET).
                 lease.verify_owned().await?;
-                super::sync_device::ensure_pending_for_device(
+                super::sync_device::ensure_pending_for_installs(
                     &mut session,
                     user_id,
                     device_id,
                     Some(&lease),
+                    lease.installation_ids(),
                 )
                 .await?;
-                match revision {
-                    Some(revision) => lease.commit_revision(&mut *session, revision).await,
-                    None => Ok(()),
+                if changed > 0 {
+                    super::plugin_sync_protocol::touch_desired_state(&mut session, user_id).await?;
                 }
+                lease
+                    .commit_plugin_revisions(&mut *session, revisions)
+                    .await
             },
-        )
-        .await;
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(super::write_coordination::coordination_error(
+            "plugin_write_busy",
+        ))
+    });
     lease.release().await;
     match outcome {
         Ok(_) => PluginPreparation::Ready,
@@ -131,49 +162,122 @@ pub(crate) async fn record_registration_sync_result(
     user_id: i64,
     result: &SyncResult,
 ) {
-    // `_record_registration_sync_result` -> `record_device_sync_result` ->
-    // `reconcile_plugin_device_rows` holds its own plugin write lease for this
-    // second root transaction (`plugin_device_identity.py:118-124`), with the
-    // source's `before_flush`/`before_commit` ownership checks and revision
-    // advance.
-    let lease =
-        match super::write_coordination::PluginWriteLease::acquire(state.redis.as_ref(), user_id)
-            .await
-        {
-            Ok(lease) => lease,
-            Err(error) => {
-                tracing::error!(%error, user_id, "Sync result plugin write lease failed");
-                return;
-            }
-        };
-    let outcome = state
-        .mysql
-        .with_transaction_options(
+    let deadline = Instant::now() + super::plugin_sync_protocol::WRITE_BUDGET;
+    if let Err(error) =
+        record_registration_sync_result_until(state, user_id, result, deadline).await
+    {
+        tracing::error!(%error, user_id, device_id=result.device_id,
+            "Registration capability sync result persistence failed");
+    }
+}
+
+/// Share the receipt budget without cancelling a writer during lease cleanup.
+pub(super) async fn record_registration_sync_result_until(
+    state: &AppState,
+    user_id: i64,
+    result: &SyncResult,
+    deadline: Instant,
+) -> brz_mysql::MysqlResult<()> {
+    ensure_registration_state(state, user_id, deadline).await?;
+    #[derive(FromMysqlRow)]
+    struct InstallationId {
+        id: i64,
+    }
+    let installations: Vec<InstallationId> = tokio::time::timeout_at(deadline, state.mysql.fetch_all(
+        "SELECT kinds.id FROM kinds WHERE kinds.user_id=? AND kinds.kind='InstalledPlugin' AND kinds.namespace='default' AND (kinds.is_active=true OR EXISTS (SELECT 1 FROM plugin_device_installations WHERE user_id=? AND installed_kind_id=kinds.id)) ORDER BY kinds.id",
+        (user_id, user_id),
+    )).await.unwrap_or_else(|_| Err(super::write_coordination::coordination_error("plugin_write_busy")))?;
+    // The MySQL pool bounds transaction concurrency; lease waits own no pool
+    // slot. Poll all receipts so a contended plugin cannot consume its peers'
+    // shared budget. join_all also drains cleanup after individual failures.
+    let writes = installations.iter().map(|installed| async {
+        let outcome = super::plugin_sync_protocol::retry_plugin_receipt(deadline, || {
+            persist_registration_result(state, user_id, result, installed.id, deadline)
+        })
+        .await;
+        (installed.id, outcome)
+    });
+    let mut failure = None;
+    for (installed_id, outcome) in futures_util::future::join_all(writes).await {
+        if let Err(error) = outcome {
+            tracing::error!(%error, user_id, installed_id, device_id=result.device_id,
+                "Registration plugin acknowledgement remains pending");
+            failure = Some(error);
+        }
+    }
+    failure.map_or(Ok(()), Err)
+}
+
+async fn ensure_registration_state(
+    state: &AppState,
+    user_id: i64,
+    deadline: Instant,
+) -> brz_mysql::MysqlResult<()> {
+    // Pool waits share the budget too. No installation lease is held here;
+    // uncertain first initialization retains its bootstrap fence until expiry.
+    tokio::time::timeout_at(
+        deadline,
+        super::plugin_sync_protocol::ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(super::write_coordination::coordination_error(
+            "plugin_write_busy",
+        ))
+    })
+}
+
+async fn persist_registration_result(
+    state: &AppState,
+    user_id: i64,
+    result: &SyncResult,
+    installed_id: i64,
+    deadline: Instant,
+) -> brz_mysql::MysqlResult<()> {
+    // A complete ACK still commits one installation at a time. Other plugins
+    // stay writable while this one waits for a foreground writer. Each retry
+    // revalidates current state without replaying the executed device RPC.
+    let mut lease = super::write_coordination::PluginWriteLease::acquire_installed_until(
+        &state.mysql,
+        state.redis.as_ref(),
+        user_id,
+        Some(&[installed_id]),
+        deadline,
+    )
+    .await?;
+    lease.deadline = lease.deadline.min(deadline);
+    let outcome = tokio::time::timeout_at(
+        deadline,
+        state.mysql.with_transaction_options(
             brz_mysql::MysqlTransactionOptions::default()
                 .with_isolation_level(brz_mysql::MysqlIsolationLevel::ReadCommitted),
             async |transaction| {
                 let mut session = &mut *transaction;
-                // Source order: policy SELECT, then the initial ownership
-                // check, then the business reads; the commit check follows.
-                let revision = lease.read_policy_revision(&mut *session).await?;
+                // Capture each parent before reading dependent device state.
+                let revisions = lease.read_plugin_revisions(&mut *session).await?;
                 lease.verify_owned().await?;
-                record_device_sync_result(&mut session, user_id, result, Some(&lease)).await?;
-                match revision {
-                    Some(revision) => lease.commit_revision(&mut *session, revision).await,
-                    None => Ok(()),
-                }
+                super::record_sync_result::record_device_sync_result_for_installs(
+                    &mut session,
+                    user_id,
+                    result,
+                    Some(&lease),
+                    lease.installation_ids(),
+                )
+                .await?;
+                lease
+                    .commit_plugin_revisions(&mut *session, revisions)
+                    .await
             },
-        )
-        .await;
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(super::write_coordination::coordination_error(
+            "plugin_write_busy",
+        ))
+    });
     lease.release().await;
-    if let Err(error) = outcome {
-        tracing::error!(
-            %error,
-            user_id,
-            device_id = result.device_id,
-            "Registration capability sync result persistence failed"
-        );
-    }
+    outcome
 }
 
 /// One capability-sync dispatch outcome for a registration-time caller.
@@ -183,6 +287,9 @@ pub(crate) enum DispatchOutcome {
     /// The dispatch never reached or never answered the device; the value is
     /// the source's `str(exc)` replacement.
     Failure(&'static str),
+    /// Shutdown interrupted the source's pending callback wait, so the source
+    /// never produces (or persists) a sync result for this registration.
+    Cancelled,
 }
 
 /// Dispatch one `device:sync_capabilities` payload to a live socket.
@@ -204,7 +311,9 @@ pub(crate) trait CapabilityDispatch {
 ///
 /// Returns `None` when a desired-state build failed (the source's outer
 /// best-effort handler logs and stops); `include_plugins` chooses the payload
-/// shape and whether the round trip is persisted.
+/// shape and whether the round trip is persisted. A device that advertises the
+/// versioned plugin protocol receives a `plugin_sync` snapshot instead of the
+/// legacy desired-state payload.
 pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     state: &AppState,
     user_id: i64,
@@ -212,13 +321,14 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     include_plugins: bool,
     dispatch: &D,
 ) -> Option<SyncResult> {
-    if include_plugins {
-        // `sync_current_device_capabilities` resolves the route once before the
-        // build to negotiate the plugin protocol.
-        supports_plugin_delta(state, user_id, device_id).await;
-    }
+    // `sync_current_device_capabilities`: the route is resolved once before
+    // the build to negotiate the plugin protocol; the result selects the
+    // versioned loader for every build and reload in this round trip.
+    let versioned = include_plugins && supports_plugin_delta(state, user_id, device_id).await;
     let mut payload =
-        match build_registration_payload(state, user_id, device_id, include_plugins).await {
+        match build_registration_payload(state, user_id, device_id, include_plugins, versioned)
+            .await
+        {
             Ok(payload) => payload,
             Err(()) => return None,
         };
@@ -227,13 +337,44 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
         let route = match resolve_online_route(state, user_id, device_id).await {
             Ok(OnlineRouteResolution::Ready(route)) => route,
             Ok(OnlineRouteResolution::Unavailable(reason)) => {
-                return Some(SyncResult::failure(device_id, None, reason));
+                return Some(snapshot_failure(device_id, &payload, versioned, reason));
             }
             Err(error) => {
                 tracing::error!(?error, user_id, "registration capability route read failed");
                 return None;
             }
         };
+        if versioned
+            && !super::plugin_sync_protocol::supports_plugin_sync_v2(
+                route.online.get("runtime_features"),
+            )
+        {
+            return Some(snapshot_failure(
+                device_id,
+                &payload,
+                versioned,
+                "Device plugin sync capability changed; retry synchronization",
+            ));
+        }
+        if versioned
+            && let Err(error) = super::plugin_sync_protocol::register_plugin_snapshot_intent(
+                state, user_id, device_id, &payload,
+            )
+            .await
+        {
+            tracing::error!(
+                %error,
+                user_id,
+                device_id,
+                "plugin snapshot intent registration failed"
+            );
+            return Some(snapshot_failure(
+                device_id,
+                &payload,
+                versioned,
+                &error.to_string(),
+            ));
+        }
         let mut dispatch_payload = payload.clone();
         if let Value::Object(object) = &mut dispatch_payload {
             object.insert(
@@ -241,7 +382,7 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
                 Value::String(route.runtime_device_id),
             );
         }
-        let result = match dispatch
+        let mut result = match dispatch
             .dispatch(
                 &route.socket_id,
                 &dispatch_payload,
@@ -249,14 +390,31 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
             )
             .await
         {
-            DispatchOutcome::Ack(args) => SyncResult::from_ack(device_id, ack_argument(&args)),
+            DispatchOutcome::Ack(args) => {
+                let ack = ack_argument(&args);
+                if versioned
+                    && let Some(error) =
+                        super::plugin_sync_protocol::validate_plugin_ack(&payload, ack)
+                {
+                    return Some(snapshot_failure(device_id, &payload, versioned, error));
+                }
+                SyncResult::from_ack(device_id, ack)
+            }
             DispatchOutcome::Failure(reason) => SyncResult::failure(device_id, None, reason),
+            // The process is stopping, so the source's callback wait never
+            // reaches a result and nothing may be persisted.
+            DispatchOutcome::Cancelled => return None,
         };
+        if versioned {
+            result.desired_plugin_snapshot = Some(payload.clone());
+        }
         if !result.acknowledged {
             return Some(result);
         }
         let latest =
-            match build_registration_payload(state, user_id, device_id, include_plugins).await {
+            match build_registration_payload(state, user_id, device_id, include_plugins, versioned)
+                .await
+            {
                 Ok(payload) => payload,
                 Err(()) => return None,
             };
@@ -278,21 +436,43 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     ))
 }
 
+/// One failed versioned round trip; the source keeps the desired snapshot so
+/// the result recording can still fence the acknowledged generation.
+fn snapshot_failure(device_id: &str, payload: &Value, versioned: bool, error: &str) -> SyncResult {
+    let mut result = SyncResult::failure(device_id, None, error);
+    if versioned {
+        result.desired_plugin_snapshot = Some(payload.clone());
+    }
+    result
+}
+
 /// One registration-time desired-state build; a failure stops the follow-up.
 async fn build_registration_payload(
     state: &AppState,
     user_id: i64,
     device_id: &str,
     include_plugins: bool,
+    versioned: bool,
 ) -> Result<Value, ()> {
-    match build_desired_capabilities_for_registration(
-        &state.mysql,
-        user_id,
-        device_id,
-        include_plugins,
-    )
-    .await
-    {
+    let built = if versioned {
+        super::plugin_sync_protocol::load_versioned_registration_payload(
+            state,
+            user_id,
+            device_id,
+            include_plugins,
+            true,
+        )
+        .await
+    } else {
+        build_desired_capabilities_for_registration(
+            &state.mysql,
+            user_id,
+            device_id,
+            include_plugins,
+        )
+        .await
+    };
+    match built {
         Ok(payload) => Ok(payload),
         Err(error) => {
             log_build_error(user_id, &error);
@@ -304,6 +484,53 @@ async fn build_registration_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn acknowledgement_persistence_retries_metadata_conflicts() {
+        let mut attempts = 0;
+        super::super::plugin_sync_protocol::retry_plugin_receipt(
+            Instant::now() + super::super::plugin_sync_protocol::WRITE_BUDGET,
+            || {
+                attempts += 1;
+                std::future::ready(if attempts == 1 {
+                    Err(super::super::write_coordination::coordination_error(
+                        "plugin_write_conflict",
+                    ))
+                } else {
+                    Ok(())
+                })
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn acknowledgement_persistence_rejects_lease_failures_without_retry() {
+        for (code, expected_attempts) in [
+            ("plugin_write_unavailable", 1),
+            ("plugin_write_lease_lost", 1),
+        ] {
+            let mut attempts = 0;
+            let error = super::super::plugin_sync_protocol::retry_plugin_receipt(
+                Instant::now() + super::super::plugin_sync_protocol::WRITE_BUDGET,
+                || {
+                    attempts += 1;
+                    std::future::ready(Err::<(), _>(
+                        super::super::write_coordination::coordination_error(code),
+                    ))
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(
+                super::super::write_coordination::plugin_write_error_code(&error),
+                Some(code)
+            );
+            assert_eq!(attempts, expected_attempts);
+        }
+    }
 
     #[test]
     fn plugin_preparation_outcomes_are_distinct() {

@@ -108,10 +108,16 @@ impl RuntimeWorkRpcHandler {
                 .configure_git_webhook(&identity, &args, name == "git_webhook_plan")
                 .await;
         }
+        if name == "search_context" {
+            return self.search_stand_in_context(&identity, &args).await;
+        }
         if matches!(name, "list_tasks" | "read_task") {
             return self
                 .read_stand_in_conversations(&identity, name, &args)
                 .await;
+        }
+        if identity.work.is_some() && name == "create_task" {
+            return self.create_source_task(&identity, &args).await;
         }
         if identity.device != self.device_id
             || identity.work.is_some()
@@ -161,7 +167,10 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        if matches!(name, "list_schedules" | "schedule_task" | "cancel_schedule") {
+        if matches!(
+            name,
+            "list_schedules" | "schedule_task" | "update_schedule" | "cancel_schedule"
+        ) {
             if identity.coordinator_batch.is_some() {
                 return Err(AppIpcError::new(
                     "permission_denied",
@@ -218,7 +227,17 @@ impl RuntimeWorkRpcHandler {
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = json!(message);
         // Source-driven orchestration never elevates an existing conversation.
-        request["standInDelegation"] = json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":link.runtime_handle["origin"]["askBeforeAct"] == true || link.runtime_handle["executionRequest"]["standInDelegation"]["askBeforeAct"] == true});
+        let mut delegation = if request["standInDelegation"]["sourceMessageId"].is_string() {
+            self.source_task_parent(&link)?;
+            request["standInDelegation"].clone()
+        } else {
+            json!({"sourceTaskId":identity.task_id,"userId":identity.user})
+        };
+        delegation["askBeforeAct"] = json!(
+            link.runtime_handle["origin"]["askBeforeAct"] == true
+                || request["standInDelegation"]["askBeforeAct"] == true
+        );
+        request["standInDelegation"] = delegation;
         use sha2::{Digest, Sha256};
         let command = format!("stand-in-task:{:x}", Sha256::digest(client.as_bytes()));
         Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await
@@ -292,9 +311,21 @@ impl RuntimeWorkRpcHandler {
         config["userId"] = json!(identity.user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
         let sources = self.capture_delegated_read_sources(identity, args)?;
-        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":false});
-        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
-        payload["executionRequest"]["standInDelegation"] = json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources});
+        self.start_delegated_task(identity, args, &id, &config, json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources})).await
+    }
+
+    pub(super) async fn start_delegated_task(
+        &self,
+        identity: &StandInMcpIdentity,
+        args: &Value,
+        id: &str,
+        config: &Value,
+        delegation: Value,
+    ) -> Result<Value, AppIpcError> {
+        let ask = delegation["askBeforeAct"] == true;
+        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":ask});
+        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), config).await?;
+        payload["executionRequest"]["standInDelegation"] = delegation;
         Box::pin(self.create_task(payload)).await
     }
 }

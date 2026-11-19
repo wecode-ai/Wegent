@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { promisify } from 'node:util'
 
 export const RELEASE_PREPARATION_PHASE_TIMEOUT_MS = 300_000
 export const RELEASE_PREPARATION_PROGRESS_PREFIX = '[release-preparation-stage] '
@@ -17,16 +16,50 @@ const RELEASE_PHASES = [
   'ready',
 ]
 
+/** Own the process group that must stop before activation recovery can write data. */
+export function spawnReleaseProcess(executable, args, { env, maxBuffer = 1024 * 1024 }) {
+  const child = spawn(executable, args, {
+    env,
+    detached: process.platform !== 'win32',
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const result = new Promise((resolve, reject) => {
+    const output = { stdout: [], stderr: [] }
+    for (const name of ['stdout', 'stderr']) {
+      let bytes = 0
+      child[name].on('data', chunk => {
+        bytes += chunk.length
+        if (bytes > maxBuffer) {
+          reject(new Error('Release preparation output exceeded its buffer limit'))
+          return
+        }
+        output[name].push(chunk)
+      })
+    }
+    child.once('error', reject)
+    child.once('close', (code, signal) => {
+      if (code !== 0 || signal) {
+        reject(new Error('Release preparation process did not exit successfully'))
+        return
+      }
+      resolve({
+        stdout: Buffer.concat(output.stdout).toString('utf8'),
+        stderr: Buffer.concat(output.stderr).toString('utf8'),
+      })
+    })
+  })
+  return Object.assign(result, { child })
+}
+
 export function prepareReleaseProcess(
   executable,
   args,
   { env, progress, releaseId, version, stop }
 ) {
-  const preparation = promisify(execFile)(executable, args, {
+  const preparation = spawnReleaseProcess(executable, args, {
     env,
-    detached: process.platform !== 'win32',
     maxBuffer: 1024 * 1024,
-    windowsHide: true,
   })
   let output = ''
   if (progress === 'stdout')
@@ -99,7 +132,7 @@ export async function waitForReleasePreparation(preparation, readProgress, { sto
     )
     return outcome.value
   } catch (error) {
-    if (!outcome) {
+    if (!outcome || (outcome.error && preparation.child?.pid)) {
       try {
         await stop(preparation.child)
         await settled

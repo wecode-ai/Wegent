@@ -33,11 +33,18 @@ pub struct TableTemplates {
 /// The statements project the full ORM column list, so every column is labeled
 /// with its physical table prefix (`subtasks_…` or `subtasks_00NN_…`); the
 /// decode resolves each field by that suffix.
+/// One `subtasks` row as `socketio`'s streaming-status checks read it.
+///
+/// The statements project the full ORM column list, so every column is labeled
+/// with its physical table prefix (`subtasks_…` or `subtasks_00NN_…`); the
+/// decode resolves each field by that suffix. `executor_name` is carried for
+/// `chat:cancel`'s device routing, which shares this full-row lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamingSubtask {
     pub id: i64,
     pub task_id: i64,
     pub status: String,
+    pub executor_name: Option<String>,
     pub created_at: Option<chrono::NaiveDateTime>,
 }
 
@@ -48,9 +55,23 @@ impl StreamingSubtask {
             id: field(row, "id")?,
             task_id: field(row, "task_id")?,
             status: field(row, "status")?,
+            executor_name: optional_field(row, "executor_name")?,
             created_at: field(row, "created_at")?,
         })
     }
+}
+
+/// Resolve an optional `column` in a projection labeled
+/// `<physical_table>_<column>`; a missing label or NULL value is `None`.
+fn optional_field<T: brz_mysql::FromMysqlValue>(
+    row: &brz_mysql::MysqlRow,
+    column: &str,
+) -> brz_mysql::MysqlResult<Option<T>> {
+    let suffix = format!("_{column}");
+    let Some(label) = row.columns().find(|name| name.ends_with(&suffix)) else {
+        return Ok(None);
+    };
+    row.get::<T>(label)
 }
 
 /// Resolve `column` in a projection labeled `<physical_table>_<column>`.

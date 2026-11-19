@@ -56,7 +56,11 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
+OpenAI Responses upstreams in `auto` and `standard` receive Codex subagent items as `type: "message"` with `role: "developer"`. The outbound item uses standard message fields, with the sender and recipient preserved in the Codex message content.
+
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
+
+The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.
 
 For example, configure Kimi Responses with:
 
@@ -85,6 +89,10 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 #### Portable Responses Tools
 
+All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
+
+The `model-sse-parsing` desktop E2E checkpoint runs real Electron, executor, and Codex components with only the model service simulated. It covers Responses function bridging, native Responses, Chat Completions, and Anthropic Messages using multiline JSON, mixed line endings, split Chinese characters, and misleading event headers. Real Code Mode tools must write and read a file, and the successful result must reach the next model request's history. Responses tool streams stay open until the real tool result arrives, proving that complete CR-terminated frames dispatch without waiting for EOF. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
 Local model interfaces, cloud models, stand-ins, and configured Codex providers default to `tool_profile: "function"`, with native `tool_search` and namespaces disabled. Existing configurations without profile or capability fields use the same defaults without recreating models. An explicit `tool_profile: "custom"` preserves native custom tools. Local `codex_tool_compatibility: "native"` or cloud capability switches enable native namespaces and tool search. Cloud `codex_request_mode: "passthrough"` preserves the complete native request; `standard` always bridges tools to functions. Defaults do not depend on provider IDs, model names, or a Responses endpoint claiming Codex-specific capabilities.
 
 `tool_profile: "function"` also applies to custom tools inside native namespaces. With `native_namespace_tools` enabled, the proxy preserves the namespace and its description while converting custom tools such as `exec` into function tools with a string `input` parameter. Historical calls, outputs, and forced tool choices use the same protocol. When native namespaces are disabled, the proxy flattens namespaces and keeps the same input wrapper for their custom tools. SSE responses restore the original tool name, namespace, and raw input so tools sharing a name remain distinct.
@@ -92,6 +100,16 @@ Local model interfaces, cloud models, stand-ins, and configured Codex providers 
 Built-in tool types inside namespaces return a request validation error instead of crashing the proxy. Existing function definitions with an omitted type retain their previous conversion behavior.
 
 The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
+
+#### Legacy DeepSeek configurations
+
+Changing defaults alone cannot fix rejected `exec` calls when a legacy configuration already
+stores `tool_profile: "custom"`. Direct `api.deepseek.com` Responses requests in `auto` mode
+still follow its supported tool capabilities: preserve native `apply_patch` and reversibly adapt
+other custom tools, namespaces, and client tool search to function tools. Configurations without
+a legacy profile use the shared function default above. Match the actual endpoint, without
+guessing model names or retrying failed requests. Explicit `standard` and `passthrough` modes
+retain precedence; other gateways use the shared policy.
 
 #### Kimi K3 Chat Completions Compatibility
 
@@ -129,7 +147,8 @@ the UI.
 
 ### Codex Direct-Provider Overload Recovery
 
-Native Codex providers can bypass the compatibility proxy. When the app-server
+User-configured native Codex providers can remain direct when they do not select
+the Wework compatibility route. When the app-server
 reports a structured `serverOverloaded` error, the executor waits for the failed
 turn's `turn/completed` event before continuing in the same thread with the same
 model. Recovery is bounded to five attempts, delayed by 5, 10, 20, 40, and 60
@@ -156,7 +175,13 @@ limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoi
 uses real Electron, Codex, and executor processes to verify tool-history retention,
 automatic continuation, no duplicate user messages, and cancellation.
 
+### Codex external context conversion
+
+When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
+
 ### Anthropic Empty-Output Recovery
+
+For every Anthropic Messages upstream, the executor normalizes Codex subagent `agent_message` items to messages with the `developer` role. The Anthropic adapter then places their content in the upstream request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated upstream to verify that both the child task and the completion reach that field.
 
 Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
 

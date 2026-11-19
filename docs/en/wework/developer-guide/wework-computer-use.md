@@ -5,13 +5,35 @@ sidebar_position: 39
 # Computer use
 
 Wework computer use lets local Codex conversations control desktop applications
-after the user grants permission. It uses `@trycua/cua-driver` for accessibility
+after the user grants permission. It uses `@trycua/cua-driver` 0.52.13 for accessibility
 and screen access, while Wework continues to own conversation integration,
 permission state, action approval, cancellation, and MCP exposure.
 
 Computer use is only for desktop applications outside the Wework built-in
 browser. Web tasks continue to use `wework_browser`; do not emulate browser
 actions through desktop control.
+
+## Model workflow
+
+When the task names an application, the model can pass its name or bundle ID to
+`run_steps` or to `cua.getApp` inside `run_script`. The driver can read current
+accessibility state and locate controls by role and name within the batch.
+Use `run_steps` to combine known actions, waits, and verification in one call.
+Use the driver's `run_script` sandbox when intermediate observations determine
+which action to take.
+
+`observe: {}` returns one accessibility diff after the batch. For standalone
+window reads, start with the accessibility tree, use `since: "latest"` on
+subsequent reads, and request screenshots when visual detail matters. The
+Executor provides concise descriptions for these three entry points while
+preserving the driver's schemas and read-only annotations.
+
+For multi-call scripts, set `state_mode: "reuse"` in `run_script` and store app
+references or intermediate values in the script's `state` object. Use
+`state_mode: "reset"` to start with an empty object. State is limited to 4 KiB
+of JSON in the conversation's MCP connection, is updated by successful scripts,
+and is cleared when the connection closes or the driver is replaced. Rebind apps
+from their saved references and observe fresh accessibility targets before acting.
 
 ## Architecture
 
@@ -27,6 +49,12 @@ Codex
   -> @trycua/cua-driver
   -> platform accessibility and screen-capture APIs
 ```
+
+The worker explicitly creates its runtime with
+`CuaDriver.create({ embedded: true, claudeCodeCompatibility: false })`.
+This prevents the newer SDK from discovering or launching a separately installed
+CuaDriver.app and keeps native calls, permission attribution, and lifecycle under
+Wework's ownership.
 
 The Electron main process owns the CUA Driver lifecycle. Once computer use is
 enabled and system permissions are ready, `ComputerUseService` creates the
@@ -80,8 +108,9 @@ reason. Late results cannot replace cancellation errors.
 
 The worker derives read-only classification from the SDK catalog's `readOnlyHint`,
 without a handwritten tool registry. Read-only calls and discovery cancel their
-SDK Future directly. Mutating calls retain that Future: CUA 0.22.1 can otherwise
-leave native input running and skip release cleanup. Action admission remains
+SDK Future directly. Mutating calls retain that Future to avoid leaving native
+input running or skipping release cleanup when cancellation drops the Future.
+Action admission remains
 occupied until the native call actually finishes or its process exits. Driver
 shutdown also waits for process exit before a replacement can be created.
 Discovery and tool calls share cancellation handling. If the worker has not
@@ -95,10 +124,23 @@ The main-process `[computer-use]` log records an operation ID, host and native
 worker PIDs, tool name, start, completion, cancellation, failure, and elapsed
 time without arguments, screenshots, session content, or tokens. Check these
 stages before sampling that operation's `nativePid`. An aggregate call's display
-name does not identify the blocked operation. CUA 0.22.1 bounds AX traversal at
-20 seconds, but cancelling a Rust
-Future cannot forcibly stop already running `spawn_blocking` native work.
+name does not identify the blocked operation. Cancelling a Rust Future cannot
+forcibly stop already running `spawn_blocking` native work.
 Successful SDK cancellation alone therefore does not prove native-thread exit.
+
+Set `WEWORK_PROCESS_TRACE=1` in an isolated test launch to diagnose process stalls.
+Electron records the schema probe request, child spawn, first stdout and stderr data,
+process exit, and pipe closure under a single probe ID. The Executor log also receives
+Codex process startup and output-collection trace events for correlation with the
+transcript by call and process ID. The schema probe records timing and process metadata only.
+
+Official ChatGPT subscription inference uses Responses WebSocket through the local proxy.
+The same connection accepts incremental tool results with `previous_response_id`.
+Codex switches to HTTP POST when the upstream only supports HTTP. When a desktop tool
+returns the same JSON as text and structured content, the Executor keeps the structured
+copy. In diagnostic mode the Executor records the first response frame, first output item,
+first delta, terminal frame, and local processing and write times by connection and
+request number. When the upstream supplies engine timings, the log records known numeric fields.
 
 ## Permissions and settings
 
@@ -134,7 +176,11 @@ available.
 CUA is not a separate sidecar and is never installed dynamically from the user
 environment or network. The Electron package pins `@trycua/cua-driver`, and
 pnpm selects the platform-native package, such as
-`@trycua/cua-driver-darwin-arm64`.
+`@trycua/cua-driver-darwin-arm64`. Declare all six platform-native packages as
+direct `optionalDependencies` of the Electron package at the same version as
+the Driver. Relying only on transitive optional dependencies can cause
+electron-builder to omit native libraries. The staging `package.json` generated
+by local packaging must retain these declarations as well.
 
 JavaScript files enter `app.asar`, while native `.node`, `.dylib`, `.so`, and
 `.dll` files are unpacked into `app.asar.unpacked` by the Electron packaging

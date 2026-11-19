@@ -58,73 +58,109 @@ fn codex_request() -> Value {
 }
 
 #[tokio::test]
-async fn unconfigured_responses_capabilities_default_to_portable_function_tools() {
-    let config = super::super::upstream_from_model_config(&json!({
-        "base_url": "https://custom.example/v1", "model_id": "any-model"
+async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
+    let upstream = super::super::upstream_from_model_config(&json!({
+        "base_url": super::super::OFFICIAL_CHATGPT_CODEX_BASE_URL,
+        "codex_request_mode": "passthrough",
+        "tool_profile": "custom",
+        "native_tool_search": true,
+        "native_namespace_tools": true
     }))
     .unwrap()
     .unwrap();
-    assert!(config.convert_custom_tools);
-    assert!(!config.native_tool_search);
-    assert!(!config.native_namespace_tools);
+    let original = json!({
+        "model": "gpt-6.1-sol",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_foreign",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "foreign thought"}],
+                "encrypted_content": "foreign-seal"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "id": "wework_event_4d7b7f0ca34416937adf4da7ab5046a3",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }
+        ]
+    });
+
+    let encoded = serde_json::to_string(&original)
+        .unwrap()
+        .replace("wework_event_", r"\u0077ework_event_");
     let prepared = prepare(
-        &config,
-        &serde_json::to_vec(&codex_request()).unwrap(),
+        &upstream,
+        encoded.as_bytes(),
         None,
         &Default::default(),
         false,
         false,
+        &Default::default(),
     )
     .await
     .unwrap();
     let request: Value = serde_json::from_slice(&prepared.body).unwrap();
-    for tool in request["tools"].as_array().unwrap() {
-        assert!(!matches!(
-            tool["type"].as_str(),
-            Some("custom" | "namespace" | "tool_search")
-        ));
-    }
-    assert!(matches!(
-        prepared.conversion,
-        Some(Conversion::Responses(_))
-    ));
-    assert!(request["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|tool| tool["type"] == "web_search"));
+
+    assert_eq!(prepared.normalized_reasoning_items, 1);
+    assert_eq!(request["input"][0]["content"], json!([]));
+    assert_eq!(request["input"][0]["summary"][0]["text"], "foreign thought");
+    assert!(request["input"][0].get("id").is_none());
+    assert!(request["input"][0].get("encrypted_content").is_none());
+    assert!(request["input"][1].get("id").is_none());
+    assert_eq!(request["input"][1]["content"][0]["text"], "continue");
 }
 
 #[tokio::test]
-async fn explicit_native_responses_capabilities_preserve_custom_tools() {
-    let config = super::super::upstream_from_model_config(&json!({
-        "base_url": "https://custom.example/v1", "model_id": "any-model",
-        "tool_profile": "custom", "native_tool_search": true, "native_namespace_tools": true
+async fn official_chatgpt_passthrough_still_removes_old_provider_state_on_switch() {
+    let upstream = super::super::upstream_from_model_config(&json!({
+        "base_url": super::super::OFFICIAL_CHATGPT_CODEX_BASE_URL,
+        "codex_request_mode": "passthrough"
     }))
     .unwrap()
     .unwrap();
-    let original = json!({"model":"any-model", "input":[], "tools":[
-        {"type":"custom","name":"exec","format":{"type":"text"}},
-        {"type":"tool_search","execution":"client"},
-        {"type":"namespace","name":"app","tools":[
-            {"type":"function","name":"read","parameters":{"type":"object"}}
-        ]}
-    ]});
+    let original = json!({
+        "model": "gpt-6.1-sol",
+        "previous_response_id": "resp_old_provider",
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_foreign",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "foreign thought"}],
+                "encrypted_content": "foreign-seal"
+            },
+            {
+                "type": "context_compaction",
+                "encrypted_content": "old-compaction"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }
+        ]
+    });
+
     let prepared = prepare(
-        &config,
+        &upstream,
         &serde_json::to_vec(&original).unwrap(),
         None,
         &Default::default(),
+        true,
         false,
-        false,
+        &Default::default(),
     )
     .await
     .unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&prepared.body).unwrap(),
-        original
-    );
-    assert!(prepared.conversion.is_none());
+    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+
+    assert!(request.get("previous_response_id").is_none());
+    assert_eq!(request["input"].as_array().unwrap().len(), 2);
+    assert_eq!(request["input"][0]["content"], json!([]));
+    assert_eq!(request["input"][0]["summary"][0]["text"], "foreign thought");
+    assert_eq!(request["input"][1]["role"], "user");
 }
 
 #[tokio::test]
@@ -137,6 +173,7 @@ async fn passthrough_preserves_every_field_except_the_routed_model() {
         &Default::default(),
         true,
         true,
+        &Default::default(),
     )
     .await
     .expect("passthrough request");
@@ -156,42 +193,59 @@ async fn passthrough_without_model_mapping_preserves_request_bytes() {
     let mut config = upstream("passthrough");
     config.model_id = None;
     let original = b"{ \"model\": \"actual-model\", \"input\": [], \"store\": true }";
-    let prepared = prepare(&config, original, None, &Default::default(), true, true)
-        .await
-        .unwrap();
+    let prepared = prepare(
+        &config,
+        original,
+        None,
+        &Default::default(),
+        true,
+        true,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(prepared.body, original);
 }
 
 #[tokio::test]
-async fn passthrough_skips_image_sidecar_requests() {
-    let sidecar = VisionSidecarUpstream {
-        request_url: "http://127.0.0.1:1/responses".to_owned(),
-        api_format: "openai-responses".to_owned(),
-        api_key: String::new(),
-        default_headers: Vec::new(),
-        proxy_url: None,
-        model_id: "sidecar".to_owned(),
-        max_descriptions_per_turn: 1,
-        timeout: std::time::Duration::from_millis(1),
-    };
-    let original = json!({
-        "model": "catalog",
-        "input": [{"role": "user", "content": [
-            {"type": "input_image", "image_url": "data:image/png;base64,original"}
-        ]}],
+async fn responses_adapts_agent_messages_in_auto_and_standard_modes() {
+    let original = json!({"input": [
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "User input"}]},
+        {"type": "agent_message", "author": "/root", "recipient": "/root/worker",
+         "id": "amsg_one", "content": [{"type": "input_text", "text": "Continue the task"}]}
+    ]});
+    let mut compatible = original.clone();
+    compatible["input"][1] = json!({
+        "type": "message", "role": "developer",
+        "content": original["input"][1]["content"]
     });
-    let prepared = prepare(
-        &upstream("passthrough"),
-        &serde_json::to_vec(&original).unwrap(),
-        Some(&sidecar),
-        &Default::default(),
-        false,
-        false,
-    )
-    .await
-    .expect("sidecar must not be contacted");
-    let result: Value = serde_json::from_slice(&prepared.body).unwrap();
-    assert_eq!(result["input"], original["input"]);
+
+    for (mode, model, forked, expected) in [
+        ("auto", "moonshot-kimi-k3", false, &compatible),
+        ("standard", "another-provider", true, &compatible),
+        ("passthrough", "another-provider", true, &original),
+    ] {
+        let mut config = upstream(mode);
+        config.model_id = Some(model.to_owned());
+        let mut input = original.clone();
+        if mode == "standard" {
+            input["input"][1]["encrypted_content"] = json!("stale-fork-state");
+        }
+        let prepared = prepare(
+            &config,
+            &serde_json::to_vec(&input).unwrap(),
+            None,
+            &Default::default(),
+            false,
+            forked,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(request["input"], expected["input"], "mode {mode}");
+    }
 }
 
 #[tokio::test]
@@ -203,6 +257,7 @@ async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
         &Default::default(),
         false,
         false,
+        &Default::default(),
     )
     .await
     .expect("standard request");
@@ -218,34 +273,6 @@ async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
         Some(Conversion::Responses(_))
     ));
     assert_eq!(request["max_output_tokens"], 12345);
-}
-
-#[tokio::test]
-async fn auto_mode_preserves_hosted_tools() {
-    let original = codex_request();
-    let prepared = prepare(
-        &upstream("auto"),
-        &serde_json::to_vec(&original).unwrap(),
-        None,
-        &Default::default(),
-        false,
-        false,
-    )
-    .await
-    .unwrap();
-    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
-    for tool_type in ["web_search", "image_generation"] {
-        let find_tool = |body: &Value| {
-            body["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|tool| tool["type"] == tool_type)
-                .unwrap()
-                .clone()
-        };
-        assert_eq!(find_tool(&request), find_tool(&original));
-    }
 }
 
 #[tokio::test]
@@ -270,47 +297,13 @@ async fn standard_mode_rejects_forced_hosted_tools_before_sending() {
             &Default::default(),
             false,
             false,
+            &Default::default(),
         )
         .await
         .err()
         .expect("a forced hosted tool is unavailable in standard mode");
         assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
         assert!(error.detail.contains("tool_choice"));
-    }
-}
-
-#[tokio::test]
-async fn standard_mode_preserves_supported_tool_choices() {
-    for choice in [
-        json!("auto"),
-        json!("none"),
-        json!("required"),
-        json!({"type": "function", "name": "read"}),
-        json!({"type": "allowed_tools", "mode": "required", "tools": [
-            {"type": "function", "name": "read"}
-        ]}),
-    ] {
-        let request = json!({
-            "model": "catalog",
-            "tools": [
-                {"type": "function", "name": "read", "parameters": {"type": "object"}},
-                {"type": "web_search"}
-            ],
-            "tool_choice": choice,
-        });
-        let prepared = prepare(
-            &upstream("standard"),
-            &serde_json::to_vec(&request).unwrap(),
-            None,
-            &Default::default(),
-            false,
-            false,
-        )
-        .await
-        .unwrap();
-        let result: Value = serde_json::from_slice(&prepared.body).unwrap();
-        assert_eq!(result["tool_choice"], choice);
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
     }
 }
 
@@ -337,21 +330,6 @@ fn invalid_modes_cannot_select_the_direct_provider_path() {
                "upstream_api_format": "openai-chat-completions"}),
     ] {
         assert!(super::super::upstream_from_model_config(&config).is_err());
-    }
-}
-
-#[test]
-fn valid_unconfigured_models_keep_the_direct_provider_path() {
-    for config in [
-        json!({}),
-        json!({"base_url": ""}),
-        json!({"baseUrl": "  ", "codex_request_mode": "auto"}),
-        json!({"codex_request_mode": "standard"}),
-        json!({"codex_request_mode": "passthrough"}),
-    ] {
-        assert!(super::super::upstream_from_model_config(&config)
-            .expect("unconfigured proxy with a valid request policy")
-            .is_none());
     }
 }
 

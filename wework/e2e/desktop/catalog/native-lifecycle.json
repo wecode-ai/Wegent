@@ -1,7 +1,23 @@
 {
   "order": 174000,
-  "scenario": "./scenarios/native-guidance.scenario.mjs",
+  "scenario": "./scenarios/mobile-worktrees.scenario.mjs",
   "scenarioOnly": true,
+  "paths": [
+    "wework-mobile/src/hooks/useDeviceModels*",
+    "wework-mobile/src/hooks/useMobileModels*",
+    "wework-mobile/src/hooks/useMobileRuntime*",
+    "wework-mobile/src/hooks/useRuntimeLifecycleEvents*",
+    "wework-mobile/src/domain/work*",
+    "wework-mobile/src/domain/chatReducer*",
+    "wework-mobile/src/domain/mobileMessageOrdering*",
+    "wework-mobile/src/domain/modelSelection*",
+    "packages/chat-core/src/runtime-model-selection*",
+    "wework/e2e/desktop/scenarios/mobile-local-payload.scenario.mjs",
+    "wework-mobile/src/services/localRuntimeApi*",
+    "wework-mobile/src/hooks/useWorkspaceWorktree*",
+    "wework-mobile/src/components/WorktreeBranchSheet*",
+    "wework/e2e/desktop/scenarios/mobile-worktrees.scenario.mjs"
+  ],
   "ci": {
     "core": {
       "order": 94000,

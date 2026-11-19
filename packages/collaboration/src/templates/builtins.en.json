@@ -1,0 +1,449 @@
+[
+  {
+    "apiVersion": "agent.wecode.io/v1",
+    "kind": "Template",
+    "metadata": {
+      "name": "product-lifecycle",
+      "namespace": "system"
+    },
+    "spec": {
+      "displayName": "Product lifecycle",
+      "description": "Coordinate product definition, experience design, engineering, testing and delivery, with clear owners, outputs and acceptance criteria at every stage.",
+      "category": "collaboration",
+      "version": "1.2.0",
+      "resources": {
+        "collaboration": {
+          "project": {
+            "name": "Product lifecycle collaboration",
+            "description": "Define the user problem and requirements, complete experience design, technical planning, implementation and independent testing, then deliver a release plan, user documentation and rollback plan after business acceptance.",
+            "taskAssignment": {
+              "enabled": true,
+              "groupKey": "main"
+            },
+            "board": {
+              "name": "Project stages",
+              "tags": [
+                "Product definition",
+                "Experience design",
+                "Technical planning",
+                "Implementation",
+                "Testing and acceptance",
+                "Release and delivery"
+              ]
+            }
+          },
+          "groups": [
+            {
+              "name": "Product lifecycle team",
+              "description": "Define the user problem and requirements, complete experience design, technical planning, implementation and independent testing, then deliver a release plan, user documentation and rollback plan after business acceptance.",
+              "instructions": "The project lead coordinates the end-to-end process without replacing specialist roles. The product manager defines the user problem, scope and acceptance criteria. The designer creates user flows, interaction designs and visual specifications, then reviews them with product and engineering. The engineer prepares a technical plan and, after review, implements and tests the work. The tester independently runs functional, integration and regression tests against the requirements and design. Defects return to engineering for fixes and verification; requirement or design changes return to the relevant stage for confirmation. After the product manager completes business acceptance, the delivery lead prepares the release checklist, user documentation and rollback plan for the project lead to approve. Never publish without human confirmation. The team lead Agent receives new issues, breaks them down and assigns them to the appropriate members. The lead coordinates and accepts work rather than replacing the execution roles. Track progress with the Project stages labels: Product definition, Experience design, Technical planning, Implementation, Testing and acceptance, Release and delivery. When entering a stage, add its label to the parent issue, remove the previous stage label and preserve other business labels. Verify results after delivery; publishing requires human confirmation.",
+              "leaderRole": "role-0",
+              "roles": [
+                {
+                  "key": "role-0",
+                  "name": "Project lead",
+                  "responsibility": "Coordinate the lifecycle, manage blockers and confirm stage transitions",
+                  "defaultKind": "agent",
+                  "agentKey": "main-role-0"
+                },
+                {
+                  "key": "role-1",
+                  "name": "Product manager",
+                  "responsibility": "Define the user problem, scope and acceptance criteria",
+                  "agentKey": "main-role-1",
+                  "defaultKind": "agent"
+                },
+                {
+                  "key": "role-2",
+                  "name": "Designer",
+                  "responsibility": "Design user flows, interactions and high-fidelity interfaces",
+                  "agentKey": "main-role-2",
+                  "defaultKind": "agent"
+                },
+                {
+                  "key": "role-3",
+                  "name": "Engineer",
+                  "responsibility": "Prepare the technical plan, implement the work and run self-checks",
+                  "agentKey": "main-role-3",
+                  "defaultKind": "agent"
+                },
+                {
+                  "key": "role-4",
+                  "name": "Tester",
+                  "responsibility": "Run independent tests, track defects and verify regressions",
+                  "agentKey": "main-role-4",
+                  "defaultKind": "agent"
+                },
+                {
+                  "key": "role-5",
+                  "name": "Delivery lead",
+                  "responsibility": "Prepare the release, documentation, handoff and rollback plan",
+                  "agentKey": "main-role-5",
+                  "defaultKind": "agent"
+                }
+              ],
+              "stages": [
+                {
+                  "key": "stage-0",
+                  "name": "Product definition",
+                  "ownerRole": "role-1",
+                  "deliverables": ["User problem, requirements, scope and acceptance criteria"],
+                  "acceptance": "Project lead confirms the scope",
+                  "description": ""
+                },
+                {
+                  "key": "stage-1",
+                  "name": "Experience design",
+                  "ownerRole": "role-2",
+                  "deliverables": [
+                    "User flows, high-fidelity interaction designs and visual specifications"
+                  ],
+                  "acceptance": "Product and engineering approve the review",
+                  "description": ""
+                },
+                {
+                  "key": "stage-2",
+                  "name": "Technical planning",
+                  "ownerRole": "role-3",
+                  "deliverables": [
+                    "Architecture, interface and data designs, and implementation plan"
+                  ],
+                  "acceptance": "Technical review approved",
+                  "description": ""
+                },
+                {
+                  "key": "stage-3",
+                  "name": "Implementation",
+                  "ownerRole": "role-3",
+                  "deliverables": ["Code, automated tests and self-check records"],
+                  "acceptance": "Code review approved and ready for testing",
+                  "description": ""
+                },
+                {
+                  "key": "stage-4",
+                  "name": "Testing and acceptance",
+                  "ownerRole": "role-4",
+                  "deliverables": ["Test report, resolved defects and business acceptance records"],
+                  "acceptance": "Tests pass and product acceptance is confirmed",
+                  "description": ""
+                },
+                {
+                  "key": "stage-5",
+                  "name": "Release and delivery",
+                  "ownerRole": "role-5",
+                  "deliverables": [
+                    "Release checklist, user documentation, handoff and rollback plan"
+                  ],
+                  "acceptance": "Publish after human confirmation, then verify the results",
+                  "description": ""
+                }
+              ],
+              "executionRequirements": {
+                "requiredTags": []
+              },
+              "key": "main"
+            }
+          ],
+          "agents": [
+            {
+              "key": "main-role-0",
+              "name": "Project lead",
+              "runtime": "codex",
+              "systemPrompt": "You are the project lead. Coordinate the lifecycle, manage blockers and confirm stage transitions. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Coordinate the lifecycle, manage blockers and confirm stage transitions"
+            },
+            {
+              "key": "main-role-1",
+              "name": "Product manager",
+              "runtime": "codex",
+              "systemPrompt": "You are the product manager. Define the user problem, scope and acceptance criteria. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Define the user problem, scope and acceptance criteria"
+            },
+            {
+              "key": "main-role-2",
+              "name": "Designer",
+              "runtime": "codex",
+              "systemPrompt": "You are the designer. Design user flows, interactions and high-fidelity interfaces. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Design user flows, interactions and high-fidelity interfaces"
+            },
+            {
+              "key": "main-role-3",
+              "name": "Engineer",
+              "runtime": "codex",
+              "systemPrompt": "You are the engineer. Prepare the technical plan, implement the work and run self-checks. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Prepare the technical plan, implement the work and run self-checks"
+            },
+            {
+              "key": "main-role-4",
+              "name": "Tester",
+              "runtime": "codex",
+              "systemPrompt": "You are the tester. Run independent tests, track defects and verify regressions. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Run independent tests, track defects and verify regressions"
+            },
+            {
+              "key": "main-role-5",
+              "name": "Delivery lead",
+              "runtime": "codex",
+              "systemPrompt": "You are the delivery lead. Prepare the release, documentation, handoff and rollback plan. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Prepare the release, documentation, handoff and rollback plan"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "apiVersion": "agent.wecode.io/v1",
+    "kind": "Template",
+    "metadata": {
+      "name": "research-analysis",
+      "namespace": "system"
+    },
+    "spec": {
+      "displayName": "Research and analysis",
+      "description": "Gather evidence around a question, compare options and produce recommendations supported by sources and reasoned judgment.",
+      "category": "collaboration",
+      "version": "1.2.0",
+      "resources": {
+        "collaboration": {
+          "project": {
+            "name": "Focused research",
+            "description": "Collect reliable sources, cross-check evidence and compare options to produce key findings and actionable recommendations.",
+            "taskAssignment": {
+              "enabled": true,
+              "groupKey": "main"
+            },
+            "board": {
+              "name": "Project stages",
+              "tags": [
+                "Define the question",
+                "Collect evidence",
+                "Analysis and verification",
+                "Findings and recommendations"
+              ]
+            }
+          },
+          "groups": [
+            {
+              "name": "Research and analysis team",
+              "description": "Collect reliable sources, cross-check evidence and compare options to produce key findings and actionable recommendations.",
+              "instructions": "The coordinator defines the question, research scope and output format. Researchers preserve traceable sources. Analysts distinguish facts from inferences and cross-check the evidence. The coordinator combines the findings, recommendations and unresolved questions. The team lead Agent receives new issues, breaks them down and assigns them to the appropriate members. The lead coordinates and accepts work rather than replacing the execution roles. Track progress with the Project stages labels: Define the question, Collect evidence, Analysis and verification, Findings and recommendations. When entering a stage, add its label to the parent issue, remove the previous stage label and preserve other business labels. Verify results after delivery; publishing requires human confirmation.",
+              "leaderRole": "role-0",
+              "roles": [
+                {
+                  "key": "role-0",
+                  "name": "Coordinator",
+                  "responsibility": "Define the scope and synthesize findings",
+                  "defaultKind": "agent",
+                  "agentKey": "main-role-0"
+                },
+                {
+                  "key": "role-1",
+                  "name": "Researcher",
+                  "responsibility": "Find information and record its sources",
+                  "agentKey": "main-role-1",
+                  "defaultKind": "agent"
+                },
+                {
+                  "key": "role-2",
+                  "name": "Analyst",
+                  "responsibility": "Compare options and cross-check evidence",
+                  "agentKey": "main-role-2",
+                  "defaultKind": "agent"
+                }
+              ],
+              "stages": [
+                {
+                  "key": "stage-0",
+                  "name": "Define the question",
+                  "ownerRole": null,
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                },
+                {
+                  "key": "stage-1",
+                  "name": "Collect evidence",
+                  "ownerRole": "role-1",
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                },
+                {
+                  "key": "stage-2",
+                  "name": "Analysis and verification",
+                  "ownerRole": "role-2",
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                },
+                {
+                  "key": "stage-3",
+                  "name": "Findings and recommendations",
+                  "ownerRole": "role-2",
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                }
+              ],
+              "executionRequirements": {
+                "requiredTags": []
+              },
+              "key": "main"
+            }
+          ],
+          "agents": [
+            {
+              "key": "main-role-0",
+              "name": "Coordinator",
+              "runtime": "codex",
+              "systemPrompt": "You are the coordinator. Define the scope and synthesize findings. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Define the scope and synthesize findings"
+            },
+            {
+              "key": "main-role-1",
+              "name": "Researcher",
+              "runtime": "codex",
+              "systemPrompt": "You are the researcher. Find information and record its sources. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Find information and record its sources"
+            },
+            {
+              "key": "main-role-2",
+              "name": "Analyst",
+              "runtime": "codex",
+              "systemPrompt": "You are the analyst. Compare options and cross-check evidence. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Compare options and cross-check evidence"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "apiVersion": "agent.wecode.io/v1",
+    "kind": "Template",
+    "metadata": {
+      "name": "content-creation",
+      "namespace": "system"
+    },
+    "spec": {
+      "displayName": "Content creation",
+      "description": "Define the audience and communication goal, then plan, write and review content through a clear workflow.",
+      "category": "collaboration",
+      "version": "1.2.0",
+      "resources": {
+        "collaboration": {
+          "project": {
+            "name": "Content planning and production",
+            "description": "Develop the topic, draft and review content for the target audience, then prepare a final version that meets the channel requirements.",
+            "taskAssignment": {
+              "enabled": true,
+              "groupKey": "main"
+            },
+            "board": {
+              "name": "Project stages",
+              "tags": [
+                "Topic and outline",
+                "Content draft",
+                "Fact-checking and review",
+                "Final approval"
+              ]
+            }
+          },
+          "groups": [
+            {
+              "name": "Content creation team",
+              "description": "Develop the topic, draft and review content for the target audience, then prepare a final version that meets the channel requirements.",
+              "instructions": "The coordinator first confirms the audience, channel, style and acceptance criteria. The writer submits an outline and draft. The reviewer checks facts, wording and copyright issues. The coordinator resolves feedback; final approval requires human confirmation, and publishing is never automatic. The team lead Agent receives new issues, breaks them down and assigns them to the appropriate members. The lead coordinates and accepts work rather than replacing the execution roles. Track progress with the Project stages labels: Topic and outline, Content draft, Fact-checking and review, Final approval. When entering a stage, add its label to the parent issue, remove the previous stage label and preserve other business labels. Verify results after delivery; publishing requires human confirmation.",
+              "leaderRole": "role-0",
+              "roles": [
+                {
+                  "key": "role-0",
+                  "name": "Coordinator",
+                  "responsibility": "Confirm the audience and guide the direction",
+                  "defaultKind": "agent",
+                  "agentKey": "main-role-0"
+                },
+                {
+                  "key": "role-1",
+                  "name": "Writer",
+                  "responsibility": "Plan the outline and write the draft",
+                  "agentKey": "main-role-1",
+                  "defaultKind": "agent"
+                },
+                {
+                  "key": "role-2",
+                  "name": "Reviewer",
+                  "responsibility": "Check facts and improve the wording",
+                  "agentKey": "main-role-2",
+                  "defaultKind": "agent"
+                }
+              ],
+              "stages": [
+                {
+                  "key": "stage-0",
+                  "name": "Topic and outline",
+                  "ownerRole": null,
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                },
+                {
+                  "key": "stage-1",
+                  "name": "Content draft",
+                  "ownerRole": "role-1",
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                },
+                {
+                  "key": "stage-2",
+                  "name": "Fact-checking and review",
+                  "ownerRole": "role-2",
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                },
+                {
+                  "key": "stage-3",
+                  "name": "Final approval",
+                  "ownerRole": "role-2",
+                  "deliverables": [],
+                  "acceptance": "",
+                  "description": ""
+                }
+              ],
+              "executionRequirements": {
+                "requiredTags": []
+              },
+              "key": "main"
+            }
+          ],
+          "agents": [
+            {
+              "key": "main-role-0",
+              "name": "Coordinator",
+              "runtime": "codex",
+              "systemPrompt": "You are the coordinator. Confirm the audience and guide the direction. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Confirm the audience and guide the direction"
+            },
+            {
+              "key": "main-role-1",
+              "name": "Writer",
+              "runtime": "codex",
+              "systemPrompt": "You are the writer. Plan the outline and write the draft. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Plan the outline and write the draft"
+            },
+            {
+              "key": "main-role-2",
+              "name": "Reviewer",
+              "runtime": "codex",
+              "systemPrompt": "You are the reviewer. Check facts and improve the wording. Follow the team workflow, produce verifiable outputs, and promptly report blockers and questions that require human judgment.",
+              "capabilityDescription": "Check facts and improve the wording"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

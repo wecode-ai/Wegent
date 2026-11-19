@@ -1,11 +1,8 @@
 // @vitest-environment node
 import { afterEach, expect, test, vi } from 'vitest'
 import { join } from 'node:path'
-import {
-  redisCliBinary,
-  signInDesktopCloud,
-} from '../../e2e/desktop/modules/desktop-cloud-login.mjs'
-import { commandOutputAsync } from '../../e2e/desktop/modules/shared.mjs'
+import { signInDesktopCloud } from '../../e2e/desktop/modules/desktop-cloud-login.mjs'
+import { commandOutputAsync, redisCliBinary } from '../../e2e/desktop/modules/shared.mjs'
 import { pluginApi } from '../../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
 vi.mock('../../e2e/desktop/modules/shared.mjs', async original => ({
@@ -54,12 +51,40 @@ test.each([0, 1])(
         return user.user_name
       return undefined
     })
+    let pollingReady!: () => void
+    const polling = new Promise<void>(resolve => {
+      pollingReady = resolve
+    })
     const cloud = {
       backendUrl: 'http://127.0.0.1:8000',
       authToken: 'fixture-token',
       redisPort: 6379,
+      waitForAuthorizationPolling: vi.fn(() => polling),
     }
-    await expect(signInDesktopCloud({ command }, cloud)).resolves.toEqual(user)
+    const login = signInDesktopCloud({ command }, cloud)
+    await vi.waitFor(() => expect(cloud.waitForAuthorizationPolling).toHaveBeenCalledWith(id))
+    expect(pluginApi).toHaveBeenCalledTimes(1)
+    pollingReady()
+    await expect(login).resolves.toEqual(user)
+    const focus = command.mock.calls.findIndex(([action]) => action === 'focusMainWindow')
+    const connectedCard = command.mock.calls.findIndex(
+      ([action, selector]) =>
+        action === 'waitFor' && selector === '[data-testid="cloud-connection-status-card"]'
+    )
+    expect(focus).toBeGreaterThan(-1)
+    expect(vi.mocked(pluginApi).mock.invocationCallOrder.at(-1)).toBeLessThan(
+      command.mock.invocationCallOrder[focus]
+    )
+    expect(focus).toBeLessThan(connectedCard)
+    expect(command).toHaveBeenCalledWith(
+      'waitFor',
+      '[data-testid="cloud-connection-status-card"]',
+      {
+        text: user.user_name,
+        visible: true,
+        timeoutMs: 10_000,
+      }
+    )
     expect(commandOutputAsync).toHaveBeenCalledWith(
       join(redisRoot, process.platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'),
       ['-p', '6379', '--raw', '--scan', '--pattern', '*wework_auth_session:*']

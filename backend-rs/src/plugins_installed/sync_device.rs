@@ -27,13 +27,12 @@ use brz_redis::Redis;
 use chrono::Local;
 use serde_json::Value;
 
-use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
-};
+use crate::device_identity::{PluginDeviceInstallationRow, plugin_device_id_on};
 use crate::http_compat::FastApiError;
 use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 
+use super::EPOCH;
 use super::auth;
 use super::catalog_reconcile::reconcile_stale_installed_catalog_refs;
 use super::desired_capabilities::{
@@ -564,16 +563,32 @@ pub(super) async fn ensure_pending_for_device<Q>(
 where
     Q: PluginQuery,
 {
-    let identity_map =
-        reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
-            .await?;
+    ensure_pending_for_installs(session, user_id, device_id, guard, None).await
+}
+
+pub(super) async fn ensure_pending_for_installs<Q>(
+    session: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    installed_ids: Option<&[i64]>,
+) -> MysqlResult<usize>
+where
+    Q: PluginQuery,
+{
+    let identity_map = crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(session, user_id, guard, installed_ids)
+    .await?;
     let normalized_device_id = plugin_device_id_on(session, user_id, device_id).await?;
     if normalized_device_id.is_empty() {
         return Ok(0);
     }
-    let desired: Vec<DesiredInstalledKind> = session
+    let mut desired: Vec<DesiredInstalledKind> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
+    desired.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
     let mut changed = 0usize;
     // The session's identity map is seeded by `reconcile_plugin_device_rows`'s
     // leading read (primary-key ascending), so the flush emits the UPDATE
@@ -625,6 +640,17 @@ struct DesiredInsert {
     now: chrono::NaiveDateTime,
 }
 
+/// `(last_sync_at, updated_at)` for a newly materialized pending row.
+///
+/// Source `_ensure_desired_install_pending` adds
+/// `PluginDeviceInstallation(..., state="pending")` without setting a sync
+/// timestamp, so SQLAlchemy applies the column defaults
+/// (`app/models/plugin_marketplace.py`): `last_sync_at` uses `EPOCH_TIME`
+/// ("epoch means never synced") while `updated_at` uses `datetime.now`.
+fn pending_row_times(now: chrono::NaiveDateTime) -> (chrono::NaiveDateTime, chrono::NaiveDateTime) {
+    (EPOCH, now)
+}
+
 impl PendingFlush {
     /// Emit the collected INSERTs (iteration order) and UPDATEs (identity-map
     /// order, primary key ascending), then the caller's COMMIT. The UPDATE
@@ -660,6 +686,7 @@ impl PendingFlush {
     {
         self.updates.sort_by_key(|(index, _)| *index);
         for insert in &self.inserts {
+            let (last_sync_at, updated_at) = pending_row_times(insert.now);
             session
                 .execute(
                     INSERT_INSTALLATION_QUERY,
@@ -673,8 +700,8 @@ impl PendingFlush {
                         "",
                         "",
                         0_i64,
-                        insert.now,
-                        insert.now,
+                        last_sync_at,
+                        updated_at,
                     ),
                 )
                 .await?;
@@ -901,6 +928,21 @@ mod tests {
              plugin_device_installations.id = ?"
         ));
         assert_eq!(flush_timestamp().len(), "YYYY-MM-DD HH:MM:SS.ffffff".len());
+    }
+
+    #[test]
+    fn pending_insert_records_epoch_last_sync_at() {
+        // Source `_ensure_desired_install_pending` adds the row without a sync
+        // timestamp; the `PluginDeviceInstallation` column defaults then bind
+        // the epoch sentinel for `last_sync_at` and `datetime.now` for
+        // `updated_at` (app/models/plugin_marketplace.py). The recorded
+        // sync-device INSERT proves `last_sync_at='1970-01-01 00:00:00'`.
+        let now = chrono::NaiveDateTime::parse_from_str(
+            "2026-11-09 13:02:16.987728",
+            "%Y-%m-%d %H:%M:%S%.6f",
+        )
+        .unwrap();
+        assert_eq!(pending_row_times(now), (EPOCH, now));
     }
 
     /// The source's `get_current_user` runs on the request session, so the

@@ -22,7 +22,19 @@ export function issueQuestionIdentity(item: RuntimeInteraction): string | null {
   ])
 }
 
-/** Only server-validated resolved questions supersede a retained native snapshot. */
+/** Only an actual reassignment starts a new dismissal scope for the same question. */
+export function issueQuestionHandoff(item: RuntimeInteraction): string | undefined {
+  const request = item.sharedRequest
+  if (!request) return undefined
+  if (request.waiting_since && request.waiting_since !== request.created_at)
+    return request.waiting_since
+  const assignment = request.events?.findLast(
+    event => event.type === 'assigned' && event.from_user_id !== event.to_user_id
+  )
+  return assignment?.at ?? 'initial'
+}
+
+/** Only server-validated handled questions supersede a retained native snapshot. */
 export function isResolvedIssueQuestion(
   native: RuntimeInteraction,
   validatedResolved: readonly RuntimeInteraction[]
@@ -47,6 +59,17 @@ export function matchesIssueResolution(
   return identity
     ? identity === resolution.questionIdentity
     : !native.project && native.id === resolution.nativeInteractionId
+}
+
+/** Durable settlement also supersedes stale caches and stale project-work snapshots. */
+export function hasRecordedIssueResolution(
+  item: RuntimeInteraction,
+  history: readonly { resolvedIssueQuestion?: ValidatedIssueResolution }[]
+): boolean {
+  return history.some(
+    entry =>
+      entry.resolvedIssueQuestion && matchesIssueResolution(item, entry.resolvedIssueQuestion)
+  )
 }
 
 /** Shared Issue questions never require access to another member's private runtime. */

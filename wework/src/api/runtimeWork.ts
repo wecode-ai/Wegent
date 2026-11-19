@@ -1,11 +1,10 @@
+import type { RuntimeTaskArchiveRequest } from '../../../packages/chat-core/src/runtime-management-types'
 import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
 import { readRuntimeTranscript } from '@wegent/chat-core'
 import type { LocalRuntimeSidebarOptions } from '@/lib/local-runtime-sidebar-identity'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
-  BindRuntimeTaskIMSessionsRequest,
-  BindRuntimeTaskIMSessionsResponse,
   DeleteDeviceWorkspaceRequest,
   DeleteDeviceWorkspaceResponse,
   DeviceWorkspaceResponse,
@@ -276,11 +275,6 @@ export function createRuntimeWorkApi(client: HttpClient) {
     restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
       return client.post('/runtime-work/worktrees/restore', data)
     },
-    bindRuntimeTaskImSessions(
-      data: BindRuntimeTaskIMSessionsRequest
-    ): Promise<BindRuntimeTaskIMSessionsResponse> {
-      return client.post('/runtime-work/im-sessions', data)
-    },
     getImNotificationSettings(): Promise<RuntimeIMNotificationSettingsResponse> {
       return client.get('/runtime-work/im-notifications')
     },
@@ -315,7 +309,7 @@ export function createRuntimeWorkApi(client: HttpClient) {
     ): Promise<ArchivedConversationsListResponse> {
       return client.post('/runtime-work/archived-conversations/list', data)
     },
-    archiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+    archiveConversation(address: RuntimeTaskArchiveRequest): Promise<RuntimeTaskArchiveResponse> {
       return client.post('/runtime-work/archived-conversations/archive', address)
     },
     archiveProjectConversations(

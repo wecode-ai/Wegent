@@ -9,6 +9,7 @@ export function StandInReviewDialog({
   title,
   testId,
   busy = false,
+  compact = false,
   onClose,
   children,
 }: {
@@ -16,6 +17,7 @@ export function StandInReviewDialog({
   title: string
   testId: string
   busy?: boolean
+  compact?: boolean
   onClose(): void
   children: ReactNode
 }) {
@@ -39,7 +41,7 @@ export function StandInReviewDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid={testId}
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background text-text-primary shadow-lg"
+        className={`flex max-h-[calc(100dvh-2rem)] w-full ${compact ? 'max-w-[520px]' : 'max-w-2xl'} flex-col overflow-hidden rounded-2xl border border-border bg-background text-text-primary shadow-lg`}
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
           <h2 id={titleId} className="min-w-0 flex-1 text-lg font-medium">

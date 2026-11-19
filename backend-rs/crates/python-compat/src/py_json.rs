@@ -21,7 +21,7 @@ use serde_json::Value;
 /// `json.dumps(value)` with CPython's default separators and ASCII escaping.
 pub fn python_dumps(value: &Value) -> String {
     let mut out = String::new();
-    write_python_with(&mut out, value, write_python_string);
+    write_python_with(&mut out, value, write_python_string, false);
     out
 }
 
@@ -29,12 +29,24 @@ pub fn python_dumps(value: &Value) -> String {
 /// number rendering, with characters outside `!`..`~` kept as UTF-8.
 pub fn python_dumps_utf8(value: &Value) -> String {
     let mut out = String::new();
-    write_python_with(&mut out, value, write_compact_string);
+    write_python_with(&mut out, value, write_compact_string, false);
+    out
+}
+
+/// `json.dumps(value, ensure_ascii=False, separators=(",", ":"))`.
+pub fn python_dumps_compact_utf8(value: &Value) -> String {
+    let mut out = String::new();
+    write_python_with(&mut out, value, write_compact_string, true);
     out
 }
 
 /// CPython's JSON encoder body: `write_string` selects the escaping mode.
-fn write_python_with(out: &mut String, value: &Value, write_string: fn(&mut String, &str)) {
+fn write_python_with(
+    out: &mut String,
+    value: &Value,
+    write_string: fn(&mut String, &str),
+    compact: bool,
+) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
@@ -45,9 +57,9 @@ fn write_python_with(out: &mut String, value: &Value, write_string: fn(&mut Stri
             out.push('[');
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push_str(if compact { "," } else { ", " });
                 }
-                write_python_with(out, item, write_string);
+                write_python_with(out, item, write_string, compact);
             }
             out.push(']');
         }
@@ -55,11 +67,11 @@ fn write_python_with(out: &mut String, value: &Value, write_string: fn(&mut Stri
             out.push('{');
             for (index, (key, item)) in map.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(", ");
+                    out.push_str(if compact { "," } else { ", " });
                 }
                 write_string(out, key);
-                out.push_str(": ");
-                write_python_with(out, item, write_string);
+                out.push_str(if compact { ":" } else { ": " });
+                write_python_with(out, item, write_string, compact);
             }
             out.push('}');
         }

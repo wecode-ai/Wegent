@@ -1,160 +1,85 @@
-import { useEffect, useImperativeHandle, useState, type FormEvent, type Ref } from 'react'
+import {
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
 import { Mail, Plus, X } from 'lucide-react'
 import type { StandInRole } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
+import {
+  createEmailConnectionsModel,
+  initialEmailForm as initialForm,
+  EMAIL_PROVIDER,
+} from './standInEmailConnectionsModel'
+export { EMAIL_PROVIDER } from './standInEmailConnectionsModel'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 
-export const EMAIL_PROVIDER = '@wegent/dsh-connection-runtime/email'
-type Server = { host: string; port: number; secure: boolean }
-type Account = { id: string; email: string; username: string; imap: Server; smtp: Server }
-const initialForm = {
-  id: undefined as string | undefined,
-  email: '',
-  username: '',
-  password: '',
-  imap: { host: '', port: 993, secure: true },
-  smtp: { host: '', port: 465, secure: true },
-}
-
-async function request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const host = getDshExtensionHost()
-  if (!host) throw new Error('email_unavailable')
-  return host.backend.scope('wework-connection-runtime').request(method, params) as Promise<T>
-}
-
-export function StandInEmailConnections({
-  role,
-  local,
-  disabled,
-  onChange,
-  onDirtyChange,
-  ref,
-}: {
+interface StandInEmailConnectionsProps {
   role: StandInRole
   local: boolean
   disabled: boolean
   onChange(role: StandInRole): void
   onDirtyChange?(dirty: boolean): void
   ref?: Ref<AutomationNavigationHandle>
-}) {
+
+  userId?: number
+  ownerApi?: object
+}
+export function StandInEmailConnections(props: StandInEmailConnectionsProps) {
+  const scope = JSON.stringify([
+    props.userId,
+    props.role.executionDeviceId,
+    props.role.id,
+    props.local,
+  ])
+  const [owner, setOwner] = useState({ api: props.ownerApi, scope, revision: 0 })
+  if (owner.api !== props.ownerApi || owner.scope !== scope)
+    setOwner({ api: props.ownerApi, scope, revision: owner.revision + 1 })
+  return <StandInEmailConnectionsContent key={owner.revision} {...props} />
+}
+function StandInEmailConnectionsContent({
+  role,
+  local,
+  disabled,
+  onChange,
+  onDirtyChange,
+  ref,
+}: StandInEmailConnectionsProps) {
   const { t } = useTranslation('common')
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [form, setForm] = useState(initialForm)
-  const [adding, setAdding] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState<'connected' | 'updated' | null>(null)
-  const [revision, setRevision] = useState(0)
-  const [removing, setRemoving] = useState<Account | null>(null)
-  const [baseline, setBaseline] = useState(initialForm)
-  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
-  const dirty = adding && JSON.stringify(form) !== JSON.stringify(baseline)
-  const requestLeave = (action: () => void) => {
-    if (busy) return
-    if (dirty) setPendingNavigation(() => action)
-    else action()
-  }
-  useImperativeHandle(ref, () => ({ requestLeave }))
-  useEffect(() => {
-    onDirtyChange?.(dirty)
-  }, [dirty, onDirtyChange])
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
+  const input = useMemo(
+    () => ({ role, local, disabled, onChange, onDirtyChange }),
+    [role, local, disabled, onChange, onDirtyChange]
+  )
+  const [model] = useState(() => createEmailConnectionsModel(input))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const state = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const { accounts, form, adding, busy, error, saved, removing, pendingNavigation } = state
+  const setForm = (value: Parameters<typeof model.set<'form'>>[1]) => model.set('form', value)
+  const setBaseline = (value: typeof initialForm) => model.set('baseline', value)
+  const setAdding = (value: boolean | ((current: boolean) => boolean)) => model.set('adding', value)
+  const setSaved = (value: 'connected' | 'updated' | null) => model.set('saved', value)
+  const setRemoving = (value: typeof removing) => model.set('removing', value)
+  const setPendingNavigation = (value: typeof pendingNavigation) =>
+    model.set('pendingNavigation', () => value)
+  const requestLeave = model.requestLeave
+  const connect = model.connect
+  const removeAccount = model.removeAccount
   const rows = (role.connections ?? []).filter(row => row.providerId === EMAIL_PROVIDER)
-  useEffect(() => {
-    if (!local) return
-    let active = true
-    void request<Account[]>('emailAccounts')
-      .then(items => {
-        if (active) setAccounts(items)
-      })
-      .catch(() => {
-        if (active) setError('email_unavailable')
-      })
-    return () => {
-      active = false
-    }
-  }, [local, revision])
-  const connect = (account: Pick<Account, 'id' | 'email'>) => {
-    if (rows.some(row => row.profile === account.id)) return
-    onChange({
-      ...role,
-      connections: [
-        ...(role.connections ?? []),
-        {
-          providerId: EMAIL_PROVIDER,
-          profile: account.id,
-          id: 'INBOX',
-          kind: 'inbox',
-          name: account.email,
-          policy: { automatic: true, askBeforeAct: true, immediate: role.id !== '@primary' },
-        },
-      ],
-    })
-  }
-  const save = async (event: FormEvent) => {
-    event.preventDefault()
-    if (busy || disabled || !local) return
-    setBusy(true)
-    setError(null)
-    setSaved(null)
-    try {
-      const account = await request<{ id: string }>('saveEmailAccount', {
-        ...form,
-        username: form.username.trim() || form.email.trim(),
-      })
-      if (!form.id) connect({ id: account.id, email: form.email.trim() })
-      setBaseline(initialForm)
-      setForm(initialForm)
-      setAdding(false)
-      setSaved(form.id || rows.some(row => row.profile === account.id) ? 'updated' : 'connected')
-      setRevision(value => value + 1)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : ''
-      setError(
-        [
-          'email_smtp_failed',
-          'email_connection_failed',
-          'email_transport_failed',
-          'email_auth_failed',
-          'email_invalid_configuration',
-        ].find(code => message.includes(code)) ?? 'email_unavailable'
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-  const removeAccount = async () => {
-    if (!removing || busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      await request('removeEmailAccount', { id: removing.id })
-      onChange({
-        ...role,
-        connections: (role.connections ?? []).filter(
-          row => row.providerId !== EMAIL_PROVIDER || row.profile !== removing.id
-        ),
-      })
-      setRemoving(null)
-      if (form.id === removing.id) {
-        setBaseline(initialForm)
-        setForm(initialForm)
-        setAdding(false)
-      }
-      setSaved(null)
-      setRevision(value => value + 1)
-    } catch {
-      setError('email_unavailable')
-    } finally {
-      setBusy(false)
-    }
-  }
+  useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
   return (
-    <section className="space-y-4" data-testid="stand-in-email-connections">
+    <section
+      className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
+      data-testid="stand-in-email-connections"
+    >
       <StandInConnectionHeader
         icon={Mail}
         title={t('standIn.email.title')}
@@ -201,7 +126,7 @@ export function StandInEmailConnections({
         <details className="space-y-2">
           <summary
             data-testid="stand-in-email-manage"
-            className="min-h-9 cursor-pointer text-sm text-text-secondary"
+            className="min-h-11 cursor-pointer text-sm text-text-secondary md:min-h-9"
           >
             {t('standIn.email.manage')}
           </summary>
@@ -259,7 +184,10 @@ export function StandInEmailConnections({
       )}
       {adding && (
         <form
-          onSubmit={event => void save(event)}
+          onSubmit={event => {
+            event.preventDefault()
+            void model.save()
+          }}
           className="space-y-4"
           data-testid="stand-in-email-form"
         >
@@ -276,12 +204,14 @@ export function StandInEmailConnections({
                   autoComplete={key === 'password' ? 'new-password' : 'off'}
                   value={form[key]}
                   onChange={event => setForm(value => ({ ...value, [key]: event.target.value }))}
-                  className="min-h-9 w-full rounded-md border border-border bg-background px-3"
+                  className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
                 />
               </label>
             ))}
-            <p className="text-xs text-text-muted">{t('standIn.email.password_help')}</p>
-            {form.id && <p className="text-xs text-text-muted">{t('standIn.email.update_help')}</p>}
+            <p className="text-xs text-text-secondary">{t('standIn.email.password_help')}</p>
+            {form.id && (
+              <p className="text-xs text-text-secondary">{t('standIn.email.update_help')}</p>
+            )}
             {(['imap', 'smtp'] as const).map(protocol => (
               <fieldset
                 key={protocol}
@@ -305,7 +235,7 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], host: event.target.value },
                         }))
                       }
-                      className="min-h-9 w-full rounded-md border border-border bg-background px-3"
+                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
@@ -323,7 +253,7 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], port: Number(event.target.value) },
                         }))
                       }
-                      className="min-h-9 w-full rounded-md border border-border bg-background px-3"
+                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
@@ -348,7 +278,7 @@ export function StandInEmailConnections({
                           },
                         }))
                       }
-                      className="min-h-9 w-full rounded-md border border-border bg-background px-2"
+                      className="min-h-11 w-full rounded-md border border-border bg-background px-2 md:min-h-9"
                     >
                       <option value="tls">TLS</option>
                       <option value="starttls">STARTTLS</option>
@@ -388,8 +318,7 @@ export function StandInEmailConnections({
               disabled={busy}
               className="min-h-9 underline"
               onClick={() => {
-                setError(null)
-                setRevision(value => value + 1)
+                model.reload()
               }}
             >
               {t('standIn.workspace.connection_retry')}

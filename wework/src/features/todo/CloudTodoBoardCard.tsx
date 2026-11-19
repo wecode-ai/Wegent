@@ -1,3 +1,4 @@
+import { useBoardRuntimeGoal, type BoardRuntimeGoalLoader } from './boardRuntimeGoal'
 import { runtimeTaskProgress, runtimeToolActivityText } from '@wegent/collaboration'
 import {
   IssueBoardCard,
@@ -7,28 +8,17 @@ import {
   createCollaborationTranslator,
   standInProcessingActor,
 } from '@wegent/collaboration'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import type { CollaborationIssueBadge } from '@wegent/collaboration'
-import type { CloudLoopItem } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { isRuntimeChatStreamDebugEnabled } from '@/api/runtime/runtimeChatStream'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { Tooltip } from '@/components/ui/tooltip'
-import {
-  getRuntimeConversationTurns,
-  runtimeConversationKey,
-  subscribeRuntimeConversation,
-} from '@/features/workbench/runtimeConversationCache'
-import type { RuntimeLiveActivity } from '@/features/workbench/runtimeThinking'
+import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ModelSelectionConfig,
@@ -49,6 +39,7 @@ import {
   useBoardRuntimeConversations,
   type UseBoardRuntimeConversationsOptions,
 } from './useBoardRuntimeConversations'
+import { BoardRuntimeConversations } from './boardRuntimeConversations'
 import { Archive, CircleCheck } from 'lucide-react'
 import { IssueBadges } from './IssueBadges'
 
@@ -61,8 +52,6 @@ export interface BoardCardDisplaySettings {
 }
 
 export type BoardCardProgressDisplay = 'compact' | 'focused'
-
-const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
 
 function useBoardTranslate() {
   const { i18n } = useTranslation('common')
@@ -141,6 +130,7 @@ interface CloudTodoBoardCardProps {
   childrenAction?: ReactNode
   statusNames?: Record<string, string>
   item: CloudLoopItem
+  projectStore: CloudProject['project_store'] | null
   unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
@@ -148,7 +138,7 @@ interface CloudTodoBoardCardProps {
   previewPinned?: boolean
   onPreviewPinnedChange?: (pinned: boolean) => void
   onMarkRead?: (item: CloudLoopItem) => void
-  onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onLoadRuntimeGoal?: BoardRuntimeGoalLoader
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   getRuntimeTranscript?: UseBoardRuntimeConversationsOptions['getRuntimeTranscript']
   display: BoardCardDisplaySettings
@@ -179,6 +169,7 @@ export function CloudTodoBoardCard({
   childrenAction,
   statusNames,
   item,
+  projectStore,
   unread,
   taskBindings = [],
   onClick,
@@ -219,15 +210,17 @@ export function CloudTodoBoardCard({
     }
   }
   const conversationTaskBindings = [...taskBindingsByConversation.values()]
-  useBoardRuntimeConversations({
+  const [conversationSession] = useState(() => new BoardRuntimeConversations())
+  const conversationOptions: UseBoardRuntimeConversationsOptions = {
+    session: conversationSession,
     item,
     conversations: conversationTaskBindings.map(binding => ({
-      address: boardTaskAddress(item, binding),
+      address: boardTaskAddress(item, binding, projectStore),
       task: binding.runtimeTask,
     })),
     enabled: hasActiveTask || item.status === 'in_review',
     getRuntimeTranscript,
-  })
+  }
   const runningTaskBindings = conversationTaskBindings.filter(binding => binding.running)
   const currentTaskBinding = runningTaskBindings[0] ?? conversationTaskBindings[0]
   const changeRequestSnapshot = useTaskChangeRequest(
@@ -241,6 +234,15 @@ export function CloudTodoBoardCard({
       item.status === 'in_review' ||
       stoppedTaskNeedsAttention(changeRequestSnapshot?.changeRequest ?? null))
   )
+  const currentGoalAddress = useMemo(
+    () => (currentTaskBinding ? boardTaskAddress(item, currentTaskBinding, projectStore) : null),
+    [currentTaskBinding, item, projectStore]
+  )
+  const currentGoal = useBoardRuntimeGoal(currentGoalAddress, onLoadRuntimeGoal, {
+    enabled: showCurrentTask,
+    loaded: currentTaskBinding?.runtimeGoalLoaded,
+    goal: currentTaskBinding?.runtimeGoal,
+  })
   const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
   const progressTaskBindings =
     runningTaskBindings.length > 0
@@ -278,10 +280,10 @@ export function CloudTodoBoardCard({
       onMarkRead={onMarkRead ? () => onMarkRead(item) : undefined}
       progressTaskBindings={progressTaskBindings}
       goal={
-        currentTaskBinding?.runtimeGoal
+        currentTaskBinding && currentGoal.goal
           ? {
               bindingId: currentTaskBinding.id,
-              objective: currentTaskBinding.runtimeGoal.objective,
+              objective: currentGoal.goal.objective,
             }
           : null
       }
@@ -336,8 +338,10 @@ export function CloudTodoBoardCard({
         <RuntimeTaskProgressSummary
           key={binding.id}
           item={item}
+          projectStore={projectStore}
           binding={binding}
           compact={compact}
+          conversationOptions={conversationOptions}
           progressDisplay={progressDisplay}
           active={binding.running || (binding.id === currentTaskBinding?.id && hasActiveTask)}
           changeRequestSnapshot={
@@ -370,7 +374,8 @@ export function CloudTodoBoardCard({
 
 function boardTaskAddress(
   item: CloudLoopItem,
-  binding: CloudTodoBoardTaskBinding
+  binding: CloudTodoBoardTaskBinding,
+  projectStore: CloudProject['project_store'] | null
 ): RuntimeTaskAddress {
   const address = { ...runtimeTaskBindingAddress(binding), ...binding.runtimeAddress }
   return {
@@ -378,18 +383,24 @@ function boardTaskAddress(
     ...(binding.modelSelection
       ? { runtimeHandle: { ...address.runtimeHandle, modelSelection: binding.modelSelection } }
       : {}),
-    projectSession: binding.runtimeAddress?.projectSession ?? {
-      projectId: String(item.cloud_project_id),
-      issueId: String(item.id),
-    },
+    ...(projectStore === 'backend'
+      ? {
+          projectSession: address.projectSession ?? {
+            projectId: String(item.cloud_project_id),
+            issueId: String(item.id),
+          },
+        }
+      : {}),
   }
 }
 
 function RuntimeTaskProgressSummary({
   item,
+  projectStore,
   binding,
   compact,
   progressDisplay = 'compact',
+  conversationOptions,
   active,
   changeRequestSnapshot,
   repairingChangeRequest,
@@ -398,29 +409,41 @@ function RuntimeTaskProgressSummary({
   onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
+  projectStore: CloudProject['project_store'] | null
   binding: CloudTodoBoardTaskBinding
   compact: boolean
   progressDisplay?: BoardCardProgressDisplay
+  conversationOptions: UseBoardRuntimeConversationsOptions
   active: boolean
   changeRequestSnapshot: TaskChangeRequestSnapshot | null
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
-  onLoadRuntimeGoal?: (address: RuntimeTaskAddress) => Promise<void>
+  onLoadRuntimeGoal?: BoardRuntimeGoalLoader
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }) {
   const t = useBoardTranslate()
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
-    () => boardTaskAddress(item, binding),
-    [binding, item]
+    () => boardTaskAddress(item, binding, projectStore),
+    [binding, item, projectStore]
   )
-  useEffect(() => {
-    if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
-    void onLoadRuntimeGoal(taskAddress)
-  }, [binding.runtimeGoalLoaded, onLoadRuntimeGoal, taskAddress])
-  const { activity, responsePreview } = useRuntimeTaskProjection(
-    compact ? taskAddress : null,
-    active
+  const runtimeGoal = useBoardRuntimeGoal(taskAddress, onLoadRuntimeGoal, {
+    loaded: binding.runtimeGoalLoaded,
+    goal: binding.runtimeGoal,
+  })
+  const { t: goalTranslate } = useTranslation('common')
+  const recordTurns = useCallback(
+    (turns: RuntimeConversationTurn[]) => recordBoardRuntimeProjection(taskAddress, active, turns),
+    [active, taskAddress]
+  )
+  const turns = useBoardRuntimeConversations({
+    ...conversationOptions,
+    observedAddress: compact ? taskAddress : null,
+    onTurns: recordTurns,
+  })
+  const { activity, responsePreview } = useMemo(
+    () => runtimeTaskProgress(turns, active),
+    [active, turns]
   )
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
@@ -432,8 +455,8 @@ function RuntimeTaskProgressSummary({
       title={taskTitle}
       compact={compact}
       focused={progressDisplay === 'focused'}
-      goal={binding.runtimeGoal?.objective}
-      goalLoading={!binding.runtimeGoalLoaded && Boolean(onLoadRuntimeGoal)}
+      goal={runtimeGoal.goal?.objective}
+      goalLoading={runtimeGoal.loading}
       translate={t}
       activity={{
         ...activity,
@@ -447,18 +470,39 @@ function RuntimeTaskProgressSummary({
       reserveTrailingAction={showCompactChangeRequest}
       hideTaskIcon={Boolean(changeRequestSnapshot?.changeRequest)}
       status={
-        <DshContributionSlotSurface
-          attachedClassName="contents"
-          props={{
-            binding,
-            compact,
-            itemId: item.id,
-            onContinueRepair: onContinueChangeRequestRepair,
-            repairing: repairingChangeRequest,
-            snapshot: changeRequestSnapshot,
-          }}
-          slot={WEWORK_DSH_SLOTS.boardCardStatus}
-        />
+        <>
+          <DshContributionSlotSurface
+            attachedClassName="contents"
+            props={{
+              binding,
+              compact,
+              itemId: item.id,
+              onContinueRepair: onContinueChangeRequestRepair,
+              repairing: repairingChangeRequest,
+              snapshot: changeRequestSnapshot,
+            }}
+            slot={WEWORK_DSH_SLOTS.boardCardStatus}
+          />
+          {!compact && runtimeGoal.failed && (
+            <div
+              role="alert"
+              className="mb-2 flex items-center justify-between gap-2 text-xs text-destructive"
+            >
+              <span>{goalTranslate('todo.current_conversation_goal_failed')}</span>
+              <button
+                type="button"
+                data-testid={`cloud-todo-card-goal-retry-${item.id}-${binding.id}`}
+                className="shrink-0 rounded-md px-2 py-1 hover:bg-muted"
+                onClick={event => {
+                  event.stopPropagation()
+                  void runtimeGoal.retry()
+                }}
+              >
+                {goalTranslate('workbench.retry')}
+              </button>
+            </div>
+          )}
+        </>
       }
       conversation={
         !compact ? (
@@ -484,27 +528,34 @@ function RuntimeTaskProgressSummary({
   )
 }
 
-function useRuntimeTaskProjection(
-  address: RuntimeTaskAddress | null,
-  active: boolean
-): {
-  activity: RuntimeLiveActivity
-  responsePreview: string | null
-} {
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      address
-        ? subscribeRuntimeConversation(address, listener, {
-            retainWhileSubscribed: false,
-          })
-        : () => undefined,
-    [address]
-  )
-  const getSnapshot = useCallback(
-    () => (address ? getRuntimeConversationTurns(address) : EMPTY_RUNTIME_CONVERSATION_TURNS),
-    [address]
-  )
-  const turns = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-
-  return useMemo(() => runtimeTaskProgress(turns, active), [active, turns])
+function recordBoardRuntimeProjection(
+  address: RuntimeTaskAddress,
+  active: boolean,
+  turns: RuntimeConversationTurn[]
+) {
+  if (!isRuntimeChatStreamDebugEnabled()) return
+  const projection = runtimeTaskProgress(turns, active)
+  console.debug('[Wework project board] runtime progress projection', {
+    deviceId: address.deviceId,
+    taskId: address.taskId,
+    active,
+    turns: turns.map(turn => ({
+      id: turn.id,
+      status: turn.status,
+      items: turn.items.length,
+      itemOrder: turn.items.map(item => ({
+        id: item.id,
+        type: item.type,
+        ...(item.type === 'block'
+          ? {
+              blockType: item.block.type,
+              blockStatus: item.block.status,
+              contentLength: 'content' in item.block ? item.block.content?.length : undefined,
+            }
+          : {}),
+      })),
+    })),
+    activityActive: projection.activity.active,
+    processTextLength: projection.activity.processText.length,
+  })
 }

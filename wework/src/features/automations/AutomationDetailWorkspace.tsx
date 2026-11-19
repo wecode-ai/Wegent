@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import {
   Check,
   ChevronDown,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { WorkdayOnlyField } from '@wegent/collaboration/project-manage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import {
@@ -48,6 +50,7 @@ import {
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
   automationTaskKey,
+  scheduleFromAutomationDraft,
   type AutomationDraft,
   type CronPreset,
   type CustomFrequency,
@@ -116,13 +119,14 @@ export function AutomationDetailWorkspace({
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
   const [actionsOpen, setActionsOpen] = useState(false)
+  const [frequencySettingsOpen, setFrequencySettingsOpen] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => {
-    if (!validationError) return
-    if (!draft.name.trim()) nameRef.current?.focus()
-    else if (!draft.prompt.trim()) promptRef.current?.focus()
-  }, [validationError, draft.name, draft.prompt])
+  useFocusRequest(
+    !draft.name.trim() ? nameRef : promptRef,
+    JSON.stringify([validationError, draft.name, draft.prompt]),
+    { enabled: Boolean(validationError && (!draft.name.trim() || !draft.prompt.trim())) }
+  )
   const localDeviceIdSet = new Set(localDeviceIds)
   const taskOptions: AutomationTaskMenuOption[] = buildAutomationTaskOptions(runtimeWork).map(
     option => {
@@ -144,11 +148,40 @@ export function AutomationDetailWorkspace({
       : !isCloudDevice(device) && !isRemoteDevice(device)
   )
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
-  const selectedModel = models.find(
+  const catalogModel = models.find(
     model =>
       model.type === draft.modelType &&
       (model.name === draft.modelId || (model.modelId ?? model.name) === draft.modelId)
   )
+  // A saved automation keeps its model reference after the admin hides that
+  // model from new selections. Show the persisted identity instead of
+  // pretending the automation is on "automatic".
+  const selectedModel =
+    catalogModel ??
+    (draft.modelId
+      ? ({
+          name: draft.modelId,
+          modelId: draft.modelId,
+          displayName: draft.modelId,
+          type: draft.modelType as UnifiedModel['type'],
+        } as UnifiedModel)
+      : undefined)
+  const selectedModelValue = selectedModel
+    ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
+    : ''
+  const modelSelectOptions = models.map(model => {
+    const modelId = model.modelId ?? model.name
+    return {
+      value: `${model.type}:${modelId}`,
+      label: model.displayName ?? model.name,
+    }
+  })
+  if (!catalogModel && selectedModel) {
+    modelSelectOptions.unshift({
+      value: selectedModelValue,
+      label: selectedModel.displayName ?? selectedModel.name,
+    })
+  }
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
     projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
@@ -444,30 +477,21 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('workbench.model', '模型')}>
                     <InlineSelect
                       dataTestId="automation-model-select"
-                      value={
-                        selectedModel
-                          ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
-                          : ''
-                      }
+                      value={selectedModelValue}
                       onChange={value => {
+                        if (!catalogModel && selectedModel && value === selectedModelValue) return
                         const [modelType, ...modelIdParts] = value.split(':')
                         const modelId = modelIdParts.join(':')
-                        onModelChange(
+                        const nextModel =
                           models.find(
                             model =>
                               model.type === modelType && (model.modelId ?? model.name) === modelId
-                          ) ?? null
-                        )
+                          ) ?? (value === selectedModelValue ? selectedModel : undefined)
+                        onModelChange(nextModel ?? null)
                       }}
                       options={[
                         { value: '', label: t('todo.automatic', '自动') },
-                        ...models.map(model => {
-                          const modelId = model.modelId ?? model.name
-                          return {
-                            value: `${model.type}:${modelId}`,
-                            label: model.displayName ?? model.name,
-                          }
-                        }),
+                        ...modelSelectOptions,
                       ]}
                     />
                   </SettingsRow>
@@ -494,9 +518,22 @@ export function AutomationDetailWorkspace({
 
         <SectionTitle
           title={t('todo.automation_frequency', '频率')}
-          action={<Settings className="h-4 w-4" />}
+          action={
+            draft.scheduleType !== 'one_time' ? (
+              <button
+                type="button"
+                data-testid="automation-frequency-settings"
+                aria-label={t('todo.automation_frequency_settings')}
+                aria-expanded={frequencySettingsOpen}
+                onClick={() => setFrequencySettingsOpen(open => !open)}
+                className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-surface md:h-7 md:w-7"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            ) : undefined
+          }
         />
-        <FrequencySettings draft={draft} onChange={onChange} />
+        <FrequencySettings draft={draft} showAdvanced={frequencySettingsOpen} onChange={onChange} />
         {calendarMode && (
           <p className="mt-2 text-xs text-text-muted">
             {t('standIn.workspace.schedule_inherits_settings')}
@@ -572,8 +609,12 @@ function deviceOptionLabel(
   }
   if (isDeviceBelowWeWorkVersion(device)) {
     return `${name} · ${t(
-      'workbench.remote_host_upgrade_required',
-      `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+      isCloudDevice(device)
+        ? 'workbench.cloud_host_version_required'
+        : 'workbench.remote_host_upgrade_required',
+      isCloudDevice(device)
+        ? `需要 v${WEWORK_MIN_EXECUTOR_VERSION} 或以上`
+        : `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
       { version: WEWORK_MIN_EXECUTOR_VERSION }
     )}`
   }
@@ -585,14 +626,16 @@ function deviceOptionLabel(
 
 function FrequencySettings({
   draft,
+  showAdvanced,
   onChange,
 }: {
   draft: AutomationDraft
+  showAdvanced: boolean
   onChange: <K extends keyof AutomationDraft>(key: K, value: AutomationDraft[K]) => void
 }) {
   const { t } = useTranslation('common')
   const repeatOptions = [
-    { value: 'weekdays', label: t('todo.weekdays', '工作日') },
+    { value: 'weekdays', label: t('todo.weekdays', '周一至周五') },
     { value: 'daily', label: t('todo.daily', '每天') },
     { value: 'weekly', label: t('todo.weekly', '每周') },
     { value: 'custom', label: t('todo.custom', '自定义') },
@@ -711,6 +754,32 @@ function FrequencySettings({
             testId="automation-cron-time"
             value={draft.cronTime}
             onChange={value => onChange('cronTime', value)}
+          />
+        </SettingsRow>
+      ) : null}
+      {draft.scheduleType === 'cron' && scheduleFromAutomationDraft(draft).type === 'cron' ? (
+        <WorkdayOnlyField
+          checked={draft.workdayOnly}
+          onChange={value => onChange('workdayOnly', value)}
+          label={t('todo.automation_workday_only')}
+          description={t('todo.automation_workday_only_hint')}
+          testId="automation-workday-only"
+        />
+      ) : null}
+      {showAdvanced && draft.scheduleType !== 'one_time' ? (
+        <SettingsRow
+          label={t('todo.automation_timezone')}
+          description={t('todo.automation_timezone_hint')}
+        >
+          <input
+            data-testid="automation-timezone-input"
+            aria-label={t('todo.automation_timezone')}
+            value={draft.timezone}
+            onChange={event => onChange('timezone', event.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            className="w-full bg-transparent text-right text-sm outline-none"
           />
         </SettingsRow>
       ) : null}

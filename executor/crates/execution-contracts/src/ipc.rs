@@ -10,6 +10,31 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 
+    /// Resolve the authenticated service owner without exposing account credentials to plugins.
+    fn connection_service_owner<'a>(&'a self) -> BoxFuture<'a, Result<i64, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "cloud_unavailable",
+                "Connected account is unavailable",
+            ))
+        })
+    }
+
+    /// The grant is supplied by the native endpoint, never deserialized from RPC input.
+    fn handle_connection_read_rpc<'a>(
+        &'a self,
+        _method: &'a str,
+        _payload: Value,
+        _grant: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "permission_denied",
+                "Verified connection reads are unavailable",
+            ))
+        })
+    }
+
     fn reconcile_bound_task_statuses<'a>(&'a self) -> BoxFuture<'a, ()> {
         Box::pin(async {})
     }
@@ -28,6 +53,29 @@ pub trait RuntimeWorkHandler: Send + Sync {
 }
 
 pub trait BackendConnectionHandler: Send + Sync {
+    fn configure_plugin_auth<'a>(
+        &'a self,
+        _params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "plugin_auth_http_unsupported",
+                "Native plugin authorization is unavailable",
+            ))
+        })
+    }
+    fn plugin_local_sync<'a>(
+        &'a self,
+        _params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "plugin_local_sync_unsupported",
+                "Local plugin synchronization is unavailable",
+            ))
+        })
+    }
+
     fn execute_plugin_auth<'a>(
         &'a self,
         params: Value,

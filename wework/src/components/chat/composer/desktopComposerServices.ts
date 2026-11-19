@@ -8,6 +8,7 @@ import { openNativeWorkspacePathPicker } from '@/lib/native-workspace-path-picke
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import {
   hasWorkspacePathDragData,
+  isWorkspaceImageFile,
   readClipboardFileUriPaths,
   resolveDataTransferWorkspacePaths,
 } from '@/lib/workspace-path-transfer'
@@ -34,5 +35,17 @@ export function getDesktopComposerEditorServices(): ComposerEditorServices {
 export const desktopComposerTransferServices: ComposerTransferServices = {
   hasPathTransfer: data =>
     hasWorkspacePathDragData(data) || readClipboardFileUriPaths(data).length > 0,
-  resolveTransfer: resolveDataTransferWorkspacePaths,
+  resolveTransfer(data, source) {
+    const files = Array.from(data.files)
+    if (
+      source === 'clipboard' &&
+      files.length > 0 &&
+      files.every(isWorkspaceImageFile) &&
+      !hasWorkspacePathDragData(data)
+    ) {
+      // Register pasted images before any asynchronous preparation or send event.
+      return { attachmentFiles: files, referenceEntries: [] }
+    }
+    return resolveDataTransferWorkspacePaths(data, source)
+  },
 }

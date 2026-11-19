@@ -9,6 +9,14 @@ use brz_mysql::{FromMysqlRow, Json};
 use brz_redis::{Redis, RedisBytes};
 use serde_json::{Value, json};
 
+pub(crate) fn dingtalk_api_base(config: &Value) -> &str {
+    config["api_base_url"]
+        .as_str()
+        .map(|value| value.trim_end_matches('/'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or("https://api.dingtalk.com")
+}
+
 pub(crate) async fn send_im(
     state: &AppState,
     user: i64,
@@ -47,21 +55,16 @@ struct Channel {
     json: Json<Value>,
 }
 
-async fn send_session(
-    state: &AppState,
-    session: &Value,
-    kind: &str,
-    title: &str,
-    body: &str,
-    payload: &Value,
-    links: &[(String, String)],
-) -> Result<()> {
-    let channel:Option<Channel>=state.mysql.fetch_optional("SELECT json FROM kinds WHERE id=? AND kind='Messager' AND user_id=0 AND is_active=true",(session["channel_id"].as_i64().unwrap_or(0),)).await?;
+/// Load the active Messager CRD spec a channel id refers to.
+async fn active_channel_spec(state: &AppState, channel_id: i64) -> Result<Value> {
+    let channel: Option<Channel> = state.mysql.fetch_optional("SELECT json FROM kinds WHERE id=? AND kind='Messager' AND user_id=0 AND is_active=true",(channel_id,)).await?;
     let channel = channel.context("Channel not found")?;
-    let mut config = channel.json.0["spec"]["config"]
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    Ok(channel.json.0["spec"].clone())
+}
+
+/// Decrypt the sensitive fields of a Messager channel's `spec.config`.
+fn decrypt_channel_config(spec: &Value) -> Result<Value> {
+    let mut config = spec["config"].as_object().cloned().unwrap_or_default();
     for (key, value) in &mut config {
         let lower = key.to_lowercase();
         if [
@@ -84,7 +87,103 @@ async fn send_session(
             );
         }
     }
-    let config = Value::Object(config);
+    Ok(Value::Object(config))
+}
+
+/// Load a DingTalk channel's config after validating the Messager metadata.
+///
+/// `IMChannelAdapter` treats a missing `channelType` as `dingtalk` and a
+/// missing `isEnabled` as enabled; the card transport must not borrow another
+/// channel type's credential or drive a disabled channel.
+pub(crate) async fn active_dingtalk_channel_config(
+    state: &AppState,
+    channel_id: i64,
+) -> Result<Value> {
+    let spec = active_channel_spec(state, channel_id).await?;
+    let channel_type = spec
+        .get("channelType")
+        .and_then(Value::as_str)
+        .unwrap_or("dingtalk");
+    if channel_type != "dingtalk" {
+        bail!("Channel {channel_id} is not a DingTalk channel");
+    }
+    if !messager_enabled(&spec) {
+        bail!("DingTalk channel {channel_id} is disabled");
+    }
+    decrypt_channel_config(&spec)
+}
+
+/// `IMChannelAdapter.is_enabled`: `spec.get("isEnabled", True)`.
+fn messager_enabled(spec: &Value) -> bool {
+    match spec.get("isEnabled") {
+        None => true,
+        Some(Value::Null) => false,
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(_) => true,
+    }
+}
+
+/// The DingTalk `client_id` / `client secret` pair used for the OpenAPI
+/// token exchange (`DingTalkChannelProvider._is_configured`).
+pub(crate) fn dingtalk_credentials(config: &Value) -> Option<(&str, &str)> {
+    Some((
+        config_value(config, &["client_id", "clientId"])?,
+        config_value(config, &["client_secret", "clientSecret"])?,
+    ))
+}
+
+/// One DingTalk OpenAPI access-token response.
+pub(crate) struct DingTalkAccessToken {
+    pub(crate) token: String,
+    /// The `expireIn` seconds reported by the token endpoint.
+    pub(crate) expires_in: i64,
+}
+
+/// `DingTalkCardTransport._access_token`: exchange a channel credential for an
+/// OpenAPI access token. The caller owns any deadline or cache.
+pub(crate) async fn dingtalk_access_token(
+    client: &brz_http::Client,
+    client_id: &str,
+    client_secret: &str,
+) -> Result<DingTalkAccessToken> {
+    dingtalk_access_token_at(client, client_id, client_secret, "https://api.dingtalk.com").await
+}
+
+async fn dingtalk_access_token_at(
+    client: &brz_http::Client,
+    client_id: &str,
+    client_secret: &str,
+    api: &str,
+) -> Result<DingTalkAccessToken> {
+    let access = http_json(
+        client,
+        &format!("{api}/v1.0/oauth2/accessToken"),
+        None,
+        &json!({"appKey":client_id,"appSecret":client_secret}),
+    )
+    .await?;
+    let token = access["accessToken"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .context("DingTalk accessToken was not returned")?;
+    let expires_in = access["expireIn"]
+        .as_i64()
+        .context("DingTalk accessToken expireIn was not returned")?;
+    Ok(DingTalkAccessToken {
+        token: token.to_owned(),
+        expires_in,
+    })
+}
+
+async fn send_session(
+    state: &AppState,
+    session: &Value,
+    kind: &str,
+    title: &str,
+    body: &str,
+    payload: &Value,
+    links: &[(String, String)],
+) -> Result<()> {
     let headline = push_headline(kind, title, payload);
     let title = headline.as_str();
     let facts = super::push_facts(payload);
@@ -117,77 +216,13 @@ async fn send_session(
                 .join("\n")
         )
     };
-    let client = brz_http::Client::builder()
-        .read_timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|_| anyhow::anyhow!("IM HTTP client initialization failed"))?;
     match session["channel_type"].as_str().unwrap_or("") {
-        "telegram" => {
-            let token = config_value(&config, &["bot_token", "botToken"])
-                .context("Missing Telegram bot token")?;
-            let sender = session["sender_id"]
-                .as_str()
-                .and_then(|value| value.parse::<i64>().ok())
-                .context("Missing Telegram chat id")?;
-            let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-            for attempt in 1..=3 {
-                let response = client
-                    .post(&url)
-                    .map_err(|_| anyhow::anyhow!("Invalid Telegram endpoint"))?
-                    .json(&json!({"chat_id":sender,"text":plain}))
-                    .send()
-                    .await;
-                match response {
-                    Ok(response) => {
-                        let status = response.status().as_u16();
-                        let value: Value = response.json().await.unwrap_or(Value::Null);
-                        if (200..300).contains(&status) && value["ok"] == true {
-                            return Ok(());
-                        }
-                        if !(500..600).contains(&status) || attempt == 3 {
-                            bail!("Telegram notification rejected with HTTP {status}")
-                        }
-                    }
-                    Err(_) if attempt == 3 => bail!("Telegram notification transport failed"),
-                    Err(_) => {}
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(500 * attempt)).await;
-            }
-            Ok(())
-        }
-        "discord" => {
-            let token = config_value(&config, &["bot_token", "botToken"])
-                .context("Missing Discord bot token")?;
-            let sender = session["sender_id"]
-                .as_str()
-                .filter(|value| !value.is_empty())
-                .context("Missing Discord user id")?;
-            let auth = format!("Bot {token}");
-            let dm = http_json(
-                &client,
-                "https://discord.com/api/v10/users/@me/channels",
-                Some((&auth, "authorization")),
-                &json!({"recipient_id":sender}),
-            )
-            .await?;
-            let channel = dm["id"]
-                .as_str()
-                .context("Discord DM channel not returned")?;
-            let content = if plain.chars().count() > 2000 {
-                format!("{}...", plain.chars().take(1997).collect::<String>())
-            } else {
-                plain
-            };
-            http_json(
-                &client,
-                &format!("https://discord.com/api/v10/channels/{channel}/messages"),
-                Some((&auth, "authorization")),
-                &json!({"content":content}),
-            )
-            .await?;
-            Ok(())
-        }
+        "telegram" | "discord" => send_text(state, session, &plain).await.map(|_| ()),
         "dingtalk" => {
+            let client = im_client()?;
+            let config =
+                active_dingtalk_channel_config(state, session["channel_id"].as_i64().unwrap_or(0))
+                    .await?;
             dingtalk(
                 state, &client, session, &config, kind, title, body, payload, &facts, &text, links,
             )
@@ -300,57 +335,11 @@ async fn dingtalk(
     text: &str,
     links: &[(String, String)],
 ) -> Result<()> {
-    let client_id =
-        config_value(config, &["client_id", "clientId"]).context("Missing DingTalk credentials")?;
-    let client_secret = config_value(config, &["client_secret", "clientSecret"])
-        .context("Missing DingTalk credentials")?;
-    let mut recipient = session["proactive_recipient_id"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_owned();
-    if recipient.is_empty() {
-        #[derive(FromMysqlRow)]
-        struct Preferences {
-            preferences: Option<String>,
-        }
-        let preferences: Option<Preferences> = state
-            .mysql
-            .fetch_optional(
-                "SELECT preferences FROM users WHERE id=?",
-                (session["user_id"].as_i64().unwrap_or(0),),
-            )
-            .await?;
-        let preferences = preferences
-            .and_then(|value| value.preferences)
-            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
-            .unwrap_or(Value::Null);
-        let channel = session["channel_id"].as_i64().unwrap_or(0).to_string();
-        let binding = &preferences["im_channels"][channel];
-        if binding["channel_type"] == session["channel_type"]
-            && binding["last_conversation_id"] == session["conversation_id"]
-        {
-            recipient = binding["sender_staff_id"]
-                .as_str()
-                .unwrap_or("")
-                .trim()
-                .into();
-        }
-    }
-    if recipient.is_empty() {
-        bail!("Missing DingTalk staff ID")
-    }
-    let access = http_json(
-        client,
-        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
-        None,
-        &json!({"appKey":client_id,"appSecret":client_secret}),
-    )
-    .await?;
-    let access = access["accessToken"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .context("DingTalk accessToken was not returned")?;
+    let (client_id, client_secret) =
+        dingtalk_credentials(config).context("Missing DingTalk credentials")?;
+    let recipient = dingtalk_recipient(state, session).await?;
+    let api = dingtalk_api_base(config);
+    let access = dingtalk_access_token_at(client, client_id, client_secret, api).await?;
     if config["notification_card"].is_object() {
         const BUILTIN: &str = "1366a1eb-bc54-4859-ac88-517c56a9acb1.schema";
         let template = config["notification_card"]["template_id"]
@@ -371,8 +360,8 @@ async fn dingtalk(
         let card = json!({"outTrackId":super::uuid(),"cardTemplateId":template,"openSpaceId":format!("dtv1.card//IM_ROBOT.{recipient}"),"cardData":{"cardParamMap":params},"imRobotOpenSpaceModel":{"supportForward":true,"lastMessageI18n":{"ZH_CN":headline}},"imRobotOpenDeliverModel":{"spaceType":"IM_ROBOT"}});
         match http_json(
             client,
-            "https://api.dingtalk.com/v1.0/card/instances/createAndDeliver",
-            Some((access, "x-acs-dingtalk-access-token")),
+            &format!("{api}/v1.0/card/instances/createAndDeliver"),
+            Some((access.token.as_str(), "x-acs-dingtalk-access-token")),
             &card,
         )
         .await
@@ -397,7 +386,7 @@ async fn dingtalk(
     let parameters = serde_json::to_string(
         &json!({"title":title.chars().take(50).collect::<String>(),"text":markdown}),
     )?;
-    http_json(client,"https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",Some((access,"x-acs-dingtalk-access-token")),&json!({"robotCode":client_id,"userIds":[recipient],"msgKey":"sampleMarkdown","msgParam":parameters})).await?;
+    http_json(client,&format!("{api}/v1.0/robot/oToMessages/batchSend"),Some((access.token.as_str(),"x-acs-dingtalk-access-token")),&json!({"robotCode":client_id,"userIds":[recipient],"msgKey":"sampleMarkdown","msgParam":parameters})).await?;
     Ok(())
 }
 
@@ -474,12 +463,235 @@ fn card_params(
     json!({"kindLabel":label,"tone":tone,"headline":title,"itemTitle":payload["itemTitle"].as_str().unwrap_or(""),"itemKey":payload["itemKey"].as_str().unwrap_or(""),"metaLine":meta,"detailLabel":detail_label(payload),"detail":detail,"showDetail":if body.is_empty(){"false"}else{"true"},"primaryLabel":primary.map(|value|value.0.as_str()).unwrap_or(""),"primaryUrl":primary.map(|value|value.1.as_str()).unwrap_or(""),"secondaryLabel":secondary.map(|value|value.0.as_str()).unwrap_or(""),"secondaryUrl":secondary.map(|value|value.1.as_str()).unwrap_or("")})
 }
 
+async fn dingtalk_recipient(state: &AppState, session: &Value) -> Result<String> {
+    let mut recipient = session["proactive_recipient_id"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if recipient.is_empty() {
+        #[derive(FromMysqlRow)]
+        struct Preferences {
+            preferences: Option<String>,
+        }
+        let preferences: Option<Preferences> = state
+            .mysql
+            .fetch_optional(
+                "SELECT preferences FROM users WHERE id=?",
+                (session["user_id"].as_i64().unwrap_or(0),),
+            )
+            .await?;
+        let preferences = preferences
+            .and_then(|value| value.preferences)
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .unwrap_or(Value::Null);
+        let channel = session["channel_id"].as_i64().unwrap_or(0).to_string();
+        let binding = &preferences["im_channels"][channel];
+        if binding["channel_type"] == session["channel_type"]
+            && binding["last_conversation_id"] == session["conversation_id"]
+        {
+            recipient = binding["sender_staff_id"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .into();
+        }
+    }
+    if recipient.is_empty() {
+        bail!("Missing DingTalk staff ID")
+    }
+    Ok(recipient)
+}
+
+pub(crate) async fn send_text(state: &AppState, session: &Value, text: &str) -> Result<Value> {
+    let channel_id = session["channel_id"]
+        .as_i64()
+        .context("Missing IM channel id")?;
+    let kind = session["channel_type"]
+        .as_str()
+        .context("Missing IM channel type")?;
+    if kind == "telegram" {
+        let chat_id = session["sender_id"]
+            .as_str()
+            .and_then(|value| value.parse::<i64>().ok())
+            .context("Missing Telegram chat id")?;
+        return telegram_message(state, channel_id, chat_id, None, text).await;
+    }
+    let spec = active_channel_spec(state, channel_id).await?;
+    if spec["channelType"].as_str().unwrap_or("dingtalk") != kind || !messager_enabled(&spec) {
+        bail!("IM channel type or status does not match the session");
+    }
+    let config = decrypt_channel_config(&spec)?;
+    let client = im_client()?;
+    match kind {
+        "discord" => {
+            let token = config_value(&config, &["bot_token", "botToken"])
+                .context("Missing Discord bot token")?;
+            let sender = session["sender_id"]
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .context("Missing Discord user id")?;
+            let auth = format!("Bot {token}");
+            let dm = http_json(
+                &client,
+                "https://discord.com/api/v10/users/@me/channels",
+                Some((&auth, "authorization")),
+                &json!({"recipient_id":sender}),
+            )
+            .await?;
+            let channel = dm["id"]
+                .as_str()
+                .context("Discord DM channel not returned")?;
+            let content = if text.chars().count() > 2000 {
+                format!("{}...", text.chars().take(1997).collect::<String>())
+            } else {
+                text.to_owned()
+            };
+            http_json(
+                &client,
+                &format!("https://discord.com/api/v10/channels/{channel}/messages"),
+                Some((&auth, "authorization")),
+                &json!({"content":content}),
+            )
+            .await
+        }
+        "dingtalk" => {
+            let (id, secret) =
+                dingtalk_credentials(&config).context("Missing DingTalk credentials")?;
+            let recipient = dingtalk_recipient(state, session).await?;
+            // Honor the same channel endpoint configuration as subscription delivery.
+            let api = dingtalk_api_base(&config);
+            let access = dingtalk_access_token_at(&client, id, secret, api).await?;
+            http_json(&client, &format!("{api}/v1.0/robot/oToMessages/batchSend"),
+                Some((&access.token, "x-acs-dingtalk-access-token")),
+                &json!({"robotCode":id,"userIds":[recipient],"msgKey":"sampleText","msgParam":json!({"content":text}).to_string()})).await
+        }
+        _ => bail!("Unsupported channel type"),
+    }
+}
+
+fn im_client() -> Result<brz_http::Client> {
+    brz_http::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|_| anyhow::anyhow!("IM HTTP client initialization failed"))
+}
+
+pub(crate) async fn telegram_message(
+    state: &AppState,
+    channel_id: i64,
+    chat_id: i64,
+    message_id: Option<i64>,
+    text: &str,
+) -> Result<Value> {
+    let spec = active_channel_spec(state, channel_id).await?;
+    if spec["channelType"] != "telegram" || !messager_enabled(&spec) {
+        bail!("Telegram channel is unavailable");
+    }
+    let config = decrypt_channel_config(&spec)?;
+    let token =
+        config_value(&config, &["bot_token", "botToken"]).context("Missing Telegram bot token")?;
+    let endpoint = format!("https://api.telegram.org/bot{token}");
+    send_telegram(&im_client()?, &endpoint, chat_id, message_id, text).await
+}
+
+async fn send_telegram(
+    client: &brz_http::Client,
+    endpoint: &str,
+    chat_id: i64,
+    message_id: Option<i64>,
+    text: &str,
+) -> Result<Value> {
+    let (method, body) = telegram_request(chat_id, message_id, text);
+    let url = format!("{endpoint}/{method}");
+    for attempt in 1..=3 {
+        let response = client
+            .post(&url)
+            .map_err(|_| anyhow::anyhow!("Invalid Telegram endpoint"))?
+            .json(&body)
+            .send()
+            .await;
+        match response {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let value: Value = response.json().await.unwrap_or(Value::Null);
+                if (200..300).contains(&status) && value["ok"] == true {
+                    return Ok(value["result"].clone());
+                }
+                if message_id.is_some()
+                    && status == 400
+                    && value["description"]
+                        .as_str()
+                        .is_some_and(|description| description.contains("message is not modified"))
+                {
+                    return Ok(json!({"message_id": message_id}));
+                }
+                if !(500..600).contains(&status) || attempt == 3 {
+                    bail!("Telegram request rejected with HTTP {status}");
+                }
+            }
+            Err(_) if attempt == 3 => bail!("Telegram transport failed"),
+            Err(_) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt)).await;
+    }
+    bail!("Telegram transport failed")
+}
+
+fn telegram_request(chat_id: i64, message_id: Option<i64>, text: &str) -> (&'static str, Value) {
+    let text = text.chars().take(4096).collect::<String>();
+    if let Some(message_id) = message_id {
+        (
+            "editMessageText",
+            json!({"chat_id":chat_id, "message_id":message_id, "text":text}),
+        )
+    } else {
+        ("sendMessage", json!({"chat_id":chat_id, "text":text}))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn dingtalk_endpoint_matches_subscription_channel_configuration() {
+        for config in [
+            json!({}),
+            json!({"api_base_url": ""}),
+            json!({"api_base_url": "/"}),
+        ] {
+            assert_eq!(dingtalk_api_base(&config), "https://api.dingtalk.com");
+        }
+        assert_eq!(
+            dingtalk_api_base(&json!({"api_base_url": "http://127.0.0.1:1234///"})),
+            "http://127.0.0.1:1234"
+        );
+    }
+    #[test]
     fn notifications_escape_member_markdown_without_changing_plain_punctuation() {
         assert_eq!(escape("[x] *a* - 2026"), "\\[x\\] \\*a\\* - 2026");
+    }
+    #[test]
+    fn a_messager_channel_is_enabled_unless_it_is_explicitly_disabled() {
+        assert!(messager_enabled(&json!({})));
+        assert!(messager_enabled(&json!({"isEnabled": true})));
+        assert!(!messager_enabled(&json!({"isEnabled": false})));
+        assert!(!messager_enabled(&json!({"isEnabled": null})));
+    }
+    #[test]
+    fn channel_credentials_come_from_the_messager_config() {
+        let config = json!({
+            "client_id": "client-id",
+            "client_secret": "client-secret",
+        });
+        assert_eq!(
+            dingtalk_credentials(&config),
+            Some(("client-id", "client-secret"))
+        );
+        assert_eq!(
+            dingtalk_credentials(&json!({"client_id": "client-id"})),
+            None
+        );
     }
     #[test]
     fn custom_cards_limit_detail_and_expose_each_destination() {
@@ -499,5 +711,189 @@ mod tests {
         assert_eq!(value["detail"].as_str().unwrap().chars().count(), 240);
         assert_eq!(value["primaryUrl"], "https://example.invalid");
         assert_eq!(value["secondaryUrl"], "wework://boards/p");
+    }
+}
+
+#[cfg(test)]
+mod telegram_protocol_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn telegram_send_and_edit_use_the_bot_api_message_identity() {
+        for (message_id, method) in [(None, "sendMessage"), (Some(21), "editMessageText")] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}/bot-test", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let (offset, size) = loop {
+                    let mut buf = [0; 1024];
+                    let n = socket.read(&mut buf).await.unwrap();
+                    assert_ne!(n, 0);
+                    request.extend_from_slice(&buf[..n]);
+                    if let Some(position) =
+                        request.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+                    {
+                        let headers = String::from_utf8_lossy(&request[..position]);
+                        assert!(headers.starts_with(&format!("POST /bot-test/{method} HTTP/1.1")));
+                        let size = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap();
+                        break (position + 4, size);
+                    }
+                };
+                while request.len() < offset + size {
+                    let mut buf = [0; 1024];
+                    let n = socket.read(&mut buf).await.unwrap();
+                    assert_ne!(n, 0);
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let body: Value = serde_json::from_slice(&request[offset..offset + size]).unwrap();
+                assert_eq!(body["chat_id"], -12);
+                assert_eq!(body["text"], "Runtime reply");
+                assert_eq!(body["message_id"], json!(message_id));
+                let response = r#"{"ok":true,"result":{"message_id":21}}"#;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.unwrap();
+            });
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                send_telegram(
+                    &im_client().unwrap(),
+                    &endpoint,
+                    -12,
+                    message_id,
+                    "Runtime reply",
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(result["message_id"], 21);
+            server.await.unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod dingtalk_protocol_tests {
+    use super::*;
+    use brz_http_server::{Handler, NoAuthenticator, Request, Response, StatusCode};
+    use std::sync::{Arc, Mutex};
+
+    struct DingTalkApi {
+        requests: Arc<Mutex<Vec<(String, Value)>>>,
+        reject_card: bool,
+    }
+
+    impl Handler for DingTalkApi {
+        async fn call<'a>(&'a self, request: Request<'a>, _: &'a NoAuthenticator) -> Response {
+            assert_eq!(request.method(), "POST");
+            let body: Value = serde_json::from_slice(request.body()).unwrap();
+            let path = request.path();
+            let response = if path == "/v1.0/oauth2/accessToken" {
+                assert_eq!(body, json!({"appKey":"ci-app","appSecret":"ci-secret"}));
+                br#"{"accessToken":"ci-token","expireIn":7200}"#.as_slice()
+            } else {
+                assert_eq!(
+                    request.header("x-acs-dingtalk-access-token"),
+                    Some(b"ci-token".as_slice())
+                );
+                match path {
+                    "/v1.0/card/instances/createAndDeliver" if self.reject_card => {
+                        br#"{"code":"rejected"}"#.as_slice()
+                    }
+                    "/v1.0/card/instances/createAndDeliver" => br#"{"code":"0"}"#.as_slice(),
+                    "/v1.0/robot/oToMessages/batchSend" => {
+                        assert_eq!(body["robotCode"], "ci-app");
+                        assert_eq!(body["userIds"], json!(["ci-staff"]));
+                        assert_eq!(body["msgKey"], "sampleMarkdown");
+                        let params: Value =
+                            serde_json::from_str(body["msgParam"].as_str().unwrap()).unwrap();
+                        assert!(params["text"].as_str().unwrap().contains("CI notification"));
+                        br#"{"processQueryKey":"ci-message"}"#.as_slice()
+                    }
+                    _ => panic!("Unexpected DingTalk API request: {path}"),
+                }
+            };
+            self.requests.lock().unwrap().push((path.to_owned(), body));
+            Response::static_bytes(StatusCode::OK, response).content_type("application/json")
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_notifications_use_the_configured_host_for_auth_cards_and_markdown() {
+        for (card, reject_card) in [(false, false), (true, false), (true, true)] {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let server = brz_http_server::Server::bind(
+                "127.0.0.1:0".parse().unwrap(),
+                DingTalkApi {
+                    requests: requests.clone(),
+                    reject_card,
+                },
+            )
+            .await
+            .unwrap();
+            let api = format!("http://{}/", server.local_addr().unwrap());
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(server.serve_until(async {
+                let _ = stopped.await;
+            }));
+            // Explicit staff identity needs no database lookup. Keep even the
+            // unused SQL dependency bound to an isolated loopback listener.
+            let unused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mysql = brz_mysql::MysqlService::connect_lazy(&format!(
+                "mysql://ci:ci@{}/unused",
+                unused.local_addr().unwrap()
+            ))
+            .unwrap();
+            let state = crate::app_test_support::app(mysql);
+            let mut config =
+                json!({"client_id":"ci-app","client_secret":"ci-secret","api_base_url":api});
+            if card {
+                config["notification_card"] = json!({});
+            }
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                dingtalk(
+                    &state,
+                    &im_client().unwrap(),
+                    &json!({"proactive_recipient_id":"ci-staff"}),
+                    &config,
+                    "assignment",
+                    "CI title",
+                    "CI notification",
+                    &json!({}),
+                    &[],
+                    "CI notification",
+                    &[],
+                ),
+            )
+            .await;
+            let _ = stop.send(());
+            task.await.unwrap().unwrap();
+            result
+                .expect("DingTalk protocol request timed out")
+                .unwrap();
+            let paths: Vec<String> = requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect();
+            let mut expected = vec!["/v1.0/oauth2/accessToken"];
+            if card {
+                expected.push("/v1.0/card/instances/createAndDeliver");
+            }
+            if !card || reject_card {
+                expected.push("/v1.0/robot/oToMessages/batchSend");
+            }
+            assert_eq!(paths, expected);
+        }
     }
 }

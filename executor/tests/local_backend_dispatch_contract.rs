@@ -54,6 +54,41 @@ async fn backend_clone_preserves_cwd_for_preflight_and_relative_destination() {
 }
 
 #[tokio::test]
+async fn backend_clone_reports_invalid_branch_after_successful_access_check() {
+    for device_type in ["local", "cloud", "remote"] {
+        let fixture = git_clone_fixture::GitCloneFixture::new();
+        let transport = RecordingTransport::default();
+        let mut config = local_backend_config();
+        config.device_type = device_type.to_owned();
+        let runner = LocalBackendRunner::with_task_runner(
+            config,
+            transport.clone(),
+            RecordingTaskRunner::default(),
+        );
+        runner.register_handlers();
+        let mut args = fixture.args(true);
+        args[1] = "invalid..branch".into();
+        let result = transport.handler("device:execute_command").unwrap()(json!({
+            "command_key": "git_clone",
+            "command": "git clone",
+            "cwd": fixture.directory.path(),
+            "args": args,
+            "env": fixture.env,
+            "timeout_seconds": 10,
+        }))
+        .await
+        .unwrap();
+        assert_eq!(result["success"], false, "{device_type}: {result}");
+        let error = result["error"].as_str().unwrap();
+        let failure: serde_json::Value =
+            serde_json::from_str(error.strip_prefix("git-access:").unwrap()).unwrap();
+        assert_eq!(failure["code"], "clone-failed", "{device_type}: {result}");
+        assert_eq!(result["stderr"], "");
+        assert!(!fixture.directory.path().join("checkout").exists());
+    }
+}
+
+#[tokio::test]
 async fn device_workspace_file_commands_read_unregistered_directories() {
     let directory = tempfile::tempdir().unwrap();
     let path = std::fs::canonicalize(directory.path()).unwrap();

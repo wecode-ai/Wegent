@@ -1,3 +1,4 @@
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 import {
   MAX_FILE_SIZE,
   isValidFileSize,
@@ -24,7 +25,8 @@ export function createAttachmentApi(options: CreateAttachmentApiOptions = {}): A
   const getToken = options.getToken ?? (() => localStorage.getItem('auth_token'))
 
   return {
-    uploadAttachment(file, onProgress) {
+    async uploadAttachment(sourceFile, onProgress) {
+      const [file] = await normalizeClipboardImageFiles([sourceFile])
       if (!isValidFileSize(file.size)) {
         return Promise.reject(new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`))
       }

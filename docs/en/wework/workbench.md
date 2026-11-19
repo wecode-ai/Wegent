@@ -31,6 +31,10 @@ Process attribution and collection have the following limits:
 
 ## Use top-level tabs
 
+In narrow windows, the strip reveals the current tab and fits each tab within the available width. Mobile tabs, new-tab, notification and feedback controls provide targets of at least 44px; empty workspace action slots leave their width available to tabs. Arrow keys, Home and End move focus; Enter or Space activates the focused tab. Moving focus does not automatically open a sign-in flow.
+
+On Windows and Linux, the mobile layout places workspace tabs below the window action bar, keeping the application menu, notifications, feedback and window controls available.
+
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
 The first main window restores **Settings → General → Fixed tabs** and activates its chosen startup item. Use top-bar **+** to add Tasks, Collaboration, Agent or other available tabs. Each tab independently retains conversations, drafts, projects and routes; switching does not synchronize another tab's content.
@@ -45,11 +49,15 @@ In a separate window, right-click a tab and choose **Move to main window** to re
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+<a id="board-automations"></a>
+
 ## Configure board automations
 
-Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+Open **top + → Collaboration → project → Project settings → Automatic processing**, create or edit a rule and select **Scheduled**. Choose Daily, Monday–Friday or Weekly, or enter a custom Cron expression under advanced settings. The entry depends on project capabilities and management permissions; changes apply after saving.
 
-Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+Scheduled rules offer **Run only on mainland China statutory workdays**. This filter defaults to off and uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover all make-up workdays; other Cron date constraints still apply. Existing Monday–Friday rules retain their meaning. Summaries and the editor preserve the setting for both local and cloud projects. Event triggers do not use this filter.
+
+Click **Save** after editing. The editor stays in its saving state until the rule list refresh completes, then closes so you can check the updated trigger and workday filter summary. Disable a rule to suspend future automatic triggers. Reopening the editor restores the saved filter. If you switch projects while saving, the previous project’s result leaves the new project’s draft open. Saving a rule does not prove completion; check Issue activity and execution records for actual results.
 
 ## Manage issues and tasks in workspaces
 
@@ -67,13 +75,21 @@ On local boards, when a linked task finishes and moves to **In review**, its car
 
 Every runtime task has at least one system-managed **My tasks** issue. A user may additionally link the task to one issue in a local or cloud project space. Task context prefers the user-selected issue and falls back to the system issue when no user link exists. The system issue remains linked and receives runtime status, task-title, and archive-state updates even after the extra project-space link is removed, so unlinking another board never removes the task from **My tasks**. Issues may also exist without a runtime task, which is why an ordinary project-space board is not itself a task inventory.
 
-A newly created system **My tasks** issue contains only a projection of the runtime task title and description, so Wework does not inject it as independent project context into the first model request. If a user later changes the title or description, or adds priority, hierarchy, participants, tags, workflow, a due date, attachments, deliveries, or comments, the Executor marks the issue as containing additional context. Wework reads the current issue again before a later turn and injects that new context. Status changes produced only by the runtime lifecycle do not enable injection.
+A newly created **My tasks** Issue contains only the runtime task's title and description projection and is not injected as independent project context into the first model request. After the user edits its title or description, or adds priority, relationships, participants, tags, workflow, dates, attachments, deliveries, or comments, Executor marks the Issue as containing additional context. Later turns carry the necessary Issue identifiers and read guidance through separate application context; AI reads current contents through authorized tools when needed. Runtime lifecycle status synchronization alone does not trigger additional content injection.
 
 Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes. Batch archive processes all linked runtime conversations in one operation, removes successfully archived cards from the board, and keeps failed cards in the confirmation dialog for retry.
 
 Hover anywhere on a board card to open a task-progress panel at a stable position in the viewport's upper-right corner; moving across cards does not make the panel jump with each anchor. Its header shows the current issue title. When the runtime exposes one, the preview shows the current conversation goal. It directly reuses the task conversation component and always starts at the latest message instead of restoring the Task page's saved scroll position. While the current turn is active but has not produced new response text, the preview does not present the previous turn's final response as the latest progress. When a runtime task is associated with a board item, both local and cloud task bindings must persist that conversation's model selection. The preview restores the model from the binding instead of falling back to the global default for new conversations. Message loading, live updates, continuation, and attachments behave exactly as they do on the task page, with the composer collapsed by default. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Clicking the card's task-progress area, the pin action in the panel header, or the composer pins the same panel in place instead of opening a separate side conversation. While pinned, hovering other cards does not replace its content; clicking another card's task-progress area switches the pinned panel in the same position. Use the top-right close button or press `Esc` to leave the pinned state and restore normal hover previews.
 
+If the conversation goal fails to load, the progress panel shows an error and a **Retry** action. Retrying reads only that task’s goal; messages and task content remain available.
+
+<!-- ui-source: src/features/todo/WorkItemComposerGuide.tsx -->
+
 The work-item summary above the composer shows the current project or linked Issue. Click its title to open the current work-item details; when no Issue-details action is available, it opens the matching board. The details icon opens Issue details, and the board icon focuses the current work item in its project-space board. Opening the board preserves the original Task tab and reuses an already-open board tab for the same project instead of loading a duplicate. Reference chips in the composer and sent messages open a conversation or Issue according to their type; see [Working with AI](./tasks.md).
+
+The work-item summary loads task counts and Issue content independently. If one read fails, loaded content remains available; use **Retry** beside the summary to reload only the failed part.
+
+After opening a full task from an Issue conversation, the task footer directs follow-ups to the Issue. Click **Back to issue** to open it in its original local or cloud project without waiting for the work-item summary to load. The original Task tab stays open.
 
 When changing the composer's project-space association, filter by owning space on the left. Each project on the right shows its name, key, and owning space to distinguish duplicate names. Search combines project names, space names, and project keys. Projects default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **Do not add to another project space** removes the extra association.
 
@@ -81,28 +97,25 @@ Local projects do not each create a separate board. Their tasks share **My tasks
 
 ## Create issues from external systems
 
-Maintainers of a cloud workspace can create an event subscription for a source (GitHub, GitLab) from inside the automation rule configuration. Configure the generated Webhook URL in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+**Automatic rules → External event** selects an event source already connected to the cloud project. The current settings UI has no connection, address rotation or credential-management form. If the source list is empty, a project administrator must connect a source through the existing management API, then return here, choose **Refresh sources**, select a supported event and save the rule.
 
-> Note: Event subscriptions are created and managed together with the automation rule that consumes them. Pick a source (GitHub, GitLab), then add the resource URL; the Webhook URL for the created subscription is shown on the same page, ready to copy into the external system.
+Administrators can read `GET /api/v1/cloud-projects/event-sources/catalog` for supported source types, collection modes and events. With an authenticated API session that has project management permission, submit the configuration to `POST /api/v1/cloud-projects/{project_id}/incoming-hooks`. For example, a generic Webhook source needs a stable external resource identifier:
 
-The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
-
-Built-in adapters recognize GitHub Issue `opened` and `reopened` events, GitLab Issue `open` and `reopen` events, and unresolved Sentry and Grafana alerts. Closed, resolved, or titleless events do not create issues, but their receipt is recorded. The same external event ID, delivery ID, or request body is processed only once.
-
-Other systems do not need to implement a Wework-specific protocol. They can send JSON, form data, or plain text. Generic JSON must provide at least one of `title`, `subject`, `summary`, `name`, or `message`:
-
-```bash
-curl -X POST '<Hook address>' \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: incident-2026-08-16-001' \
-  -d '{
-    "title": "Production payment failures",
-    "description": "The error rate crossed its threshold. Investigate and restore service.",
-    "url": "https://monitor.example.com/incidents/001"
-  }'
+```json
+{
+  "name": "Release events",
+  "source_type": "generic",
+  "collection_mode": "webhook",
+  "resource": {
+    "external_id": "release-events",
+    "display_name": "Release events"
+  }
+}
 ```
 
-For plain-text requests, the first line becomes the title and the complete body becomes the description. Request bodies are limited to 1 MiB. The service returns HTTP `202` with a `status` of `created`, `duplicate`, `ignored`, or `failed`; a `created` response also includes the new issue's `loop_item_id`.
+Configure the returned `webhook_url` in the external system and deliver events using that source's catalog protocol. Polling or hybrid collection also requires a valid `credential_ref`; never place credentials in rule descriptions. Connection configuration and event receipt do not establish real compatibility with an external service.
+
+The Webhook URL contains a credential. Treat it as a secret and keep it out of public repositories and logs. Read, disable, delete and rotate sources through the project event-source management API; the automation page selects existing sources only. Refresh the list after connection and explicitly save the rule.
 
 ## Move between issues and runtime tasks
 
@@ -132,9 +145,11 @@ Open **top tab bar → + → Needs your input**, or choose **Needs your input** 
 
 List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
 
-When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. The reminder shows the question's creation time below the task name: hours and minutes for today, or a date for older questions. Hover over it for the complete date and time. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
+When in-app notifications are enabled for the relevant source, new questions show a reminder while the app is in the foreground. Questions already being viewed in Needs your input do not trigger another reminder. Questions from authorized online devices on the same account appear in Needs your input and produce in-app or system reminders according to your notification settings. You can view and answer another device's question here; the answer is sent to the device and conversation that own it. The reminder shows the question's creation time below the task name: hours and minutes for today, or a date for older questions. Hover over it for the complete date and time. Closing the reminder only hides the popup; the question stays pending. Select a question to read its original conversation or Issue context, or use **Open in original view** to return to its source.
 
-To leave an ordinary conversation question unhandled, hover over its left-list entry and click the cross, **Dismiss item**. The action is also reachable by keyboard and remains visible in narrow windows. It moves the question to **Handled** without sending an answer or approving an operation. Later questions in the same conversation still appear normally. Persistent Issue handoffs and ordinary project work do not offer this button: local archiving cannot replace an answer or a transfer.
+To access another computer's personal tasks, enable **Allow remote access to tasks on this computer** under **Settings → Personal → Cloud connection** on that computer and keep it online. Each computer manages this setting independently. See [Access this computer's tasks from a phone or another computer](devices.md#access-this-computers-tasks-from-a-phone-or-another-computer).
+
+To dismiss an item, click the cross, **Dismiss item**, beside its left-list entry. Task questions, project handoff questions, ordinary project work and stand-in questions all offer this visible, keyboard-accessible action. Select **Dismiss all** above the left list to dismiss all currently loaded pending items. Controls are disabled while archiving; items that cannot be saved remain pending with an error so you can try again. Dismissed items move to **Handled** in the current account’s local storage. Dismissal does not send answers, approve operations, complete or transfer Issues. New questions and later project handoffs still appear normally.
 
 Select **Collapse** or press Esc on a business question card to keep your answers and return to the ordinary message composer. Select **Expand reply** to resume answering. Collapsing never cancels the task or submits an answer. The old card closes after a new message is successfully delivered in the original conversation; failed or queued messages leave the question available to reopen.
 
@@ -146,6 +161,8 @@ Async business-question replies use the destination task's model configuration a
 
 Answering or cancelling a question in its original task or project view automatically synchronizes and archives it. Handled history retains the source groups. Both handled and dismissed records are stored locally for the current account and survive restarts. Already loaded questions remain available offline and synchronize when the device reconnects. Discovery of questions on a healthy local executor does not depend on its cloud device status.
 
+If a system-notification reply fails while the original question is handled in the task view, **Unsent replies** appears above the left list. Its text and question metadata must be durably saved for this account before the native reply queue releases its copy; failed writes leave the original reply queued. Recovery remains available across restarts and after the latest 100 handled-history entries evict an older question. Select and copy the text to continue in the original conversation; it is never automatically resent and does not reopen the question. Use **Discard this draft** when it is no longer needed. An explicitly accepted answer in the task conversation can also settle a cached native question when task discovery or history reads fail, without granting the cache reply permission. Issue handoff questions remain owned by their authoritative inbox.
+
 A queued Issue answer does not clear the wait. After confirmed acceptance, local history retains settlement identity scoped to the original project, Issue, Runtime and question. This prevents a stale native snapshot from reappearing after a failed read, device-route alias change or offline restart. The record only reconciles the same question: it grants no reply or device access permission and cannot clear another Issue's question.
 
 <a id="project-pending-work"></a>
@@ -153,6 +170,8 @@ A queued Issue answer does not clear the wait. After confirmed acceptance, local
 ### Project work and waiting time
 
 Selecting ordinary project work opens its original Issue details on the right, even without a running task; it never creates a placeholder task. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
+
+Once a question's answer is accepted or the question is cancelled, both the question and its Issue entry leave the **Needs your input** list and details. An unfinished Issue, content edits, or later execution completion do not recreate the entry. It returns for another unresolved or new question, or for work explicitly assigned to you after the questions were handled. Queued answers and requests whose settlement cannot yet be verified remain pending verification; reads reconcile automatically after recovery without granting cached questions reply authority.
 
 For one project, open **Collaboration → select project → board**, then select the toolbar's **Needs my action** button and count; select it again to clear. This temporary filter resets when switching projects and does not change saved views. Use **Only issues needing my input** in board view settings for a persistent view; it evaluates the current viewer. Local discovery includes native ownership and explicit assignments to the current verified sign-in identity, without globally merging matching names or IDs. Answers use the session's actual author. If a question still targets another identity, explicitly transfer it to the current name before answering; old recipients and historical authors are never silently rewritten. Cloud authorization always uses the server's current account.
 
@@ -164,17 +183,25 @@ For one project, open **Collaboration → select project → board**, then selec
 
 Open **titlebar bell → Notification center**, not the obsolete account-area away-reminder bubble.
 
-| Action        | Steps and limits                                                                                                                                                                        |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browse        | Select task, stand-in, collaboration or general sources and open the original task/project; reading is not handling or approval                                                         |
-| Mark all read | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
-| Refresh/more  | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
-| Channels      | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
-| IM target     | Select the receiving conversation in settings and connect its account when prompted; selecting a channel is not app authorization                                                       |
+| Action         | Steps and limits                                                                                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse         | Select task, stand-in, collaboration or general sources and open the original task/project; reading is not handling or approval                                                         |
+| Mark all read  | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
+| Refresh/more   | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
+| Channels       | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
+| IM connections | Stand-ins and tasks share existing account IM conversations by default without a target picker; platform authorization is still required                                                |
 
 System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
 
-**Continue in private chat** in a runtime task's titlebar binds it to an available IM conversation after target review. Successful switch notices show the task title, and subsequent replies follow that binding. Channel preferences and per-task private-chat binding are separate.
+Opening Issue details from a notification reads the project and Issue from their owning local or cloud source and verifies the project association. Inactive tabs do not preload records; reactivation reads them again while an already-loaded detail from the same source can remain visible. Switching accounts or data sources clears the old displayed result. Failed reads can be retried from the detail. Moving to another comment within the same Issue updates comment focus without rereading the project and Issue.
+
+Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in details popover → IM channel](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
+
+Both synchronous and asynchronous Codex business questions can be answered in IM. Desktop tasks share existing account IM conversations by default without choosing a recipient. Desktop-task delivery respects an explicit opt-out from IM notifications. When enabled, questions are sent even while the desktop is active. Tasks started from a bound private IM conversation send questions back to that conversation. Question messages identify the task and whether it is waiting for your answer or continuing other work. Quoting a question with text or an option number answers the original task directly. Ordinary messages enter the stand-in conversation, where it considers pending questions and recent chat: clear answers are submitted, unrelated requests are handled normally, and ambiguity is clarified first. A single pending question never automatically consumes an ordinary message. Requests containing several questions ask them one at a time and submit the collected answers to the original task. Quoted question replies take priority over ordinary chat and stand-in routing. Ordinary messages are not consumed by the question reply handler. Task subscriptions control foreground notifications rather than selecting recipients.
+
+Turning off **Task updates → IM** stops proactive desktop-task notifications. Conversations started in a private IM chat still ask and receive answers in that originating chat, independently of the desktop notification switch.
+
+Synchronous answers release the original waiting request. Asynchronous answers steer the original running task or continue its idle conversation, preserving its model and execution configuration. Questions already answered on the desktop, cancelled, or expired cannot be submitted again. Business answers in IM do not replace execution approvals, MCP confirmations, or account authorization.
 
 ## Split tasks by dragging
 
@@ -216,7 +243,9 @@ The titlebar's **Open workspace location** and neighboring IDE dropdown open the
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
-Selecting a writable non-Markdown text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
+In a Markdown preview in the right-side Files tab, click a text link to an image or another file to open its file tab. Select the original Markdown tab to return to the document. Relative paths resolve from the current Markdown document’s directory, such as `./screenshot.png` or `../images/screenshot.png`, and load from the device that owns the tab. Missing files show a read error; retry or select the document again to continue browsing.
+
+Selecting a writable plain text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown and HTML files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
 Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
@@ -247,6 +276,10 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 While a task is running, the conversation shows the tools in use and the current progress. Completed tool calls collapse into summaries that can be expanded to inspect commands or changed files.
 
 After a parent agent starts a subagent, the subagent activity remains anchored at its original invocation position. Later status, progress, and result updates appear at that position even if the parent continues producing other output; the activity does not move to the end of the conversation or render a second time.
+
+If you send another message to the main conversation or start the next turn while a subagent is running, its later output still belongs to the original subagent activity and does not appear as the parent agent's prose. When history loads in pages, child content joins its owning activity after that activity loads.
+
+A subagent with its own thread finishes on its own completion event and can keep streaming after the parent reply ends. Later child output does not restart the completed parent reply; the panel loads its complete history after the child finishes.
 
 Click a subagent activity to view its execution in the right workspace. The panel shows model-provided reasoning summaries, progress messages, tool calls, and results in order. Content updates live while the subagent runs, and saved process content remains available after completion or reloading the task.
 

@@ -420,6 +420,19 @@ pub struct CreateSubtasksRequest<'a> {
     pub assistant_subtask: NewSubtaskRow<'a>,
 }
 
+impl CreateSubtasksRequest<'_> {
+    /// Carry a user-only turn through stores that allocate IDs by copying
+    /// the row templates before invoking the common insert.
+    pub fn without_assistant(mut self) -> Self {
+        self.assistant_subtask.role = "";
+        self
+    }
+
+    pub(crate) fn has_assistant(&self) -> bool {
+        !self.assistant_subtask.role.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

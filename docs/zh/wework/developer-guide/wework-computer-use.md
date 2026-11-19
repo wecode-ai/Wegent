@@ -5,11 +5,28 @@ sidebar_position: 39
 # 电脑操控
 
 Wework 的电脑操控能力让本地 Codex 会话在用户授权后操作桌面应用。它使用
-`@trycua/cua-driver` 访问系统辅助功能和屏幕内容，但会话、权限状态、操作确认、
+`@trycua/cua-driver` 0.52.13 访问系统辅助功能和屏幕内容，但会话、权限状态、操作确认、
 中止以及 MCP 暴露仍由 Wework 管理。
 
 电脑操控只用于 Wework 内置浏览器之外的桌面应用。网页任务继续使用
 `wework_browser`，不要使用电脑操控模拟浏览器点击。
+
+## 模型调用流程
+
+任务已指明应用时，模型可直接把应用名或 bundle ID 传给 `run_steps`，或在
+`run_script` 中调用 `cua.getApp`。驱动可在批次内读取最新的辅助功能树并按
+控件角色和名称定位。步骤已知时使用 `run_steps`，把动作、等待条件和结果检查合在
+一次调用里。需要按中途观察结果分支时，使用驱动自带的 `run_script` 沙箱。
+
+`observe: {}` 会在批次结束后返回一次辅助功能树差量。单独查看窗口时优先读取
+辅助功能树，后续读取使用 `since: "latest"`，需要视觉信息时再取截图。
+Executor 为这三个入口提供简短的工具说明，参数、返回结构和只读标记仍取自驱动。
+
+跨调用任务可在 `run_script` 中设置 `state_mode: "reuse"`，通过脚本内的
+`state` 对象复用应用标识和中间值，或用 `state_mode: "reset"` 从空对象开始。
+状态为最多 4 KiB 的 JSON，只保留在当前会话的 MCP 连接内存中，脚本成功时更新，
+关闭连接或更换驱动实例后清空。下次用保存的应用标识重新绑定，并重新读取界面
+获取当前的辅助功能目标。
 
 ## 架构
 
@@ -32,6 +49,10 @@ Electron 主进程拥有 CUA Driver 的生命周期。启用电脑操控且系�
 随机 token 和启动时间原子写入当前 Executor Home 的
 `runtime/computer-use-bridge.json`。关闭功能或退出应用时必须中止当前动作、关闭
 bridge、停止 Driver 并删除该文件。
+
+子进程显式通过 `CuaDriver.create({ embedded: true, claudeCodeCompatibility: false })`
+创建本地运行时，避免新版 SDK 自动连接或启动用户独立安装的 CuaDriver.app，
+确保原生调用、权限归属和生命周期始终由 Wework 管理。
 
 原生工具不得在 Electron 主进程内执行：macOS 对同进程的辅助功能调用可能直接
 进入 AppKit，而 CUA 的后台线程不能操作 AppKit 窗口。独立子进程让窗口调用跨进程
@@ -62,8 +83,8 @@ stdio EOF 会丢弃对应 HTTP 请求；Electron 在响应连接异常关闭时�
 未执行；派发前取消及目录查询保留原始取消原因。迟到的结果不得覆盖取消错误。
 
 子进程从 SDK 自身目录的 `readOnlyHint` 获取只读标记，不维护手写工具分类。
-只读调用与目录查询直接取消 SDK Future。写操作不提前丢弃 Future：CUA 0.22.1 的
-后台原生输入仍可能继续，并跳过鼠标释放等收尾；动作占用因此保持到原生调用真实
+只读调用与目录查询直接取消 SDK Future。写操作不提前丢弃 Future，避免
+取消 Future 后后台原生输入继续运行并跳过鼠标释放等收尾；动作占用因此保持到原生调用真实
 完成或驱动进程退出。关闭驱动也要等到进程实际退出，才能创建下一代驱动。
 目录查询与工具调用共用取消协议；子进程在取消后 5 秒内仍未应答时，宿主强制结束
 该进程并报告动作结果未知。此时沿用异常退出的恢复流程，由用户关闭再开启电脑操控，
@@ -74,8 +95,18 @@ stdio EOF 会丢弃对应 HTTP 请求；Electron 在响应连接异常关闭时�
 完成、取消、失败阶段与耗时，不记录参数、截图、会话内容或 token。排查卡住时先
 核对阶段，再对该操作的 `nativePid` 采样；聚合调用的显示名称不能证明实际阻塞在
 `start_session`。
-CUA 0.22.1 的 AX 遍历有 20 秒截止时间，但取消 Rust Future 不能强制停止已开始的
-`spawn_blocking` 原生工作。因此 SDK 取消成功本身不是原生线程退出的证据。
+取消 Rust Future 不能强制停止已开始的 `spawn_blocking` 原生工作。因此 SDK 取消成功本身不是原生线程退出的证据。
+
+复查进程卡顿时，在隔离测试实例的启动环境设置 `WEWORK_PROCESS_TRACE=1`。Electron
+记录 Executor schema 查询的请求、进程启动、首个 stdout/stderr 数据、退出和管道关闭，
+以探针编号关联同一次查询。Codex 的进程启动及输出收集 trace 写入 Executor 日志，
+可以用调用和进程编号与 transcript 对时。探针仅记录时间和进程元数据。
+
+ChatGPT 官方订阅的 Responses 推理通过本地兼容代理使用 WebSocket。同一连接支持
+带 `previous_response_id` 的增量工具结果，上游只支持 HTTP 时由 Codex 切回 POST。
+桌面工具同时返回相同的文本 JSON 和结构化内容时，Executor 只保留结构化副本。
+诊断模式下，Executor 还按连接和请求编号记录首个响应帧、首个输出项、首个增量、
+结束帧和本地读写耗时。上游提供引擎计时时，日志只记录已知的数值字段。
 
 ## 权限与设置
 
@@ -102,7 +133,10 @@ macOS 需要向实际运行的 Wework 应用授予：
 
 CUA 不是独立 sidecar，也不从用户环境或网络动态安装。Electron 包固定依赖
 `@trycua/cua-driver`，pnpm 根据构建平台选择对应的原生包，例如
-`@trycua/cua-driver-darwin-arm64`。
+`@trycua/cua-driver-darwin-arm64`。六个平台原生包必须同时声明为 Electron 包的
+直接 `optionalDependencies`，并与 Driver 保持相同版本；不能只依赖 Driver 的间接
+可选依赖，否则 electron-builder 的依赖收集可能遗漏原生库。本地打包生成的暂存
+`package.json` 也必须保留这些声明。
 
 JavaScript 文件进入 `app.asar`，原生 `.node`、`.dylib`、`.so` 和 `.dll` 文件通过
 Electron 打包配置解包到 `app.asar.unpacked`。原生动态加载不能直接读取 ASAR

@@ -16,12 +16,15 @@ import {
 } from '../../utils/issue-dispatch-test-support'
 import {
   authHeaders,
+  configureHeldStreamResponse,
   getScenarioModelBodies,
   getScenarioRequestHeaders,
   getToolScenarioState,
   modelRequestText,
   modelToolNames,
   PROVIDER_NATIVE_API_URL,
+  releaseHeldStreamResponse,
+  waitForHeldStreamResponse,
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -108,6 +111,7 @@ test.describe('Collaboration group Executor coordination', () => {
         await page.getByTestId('template-details-product-lifecycle').click()
         await page.getByTestId('template-use').click()
         await page.getByTestId(`template-project-${fixture.projectId}`).click()
+        await page.getByTestId('template-runtime-configuration').locator('summary').click()
         const environment = page.getByTestId('template-project-environment-select')
         await expect(environment).toBeEnabled()
         await expect(environment).toHaveValue(
@@ -134,6 +138,8 @@ test.describe('Collaboration group Executor coordination', () => {
           'href',
           `${fixture.projectPath}?view=manage&section=environments`
         )
+        // Web imports retain user-selected model routing until actual execution.
+        await expect(page.getByTestId('template-model-codex')).toHaveCount(0)
         await page.getByTestId('template-bindings-apply').click()
         await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}$`))
         await page.reload()
@@ -154,7 +160,7 @@ test.describe('Collaboration group Executor coordination', () => {
             mode: 'fixed',
             environment_id: String(appDevice.id),
           })
-          expect(agent.modelPolicy.mode).toBe('fixed')
+          expect(agent.modelPolicy.mode).toBe('user_select')
         }
         const groups = await apiRequest<{ items: Array<{ name: string }> }>(
           request,
@@ -263,6 +269,153 @@ test.describe('Collaboration group Executor coordination', () => {
       await captureEvidence(page, testInfo, '02-direct-agent-in-review')
     } finally {
       await clearScenario()
+    }
+  })
+
+  test('registers an assistant and creates an idempotent risk-scoped dispatch', async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(180_000)
+    if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
+
+    const suffix = `${Date.now()}`
+    const fixture = await createProjectFixture(
+      page,
+      `assistant-${suffix}`,
+      `Assistant dispatch fixture ${suffix}`
+    )
+    try {
+      const me = await apiRequest<{ id: number }>(request, model.token, '/api/users/me')
+      const roster = await apiJson<{ id: string; endpointRef: string }>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-roster`,
+        {
+          userId: me.id,
+          roleId: 'review',
+          endpointRef: `local_wework:${me.id}:review`,
+          displayName: `Dispatch reviewer ${suffix}`,
+          enabled: true,
+          capabilityTags: ['review'],
+          autonomyPolicy: {
+            automatic: true,
+            askBeforeAct: false,
+            riskCeiling: 'low',
+          },
+          availability: 'online',
+          version: 0,
+        }
+      )
+      const inaccessibleAgent = await request.fetch(
+        `${PROVIDER_NATIVE_API_URL}/api/v1/cloud-projects/${fixture.projectId}/assistant-roster`,
+        {
+          method: 'POST',
+          headers: authHeaders(model.token),
+          data: {
+            userId: me.id,
+            roleId: 'review',
+            endpointRef: `wegent_agent:${me.id}:missing-${suffix}:review`,
+            displayName: `Inaccessible agent ${suffix}`,
+            enabled: true,
+            capabilityTags: ['review'],
+            autonomyPolicy: { automatic: false, askBeforeAct: true },
+            availability: 'online',
+            version: 0,
+          },
+        }
+      )
+      expect(inaccessibleAgent.status(), await inaccessibleAgent.text()).toBe(403)
+      const input = {
+        intentId: `assistant-intent-${suffix}`,
+        goal: `Assistant dispatch ${suffix}`,
+        riskLevel: 'high' as const,
+        description: 'Review the high-risk request before execution.',
+        managerUserId: me.id,
+        confirmationState: 'confirmed' as const,
+        assignments: [
+          {
+            rosterEntryId: roster.id,
+            userId: me.id,
+            brief: 'Review the high-risk request before execution.',
+          },
+        ],
+      }
+      const dispatched = await apiJson<{
+        dispatchId: string
+        rootIssueId: string
+        children: Array<{ issueId: string; status: string; rosterEntryId: string }>
+        replayed: boolean
+      }>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-dispatches`,
+        input
+      )
+      expect(dispatched.replayed).toBe(false)
+      expect(dispatched.children).toHaveLength(1)
+      expect(dispatched.children[0]).toMatchObject({
+        rosterEntryId: roster.id,
+        status: 'waiting_confirmation',
+      })
+
+      const replayed = await apiJson<typeof dispatched>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-dispatches`,
+        input
+      )
+      expect(replayed).toMatchObject({
+        dispatchId: dispatched.dispatchId,
+        rootIssueId: dispatched.rootIssueId,
+        replayed: true,
+      })
+
+      const automatic = await apiJson<typeof dispatched>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-dispatches`,
+        {
+          ...input,
+          intentId: `assistant-low-risk-${suffix}`,
+          goal: `Automatic assistant dispatch ${suffix}`,
+          riskLevel: 'low',
+          description: 'Use the explicitly authorized low-risk assistant policy.',
+        }
+      )
+      expect(automatic.children[0].status).toBe('queued')
+
+      const root = await apiRequest<{
+        id: string
+        status: string
+        automation: { assistant_dispatch?: boolean }
+      }>(request, model.token, `/api/v1/loop-items/${dispatched.rootIssueId}`)
+      const child = await apiRequest<{
+        id: string
+        parent_id: string | null
+        automation: { risk_level?: string }
+      }>(request, model.token, `/api/v1/loop-items/${dispatched.children[0].issueId}`)
+      expect(root.automation.assistant_dispatch).toBe(true)
+      expect(child).toMatchObject({
+        parent_id: root.id,
+        automation: { risk_level: 'high' },
+      })
+    } finally {
+      for (const path of [
+        `/api/v1/cloud-projects/${fixture.projectId}`,
+        `/api/v1/workspaces/${fixture.workspaceId}`,
+      ]) {
+        const current = await apiRequest<{ version: number }>(request, model.token, path)
+        const removed = await request.delete(
+          `${PROVIDER_NATIVE_API_URL}${path}?version=${current.version}`,
+          { headers: authHeaders(model.token) }
+        )
+        expect(removed.status(), await removed.text()).toBe(204)
+      }
     }
   })
 
@@ -380,15 +533,24 @@ test.describe('Collaboration group Executor coordination', () => {
         responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
       },
     ])
-    // Keep both worker responses active while verifying concurrent dispatch (maximum 10s).
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence, doneDelayMs: 10_000 }]
+      [{ responseContent: collectorEvidence }]
     )
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
-      { responseContent: reviewerEvidence, doneDelayMs: 10_000 },
+      { responseContent: reviewerEvidence },
     ])
+    const clearCollectorGate = await configureHeldStreamResponse(
+      request,
+      collectorTask,
+      collectorEvidence
+    )
+    const clearReviewerGate = await configureHeldStreamResponse(
+      request,
+      reviewerTask,
+      reviewerEvidence
+    )
     const clearSynthesisScenario = await configureIssueDispatchModelScenario(
       request,
       synthesisTask,
@@ -419,14 +581,27 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await captureEvidence(page, testInfo, '01-group-assigned')
 
-      const collectorCard = page
+      const memberExecutionCard = (agentName: string) =>
+        page
+          .locator('[data-testid^="cloud-task-activity-card-"]')
+          .filter({ hasText: agentName })
+          .filter({
+            has: page.locator('[data-testid^="cloud-task-activity-execution-badge-"]'),
+          })
+      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`)
+      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`)
+      const managerAssignment = page
         .locator('[data-testid^="cloud-task-activity-card-"]')
         .filter({ hasText: collectorTask })
-      const reviewerCard = page
-        .locator('[data-testid^="cloud-task-activity-card-"]')
-        .filter({ hasText: reviewerTask })
+        .filter({
+          has: page.locator('[data-testid^="cloud-task-manager-execution-"]'),
+        })
+      await expect(managerAssignment).toBeVisible({ timeout: 60_000 })
+      await expect(managerAssignment).toContainText(reviewerTask)
       await expect(collectorCard).toBeVisible({ timeout: 60_000 })
       await expect(reviewerCard).toBeVisible({ timeout: 60_000 })
+      await waitForHeldStreamResponse(request, collectorTask)
+      await waitForHeldStreamResponse(request, reviewerTask)
       await expect(
         collectorCard.locator('[data-testid^="cloud-task-activity-execution-badge-"]')
       ).toHaveAttribute('data-status', 'running')
@@ -434,6 +609,8 @@ test.describe('Collaboration group Executor coordination', () => {
         reviewerCard.locator('[data-testid^="cloud-task-activity-execution-badge-"]')
       ).toHaveAttribute('data-status', 'running')
       await captureEvidence(page, testInfo, '02-first-round-members-running-in-parallel')
+      await releaseHeldStreamResponse(request, collectorTask)
+      await releaseHeldStreamResponse(request, reviewerTask)
 
       const executions = await waitForCollaborationExecutions(
         request,
@@ -452,8 +629,16 @@ test.describe('Collaboration group Executor coordination', () => {
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
       expect(completed.assignee_group_id).toBeNull()
-      expect(completed.assignee_agent_id).toBe(collector.id)
+      // The manager takes ownership again after evaluating the delivered rounds.
+      expect(completed.assignee_agent_id).toBe(leader.id)
 
+      // The status tool commits before the manager's final model response.
+      await expect
+        .poll(async () => (await getToolScenarioState(request, issueTitle)).nextStep, {
+          timeout: 60_000,
+          message: 'The final manager model step should finish before capturing its evidence',
+        })
+        .toBe(6)
       const managerBodies = await getScenarioModelBodies(request, issueTitle)
       const managerHeaders = await getScenarioRequestHeaders(request, issueTitle)
       const managerScenario = await getToolScenarioState(request, issueTitle)
@@ -518,11 +703,13 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
         'data-value',
-        `agent:${collector.id}`
+        `agent:${leader.id}`
       )
       await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
       await captureEvidence(page, testInfo, '03-manager-reviewed-two-rounds')
     } finally {
+      await clearReviewerGate()
+      await clearCollectorGate()
       await clearSynthesisScenario()
       await clearReviewerScenario()
       await clearCollectorScenario()
@@ -619,6 +806,22 @@ async function apiRequest<T>(
 ): Promise<T> {
   const response = await request.get(`${PROVIDER_NATIVE_API_URL}${pathname}`, {
     headers: authHeaders(token),
+  })
+  expect(response.status(), await response.text()).toBe(200)
+  return (await response.json()) as T
+}
+
+async function apiJson<T>(
+  request: APIRequestContext,
+  token: string,
+  method: 'POST',
+  pathname: string,
+  data: unknown
+): Promise<T> {
+  const response = await request.fetch(`${PROVIDER_NATIVE_API_URL}${pathname}`, {
+    method,
+    headers: authHeaders(token),
+    data,
   })
   expect(response.status(), await response.text()).toBe(200)
   return (await response.json()) as T

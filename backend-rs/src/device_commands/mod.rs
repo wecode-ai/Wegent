@@ -25,7 +25,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 mod defaults_codex;
 mod defaults_git;
@@ -114,7 +114,7 @@ const REMOTE_MUTATING_COMMAND_KEYS: [&str; 10] = [
 const RUNTIME_AUTH_COMMAND_KEYS: [&str; 2] = ["read_runtime_auth_file", "sync_runtime_auth_file"];
 
 /// `command_service.execute_configured_device_command`'s payload keys that
-/// carry `command_key` to the executor.
+/// carry `command_key` to the executor independently of native Git selection.
 const EXECUTOR_COMMAND_KEY_KEYS: [&str; 6] = [
     "task_artifact",
     "environment_prepare",
@@ -138,6 +138,7 @@ pub struct DeviceCommandSpec {
 pub(crate) struct CommandDefinition {
     pub command: Cow<'static, str>,
     pub post_processor: Option<Cow<'static, str>>,
+    pub native_git: bool,
 }
 
 /// `CommandRegistryError`: invalid registry state or command definition.
@@ -224,9 +225,16 @@ pub(crate) fn remote_command_allowed(key: &str, device_type: &str) -> bool {
         || registered_scope(key).is_some_and(|types| types.contains(&device_type))
 }
 
-/// Whether the executor payload carries `command_key` for this spelling.
-pub(crate) fn executor_payload_carries_key(key: &str) -> bool {
-    EXECUTOR_COMMAND_KEY_KEYS.contains(&key)
+/// Preserve native command dispatch while respecting explicit Git overrides.
+/// Callers resolve the command first, which validates the startup configuration.
+pub(crate) fn add_executor_command_key(
+    payload: &mut Map<String, Value>,
+    key: &str,
+    native_git: bool,
+) {
+    if EXECUTOR_COMMAND_KEY_KEYS.contains(&key) || native_git {
+        payload.insert("command_key".into(), Value::String(key.to_owned()));
+    }
 }
 
 /// Parse `LOCAL_DEVICE_COMMANDS` once, at startup.
@@ -290,6 +298,7 @@ pub(crate) fn resolve_local_device_command(
     Ok(default.map(|definition| CommandDefinition {
         command: Cow::Borrowed(definition.command),
         post_processor: definition.post_processor.map(Cow::Borrowed),
+        native_git: matches!(key, "git_clone" | "git_branch" | "git_branch_list"),
     }))
 }
 
@@ -328,6 +337,7 @@ fn parse_definition(
             }
             Ok(CommandDefinition {
                 command: Cow::Owned(command.to_string()),
+                native_git: false,
                 post_processor: default
                     .and_then(|definition| definition.post_processor)
                     .map(Cow::Borrowed),
@@ -358,6 +368,7 @@ fn parse_definition(
             };
             Ok(CommandDefinition {
                 command: Cow::Owned(command.to_string()),
+                native_git: false,
                 post_processor,
             })
         }
@@ -465,6 +476,25 @@ fn python_repr_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn native_git_dispatch_preserves_explicit_command_overrides() {
+        for key in ["git_clone", "git_branch", "git_branch_list"] {
+            let definition = resolve_local_device_command(key).unwrap().unwrap();
+            let mut payload = Map::new();
+            add_executor_command_key(&mut payload, key, definition.native_git);
+            assert_eq!(payload["command_key"], key);
+            let configured =
+                parse_definition(key, &json!("custom-git-command"), default_command(key)).unwrap();
+            payload.clear();
+            add_executor_command_key(&mut payload, key, configured.native_git);
+            assert!(payload.get("command_key").is_none());
+        }
+        let mut payload = Map::new();
+        add_executor_command_key(&mut payload, "workspace_read_text_file", false);
+        assert_eq!(payload["command_key"], "workspace_read_text_file");
+    }
 
     #[test]
     fn every_default_command_resolves_and_splits() {
@@ -503,6 +533,28 @@ mod tests {
     fn blank_keys_resolve_to_nothing() {
         assert_eq!(resolve_local_device_command("   ").unwrap(), None);
         assert_eq!(resolve_local_device_command("not_a_command").unwrap(), None);
+    }
+
+    #[test]
+    fn native_git_identity_requires_a_builtin_definition() {
+        for key in ["git_clone", "git_branch", "git_branch_list"] {
+            let definition = resolve_local_device_command(key).unwrap().unwrap();
+            assert!(definition.native_git);
+            let default = default_command(key);
+            for raw in [
+                json!(definition.command),
+                json!({"command":definition.command}),
+                json!("git --version"),
+            ] {
+                assert!(!parse_definition(key, &raw, default).unwrap().native_git);
+            }
+        }
+        assert!(
+            !resolve_local_device_command("pwd")
+                .unwrap()
+                .unwrap()
+                .native_git
+        );
     }
 
     #[test]

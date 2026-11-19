@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyRoundStandInAssignment } from '../modules/stand-in-round-assignment.mjs'
 import { verifyOrphanStandInRecovery } from '../modules/stand-in-orphan-binding-recovery.mjs'
+import { verifyStandInStartupRecovery } from '../modules/stand-in-startup-recovery.mjs'
 import {
   assistantMessage,
   createSse,
@@ -162,6 +163,17 @@ export function createDesktopScenario({
         resultDir,
         timeoutMs: modelResponseTimeoutMs,
       })
+      await verifyStandInStartupRecovery({
+        request,
+        rpc,
+        project,
+        user,
+        settings,
+        until,
+        control,
+        resultDir,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       let issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
         title: 'Process me, transfer away, then transfer back',
         assignee_user_id: user.id,
@@ -280,6 +292,25 @@ export function createDesktopScenario({
       assert.ok(firstConversation.task.executionState?.latestTurnId)
       assert.ok(secondConversation.task.executionState?.latestTurnId)
       await expectPublicResults(issue, 2)
+      const pendingPath = `/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
+      const beforePending = await request(`/v1/loop-items/${issue.id}`)
+      const pending = await request(pendingPath, {
+        body: 'TOOL_GENERATED_PENDING_RESULT',
+        assistant_source: {
+          device_id: secondBindings[0].device_id,
+          task_id: secondTask,
+          requires_confirmation: true,
+        },
+      })
+      assert.equal(pending.generation_source, 'ai')
+      assert.equal(pending.publication_source, 'ai')
+      assert.equal(pending.confirmation_state, 'pending')
+      const observerPending = (await request(pendingPath, undefined, otherToken)).find(
+        row => row.id === pending.id
+      )
+      assert.equal(observerPending?.generation_source, 'ai')
+      assert.equal(observerPending?.confirmation_state, 'pending')
+      assert.equal((await request(`/v1/loop-items/${issue.id}`)).status, beforePending.status)
       const manual = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
       assert.equal(
         manual.taskId,

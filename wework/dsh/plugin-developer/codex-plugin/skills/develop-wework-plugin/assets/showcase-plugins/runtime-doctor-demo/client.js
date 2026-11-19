@@ -2,20 +2,142 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-dev-environments-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useRef, useState } = React
+    const { createElement, useCallback, useState, useSyncExternalStore } = React
     const PROVIDER_ID = 'dev-environments'
     const OPEN_EVENT = 'wework-demo:open-dev-environments'
-    const WORKSPACE_EVENT = 'wework-demo:dev-environments-workspace'
 
-    function EnvironmentStatusAction({ workspaceTarget }) {
-      const workspacePath = workspaceTarget?.path ?? ''
-      useEffect(() => {
-        window.dispatchEvent(
-          new CustomEvent(WORKSPACE_EVENT, {
-            detail: { workspacePath },
-          })
-        )
-      }, [workspacePath])
+    function createEnvironmentController(environments) {
+      let snapshot = {
+        workspacePath: '',
+        workspaces: new Map(),
+        open: false,
+        report: null,
+        loading: false,
+        error: '',
+      }
+      let requestSequence = 0
+      const listeners = new Set()
+      let wizardObservers = 0
+      const publish = change => {
+        snapshot = { ...snapshot, ...change }
+        for (const listener of listeners) listener()
+      }
+      const inspect = async (workspacePath = snapshot.workspacePath) => {
+        if (!workspacePath) return
+        const requestId = ++requestSequence
+        const isCurrent = () =>
+          wizardObservers > 0 &&
+          snapshot.open &&
+          snapshot.workspacePath === workspacePath &&
+          requestSequence === requestId
+        publish({ loading: true, error: '' })
+        try {
+          const report = await environments.inspect(PROVIDER_ID, { workspacePath })
+          if (isCurrent()) publish({ report })
+        } catch (reason) {
+          if (isCurrent())
+            publish({ error: reason instanceof Error ? reason.message : String(reason) })
+        } finally {
+          if (isCurrent()) publish({ loading: false })
+        }
+      }
+      const updateWorkspace = workspacePath => {
+        if (snapshot.workspacePath === workspacePath) return
+        requestSequence += 1
+        publish({
+          workspacePath,
+          report: null,
+          error: '',
+          loading: false,
+          open: Boolean(workspacePath) && snapshot.open,
+        })
+        if (snapshot.open) void inspect(workspacePath)
+      }
+      const show = event => {
+        const workspacePath =
+          typeof event.detail?.workspacePath === 'string' ? event.detail.workspacePath : ''
+        requestSequence += 1
+        publish({
+          workspacePath,
+          report: null,
+          error: '',
+          loading: false,
+          open: Boolean(workspacePath),
+        })
+        if (workspacePath) void inspect(workspacePath)
+      }
+      return {
+        getSnapshot: () => snapshot,
+        observeWorkspace(listener, owner, workspacePath) {
+          listeners.add(listener)
+          const workspaces = new Map(snapshot.workspaces)
+          workspaces.set(owner, workspacePath)
+          publish({ workspaces })
+          updateWorkspace(workspacePath)
+          return () => {
+            listeners.delete(listener)
+            const workspaces = new Map(snapshot.workspaces)
+            workspaces.delete(owner)
+            publish({ workspaces })
+          }
+        },
+        subscribeWizard(listener) {
+          listeners.add(listener)
+          wizardObservers += 1
+          if (wizardObservers === 1) window.addEventListener(OPEN_EVENT, show)
+          return () => {
+            listeners.delete(listener)
+            wizardObservers -= 1
+            if (!wizardObservers) {
+              window.removeEventListener(OPEN_EVENT, show)
+              requestSequence += 1
+              publish({ open: false, loading: false })
+            }
+          }
+        },
+        close() {
+          requestSequence += 1
+          publish({ open: false, loading: false })
+        },
+        async prepare() {
+          const { workspacePath, loading } = snapshot
+          if (!workspacePath || loading || !snapshot.open || !wizardObservers) return
+          const requestId = ++requestSequence
+          const isCurrent = () =>
+            wizardObservers > 0 &&
+            snapshot.open &&
+            snapshot.workspacePath === workspacePath &&
+            requestSequence === requestId
+          publish({ loading: true, error: '' })
+          try {
+            const report = await environments.prepare(PROVIDER_ID, {
+              workspacePath,
+              target: 'devcontainer',
+            })
+            if (isCurrent()) publish({ report })
+          } catch (reason) {
+            if (isCurrent())
+              publish({ error: reason instanceof Error ? reason.message : String(reason) })
+          } finally {
+            if (isCurrent()) publish({ loading: false })
+          }
+        },
+      }
+    }
+
+    function EnvironmentStatusAction({ workspaceTarget, controller }) {
+      const path = workspaceTarget?.path ?? ''
+      const [owner] = useState(() => Symbol('workspace-toolbar'))
+      const subscribe = useCallback(
+        listener => controller.observeWorkspace(listener, owner, path),
+        [controller, owner, path]
+      )
+      const snapshot = useSyncExternalStore(
+        subscribe,
+        controller.getSnapshot,
+        controller.getSnapshot
+      )
+      const workspacePath = snapshot.workspaces.get(owner) ?? path
       return createElement(
         'button',
         {
@@ -37,103 +159,13 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DevEnvironmentWizard() {
-      const [open, setOpen] = useState(false)
-      const [report, setReport] = useState(null)
-      const [loading, setLoading] = useState(false)
-      const [error, setError] = useState('')
-      const activePath = useRef('')
-      const openState = useRef(false)
-      const requestSequence = useRef(0)
-
-      useEffect(() => {
-        const workspacePathFromEvent = event =>
-          typeof event.detail?.workspacePath === 'string' ? event.detail.workspacePath : ''
-        const updateWorkspace = event => {
-          const workspacePath = workspacePathFromEvent(event)
-          if (activePath.current === workspacePath) return
-          activePath.current = workspacePath
-          requestSequence.current += 1
-          setReport(null)
-          setError('')
-          setLoading(false)
-          if (!workspacePath) {
-            openState.current = false
-            setOpen(false)
-          } else if (openState.current) {
-            void inspect(workspacePath)
-          }
-        }
-        const show = event => {
-          const workspacePath = workspacePathFromEvent(event)
-          activePath.current = workspacePath
-          requestSequence.current += 1
-          setReport(null)
-          setError('')
-          setLoading(false)
-          if (!workspacePath) {
-            openState.current = false
-            setOpen(false)
-            return
-          }
-          openState.current = true
-          setOpen(true)
-          void inspect(workspacePath)
-        }
-        window.addEventListener(WORKSPACE_EVENT, updateWorkspace)
-        window.addEventListener(OPEN_EVENT, show)
-        return () => {
-          window.removeEventListener(WORKSPACE_EVENT, updateWorkspace)
-          window.removeEventListener(OPEN_EVENT, show)
-        }
-      }, [])
-
-      const close = () => {
-        openState.current = false
-        requestSequence.current += 1
-        setLoading(false)
-        setOpen(false)
-      }
-
-      const inspect = async (workspacePath = activePath.current) => {
-        if (!workspacePath) return
-        const requestId = ++requestSequence.current
-        const isCurrent = () =>
-          activePath.current === workspacePath && requestSequence.current === requestId
-        setLoading(true)
-        setError('')
-        try {
-          const next = await DevEnvironmentWizard.wework.environments.inspect(PROVIDER_ID, {
-            workspacePath,
-          })
-          if (isCurrent()) setReport(next)
-        } catch (reason) {
-          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
-        } finally {
-          if (isCurrent()) setLoading(false)
-        }
-      }
-
-      const prepare = async () => {
-        const workspacePath = activePath.current
-        if (!workspacePath || loading) return
-        const requestId = ++requestSequence.current
-        const isCurrent = () =>
-          activePath.current === workspacePath && requestSequence.current === requestId
-        setLoading(true)
-        setError('')
-        try {
-          const next = await DevEnvironmentWizard.wework.environments.prepare(PROVIDER_ID, {
-            workspacePath,
-            target: 'devcontainer',
-          })
-          if (isCurrent()) setReport(next)
-        } catch (reason) {
-          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
-        } finally {
-          if (isCurrent()) setLoading(false)
-        }
-      }
+    function DevEnvironmentWizard({ controller }) {
+      const { open, report, loading, error } = useSyncExternalStore(
+        controller.subscribeWizard,
+        controller.getSnapshot,
+        controller.getSnapshot
+      )
+      const { close, prepare } = controller
 
       if (!open) return null
       const configured = report?.state === 'configured'
@@ -333,7 +365,10 @@ window.__ModuleLoader__.load({
               target: request.target,
             }),
         })
-        DevEnvironmentWizard.wework = ctx.wework
+        const controller = createEnvironmentController(ctx.wework.environments)
+        const StatusAction = props =>
+          createElement(EnvironmentStatusAction, { ...props, controller })
+        const Wizard = () => createElement(DevEnvironmentWizard, { controller })
         for (const contribution of [
           {
             slot: 'wework.workspace.toolbar.action',
@@ -342,7 +377,7 @@ window.__ModuleLoader__.load({
               label: 'Development environment',
               order: 15,
             },
-            component: EnvironmentStatusAction,
+            component: StatusAction,
           },
           {
             slot: 'wework.shell.overlay',
@@ -351,7 +386,7 @@ window.__ModuleLoader__.load({
               label: 'Development environment wizard',
               order: 15,
             },
-            component: DevEnvironmentWizard,
+            component: Wizard,
           },
         ]) {
           ctx.slots.inject(contribution.slot, function* () {

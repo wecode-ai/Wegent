@@ -129,6 +129,11 @@ export function parseConnections(manifest) {
       JSON.stringify(provider.collectionModes) === '["poll"]',
       'Only poll collection is supported'
     )
+    requireValue(
+      provider.collectionPagination === undefined ||
+        ['durable', 'staged'].includes(provider.collectionPagination),
+      'Invalid collection pagination contract'
+    )
     requireValue(provider.readPagination === undefined, 'Use the read capability declaration')
     if (provider.read !== undefined) {
       requireValue(
@@ -247,6 +252,15 @@ export function parseConnections(manifest) {
               new Set(Object.values(spec.parameters)).size === Object.keys(spec.parameters).length,
             'Invalid CLI parameters'
           )
+          if (spec.outputFile !== undefined)
+            requireValue(
+              record(spec.outputFile) &&
+                /^--[a-z][a-z0-9-]*$/.test(spec.outputFile.flag) &&
+                !Object.values(spec.parameters).includes(spec.outputFile.flag) &&
+                !spec.command.some(part => part.split('=')[0] === spec.outputFile.flag) &&
+                !declaration.outputArgs.some(part => part.split('=')[0] === spec.outputFile.flag),
+              'Invalid host-owned CLI output file'
+            )
         }
       }
     }
@@ -388,7 +402,8 @@ export class ConnectionRegistry {
     )
   }
 
-  async call(id, method, input) {
+  async call(id, method, input, { signal, initializationMode } = {}) {
+    signal?.throwIfAborted()
     const entry = this.entries.get(id)
     if (!entry)
       throw new ConnectionError('connection_unavailable', 'Connection plugin is not active')
@@ -416,7 +431,13 @@ export class ConnectionRegistry {
       )
     if (this.entries.get(id) !== entry)
       throw new ConnectionError('connection_unavailable', 'Connection plugin was stopped')
-    const context = this.contextFor(entry, dependencies)
+    const context = this.contextFor(
+      entry,
+      dependencies,
+      signal ? AbortSignal.any([entry.controller.signal, signal]) : entry.controller.signal,
+      method === 'initialize' && initializationMode === 'fresh' ? 'fresh' : undefined
+    )
+    context.signal.throwIfAborted()
     boundedJson(input, 1024 * 1024, 'Connection input exceeds the JSON budget')
     const params = structuredClone(input)
     if (method === 'readSource' && params.cursor !== undefined) {
@@ -490,9 +511,9 @@ export class ConnectionRegistry {
       if (method === 'collect')
         requireValue(record(params.checkpoint), 'Invalid connection checkpoint')
     }
-    entry.controller.signal.throwIfAborted()
+    context.signal.throwIfAborted()
     const result = await entry.implementation[method](context, params)
-    entry.controller.signal.throwIfAborted()
+    context.signal.throwIfAborted()
     validateProviderResult(entry.provider, method, result, params)
     if (method === 'validate') validateCollectionConfiguration(result)
     if (method === 'collect' && source.scope === 'all') {
@@ -526,15 +547,16 @@ export class ConnectionRegistry {
     return result
   }
 
-  contextFor(entry, dependencies) {
+  contextFor(entry, dependencies, signal = entry.controller.signal, initializationMode) {
     return Object.freeze({
       ...this.context({
         packageName: entry.definition.packageName,
         providerId: entry.id,
         dependencies: structuredClone(dependencies),
-        signal: entry.controller.signal,
+        signal,
+        ...(initializationMode ? { initializationMode } : {}),
       }),
-      signal: entry.controller.signal,
+      signal,
     })
   }
 
@@ -592,6 +614,28 @@ function validateProviderResult(provider, method, result, input) {
     )
   }
   if (method === 'collect') {
+    if (result?.resourceStates !== undefined)
+      requireValue(
+        Array.isArray(result.resourceStates) &&
+          result.resourceStates.length <= 1000 &&
+          result.resourceStates.every(
+            state =>
+              record(state) &&
+              record(state.data) &&
+              ['kind', 'provider', 'topicId', 'observedAt'].every(
+                key =>
+                  typeof state[key] === 'string' &&
+                  state[key].length > 0 &&
+                  state[key].length <= 4096
+              ) &&
+              Number.isFinite(Date.parse(state.observedAt)) &&
+              (state.errorCode === undefined ||
+                (typeof state.errorCode === 'string' &&
+                  state.errorCode.length > 0 &&
+                  state.errorCode.length <= 256))
+          ),
+        'Invalid resource state projection'
+      )
     requireValue(
       record(result) &&
         record(result.nextCheckpoint) &&

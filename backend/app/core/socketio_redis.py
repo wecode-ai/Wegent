@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import Any
 
+from anyio import fail_after
 from socketio import AsyncRedisManager
 
 from shared.telemetry.decorators import trace_async
@@ -94,9 +95,10 @@ class ObservedRedisManager(AsyncRedisManager):
         """Update readiness from one bounded round trip."""
         was_ready = self.ack_ready
         try:
-            await asyncio.wait_for(
-                self._probe_ack_round_trip(), timeout=ACK_PROBE_TIMEOUT_SECONDS
-            )
+            # Keep this task's cancellation independent from ACK completion on
+            # Python 3.10/3.11, where wait_for can absorb the cancellation.
+            with fail_after(ACK_PROBE_TIMEOUT_SECONDS):
+                await self._probe_ack_round_trip()
         except Exception as error:
             self._probe_failures += 1
             if was_ready and not self.ack_ready:
@@ -122,6 +124,11 @@ class ObservedRedisManager(AsyncRedisManager):
 
     async def run_ack_probe(self, interval_seconds: float) -> None:
         """Check independently of HTTP traffic and local Socket.IO connections."""
+        # Keep the subscriber active before its blocking read expires. Otherwise
+        # a healthy idle connection closes and loses callbacks while resubscribing.
+        socket_timeout = self.redis_options.get("socket_timeout")
+        if socket_timeout is not None:
+            interval_seconds = min(interval_seconds, socket_timeout / 2)
         while True:
             await self.check_ack()
             await asyncio.sleep(interval_seconds)

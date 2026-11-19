@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
+import { useClock } from '@wegent/collaboration/clock'
 import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
+import type { ConnectionGoalWaitState } from '@/lib/runtime-connection-events'
 
 interface GoalStatusBarProps {
   goal: RuntimeGoal
   continuing?: boolean
   executionStatus?: RuntimeGoalExecutionStatus | null
+  eventWaitState?: ConnectionGoalWaitState
   onEditGoal?: () => void
   onPauseGoal?: () => void
   onResumeGoal?: () => void
@@ -28,6 +31,7 @@ export function GoalStatusBar({
   goal,
   continuing = false,
   executionStatus = null,
+  eventWaitState,
   onEditGoal,
   onPauseGoal,
   onResumeGoal,
@@ -35,43 +39,38 @@ export function GoalStatusBar({
   integrated = false,
 }: GoalStatusBarProps) {
   const { t } = useTranslation('common')
+  const waitingForEvent = Boolean(eventWaitState) && executionStatus !== 'needsAttention'
   const statusLabel =
-    executionStatus === 'recovering'
-      ? { key: 'workbench.goal_status_compact_recovering', fallback: '正在恢复' }
-      : executionStatus === 'needsAttention'
-        ? { key: 'workbench.goal_status_compact_needs_attention', fallback: '需要恢复' }
-        : continuing
-          ? { key: 'workbench.goal_status_compact_continuing', fallback: '正在开始下一轮' }
-          : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
-  const timerKey = goalTimerKey(goal)
-  const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
+    executionStatus === 'needsAttention'
+      ? { key: 'workbench.goal_status_compact_needs_attention', fallback: '需要恢复' }
+      : executionStatus === 'recovering'
+        ? { key: 'workbench.goal_status_compact_recovering', fallback: '正在恢复' }
+        : waitingForEvent && goal.status === 'blocked'
+          ? eventWaitState === 'received'
+            ? { key: 'workbench.goal_status_waiting_execution', fallback: '等待继续执行' }
+            : { key: 'workbench.goal_status_waiting_event', fallback: '等待事件' }
+          : continuing
+            ? { key: 'workbench.goal_status_compact_continuing', fallback: '正在开始下一轮' }
+            : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const [actionsRevealed, setActionsRevealed] = useState(false)
-  const elapsedSeconds = useMemo(
-    () => getLiveElapsedSeconds(goal, timerState, timerKey),
-    [goal, timerKey, timerState]
-  )
-  const elapsed = formatGoalElapsed(elapsedSeconds)
   const resumable =
-    goal.status === 'paused' || goal.status === 'blocked' || executionStatus === 'needsAttention'
-  const canToggle = goal.status === 'active' || resumable
-  const showStatus = !canToggle || continuing || executionStatus !== null
+    goal.status === 'paused' ||
+    (goal.status === 'blocked' && !waitingForEvent) ||
+    executionStatus === 'needsAttention'
+  const canToggle =
+    goal.status === 'active' || resumable || (goal.status === 'blocked' && waitingForEvent)
+  const showStatus =
+    goal.status === 'paused' ||
+    goal.status === 'blocked' ||
+    waitingForEvent ||
+    !canToggle ||
+    continuing ||
+    executionStatus !== null
   const ToggleIcon = resumable ? Play : Pause
   const toggleLabel = resumable
     ? t('workbench.goal_start', '开始目标')
     : t('workbench.goal_pause', '暂停目标')
   const toggleAction = resumable ? onResumeGoal : onPauseGoal
-
-  useEffect(() => {
-    if (goal.status !== 'active') return
-
-    const interval = window.setInterval(() => {
-      const nowMs = Date.now()
-      setTimerState(current =>
-        current.key === timerKey ? { ...current, nowMs } : createTimerState(timerKey, nowMs)
-      )
-    }, 1000)
-    return () => window.clearInterval(interval)
-  }, [goal.status, timerKey])
 
   return (
     <div
@@ -108,7 +107,7 @@ export function GoalStatusBar({
       {showStatus && (
         <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
       )}
-      {elapsed && <span className="shrink-0 text-text-muted">{elapsed}</span>}
+      <GoalElapsedTime key={goalTimerKey(goal)} goal={goal} />
       <div
         id="goal-status-details"
         data-testid="goal-status-details"
@@ -173,37 +172,23 @@ export function GoalStatusBar({
   )
 }
 
-interface GoalTimerState {
-  key: string
-  startedAtMs: number
-  nowMs: number
-}
-
-function createTimerState(key: string, nowMs: number): GoalTimerState {
-  return {
-    key,
-    startedAtMs: nowMs,
-    nowMs,
-  }
+function GoalElapsedTime({ goal }: { goal: RuntimeGoal }) {
+  const [startedAtMs] = useState(() => Date.now())
+  const nowMs = useClock(goal.status === 'active')
+  const baseSeconds = Number.isFinite(goal.timeUsedSeconds)
+    ? Math.max(0, Math.floor(goal.timeUsedSeconds))
+    : 0
+  const liveSeconds =
+    goal.status === 'active' ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000)) : 0
+  return (
+    <span className="shrink-0 text-text-muted">{formatGoalElapsed(baseSeconds + liveSeconds)}</span>
+  )
 }
 
 function goalTimerKey(goal: RuntimeGoal): string {
   return [goal.threadId, goal.status, goal.timeUsedSeconds, goal.createdAt, goal.updatedAt].join(
     ':'
   )
-}
-
-function getLiveElapsedSeconds(
-  goal: RuntimeGoal,
-  timerState: GoalTimerState,
-  timerKey: string
-): number {
-  const baseSeconds = Number.isFinite(goal.timeUsedSeconds)
-    ? Math.max(0, Math.floor(goal.timeUsedSeconds))
-    : 0
-  if (goal.status !== 'active' || timerState.key !== timerKey) return baseSeconds
-
-  return baseSeconds + Math.max(0, Math.floor((timerState.nowMs - timerState.startedAtMs) / 1000))
 }
 
 function formatGoalElapsed(seconds: number): string {

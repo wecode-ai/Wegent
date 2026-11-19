@@ -110,7 +110,7 @@ impl LocalTaskStore {
             &mut value,
             before.unwrap_or(&Value::Null),
         );
-        validate_role(&value, &device)?;
+        validate_role(&value)?;
         value["version"] = json!(version + 1);
         value["userId"] = json!(user_id);
         value.as_object_mut().unwrap().remove("projectId");
@@ -122,7 +122,6 @@ impl LocalTaskStore {
         } else {
             roles.push(value.clone());
         }
-        personal["executionDeviceId"] = json!(device);
         personal["userId"] = json!(user_id);
         personal["version"] = json!(personal["version"].as_i64().unwrap_or(0) + 1);
         super::stand_in_processing::update_processing_configuration(

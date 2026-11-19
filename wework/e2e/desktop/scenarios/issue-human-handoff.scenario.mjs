@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ import {
   selectCollaborationProjectView,
 } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { verifyIssueQuestionReflow } from '../modules/issue-question-reflow.mjs'
 import {
   assistantMessage,
   createSse,
@@ -105,7 +107,7 @@ export function createDesktopScenario({
   }
   async function recordPendingRows(control, expectedQuestions = 1, phase = 'pending') {
     const rows = []
-    const expectedProjects = phase === 'pending' ? 1 : 2
+    const expectedProjects = 1
     await until(
       async () => ({
         questions: Number(
@@ -307,6 +309,14 @@ export function createDesktopScenario({
         })
         await reloadMainWindow(control, 'Restore native Issue ownership fixtures')
         await verifyHeader(control, ordinaryId, 'human', 'local')
+        await control.command(
+          'waitFor',
+          `${scoped('project-needs-my-input-filter')}[aria-pressed="true"]`
+        )
+        await control.command('waitFor', scoped(`cloud-todo-card-${foreign.id}`), {
+          visible: false,
+        })
+        await showAllCollaborationIssues(control, ACTIVE)
         await control.command('waitFor', scoped(`cloud-todo-card-${foreign.id}`))
         const filter = scoped('project-needs-my-input-filter')
         await control.command('clickWhenEnabled', filter)
@@ -553,6 +563,15 @@ export function createDesktopScenario({
           `${surface} ${testId(`issue-human-request-assignee-${question.id}`)}`,
           `${surface} ${testId('request-user-input-submit-button')}`,
         ])
+        await verifyIssueQuestionReflow(control, {
+          contentScope: ACTIVE,
+          question: surface,
+          originalDescription: MARKER,
+          readDescription: async () =>
+            (await rpc(control, 'todos.get', { project_id: project.id, task_id: issue.id }))
+              .description,
+          captureScreenshot,
+        })
         const previousSize = await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 480, height: 760 }),
         })
@@ -568,9 +587,17 @@ export function createDesktopScenario({
             `${surface} ${testId('request-user-input-submit-button')}`,
           ]) {
             const [metrics] = JSON.parse(await control.command('getElementMetrics', target))
+            if (!fullyVisible(metrics)) {
+              await recordSurface(control, 'issue-handoff-narrow-control-obscured', [
+                surface,
+                target,
+                scoped('cloud-todo-detail-scroll'),
+                scoped('issue-reply-composer'),
+              ])
+            }
             assert.ok(
               fullyVisible(metrics),
-              `The narrow question control must actually be visible: ${target}`
+              `The narrow question control must actually be visible: ${target}; metrics=${JSON.stringify(metrics)}`
             )
             assert.ok(metrics.width >= 44 && metrics.height >= 44)
           }
@@ -655,6 +682,12 @@ export function createDesktopScenario({
           'Accepted questions must disappear from the global pending UI, not only the native inbox'
         )
         await recordPendingRows(control, 0, 'accepted')
+        const handledIssue = `${scoped('interaction-list-item')}[data-interaction-id=${JSON.stringify(`project-issue:local:${project.id}:${issue.id}`)}]`
+        assert.equal(
+          Number(await control.command('getElementCount', handledIssue)),
+          0,
+          'The answered Issue must leave pending work while unrelated ordinary work remains'
+        )
         await reloadMainWindow(control, 'Answered questions remain resolved after reload')
         const inbox = await rpc(control, 'todos.humanRequests.inbox', { user_ids: [0, viewerId] })
         assert.ok(!inbox.items.some(request => request.id === question.id))
@@ -665,6 +698,11 @@ export function createDesktopScenario({
           'Accepted questions must not return to the global pending UI after reload'
         )
         await recordPendingRows(control, 0, 'reloaded')
+        assert.equal(
+          Number(await control.command('getElementCount', handledIssue)),
+          0,
+          'Reload must not recreate the answered Issue as ordinary pending work'
+        )
         await recordSurface(control, 'issue-handoff-05-resolved', [
           scoped('runtime-interactions-page'),
         ])

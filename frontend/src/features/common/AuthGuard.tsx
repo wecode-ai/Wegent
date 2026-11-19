@@ -32,6 +32,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       paths.auth.wework_authorize.getHref(),
       paths.auth.oauth_authorize.getHref(),
       '/shared/task', // Allow public shared task page without authentication
+      '/shared/task/access', // Metadata preview only; joining requires backend auth
       '/shared/knowledge', // Allow public shared knowledge base page without authentication
       '/open-wework', // Let notification recipients choose the desktop or web destination
     ]

@@ -11,6 +11,7 @@ import {
   CoreDshPluginManager,
   type CoreDshDevelopmentPlugin,
   type CoreDshPlugin,
+  type CoreDshPluginInstallRequest,
 } from './core-dsh-plugin-manager.js'
 import { DshRuntime, type DshRuntimeOptions } from './dsh-runtime.js'
 import {
@@ -38,6 +39,7 @@ export interface DesktopRuntimeOptions {
   hostPipe: HostPipeServer
   modelConfiguration?: ModelConfigurationStore
   readWorkbenchMode?: () => Promise<WorkbenchMode>
+  confirmPluginInstall?: (request: CoreDshPluginInstallRequest) => Promise<boolean>
   createWorkbenchHostPipe?: (tabId: string) => {
     hostPipe: HostPipeServer
     principal: string
@@ -285,7 +287,6 @@ export class DesktopRuntime {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
-    // Device identity and managed auth preparation may write Homes. Gate both first.
     await assertExecutorWorkbenchCompatibility(this.options.environment)
     if (this.lifecycleGeneration !== generation) return null
     const deviceId = await this.resolveDesktopDeviceId()
@@ -378,6 +379,7 @@ export class DesktopRuntime {
         dshEntry: managedRuntime.entry,
         nodeCommand: managedRuntime.command,
         environment: managedRuntime.environment,
+        confirmInstall: this.options.confirmPluginInstall,
       })
       if (this.options.readWorkbenchMode) {
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)

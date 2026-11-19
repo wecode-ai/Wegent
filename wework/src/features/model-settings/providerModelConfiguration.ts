@@ -7,7 +7,7 @@ import {
   removeMigratedLocalModelConfigs,
   type LocalModelConfig,
 } from './localModelSettings'
-import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
+import { providerModelCatalogEntry } from './localModelCatalog'
 import { codexCatalogModelIdForUpstream } from './codexCatalog'
 import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
@@ -63,16 +63,7 @@ export function resolveProviderModel(
   })
   const displayName = model.display_name || model.model_id
   const profileId = model.provider_profile_id ?? 'custom'
-  const catalogEntry =
-    model.catalog_entry ??
-    (profileId === 'custom'
-      ? createDefaultLocalModelCatalogEntry({
-          id: model.id,
-          displayName,
-          toolProfile,
-          contextWindow: model.context_window,
-        })
-      : undefined)
+  const catalogEntry = providerModelCatalogEntry(model)
   const requestPath =
     model.request_path ??
     (model.api_format && model.api_format !== provider.api_format
@@ -84,6 +75,7 @@ export function resolveProviderModel(
   const config: LocalModelConfig = {
     id: model.id,
     providerConnectionId: provider.id,
+    providerRevision: provider.credential_revision,
     providerProfileId: profileId,
     displayName,
     group: model.group ?? provider.name,
@@ -91,8 +83,7 @@ export function resolveProviderModel(
     baseUrl: provider.base_url,
     apiFormat,
     requestPath,
-    apiKey: provider.api_key,
-    apiKeyConfigured: Boolean(provider.api_key),
+    apiKeyConfigured: provider.api_key_configured ?? Boolean(provider.api_key),
     toolProfile,
     codexToolCompatibility:
       apiFormat === 'openai-responses'
@@ -216,10 +207,10 @@ async function loadProviderConfiguration(sequence: number): Promise<void> {
 export function initializeProviderModelConfiguration(): Promise<void> {
   if (!isElectronRuntime()) return Promise.resolve()
   initialized ??= (async () => {
-    await reloadProviderConfiguration()
     subscribeDesktopHostEvents(event => {
       if (event.type === 'model-configuration.changed') void reloadProviderConfiguration()
     })
+    await reloadProviderConfiguration()
   })()
   return initialized
 }

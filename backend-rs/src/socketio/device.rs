@@ -115,7 +115,7 @@ fn route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
 /// `EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT`.
 const DEFAULT_RUNTIME_TRANSFER_PORT: i64 = 17888;
 /// `DEVICE_ONLINE_TTL`.
-const ONLINE_TTL_SECONDS: u64 = 90;
+pub(super) const ONLINE_TTL_SECONDS: u64 = 90;
 
 /// `_match_cloud_device_sync`'s write of the matched cloud row: it only marks
 /// `json` dirty, so `Kind.updated_at`'s ORM `onupdate=func.now()` renders the
@@ -335,7 +335,11 @@ pub fn registered(
     payload: &RegisterPayload,
     cloud_matched: bool,
 ) -> Registered {
-    let route_id = route_id(row, payload.device_type);
+    let route_id = if cloud_matched {
+        payload.device_id.clone()
+    } else {
+        route_id(row, payload.device_type)
+    };
     let display_name = if cloud_matched {
         payload.name.clone()
     } else {
@@ -500,6 +504,28 @@ pub async fn set_online(state: &AppState, user_id: i64, route_id: &str, data: &V
             false
         }
     }
+}
+
+/// Refresh status only for the connection that owns the online document.
+pub async fn update_online_status(
+    state: &AppState,
+    user_id: i64,
+    route_id: &str,
+    socket_id: &str,
+    status: &str,
+) -> bool {
+    crate::device_online_state::update_online_state(
+        state,
+        user_id,
+        route_id,
+        socket_id,
+        ONLINE_TTL_SECONDS,
+        |data| {
+            data.insert("status".into(), Value::String(status.into()));
+            data.insert("last_heartbeat".into(), Value::String(local_isoformat()));
+        },
+    )
+    .await
 }
 
 /// Reads the device online state (`cache_manager.get_or_raise`).
@@ -835,7 +861,8 @@ mod tests {
     fn cloud_registration_keeps_the_reported_name() {
         // `_register_device_session`'s `is_cloud_device` branch sets the
         // persisted name to `payload.name`, ignoring the CRD display name.
-        let row = device_row("qingjieyun");
+        let mut row = device_row("qingjieyun");
+        row.name = "cloud-logical-name".into();
         let payload = cloud_payload("executor-a4b5");
         let registered = registered(&row, &payload, true);
         assert_eq!(registered.display_name, "executor-a4b5");

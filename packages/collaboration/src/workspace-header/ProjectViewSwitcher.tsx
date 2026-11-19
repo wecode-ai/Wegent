@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  useEffect,
-  useRef,
+  useCallback,
+  useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
   type Ref,
@@ -21,7 +22,7 @@ import {
   type ProjectViewSelectionMemory,
 } from './projectViewNavigation'
 
-export * from './projectViewNavigation'
+export type * from './projectViewNavigation'
 
 export interface ProjectViewSwitcherProps<
   View extends CollaborationProjectView = CollaborationProjectView,
@@ -40,24 +41,21 @@ export interface ProjectViewSwitcherProps<
 
 function navigateTabs(event: KeyboardEvent<HTMLElement>) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-  const tabs = [
-    ...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
-  ]
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
   const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
   const next =
     event.key === 'Home'
       ? 0
       : event.key === 'End'
         ? tabs.length - 1
-        : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) %
-          tabs.length
+        : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
   event.preventDefault()
   tabs[next]?.focus()
   tabs[next]?.click()
 }
 
 export function ProjectViewSwitcher<View extends CollaborationProjectView>(
-  props: ProjectViewSwitcherProps<View>,
+  props: ProjectViewSwitcherProps<View>
 ) {
   const groups = buildProjectViewNavigation(props.options)
   return groups.length ? (
@@ -78,77 +76,61 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
   selectionMemory,
   value,
 }: ProjectViewSwitcherProps<View>) {
-  const localMemory = useRef(createProjectViewSelectionMemory())
-  const memory = selectionMemory ?? localMemory.current
+  const [localMemory] = useState(createProjectViewSelectionMemory)
+  const memory = selectionMemory ?? localMemory
   const messages = projectViewMessages[locale]
   const groups = buildProjectViewNavigation(options)
-  const primaryLabel = groups.map((group) => messages[group.id]).join(' / ')
+  const primaryLabel = groups.map(group => messages[group.id]).join(' / ')
   const resolvedView = resolveGroupedProjectView(options, value)
   const selectedGroup =
-    groups.find((group) =>
+    groups.find(group =>
       group.entries.some(
-        (entry) =>
+        entry =>
           entry.option.id === resolvedView ||
-          entry.segments?.some((segment) => segment.id === resolvedView),
-      ),
+          entry.segments?.some(segment => segment.id === resolvedView)
+      )
     ) ?? groups[0]
   const selectedEntry =
     selectedGroup.entries.find(
-      (entry) =>
+      entry =>
         entry.option.id === resolvedView ||
-        entry.segments?.some((segment) => segment.id === resolvedView),
+        entry.segments?.some(segment => segment.id === resolvedView)
     ) ?? selectedGroup.entries[0]
 
-  useEffect(() => {
-    // Rendering a deep link must never navigate; it only updates this session's plan choice.
-    if (selectedGroup.id !== 'plan' || resolvedView !== value) return
-    const previous = memory.get(selectionKey)
-    memory.set(selectionKey, {
-      planView: value,
-      timelineView:
-        selectedEntry.id === 'timeline' ? value : previous?.timelineView,
-    })
-  }, [
-    memory,
-    selectionKey,
-    selectedGroup.id,
-    selectedEntry.id,
-    resolvedView,
-    value,
-  ])
+  const remembersPlan = selectedGroup.id === 'plan' && resolvedView === value
+  const remembersTimeline = selectedEntry.id === 'timeline'
+  const subscribeSelection = useCallback(
+    (listener: () => void) =>
+      memory.subscribe(
+        selectionKey,
+        listener,
+        remembersPlan
+          ? { planView: value, timelineView: remembersTimeline ? value : undefined }
+          : undefined
+      ),
+    [memory, selectionKey, remembersPlan, remembersTimeline, value]
+  )
+  const readSelection = useCallback(() => memory.get(selectionKey), [memory, selectionKey])
+  const rememberedSelection = useSyncExternalStore(subscribeSelection, readSelection, readSelection)
 
   const targetView = (entry: typeof selectedEntry) => {
-    if (entry.segments?.some((segment) => segment.id === resolvedView))
-      return resolvedView as View
-    const timeline = memory.get(selectionKey)?.timelineView
-    return (
-      entry.segments?.find((segment) => segment.id === timeline)?.id ??
-      entry.option.id
-    )
+    if (entry.segments?.some(segment => segment.id === resolvedView)) return resolvedView as View
+    const timeline = rememberedSelection?.timelineView
+    return entry.segments?.find(segment => segment.id === timeline)?.id ?? entry.option.id
   }
   const selectGroup = (group: typeof selectedGroup) => {
     if (group.id === selectedGroup.id) return
-    const remembered =
-      group.id === 'plan' ? memory.get(selectionKey)?.planView : undefined
-    const available = group.entries.flatMap(
-      (entry) => entry.segments ?? [entry.option],
-    )
-    onChange(
-      available.find((option) => option.id === remembered)?.id ??
-        group.entries[0].option.id,
-    )
+    const remembered = group.id === 'plan' ? rememberedSelection?.planView : undefined
+    const available = group.entries.flatMap(entry => entry.segments ?? [entry.option])
+    onChange(available.find(option => option.id === remembered)?.id ?? group.entries[0].option.id)
   }
-  const secondary = selectedGroup.entries.map((entry) => ({
+  const secondary = selectedGroup.entries.map(entry => ({
     ...entry.option,
     id: targetView(entry),
     label: entry.id === 'timeline' ? messages.timeline : entry.option.label,
-    testId:
-      entry.id === 'timeline'
-        ? 'collaboration-sub-timeline'
-        : entry.option.testId,
+    testId: entry.id === 'timeline' ? 'collaboration-sub-timeline' : entry.option.testId,
     // Timeline aliases belong to the original segment, never its parent entry.
-    oldTestIdAliases:
-      entry.id === 'timeline' ? undefined : entry.option.oldTestIdAliases,
+    oldTestIdAliases: entry.id === 'timeline' ? undefined : entry.option.oldTestIdAliases,
   }))
 
   return (
@@ -165,16 +147,14 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
         aria-label={primaryLabel}
         onKeyDown={navigateTabs}
       >
-        {groups.map((group) => (
+        {groups.map(group => (
           <button
             key={group.id}
             type="button"
             role="tab"
             className="project-view-switcher-tab"
             data-testid={
-              group.id === 'work'
-                ? group.entries[0].option.testId
-                : `collaboration-tab-${group.id}`
+              group.id === 'work' ? group.entries[0].option.testId : `collaboration-tab-${group.id}`
             }
             aria-selected={group.id === selectedGroup.id}
             aria-current={group.id === selectedGroup.id ? 'page' : undefined}
@@ -200,9 +180,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
           {compact ? (
             <ProjectViewMenu
               label={
-                selectedEntry.id === 'timeline'
-                  ? messages.timeline
-                  : selectedEntry.option.label
+                selectedEntry.id === 'timeline' ? messages.timeline : selectedEntry.option.label
               }
               options={secondary}
               value={targetView(selectedEntry)}
@@ -216,8 +194,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
               onKeyDown={navigateTabs}
             >
               {secondary.map((option, index) => {
-                const selected =
-                  selectedEntry.id === selectedGroup.entries[index].id
+                const selected = selectedEntry.id === selectedGroup.entries[index].id
                 return (
                   <button
                     key={option.id}
@@ -242,7 +219,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
               role="group"
               aria-label={messages.timeline}
             >
-              {selectedEntry.segments.map((option) => (
+              {selectedEntry.segments.map(option => (
                 <button
                   key={option.id}
                   type="button"
@@ -250,10 +227,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
                   aria-pressed={option.id === resolvedView}
                   onClick={() => onChange(option.id)}
                 >
-                  <ProjectViewLabel
-                    option={option}
-                    selected={option.id === resolvedView}
-                  />
+                  <ProjectViewLabel option={option} selected={option.id === resolvedView} />
                 </button>
               ))}
             </div>

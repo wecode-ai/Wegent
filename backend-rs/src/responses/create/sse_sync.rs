@@ -40,9 +40,14 @@ use crate::internal_callback::emitter::StatusUpdatingEmitter;
 use crate::internal_callback::event::{EventType, ExecutionEvent};
 use crate::internal_callback::is_cancelled;
 use crate::internal_callback::parser;
+use crate::responses::stream_state::{register_stream, unregister_stream};
 use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
+
+#[path = "sse_acceptance.rs"]
+mod acceptance;
+pub(crate) use acceptance::DispatchAcceptance;
 
 /// The dependencies one chat-shell SSE consumer needs.
 ///
@@ -60,6 +65,20 @@ pub(crate) struct ConsumerContext<'a, M: Mysql, R: Redis> {
     pub executor_manager: &'a ExecutorManager,
     /// `Completion.app`: the subscription notification handler reads it.
     pub app: Option<&'a AppState>,
+    /// `/chat` dispatch: forward every parsed event to the Socket.IO emitter
+    /// and emit the dispatcher's START frame before the stream opens, exactly
+    /// like `WebSocketResultEmitter`.
+    pub forward: bool,
+    /// `_build_start_event_data(request)`: the START frame's `shell_type` and
+    /// optional `bot_name`.
+    pub start_data: Value,
+    /// The START frame's `task:created` identity.
+    pub created_task: Option<crate::internal_callback::emitter::CreatedTask>,
+    /// `request.user.id`: the owner room the terminal `task:status` frame
+    /// addresses when forwarding to Socket.IO.
+    pub owner_user_id: Option<i64>,
+    pub acceptance: Option<DispatchAcceptance>,
+    pub recover_terminal: bool,
 }
 
 impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
@@ -73,68 +92,23 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
             tables: crate::internal_callback::tables(state),
             executor_manager: &state.executor_manager,
             app: Some(state),
+            forward: false,
+            start_data: Value::Null,
+            created_task: None,
+            owner_user_id: None,
+            acceptance: None,
+            recover_terminal: false,
         }
     }
 }
 
-/// `session_manager._get_cancel_key` (`app/services/chat/storage/session.py`).
-const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
-/// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
-const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// The chat-shell per-read timeout (`httpx`'s 300-second default).
-///
-/// This is an inactivity window, not a total request deadline. A streaming
-/// response may legitimately run longer than this as long as chunks keep
-/// arriving.
-const STREAM_TIMEOUT: Duration = Duration::from_secs(300);
-/// `_SSE_TERMINAL_DRAIN_TIMEOUT_SECONDS`: the bounded tail read after a
-/// delivered terminal event.
-const TERMINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
-/// The OpenAI SDK appends `/responses` to its `.../v1` base URL.
-const RESPONSES_PATH: &str = "/v1/responses";
-
-/// Events that end the read (`ResponsesAPIStreamEvents` terminal values).
-const TERMINAL_EVENT_TYPES: [&str; 3] = ["response.completed", "error", "response.incomplete"];
-
-/// The collected result of a synchronous chat-shell dispatch.
-#[derive(Debug)]
-pub(crate) struct Collected {
-    /// `QueueBasedEmitter.collect`'s accumulated `chunk` content.
-    pub content: String,
-}
-
-/// One failed dispatch the caller renders as
-/// `500 {"detail": "LLM request failed: <message>"}`.
-struct Failure {
-    message: String,
-    /// The terminal status was already persisted by the failure branch.
-    persist: bool,
-    error_code: Option<&'static str>,
-}
-
-impl Failure {
-    /// A failure the dispatcher's `except` branch persists as FAILED.
-    fn persisted(message: String) -> Self {
-        Self {
-            message,
-            persist: true,
-            error_code: None,
-        }
-    }
-
-    /// A transport failure the dispatcher's `except` branch persists as
-    /// FAILED with the Source's classified error code
-    /// (`ExecutionDispatcher`'s `classify_error` returns `network_error` for
-    /// a connection failure, which `collect_completed_result` writes into
-    /// `result.error_type`).
-    fn network(message: String) -> Self {
-        Self {
-            message,
-            persist: true,
-            error_code: Some("network_error"),
-        }
-    }
-}
+#[path = "sse_protocol.rs"]
+mod protocol;
+use protocol::{
+    CANCEL_POLL_INTERVAL, Failure, RESPONSES_PATH, STREAM_TIMEOUT, TERMINAL_DRAIN_TIMEOUT,
+    TERMINAL_EVENT_TYPES,
+};
+pub(crate) use protocol::{Collected, SseFrames};
 
 /// Consume one chat-shell event stream for the synchronous create branch.
 ///
@@ -153,11 +127,15 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
 
     let mut emitter =
         StatusUpdatingEmitter::new(redis.clone(), request.task_id, request.subtask_id);
-    let cancel_key = format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id);
+    if let Some(created) = ctx.created_task.clone() {
+        emitter = emitter.with_created_task(created);
+    }
+    let cancel_key = crate::socketio::chat_control::cancel_key(request.subtask_id);
     // A package job starts after the public request has returned or subscribed.
     // Clearing its flag here could erase a cancellation admitted while queued.
-    if !ctx.package_mode {
-        let _ = redis.del(cancel_key.as_str()).await;
+    let image_stream = super::package_runtime::is_image_target(target_url);
+    if !ctx.package_mode && !image_stream && ctx.acceptance.is_none() {
+        register_stream(Some(redis), request.subtask_id).await;
     }
 
     let result = read_stream(
@@ -175,13 +153,34 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     // `dispatch`'s finally: `wrapped_emitter.close()` flushes buffered content.
     emitter.close().await;
     // `_dispatch_chat_shell_sse`'s finally: `unregister_stream`.
-    let _ = redis.del(cancel_key.as_str()).await;
+    unregister_stream(Some(redis), request.subtask_id).await;
 
     match result {
-        Ok(collected) => Ok(collected),
+        Ok((collected, terminal)) => {
+            if let Some(event) = terminal {
+                // A terminal image row makes its subtask ID available for retry.
+                // All old cancel-key operations must finish before that handoff.
+                Box::pin(complete(ctx, &event))
+                    .await
+                    .map_err(|error| error.message)?;
+                if event.event_type == "error" {
+                    return Err(event.error.unwrap_or_else(|| "Unknown error".to_string()));
+                }
+            }
+            Ok(collected)
+        }
         Err(failure) => {
-            if failure.persist {
-                complete_failure(ctx, request, &failure).await;
+            if ctx
+                .acceptance
+                .as_ref()
+                .is_some_and(|value| value.resolve(Err(failure.message.clone())))
+            {
+                return Err(failure.message);
+            }
+            // An automatic handoff can replay this stream after transport loss.
+            // Explicit upstream terminal frames still settle through complete().
+            if failure.persist && ctx.acceptance.is_none() {
+                Box::pin(complete_failure(ctx, request, &failure)).await;
             }
             Err(failure.message)
         }
@@ -240,6 +239,8 @@ enum StreamEnd {
     /// The `error` terminal event's FAILED state was already persisted; drain,
     /// then report the failure.
     ErrorTerminal(brz_http::Response, Failure),
+    /// The image stream's terminal event is persisted after releasing its cancel key.
+    ImageTerminal(brz_http::Response, Box<ExecutionEvent>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -252,7 +253,7 @@ async fn read_stream<M: Mysql, R: Redis>(
     redis: &R,
     emitter: &mut StatusUpdatingEmitter<R>,
     cancel_key: &str,
-) -> Result<Collected, Failure> {
+) -> Result<(Collected, Option<ExecutionEvent>), Failure> {
     let mut content = String::new();
     // `_wait_for_sse_cancellation` is created before `stream_open_task`
     // (`chat_shell_sse.py:235`) and cancelled in `finally` (`:533-548`), so this
@@ -269,6 +270,21 @@ async fn read_stream<M: Mysql, R: Redis>(
     // poller's completion wherever it resolves (initial poll, the main race, or
     // the terminal drain) and join only a still-pending poll.
     let mut cancel_done = already_cancelled;
+
+    // `_dispatch_chat_shell_sse`'s `await emitter.emit_start(...)` runs after
+    // the cancellation watcher is created and before the stream opens. The
+    // wrapped emitter publishes the START frames without persisting, so the
+    // `chat:task_streaming` marker is established only by the parsed
+    // `response.created` START inside the consume loop.
+    let image_stream = super::package_runtime::is_image_target(target_url);
+    if ctx.forward
+        && !image_stream
+        && let Err(error) = emitter
+            .emit_start_forward_only(message_id, &ctx.start_data)
+            .await
+    {
+        tracing::warn!(%error, "chat-shell START emit failed");
+    }
 
     // Scoped so the stream future releases its borrows of `emitter` and
     // `content` before the remaining phases use them.
@@ -287,7 +303,7 @@ async fn read_stream<M: Mysql, R: Redis>(
             // The Source still creates `stream_open_task` before waiting on the
             // race and then drops it through `_cancel_sse_stream_open`; start
             // the request so an in-flight open is not skipped.
-            if !ctx.package_mode {
+            if !ctx.package_mode && !image_stream {
                 let _ = poll_once(open.as_mut()).await;
             }
             None
@@ -306,14 +322,29 @@ async fn read_stream<M: Mysql, R: Redis>(
         }
     };
     let result = match end {
-        None => finish_cancelled(ctx, request, emitter, &content).await,
+        None => {
+            let event =
+                ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
+            if image_stream {
+                Ok((Collected { content }, Some(event)))
+            } else {
+                emitter.close().await;
+                complete(ctx, &event)
+                    .await
+                    .map(|()| (Collected { content }, None))
+            }
+        }
         Some(Ok(StreamEnd::Terminal(mut response))) => {
             cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
-            Ok(Collected { content })
+            Ok((Collected { content }, None))
         }
         Some(Ok(StreamEnd::ErrorTerminal(mut response, failure))) => {
             cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
             Err(failure)
+        }
+        Some(Ok(StreamEnd::ImageTerminal(mut response, event))) => {
+            cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
+            Ok((Collected { content }, Some(*event)))
         }
         Some(Err(failure)) => Err(failure),
     };
@@ -345,7 +376,16 @@ async fn open_and_consume<M: Mysql, R: Redis>(
     emitter: &mut StatusUpdatingEmitter<R>,
     content: &mut String,
 ) -> Result<StreamEnd, Failure> {
-    let url = format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/'));
+    let image_stream = super::package_runtime::is_image_target(target_url);
+    let (url, body) = if image_stream {
+        (target_url.to_owned(), image_request_body(request))
+    } else {
+        let payload = dispatch::assemble(request, true, false);
+        (
+            format!("{}{RESPONSES_PATH}", target_url.trim_end_matches('/')),
+            serde_json::to_value(&payload).unwrap_or(Value::Null),
+        )
+    };
     // The source's OpenAI/httpx client uses a 300-second per-read timeout
     // (`x-stainless-read-timeout: 300.0` in the recorded request). The
     // `brz-http` default is 400 ms per socket read, which aborts an SSE stream
@@ -354,8 +394,6 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         .read_timeout(STREAM_TIMEOUT)
         .build()
         .map_err(|_| Failure::network("Connection error.".to_string()))?;
-    let payload = dispatch::assemble(request, true, false);
-    let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
     let http_request = stream_request(&client, &url, &body, request_id)
         .map_err(|_| Failure::network("Connection error.".to_string()))?;
     let mut response = client
@@ -370,6 +408,19 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         )));
     }
 
+    if image_stream {
+        tracing::info!(
+            task_id = request.task_id,
+            subtask_id = request.subtask_id,
+            "Image execution SSE stream opened"
+        );
+    } else {
+        tracing::info!(
+            task_id = request.task_id,
+            subtask_id = request.subtask_id,
+            "Chat Shell SSE stream opened"
+        );
+    }
     let mut frames = SseFrames::default();
     let mut event_count = 0_u64;
 
@@ -403,20 +454,38 @@ async fn open_and_consume<M: Mysql, R: Redis>(
             let Some(event_type) = event.get("type").and_then(Value::as_str) else {
                 continue;
             };
-            let parsed = parser::shared()
-                .parse(
-                    request.task_id,
-                    request.subtask_id,
-                    message_id,
-                    event_type,
-                    &event,
-                )
-                .map_err(|error| Failure::persisted(error.0))?;
+            let parsed = if image_stream {
+                Some(parse_image_event(&event, request, &ctx.start_data)?)
+            } else {
+                parser::shared()
+                    .parse(
+                        request.task_id,
+                        request.subtask_id,
+                        message_id,
+                        event_type,
+                        &event,
+                    )
+                    .map_err(|error| Failure::persisted(error.0))?
+            };
             if let Some(mut parsed) = parsed {
+                if let Some(acceptance) = ctx.acceptance.as_ref() {
+                    acceptance
+                        .accept(ctx.redis.ok_or_else(|| {
+                            Failure::terminal_persistence("Pipeline Redis is unavailable")
+                        })?)
+                        .await
+                        .map_err(|error| Failure::terminal_persistence(&error))?;
+                }
+                if image_stream && let Some(redis) = ctx.redis {
+                    persist_image_blocks(redis, &parsed).await;
+                }
                 if parsed.event_type == "chunk" {
                     content.push_str(&parsed.content);
                 }
                 if completion::terminal_status(&parsed.event_type).is_some() {
+                    if image_stream {
+                        return Ok(StreamEnd::ImageTerminal(response, Box::new(parsed)));
+                    }
                     // `StatusUpdatingEmitter`'s terminal branch flushes the
                     // buffered stream content before completing the task.
                     emitter.close().await;
@@ -438,6 +507,12 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                     }
                 } else if ctx.package_mode {
                     emit_package_event(ctx, &parsed).await?;
+                } else if ctx.forward {
+                    // `/chat` dispatch: `WebSocketResultEmitter.emit`, i.e.
+                    // persist and publish the corresponding Socket.IO frame.
+                    if let Err(error) = emitter.emit(&mut parsed).await {
+                        tracing::warn!(%error, "chat-shell stream forward failed");
+                    }
                 } else if let Err(error) = emitter.emit_persist_only(&mut parsed).await {
                     tracing::warn!(%error, "chat-shell stream persistence failed");
                 }
@@ -460,6 +535,59 @@ async fn open_and_consume<M: Mysql, R: Redis>(
         // cannot match by type or message (`shared/utils/error_classifier.py`).
         error_code: Some("generic_error"),
     })
+}
+
+/// Only send the fields ImageAgent consumes across the private runtime boundary.
+fn image_request_body(request: &ExecutionRequest) -> Value {
+    serde_json::json!({
+        "task_id": request.task_id,
+        "subtask_id": request.subtask_id,
+        "user_subtask_id": request.user_subtask_id,
+        "message_id": request.message_id,
+        "user": { "id": request.user_id },
+        "prompt": request.prompt,
+        "attachments": request.attachments,
+        "model_config": request.model_config,
+    })
+}
+
+fn parse_image_event(
+    payload: &Value,
+    request: &ExecutionRequest,
+    start_data: &Value,
+) -> Result<ExecutionEvent, Failure> {
+    let mut event = ExecutionEvent::from_value(payload);
+    if event.task_id != request.task_id || event.subtask_id != request.subtask_id {
+        return Err(Failure::persisted(
+            "Image execution returned an event for a different turn".to_owned(),
+        ));
+    }
+    if event.event_type == "start"
+        && let Some(bot_name) = start_data.get("bot_name")
+    {
+        event.data.insert("bot_name".into(), bot_name.clone());
+    }
+    Ok(event)
+}
+
+/// Keep the placeholder and final snapshot available to reconnecting clients.
+async fn persist_image_blocks<R: Redis>(redis: &R, event: &ExecutionEvent) {
+    let Some(blocks) = event
+        .result
+        .as_ref()
+        .and_then(|result| result["blocks"].as_array())
+    else {
+        return;
+    };
+    for block in blocks.iter().filter(|block| block["type"] == "image") {
+        if let Some(mut block) = block.as_object().cloned()
+            && let Err(error) =
+                crate::internal_callback::session::add_block(redis, event.subtask_id, &mut block)
+                    .await
+        {
+            tracing::warn!(%error, subtask_id = event.subtask_id, "image block persistence failed");
+        }
+    }
 }
 
 /// Build the Chat Shell SSE request without a total request deadline.
@@ -531,25 +659,33 @@ async fn drain_with_cancel_poll<F: Future<Output = ()>>(
     true
 }
 
-/// Package execution fans out to Socket.IO and callback subscribers just like
-/// the in-process Python emitter, through the same handler as executor events.
+/// Package execution and automatic pipeline stages use the callback's durable
+/// terminal and notification path.
 async fn emit_package_event<M: Mysql, R: Redis>(
     ctx: &ConsumerContext<'_, M, R>,
     event: &ExecutionEvent,
 ) -> Result<(), Failure> {
-    let app = ctx
-        .app
-        .ok_or_else(|| Failure::persisted("Package dispatch lost application state".to_owned()))?;
-    crate::internal_callback::process_execution_event(
-        app,
-        event.clone(),
-        Some("inprocess-chat"),
-        Some("standalone"),
-    )
-    .await
-    .map_err(|error| {
+    let app = ctx.app.ok_or_else(|| {
+        Failure::persisted("Chat Shell dispatch lost application state".to_owned())
+    })?;
+    let result = if ctx.recover_terminal {
+        crate::internal_callback::process_background_shell_event(app, event.clone()).await
+    } else {
+        crate::internal_callback::process_execution_event(
+            app,
+            event.clone(),
+            Some("inprocess-chat"),
+            Some("standalone"),
+        )
+        .await
+    };
+    result.map_err(|error| {
         tracing::error!(task_id = event.task_id, error = ?error, "package event processing failed");
-        Failure::persisted("Package event processing failed".to_owned())
+        if completion::terminal_status(&event.event_type).is_some() {
+            Failure::terminal_persistence("Could not save the execution result")
+        } else {
+            Failure::persisted("Chat Shell event processing failed".into())
+        }
     })
 }
 
@@ -558,8 +694,8 @@ async fn complete<M: Mysql, R: Redis>(
     ctx: &ConsumerContext<'_, M, R>,
     event: &ExecutionEvent,
 ) -> Result<(), Failure> {
-    if ctx.package_mode {
-        return emit_package_event(ctx, event).await;
+    if ctx.package_mode || ctx.recover_terminal {
+        return Box::pin(emit_package_event(ctx, event)).await;
     }
     let Some(redis) = ctx.redis else {
         return Ok(());
@@ -577,7 +713,7 @@ async fn complete<M: Mysql, R: Redis>(
     // `StatusUpdatingEmitter`'s terminal branch. The create flow wraps an
     // `SSEResultEmitter`, so the callback's `task:status` owner pre-read does
     // not run here.
-    completion::complete_terminal_event(
+    let committed = completion::complete_terminal_event(
         &completion,
         event.task_id,
         event.subtask_id,
@@ -588,7 +724,57 @@ async fn complete<M: Mysql, R: Redis>(
         None,
         None,
     )
-    .await;
+    .await
+    .map_err(|_| Failure::terminal_persistence("Could not save the execution result"))?;
+    let Some(committed) = committed else {
+        if let Err(error) = crate::internal_callback::session::cleanup_settled_streaming_state(
+            redis,
+            event.subtask_id,
+            event.task_id,
+        )
+        .await
+        {
+            tracing::warn!(%error, task_id = event.task_id, subtask_id = event.subtask_id, "already-settled streaming cleanup failed");
+        }
+        return Err(Failure::terminal_persistence(
+            "The execution was already settled",
+        ));
+    };
+    let final_result = committed.result;
+    // `WebSocketResultEmitter.emit`'s terminal branch for the `/chat` dispatch:
+    // the event's frame (`chat:done` / `chat:error` / `chat:cancelled`) then
+    // `task:status`. The OpenAPI path wraps an `SSEResultEmitter` and stops at
+    // the persisted terminal state.
+    if ctx.forward {
+        let result = final_result
+            .or_else(|| event.result.clone())
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        let mut frame = event.clone();
+        frame.result = Some(result.clone());
+        // `websocket.py:_load_context_briefs`: the DONE frame carries the
+        // completed subtask's committed context briefs.
+        let contexts =
+            match crate::responses::create::contexts::context_briefs(ctx.mysql, frame.subtask_id)
+                .await
+            {
+                Ok(briefs) => Some(briefs),
+                Err(error) => {
+                    tracing::warn!(%error, "chat:done context briefs load failed");
+                    None
+                }
+            };
+        if let Err(error) = crate::internal_callback::emitter::emit_terminal_frames(
+            redis,
+            &frame,
+            ctx.owner_user_id,
+            &result,
+            contexts.as_ref(),
+        )
+        .await
+        {
+            tracing::warn!(%error, "chat-shell terminal frames failed");
+        }
+    }
     Ok(())
 }
 
@@ -598,7 +784,7 @@ async fn complete_failure<M: Mysql, R: Redis>(
     request: &ExecutionRequest,
     failure: &Failure,
 ) {
-    if ctx.package_mode {
+    if ctx.package_mode || ctx.recover_terminal {
         let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
         event.error = Some(failure.message.clone());
         event.error_code = failure.error_code.map(str::to_owned);
@@ -625,7 +811,7 @@ async fn complete_failure<M: Mysql, R: Redis>(
     // `result.error_type` from the classified error code, so the persisted
     // terminal row carries the Source's result payload instead of a NULL one.
     let result = failure_result(failure);
-    completion::complete_terminal_event(
+    let Ok(Some(committed)) = completion::complete_terminal_event(
         &completion,
         request.task_id,
         request.subtask_id,
@@ -636,7 +822,30 @@ async fn complete_failure<M: Mysql, R: Redis>(
         None,
         None,
     )
-    .await;
+    .await
+    else {
+        return;
+    };
+    if ctx.forward {
+        // `_trigger_ai`'s failure branch emits `chat:error` with the classified
+        // error type and message id, then `task:status FAILED`.
+        let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
+        event.message_id = request.message_id;
+        event.error = Some(failure.message.clone());
+        event.error_code = failure.error_code.map(str::to_owned);
+        event.result = committed.result;
+        if let Err(error) = crate::internal_callback::emitter::emit_terminal_frames(
+            redis,
+            &event,
+            ctx.owner_user_id,
+            event.result.as_ref().unwrap_or(&serde_json::Value::Null),
+            None,
+        )
+        .await
+        {
+            tracing::warn!(%error, "chat-shell failure frames failed");
+        }
+    }
 }
 
 /// The `result` payload `collect_completed_result` builds for a persisted
@@ -648,79 +857,8 @@ fn failure_result(failure: &Failure) -> Option<Value> {
         .map(|code| serde_json::json!({ "error_type": code }))
 }
 
-/// `dispatch_sse` emits a cancelled terminal event and stops reading;
-/// `collect` keeps the accumulated content.
-async fn finish_cancelled<M: Mysql, R: Redis>(
-    ctx: &ConsumerContext<'_, M, R>,
-    request: &ExecutionRequest,
-    emitter: &mut StatusUpdatingEmitter<R>,
-    content: &str,
-) -> Result<Collected, Failure> {
-    let event = ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
-    emitter.close().await;
-    complete(ctx, &event).await?;
-    Ok(Collected {
-        content: content.to_string(),
-    })
-}
-
-/// Incremental `data:` frame reader for the chat-shell event stream.
-#[derive(Default)]
-pub(super) struct SseFrames {
-    buffer: Vec<u8>,
-}
-
-impl SseFrames {
-    /// Append a transport chunk and return every complete event JSON value.
-    pub(super) fn push(&mut self, chunk: &[u8]) -> Vec<Value> {
-        self.buffer.extend_from_slice(chunk);
-        let mut events = Vec::new();
-        while let Some((end, delimiter)) = next_frame(&self.buffer) {
-            let frame: Vec<u8> = self.buffer.drain(..end + delimiter).collect();
-            if let Some(event) = parse_frame(&frame[..end]) {
-                events.push(event);
-            }
-        }
-        events
-    }
-}
-
-/// Locate the end of the next frame and its delimiter length.
-fn next_frame(buffer: &[u8]) -> Option<(usize, usize)> {
-    let mut index = 0;
-    while index < buffer.len() {
-        if buffer[index] == b'\n' {
-            if buffer.get(index + 1) == Some(&b'\n') {
-                return Some((index, 2));
-            }
-            if buffer.get(index + 1) == Some(&b'\r') && buffer.get(index + 2) == Some(&b'\n') {
-                return Some((index, 3));
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-/// Join one frame's `data:` lines and decode them.
-fn parse_frame(frame: &[u8]) -> Option<Value> {
-    let text = std::str::from_utf8(frame).ok()?;
-    let mut data = String::new();
-    for line in text.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let Some(rest) = line.strip_prefix("data:") else {
-            continue;
-        };
-        if !data.is_empty() {
-            data.push('\n');
-        }
-        data.push_str(rest.strip_prefix(' ').unwrap_or(rest));
-    }
-    if data.is_empty() || data == "[DONE]" {
-        return None;
-    }
-    serde_json::from_str(&data).ok()
-}
+#[cfg(test)]
+use protocol::parse_frame;
 
 #[cfg(test)]
 mod tests {
@@ -748,6 +886,43 @@ mod tests {
             failure_result(&Failure::persisted("boom".to_string())),
             None
         );
+    }
+
+    #[test]
+    fn image_runtime_preserves_reference_input_and_terminal_image_blocks() {
+        let request = ExecutionRequest {
+            task_id: 5,
+            subtask_id: 6,
+            message_id: Some(2),
+            user_id: 7,
+            prompt: serde_json::json!("Draw a blue square"),
+            attachments: vec![serde_json::json!({"mime_type": "image/png", "url": "reference"})],
+            model_config: serde_json::json!({"modelType": "image", "protocol": "gpt-image"}),
+            ..ExecutionRequest::default()
+        };
+        let body = image_request_body(&request);
+        assert_eq!(body["user"]["id"], 7);
+        assert_eq!(body["model_config"]["protocol"], "gpt-image");
+        assert_eq!(body["attachments"][0]["url"], "reference");
+        assert!(body.get("auth_token").is_none());
+
+        let mut frames = SseFrames::default();
+        let events = frames.push(
+            b"data: {\"type\":\"done\",\"task_id\":5,\"subtask_id\":6,\"message_id\":2,\"result\":{\"blocks\":[{\"type\":\"image\",\"image_attachment_ids\":[41]}]}}\n\n",
+        );
+        let event = parse_image_event(&events[0], &request, &Value::Null)
+            .ok()
+            .expect("valid ImageAgent event");
+        assert_eq!(
+            completion::terminal_status(&event.event_type),
+            Some("COMPLETED")
+        );
+        assert_eq!(event.message_id, Some(2));
+        assert_eq!(
+            event.result.unwrap()["blocks"][0]["image_attachment_ids"][0],
+            41
+        );
+        assert!(parse_image_event(&events[0], &ExecutionRequest::default(), &Value::Null).is_err());
     }
 
     #[test]

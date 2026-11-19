@@ -29,8 +29,8 @@ function publishNextTarget(catalog: UpgradeCatalog) {
   return target
 }
 
-async function readyFixture(readableDataSchemas = [1]) {
-  const context = await fixture()
+async function readyFixture(readableDataSchemas = [1], currentVersion = '1.0.0') {
+  const context = await fixture(currentVersion)
   const { service, options, catalog, store } = context
   const profile = currentCoreProfile(options.dataDirectory)
   await mkdir(profile, { recursive: true })
@@ -70,14 +70,14 @@ async function readyFixture(readableDataSchemas = [1]) {
   await service.download('stable')
   return { ...context, preparation }
 }
-async function fixture() {
+async function fixture(currentVersion = '1.0.0') {
   const directory = await mkdtemp(join(tmpdir(), 'wework-updater-test-'))
   roots.push(directory)
   const store = new ReleaseStore(join(directory, 'releases'))
   await store.save({
     schemaVersion: 1,
     id: 'source',
-    version: '1.0.0',
+    version: currentVersion,
     executable: join(directory, 'host'),
     resources: join(directory, 'resources'),
     runtimeRoot: join(directory, 'runtimes'),
@@ -119,6 +119,14 @@ async function fixture() {
       },
     ],
   }
+  if (!catalog.releases.some(release => release.version === currentVersion)) {
+    catalog.releases.push({
+      ...catalog.releases[0],
+      version: currentVersion,
+      sha256: 'b'.repeat(64),
+      sourceSha: 'b'.repeat(40),
+    })
+  }
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockImplementation(
@@ -134,7 +142,7 @@ async function fixture() {
   const options = {
     store,
     dataDirectory: directory,
-    currentVersion: '1.0.0',
+    currentVersion,
     executable: join(directory, 'host'),
     resources: join(directory, 'resources'),
     runtimeRoot: join(directory, 'runtimes'),
@@ -165,6 +173,47 @@ test('uses new fields on the existing component endpoint and selects a verified 
   })
   expect(String(fetch.mock.calls[0][0])).toContain('/components-stable-')
 })
+
+test('a published intermediate source can prepare and install using interval evidence', async () => {
+  const { service, catalog, shutdown, restart, store } = await readyFixture([1], '1.0.5')
+  expect(catalog.edges.some(edge => edge.from === '1.0.5')).toBe(false)
+  expect(await service.check('stable')).toMatchObject({
+    currentVersion: '1.0.5',
+    version: '1.1.0',
+    path: ['1.1.0'],
+    readyToInstall: true,
+  })
+  await service.createInstallAction('1.1.0')()
+  expect(shutdown).toHaveBeenCalledOnce()
+  expect(restart).toHaveBeenCalledOnce()
+  const activation = (await store.activation())!
+  expect(activation.from).toBe('source')
+  expect((await store.read(activation.to)).version).toBe('1.1.0')
+  expect((await store.read(activation.from)).version).toBe('1.0.5')
+})
+
+test.each(['edge', 'anchor', 'target', 'explicit-pair'])(
+  'installation rechecks interval %s revocation before shutdown',
+  async revoked => {
+    const { service, catalog, shutdown } = await readyFixture([1], '1.0.5')
+    const install = service.createInstallAction('1.1.0')
+    if (revoked === 'edge') catalog.edges[0].revoked = true
+    if (revoked === 'anchor') catalog.releases[0].revoked = true
+    if (revoked === 'target') catalog.releases[1].revoked = true
+    if (revoked === 'explicit-pair') {
+      const source = catalog.releases.find(release => release.version === '1.0.5')!
+      catalog.edges.push({
+        ...catalog.edges[0],
+        from: source.version,
+        fromSha256: source.sha256,
+        fromSourceSha: source.sourceSha,
+        revoked: true,
+      })
+    }
+    await expect(install()).rejects.toThrow('revoked or changed')
+    expect(shutdown).not.toHaveBeenCalled()
+  }
+)
 test('never treats the absence of an upgrade policy as permission to update directly', async () => {
   const { service, fetch } = await fixture()
   fetch.mockResolvedValue(new Response(JSON.stringify({ schemaVersion: 1, appVersion: '1.2.0' })))
@@ -391,6 +440,66 @@ test('does not offer a stale rollback belonging to a different installed version
   const service = new AppUpdateService({ ...options, currentVersion: '1.1.0' })
   expect(await service.previousRelease()).toBeNull()
 })
+
+test.each(['replaced', 'missing-components', 'activation', 'different-path'] as const)(
+  'reconciles a Windows installation before startup readiness: %s',
+  async mode => {
+    const { options, store, fetch } = await fixture()
+    const source = { ...(await store.active())!, id: 'installed-source' }
+    await store.save(source)
+    await atomicReleaseWrite(join(store.root, 'active'), source.id)
+    await atomicReleaseWrite(join(store.root, 'previousHealthy'), 'source')
+    const profile = currentCoreProfile(options.dataDirectory)
+    await mkdir(profile, { recursive: true })
+    await writeFile(join(profile, 'task.json'), '{"task":"keep"}')
+    if (mode === 'activation') {
+      const target = { ...source, id: 'installed-target' }
+      await store.save(target)
+      await store.activate(target, 'snapshot')
+    }
+    const before = await store.active()
+    const service = new AppUpdateService({
+      ...options,
+      currentVersion: '1.1.0',
+      executable:
+        mode === 'different-path' ? join(options.dataDirectory, 'other/host') : options.executable,
+    })
+    const components = { executor: join(options.dataDirectory, 'new/executor') } as ComponentPaths
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    try {
+      if (mode === 'missing-components') {
+        await expect(service.reconcileInstalledRelease(null)).rejects.toThrow(
+          'The running release component composition is unavailable'
+        )
+        expect(await store.active()).toEqual(before)
+      } else if (mode === 'replaced') {
+        const installed = await service.reconcileInstalledRelease(components)
+        expect(installed).toMatchObject({
+          version: '1.1.0',
+          executable: options.executable,
+          retainedRelease: source.id,
+          profileRoot: await realpath(profile),
+        })
+        expect(await store.active()).toEqual(installed)
+        expect(await readFile(join(store.root, 'bridge'), 'utf8')).toBe(options.executable)
+        expect(await service.previousRelease()).toBeNull()
+        expect(
+          JSON.parse(await readFile(join(store.slot(installed!.id), 'prepared.json'), 'utf8'))
+        ).toEqual({ components })
+        expect(await service.reconcileInstalledRelease(components)).toBeNull()
+        expect(await store.active()).toEqual(installed)
+      } else {
+        expect(await service.reconcileInstalledRelease(components)).toBeNull()
+        expect(await store.active()).toEqual(before)
+      }
+      expect(fetch).not.toHaveBeenCalled()
+      expect(await readFile(join(profile, 'task.json'), 'utf8')).toBe('{"task":"keep"}')
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+    }
+  }
+)
 
 test('waits for running component readiness before inspecting the profile or downloading', async () => {
   const { options, store, fetch } = await fixture()

@@ -499,9 +499,24 @@ where
     Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
-    let rows: Vec<InstalledKindRow> = mysql
+    reconcile_installed_catalog_refs(mysql, redis, resolvers, user_id, None).await
+}
+
+pub(super) async fn reconcile_installed_catalog_refs<Q, R>(
+    mysql: &mut Q,
+    redis: Option<&R>,
+    resolvers: &EntityResolvers<R>,
+    user_id: i64,
+    installed_ids: Option<&[i64]>,
+) -> MysqlResult<usize>
+where
+    Q: PluginQuery + crate::permissions::EntityQuery,
+    R: brz_redis::Redis,
+{
+    let mut rows: Vec<InstalledKindRow> = mysql
         .fetch_all(sql(LIST_INSTALLED_QUERY, KIND_COLUMNS), (user_id,))
         .await?;
+    rows.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
     if rows.is_empty() {
         return Ok(0);
     }
@@ -611,9 +626,12 @@ where
         }
     }
 
-    if changed > 0 {
-        mysql.execute("COMMIT", ()).await?;
-    }
+    // The typed transaction owned by the caller is the commit boundary. The
+    // source's mid-function `db.commit()` here cannot be expressed as a raw
+    // `COMMIT` on this handle: on a transaction it would end the enclosing
+    // typed transaction early (`brz-mysql` rejects transaction control through
+    // `execute`), and on the pooled caller autocommit already persisted each
+    // write. Returning `changed` lets the caller keep the source's outcome.
     Ok(changed)
 }
 

@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from '../modules/issue-comment-selectors.mjs'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
+import { verifyStandInConversationAssignmentIndependence } from '../modules/stand-in-conversation-assignment-independence.mjs'
+import {
+  isCollaborationSubagentRequest,
+  nativeSubagentCompletionPayload,
+} from '../modules/subagent-request.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { verifyStandInRoleDeviceChange } from '../modules/stand-in-role-device-change.mjs'
+import { stopProcessGroup } from '../process-lifecycle.mjs'
 import {
   assistantMessage,
   createSse,
@@ -18,7 +25,7 @@ import {
 const MARKER = `ISSUE_ROOM_${process.pid}`
 const ACK = '收到，我会让子代理检查，完成后在这里回复。'
 const RESULT = '检查已完成，结果已核实。'
-const FOLLOWUP = '补充解释已完成，仍在同一个分身会话中。'
+const FOLLOWUP = '补充解释已完成，仍在同一个助理会话中。'
 const REOPENED = '已重新开始处理此 Issue。'
 const SUPPLEMENT = '补充信息已收到，会话历史保持连续。'
 const RAW_CHILD = 'ISSUE_ROOM_PRIVATE_CHILD_TRACE'
@@ -28,6 +35,7 @@ const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 /** Real comments, inbox, Runtime and native subagents; only the model is scripted. */
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
   let cloud, user, project, settings, environment, heldChild
+  let duplicateExecutor, duplicateDeviceId
   let spawned = false
   let waited = false
   let delivered = false
@@ -35,7 +43,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
   let supplementHandled = false
   let waitCount = 0
   let waitCallId
-  let childId
+  let childName
   const waitOutputs = []
   const messageVisibility = []
   const reply = (response, events) => {
@@ -89,7 +97,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const workspace = await request('/v1/workspaces', { name: MARKER })
       project = await request('/v1/cloud-projects', {
         workspace_id: workspace.id,
-        name: '分身 Issue 对话验收',
+        name: '助理 Issue 对话验收',
         task_provider: 'local',
       })
     },
@@ -129,44 +137,38 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         ])
       } else if (!waited) {
         const spawnOutput = toolOutputText(body, 'issue-room-spawn')
-        childId = JSON.parse(spawnOutput).agent_id
-        assert.ok(childId, `The parent must receive a real native child identity: ${spawnOutput}`)
+        childName = JSON.parse(spawnOutput).task_name
+        assert.ok(
+          childName,
+          `The parent must receive a real native child task name: ${spawnOutput}`
+        )
         waited = true
         waitCallId = `issue-room-wait-${++waitCount}`
         reply(
           response,
-          selectedToolCall(
-            waitCallId,
-            selectTool(body, 'wait_agent', { targets: [childId], timeout_ms: 60000 })
-          )
+          selectedToolCall(waitCallId, selectTool(body, 'wait_agent', { timeout_ms: 60000 }))
         )
       } else if (!delivered) {
         const output = toolOutputText(body, waitCallId)
         assert.ok(output, 'Each wait must return through a real native tool call')
         waitOutputs.push(output)
         const waitedResult = JSON.parse(output)
-        const statuses = Object.values(waitedResult.status)
-        assert.ok(
-          !statuses.some(status => status.errored || status === 'not_found'),
-          `Native child execution failed: ${output}`
-        )
-        const childReport = statuses.some(status => status.completed === RAW_CHILD)
-        if (!childReport) {
-          assert.equal(
-            waitedResult.timed_out,
-            true,
-            `Native wait returned no completed child: ${output}`
-          )
+        assert.equal(typeof waitedResult.message, 'string', `Invalid native wait: ${output}`)
+        assert.equal(typeof waitedResult.timed_out, 'boolean', `Invalid native wait: ${output}`)
+        const childReport = nativeSubagentCompletionPayload(body, childName)
+        if (childReport === undefined) {
           waitCallId = `issue-room-wait-${++waitCount}`
           reply(
             response,
-            selectedToolCall(
-              waitCallId,
-              selectTool(body, 'wait_agent', { targets: [childId], timeout_ms: 60000 })
-            )
+            selectedToolCall(waitCallId, selectTool(body, 'wait_agent', { timeout_ms: 60000 }))
           )
           return true
         }
+        assert.equal(
+          childReport,
+          RAW_CHILD,
+          'The native child must return its exact verified result'
+        )
         assert.ok(childReleased, 'A result cannot be published before the child finishes')
         delivered = true
         reply(response, [assistantMessage(RESULT)])
@@ -244,6 +246,22 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const reservedBindings = await request(`/v1/loop-items/${concurrent[0].id}/tasks`)
       assert.equal(reservedBindings.length, 1)
       assert.equal(reservedBindings[0].stand_in_conversation_id, `${MARKER}-conversation`)
+      // A second Runtime may share the desktop alias while owning a distinct route.
+      // The remaining real mention, reply and assignment flows must use this Runtime's route.
+      const duplicateIndex = environment.generatedRemoteExecutors.length
+      await environment.startDuplicateAppDeviceIdentity()
+      duplicateExecutor = environment.generatedRemoteExecutors[duplicateIndex]
+      duplicateDeviceId = (await environment.devices()).find(
+        device =>
+          device.device_type === 'app' &&
+          device.app_device_id === appDevice.app_device_id &&
+          device.id !== appDevice.id &&
+          device.status === 'online'
+      )?.id
+      assert.ok(duplicateDeviceId, 'The duplicate fixture must have its own device record')
+      // Keep the active registration record, which remains an ambiguous alias,
+      // without retaining an extra idle Executor during the scenario.
+      await stopProcessGroup(duplicateExecutor)
       const initial = await rpc('runtime.stand_in.personal.get', { userId: user.id })
       settings = await rpc('runtime.stand_in.personal.save', {
         userId: user.id,
@@ -254,7 +272,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
             {
               ...initial.roles[0],
               id: ROLE,
-              name: '项目检查分身',
+              name: '项目检查助理',
               enabled: true,
               manual: true,
               intakeRouted: true,
@@ -273,11 +291,27 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         },
       })
       const issue = await create(`${MARKER}：同一事项持续协作`)
+      const savedRole = settings.roles.find(role => role.id === ROLE)
+      console.info(
+        '[stand-in-mention-preconditions]',
+        JSON.stringify({
+          issue: { id: issue.id, tags: issue.tags, created_at: issue.created_at },
+          executionDeviceId: settings.executionDeviceId,
+          lifecycle: settings.lifecycle,
+          role: savedRole && {
+            id: savedRole.id,
+            enabled: savedRole.enabled,
+            enabledAfter: savedRole.enabledAfter,
+            projectBoundaries: savedRole.projectBoundaries,
+            collaboration: savedRole.collaboration,
+          },
+        })
+      )
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${project.id}/issues/${issue.id}`,
       })
       const activity = `${ACTIVE} [data-testid="cloud-task-activity-${issue.id}"]`
-      const form = `${activity} [data-testid="task-comment-form"]`
+      const form = `${ACTIVE} ${issueCommentFormSelector(issue.id)}`
       const editor = `${form} [data-testid="cloud-task-activity-composer"]`
       await control.command('waitFor', editor)
       await control.command('fill', editor, {
@@ -384,6 +418,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await captureScreenshot(control, 'issue-room-04-result-separate-message.png')
       const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
       assert.equal(bindings.length, 1)
+      assert.equal(bindings[0].device_id, appDevice.execution_target_id)
       const taskId = bindings[0].task_id
       const first = await until(
         () => rpc('runtime.tasks.get', { taskId }),
@@ -473,6 +508,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'The eligible automatic assignment must dispatch'
       )
       const assignmentTask = assignedBindings[0].task_id
+      assert.equal(assignedBindings[0].device_id, appDevice.execution_target_id)
       await until(
         () => rpc('runtime.tasks.get', { taskId: assignmentTask }),
         value => value.task?.status === 'done',
@@ -485,15 +521,69 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'Saved manual flags must not mint manual authority'
       )
       assert.equal(transcript.origin.triggerCommentId, null)
+      const beforeIndependence = await rpc('runtime.stand_in.personal.get', { userId: user.id })
+      await verifyStandInConversationAssignmentIndependence({
+        control,
+        cloud,
+        user,
+        project,
+        roleId: ROLE,
+        issue: assigned,
+        taskId: assignmentTask,
+        deviceId: assignedBindings[0].device_id,
+        marker: MARKER,
+        rpc,
+        request,
+        until,
+        timeoutMs: uiTimeoutMs,
+      })
+      const afterIndependence = await rpc('runtime.stand_in.personal.get', { userId: user.id })
+      await rpc('runtime.stand_in.personal.save', {
+        userId: user.id,
+        settings: {
+          ...afterIndependence,
+          roles: afterIndependence.roles.map(role =>
+            role.id === ROLE ? beforeIndependence.roles.find(row => row.id === ROLE) : role
+          ),
+        },
+      })
+      await verifyStandInRoleDeviceChange({
+        control,
+        environment,
+        request,
+        rpc,
+        until,
+        user,
+        project,
+        roleId: ROLE,
+        marker: MARKER,
+        existingIssue: assigned,
+        existingTask: assignmentTask,
+        resultText: FOLLOWUP,
+        existingResultText: '已完成本次指派。',
+      })
       settings = await rpc('runtime.stand_in.personal.get', { userId: user.id })
       await rpc('runtime.stand_in.personal.save', {
         userId: user.id,
         settings: { ...settings, roles: settings.roles.filter(role => role.id !== ROLE) },
       })
     },
-    cleanup() {
+    async cleanup() {
       heldChild?.destroy()
       heldChild = null
+      if (duplicateExecutor) await stopProcessGroup(duplicateExecutor)
+      if (duplicateDeviceId) {
+        const response = await fetch(
+          `${cloud.backendUrl}/api/devices/records/${duplicateDeviceId}`,
+          {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${cloud.authToken}` },
+            signal: AbortSignal.timeout(uiTimeoutMs),
+          }
+        )
+        assert.equal(response.ok, true, 'The isolated duplicate device fixture must be removed')
+        duplicateDeviceId = undefined
+      }
     },
     diagnostics() {
       return {

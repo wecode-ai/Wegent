@@ -166,6 +166,28 @@ def test_resolve_llm_proxy_model_config_rejects_spoofed_personal_owner(
     assert exc_info.value.status_code == 403
 
 
+def test_resolve_llm_proxy_model_config_enforces_public_whitelist(
+    test_db, test_user: User
+):
+    model = _model_kind(0, name="restricted-public-model")
+    model.json["spec"]["allowedUsersEnabled"] = True
+    model.json["spec"]["allowedUsers"] = ["another-user"]
+    test_db.add(model)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_llm_proxy_model_config(
+            test_db,
+            test_user,
+            model_name=model.name,
+            model_type="public",
+            namespace="default",
+            resource_user_id=0,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
 def test_resolve_llm_proxy_model_config_processes_custom_header_placeholders(
     test_db, test_user: User
 ):

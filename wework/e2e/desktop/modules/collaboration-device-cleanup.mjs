@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from './collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
 import { verifyCloudRegistrationDeletionRace } from './collaboration-device-registration-race.mjs'
@@ -47,7 +48,8 @@ export async function verifyCollaborationDeviceCleanup({
         appDeviceId: `electron-device-cleanup-${process.pid}`,
         bindShell: 'claudecode',
       },
-      status: suffix === 'history' ? { lastSeenAt: '2026-01-02T03:04:05+00:00' } : {},
+      status:
+        suffix === 'history' ? { lastSeenAt: new Date(Date.now() - 86_400_000).toISOString() } : {},
     }
     await cloud.executeDatabase(
       'INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, 1, NOW(), NOW())',
@@ -75,36 +77,27 @@ export async function verifyCollaborationDeviceCleanup({
       .workspace_ids.includes(String(space.id))
   )
   await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+  await revealCollaborationSidebarElement(
+    control,
+    scoped('[data-testid="collaboration-primary-devices"]')
+  )
   await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
-  for (const id of ids)
-    await control.command('waitFor', scoped(`[data-testid="collaboration-devices-delete-${id}"]`), {
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-devices-row-${original.id}"]`),
+    { timeoutMs }
+  )
+  for (const id of ids) {
+    await control.command('waitFor', scoped(`[data-testid="collaboration-devices-row-${id}"]`), {
+      visible: false,
       timeoutMs,
     })
-  assert.match(
-    await control.command(
-      'getText',
-      scoped(`[data-testid="collaboration-device-last-seen-${unknownId}"]`)
-    ),
-    /暂无记录|No record/
-  )
-  assert.doesNotMatch(
-    await control.command(
-      'getText',
-      scoped(`[data-testid="collaboration-device-last-seen-${historyId}"]`)
-    ),
-    /暂无记录|No record/
-  )
-  assert.equal(
-    Number(
-      await control.command(
-        'getElementCount',
-        scoped(`[data-testid="collaboration-devices-delete-${original.id}"]`)
-      )
-    ),
-    0,
-    'Online runner offered deletion'
-  )
-
+    assert.equal(
+      (await cloud.queryDatabase('SELECT is_active FROM kinds WHERE id = %s', [id]))[0].is_active,
+      1,
+      'Hiding an offline registration must not delete its persistent identity'
+    )
+  }
   await capture?.('collaboration-device-cleanup-catalog.png')
   const onlineDelete = await fetch(
     `${cloud.backendUrl}/api/devices/records/${original.id}?offline_only=true`,
@@ -114,33 +107,9 @@ export async function verifyCollaborationDeviceCleanup({
     }
   )
   assert.equal(onlineDelete.status, 409, 'The server accepted deletion of a live runner')
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-devices-delete-${historyId}"]`)
-  )
-  assert.ok(
-    (
-      await control.command('getText', scoped('[data-testid="collaboration-delete-device-dialog"]'))
-    ).includes(space.name),
-    'The removal confirmation omitted the affected workspace'
-  )
-  await capture?.('collaboration-device-cleanup-confirm.png')
-  await control.command('click', scoped('[data-testid="collaboration-delete-device-cancel"]'))
-  assert.equal(
-    (await cloud.queryDatabase('SELECT is_active FROM kinds WHERE id = %s', [historyId]))[0]
-      .is_active,
-    1
-  )
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-devices-delete-${historyId}"]`)
-  )
-  await control.command('click', scoped('[data-testid="collaboration-delete-device-confirm"]'))
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="collaboration-devices-row-${historyId}"]`),
-    { visible: false, timeoutMs }
-  )
+  // Retention expiry is covered through the real MySQL/Redis job tests. Exercise the
+  // existing record removal contract directly because offline rows have no UI actions.
+  await request(`/api/devices/records/${historyId}?offline_only=true`, { method: 'DELETE' })
   assert.equal(
     (await cloud.queryDatabase('SELECT is_active FROM kinds WHERE id = %s', [historyId]))[0]
       .is_active,
@@ -155,7 +124,6 @@ export async function verifyCollaborationDeviceCleanup({
     (await request('/api/devices')).items.some(device => device.id === historyId),
     false
   )
-
   assert.equal(
     (await request(`/api/v1/workspaces/${space.id}/execution-environments`)).items.some(
       device => device.device_id === historyId
@@ -183,15 +151,15 @@ export async function verifyCollaborationDeviceCleanup({
   )
   await verifyCloudRegistrationDeletionRace(cloud, ownerId)
   await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+  await revealCollaborationSidebarElement(
+    control,
+    scoped('[data-testid="collaboration-primary-devices"]')
+  )
   await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
   await control.command(
     'waitFor',
-    scoped(`[data-testid="collaboration-devices-delete-${original.id}"]`),
-    { timeoutMs }
-  )
-  await control.command(
-    'click',
-    scoped(`[data-testid="collaboration-devices-delete-${original.id}"]`)
+    scoped(`[data-testid="collaboration-devices-row-${original.id}"]`),
+    { visible: false, timeoutMs }
   )
   cloud.remoteDockerExecutor = await cloud.spawnExecutor(
     cloud.remoteDockerExecutorEnv,
@@ -202,19 +170,22 @@ export async function verifyCollaborationDeviceCleanup({
     'online',
     cloud.remoteDockerExecutorLogPath
   )
-  await control.command('click', scoped('[data-testid="collaboration-delete-device-confirm"]'))
-  const error = scoped('[data-testid="collaboration-delete-device-dialog"] [role="alert"]')
-  await control.command('waitFor', error, { visible: true, timeoutMs })
-  assert.match(await control.command('getText', error), /设备已上线|device is online/)
+  const reconnectedDelete = await fetch(
+    `${cloud.backendUrl}/api/devices/records/${original.id}?offline_only=true`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${cloud.authToken}` },
+    }
+  )
+  assert.equal(reconnectedDelete.status, 409, 'A reconnected device must reject record removal')
   assert.equal(
     (await cloud.queryDatabase('SELECT is_active FROM kinds WHERE id = %s', [original.id]))[0]
       .is_active,
     1
   )
-  await control.command('click', scoped('[data-testid="collaboration-delete-device-cancel"]'))
   // Remove the remaining isolated legacy fixture through the production endpoint.
   await request(`/api/devices/records/${unknownId}?offline_only=true`, { method: 'DELETE' })
   console.log(
-    '[desktop-e2e] PASS device-cleanup: record isolation, cancel, workspace removal, persistent heartbeat and reconnect conflict'
+    '[desktop-e2e] PASS device-cleanup: online-only discovery, record isolation, workspace removal, persistent heartbeat and reconnect conflict'
   )
 }

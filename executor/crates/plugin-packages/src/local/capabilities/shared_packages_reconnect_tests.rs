@@ -116,7 +116,7 @@ async fn missing_or_legacy_shared_plugin_is_downloaded_again() {
 }
 
 #[tokio::test]
-async fn reconnect_rejects_corrupted_shared_plugin_without_replacing_manifest() {
+async fn reconnect_restores_corrupted_shared_plugin_without_changing_its_version() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());
     let packages = packages("v1");
@@ -144,12 +144,23 @@ async fn reconnect_rejects_corrupted_shared_plugin_without_replacing_manifest() 
         std::sync::Arc::new(crate::NoRunningSessions),
     );
     let result = reconnected.apply_sync(payload).await.unwrap();
-    assert_eq!(result["success"], false);
-    // A failed cache verification attempts a fresh download, but publication must
-    // still reject the corrupted immutable directory and preserve the manifest.
+    assert_eq!(result["success"], true);
+    // Recovery retains the damaged original and reuses the healthy runtime.
     assert_eq!(packages.downloads.load(Ordering::SeqCst), 2);
     assert_eq!(
         store.manifest.load().unwrap()["plugins"]["demo@wegent"],
         before
     );
+    assert_eq!(fs::read(shared.join("payload.txt")).unwrap(), b"v1");
+    let history = root
+        .path()
+        .join("workbench/shared/recovery/plugins")
+        .join(shared.file_name().unwrap());
+    let backups = fs::read_dir(history)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(backups.len(), 1);
+    assert!(!backups[0].path().join("package/payload.txt").exists());
+    assert!(backups[0].path().join("metadata.json").is_file());
 }

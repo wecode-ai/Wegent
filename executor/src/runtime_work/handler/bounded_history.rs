@@ -214,7 +214,31 @@ impl RuntimeWorkRpcHandler {
                     return page(&snapshot, &cursor.snapshot, limit, true, start)
                 }
                 Position::Content { message, offset } => {
-                    return content(&snapshot, &cursor.snapshot, message, offset)
+                    let overlap = match args.get("contentOverlapBytes") {
+                        None => 0,
+                        Some(value) => value
+                            .as_u64()
+                            .filter(|value| *value <= 4096)
+                            .ok_or_else(|| invalid("Content overlap must be 0-4096 bytes"))?
+                            as usize,
+                    };
+                    let mut result = content(&snapshot, &cursor.snapshot, message, offset)?;
+                    if overlap > 0 {
+                        let text = snapshot.messages[message]["content"]
+                            .as_str()
+                            .unwrap_or_default();
+                        let mut start = offset.saturating_sub(overlap);
+                        while !text.is_char_boundary(start) {
+                            start += 1;
+                        }
+                        let end = offset + result["content"].as_str().unwrap_or_default().len();
+                        result["content"] = json!(&text[start..end]);
+                        result["contentOffset"] = json!(start);
+                    }
+                    if result.to_string().len() > PAGE_BYTES {
+                        return Err(invalid("History content overlap exceeds its byte budget"));
+                    }
+                    return Ok(result);
                 }
                 Position::NativeBefore => {
                     native = Some((

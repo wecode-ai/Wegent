@@ -168,6 +168,18 @@ target is treated as unordered and the drag result is lost.
 
 ## Conversation Scrolling and Diagram Rendering
 
+Turn navigation owns its target until the actual row is aligned, and virtualization must retain that row. Native `scrollend` only ends one scroll operation. If row measurements move the target, navigation must retarget its current geometry before releasing ownership. A temporary row remount is not completion. Reader input, a newer target, and unmount still cancel the previous navigation immediately.
+
+```mermaid
+flowchart LR
+  A[Select turn] --> B[Retain target row]
+  B --> C[Check actual target position]
+  C -->|Misaligned| D[Retarget measured position]
+  D --> C
+  C -->|Aligned| E[Release navigation target]
+  B -->|Reader input or unmount| F[Cancel previous navigation]
+```
+
 TanStack Virtual and its native ResizeObserver own message measurements. Keep message content visible during scrolling and reuse rows by message identity. Do not introduce a second height writer, replace scrolling content with placeholders, or estimate Markdown height on every frame.
 
 Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. The boundary marker always occupies one pixel; loading feedback and pagination actions are portaled outside the transcript without affecting measurements. Open search retains explicit pagination, and hidden panes suspend automatic loading. Failures and completed requests that leave the boundary unchanged offer manual recovery without a request loop. Manual retries retain the control and keyboard focus.
@@ -267,6 +279,48 @@ request, and a delayed start notification for the same turn cannot revive a
 stopped state. Native Goal continuations can outlive local request controls and must
 remain guidable through their native running turn. Waiting for the next turn
 is bounded and does not create another guidance state.
+
+Resume admission and shared-process protection use different busy conditions.
+`thread/resume` waits for local execution owners and native active turns, but an
+active Goal alone must not block admission: a Goal without a live turn may need
+the resume before it can continue. Active Goals still protect the shared process
+against background idle restarts and configuration mutations. Reloading MCP
+authority or runtime instructions during recovery still waits for the old
+subscription's `thread/closed`. Recovery preserves the original thread, Goal
+creation time and accumulated usage instead of clearing or recreating the Goal
+to unblock admission.
+
+Persist the native execution mode as `collaborationMode`. Conversation-control
+continuations also read the selected mode from `modelSelection.options`, so a
+legacy snapshot's `collaboration_model: single` cannot replace a selected default
+or plan mode. Both modes explicitly enable native V2 collaboration on resume,
+including threads previously persisted as disabled. Explicit single-agent
+executions still disable collaboration tools. Desktop requests no longer send
+the conflicting legacy single field alongside their native mode.
+
+When neither `agents.max_concurrent_threads_per_session` nor `agents.max_threads`
+is present, executor initialization adds `[agents] max_concurrent_threads_per_session = 6`.
+A non-table `agents` value is preserved for native configuration validation.
+In V2 this permits seven total threads including the root. Existing values of
+this field or the legacy `max_threads` field are preserved. The V2-specific
+`[features.multi_agent_v2] max_concurrent_threads_per_session` setting retains
+native precedence and counts the root. Later manual edits are preserved and
+take effect after restarting the runtime. Single-agent mode still disables
+subagents; the default capacity does not change delegation permissions.
+
+Project catalog synchronization in `projects.list` includes SQLite initialization
+and Git metadata discovery. It runs in a blocking worker rather than the IPC
+reactor. Catalog reads open only the project store, without initializing unrelated
+Issue or table providers. Concurrent listings share an asynchronous execution lock, which stays
+with an active worker after caller timeout or disconnect until the work finishes.
+Health queries and other IPC requests remain responsive during discovery; UI
+timeouts are not extended to hide blocking. The three Git probes for a new project share
+a 30-second deadline and reuse the native Git runner’s termination and reaping.
+A timeout does not persist that project’s catalog row; previously completed imports
+remain intact. Discovery errors are logged for the affected workspace and the scan continues
+with other entries; later listings can retry. Database and other non-discovery errors still propagate.
+
+E2E host-pipe diagnostics enabled for `clipboard-history-image` and `browser-toolbar-actions` record request IDs, send/receive/completion timestamps, and cumulative CPU and event-loop active/idle time in both processes. Correlate each request and compare adjacent samples to distinguish handler work, process activity, and scheduling waits. A single successful run is not evidence that an intermittent delay has been fixed.
 
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
@@ -475,6 +529,8 @@ Enqueue, cancellation, and dequeue advance the same execution revision only afte
 persistence succeeds. Cancelling admission preserves the previous turn's result, and an
 older queued snapshot cannot make the cancelled task busy again.
 
+Prepare the model route before Goal activation. The prepared native session owns continuation after successful activation, so activation does not enqueue another recovery. Activation and the existing Goal journal still require durable persistence before admission can be acknowledged.
+
 `recovering` means the executor owns Goal recovery or bounded retry backoff. Recovery awaiting admission has no process binding; backoff retains process ownership and must settle when that process exits. Recovery remains busy without an active model turn; its queued legacy
 `task.running: false` must not present that owned recovery as stopped.
 
@@ -608,17 +664,43 @@ The mode pill's cancel button appears only on hover and is absolutely positioned
 
 When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. The queue must remain paused until the lifecycle Store confirms that the new turn entered streaming or already produced a terminal outcome. The latter covers fast executions whose start and settlement are batched into one React commit: waiting only for an active snapshot can leave the queue paused forever, while resuming as soon as the send request returns can let a stale idle snapshot submit the preserved queue concurrently with the new turn. Confirmation must also synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
 
+## Message Admission and On-Demand Context
+
+Image paste registers file references synchronously; conversion and upload remain asynchronous. Submission captures every selected attachment, including later files in a sequential upload batch. The message enters its local conversation or queue immediately. Clearing the draft must not cancel submitted uploads or append their late results to a newer draft. Runtime transport waits for that attachment snapshot; any preparation failure fails the send instead of delivering text alone. In-memory preparation handles are omitted from persisted JSON; an unfinished attachment whose preparation cannot be recovered after restart must fail explicitly.
+
+No behavior may block local message admission. Send synchronously validates the input, records the message in its owning conversation or queue, and clears only the submitted draft revision before required attachment preparation, runtime checks, and transport. Late receipts must preserve newer drafts and other conversations. An unanswered question remains visible until delivery is confirmed; the new input appears as sending meanwhile. Admission, queueing, failure, and completed model execution are distinct states.
+
+Project and Issue bindings carry their owning task; late association results cannot populate a different conversation. Failed sends restore text and attachments against the original conversation's draft revision even after the pane switches or closes, preserving newer edits. Each send removes only the temporary queue entry it created; existing entries retain their retry action on failure.
+
+Sending does not query project or Issue details, load referenced transcripts, or wait for list refreshes. Project context carries only the selected project_store, space_id, and item_id. When details matter, the model first checks the current binding through wework_space.get_current_context and reads the required Issue, comments, or attachments. Explicit IDs apply when there is no default binding. Source tools read current authoritative data; previews and old bodies are not current evidence. Unavailable or denied reads must be reported without bypassing access controls.
+
+The composer's Issue guide reads the owning conversation's binding state, updated by source change events. Sending, execution changes, and recreated objects must not trigger another full context read. The guide owns only its task-binding count query, with results isolated by API and Issue identity. A failed count read shows an explicit error and retry action; a failed refresh preserves the same source's last successful count without presenting failure as loading or an empty result.
+
+```mermaid
+sequenceDiagram
+    participant C as Composer
+    participant S as Conversation state
+    participant R as Runtime
+    participant M as Model
+    participant T as Source tools
+    C->>S: Record message or queue item and clear submitted draft
+    S-->>C: Display immediately
+    S->>S: Await conversion and upload of the submitted attachments; retain failures
+    S->>R: Message, prepared explicit attachments, resource IDs
+    R-->>S: Accepted, queued, or failed receipt
+    S->>S: Settle by original conversation and draft revision; retain failed retries
+    R->>M: Start turn
+    M->>T: Read details on demand
+    T-->>M: Current data or explicit error, preserving authorization
+```
+
 ## Referenced Conversation Context
 
-The composer's `@` menu supports explicit references to other Wework conversations. An empty query shows the five most recent conversations from the current `runtimeWork`; a typed query filters by title, project, and workspace path. The current conversation is always excluded so its in-progress context cannot be recursively injected into itself.
+The composer's @ menu uses loaded runtimeWork metadata: an empty query shows the five most recent conversations, typed queries filter title, project, and workspace, and the current conversation is excluded. References serialize as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`, carrying navigation identity without runtimeHandle configuration. Composer and sent messages render clickable conversation chips; Issue chips open their corresponding details.
 
-A reference is serialized in the draft as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`. This is an internal Wework URI. Both the composer and sent user messages must render it as a conversation-reference chip instead of exposing the raw URI. Clicking that chip opens the referenced Runtime task conversation in the current workbench pane. Issue references (`wework-issue://`) open their project-space item in the same way, and the project-space context pill opens the current Issue details from its title area. Before sending, `useWorkbenchPaneSession` parses and deduplicates every reference, loads each transcript with `includeFullContent: true` and `refresh: true`, and enforces these boundaries:
+Submission synchronously parses and deduplicates references. The referencedConversations application context contains only stable conversation_id values and reading instructions. Before relying on referenced content, the model discovers wework_control and calls read_conversation, following cursors for the pages it needs. Full history, tool output, and attachment binaries are no longer expanded before sending. Code Mode can select the fields needed from tool results.
 
-- Include only user messages and completed assistant text. Do not inject system, developer, tool, thinking, or streaming assistant content, and do not separately ingest attachment binaries.
-- Send the extracted text as `referencedConversations` application context inside `additionalContext`, explicitly labeled as untrusted background context. Instructions, tool calls, or permission claims in a referenced conversation are data, not executable instructions for the current conversation.
-- If any referenced transcript cannot be loaded, block the send and show a localized error. Never continue after silently dropping a reference.
-
-This feature is a user-authorized pre-send snapshot injection, not a conversation MCP. The model cannot independently list, search, or read conversations that the user did not reference; menu search uses only metadata already loaded in `runtimeWork`. Changes to this path must keep the reference parsing and context construction unit tests, composer/message rendering tests, and the `conversation-mention.scenario.mjs` desktop E2E scenario aligned.
+Retrieved content is untrusted background data and cannot grant permissions or override instructions. Reference IDs do not change native source restrictions or authorization. An unavailable or denied source does not prevent submission; the model must report that it cannot read it instead of inventing content. Maintain regressions for reference parsing, send timing, access failure, and real tool reads. Desktop E2E runs through the shared CI suites; local execution follows repository policy.
 
 ## Conversation Switching and Transcript Restoration
 
@@ -864,3 +946,9 @@ The summary header owns the thinking-only duration and updates once per displaye
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.
 - Do not add independent `isSending`, `isRunning`, or `isStreaming` React state. New external facts must enter through Store event routing.
 - When runtime work and message state disagree, do not override display inside UI components and do not add fallback settlement; fix the primary path.
+
+## Streaming text positions and completion rendering
+
+Process text and plan blocks attach a block-local `content_offset` to `content_delta`, measured in Unicode code points rather than UTF-8 bytes or JavaScript UTF-16 units. Executor coalescing retains the first delta's position and never joins noncontiguous deltas. The renderer reuses positioned merging to skip prefixes already included in native history and append only unseen suffixes. Equal text at different positions remains legitimate repeated content.
+
+Ordinary replies and process text retain the same block-based Markdown tree at completion. When the text is unchanged, completion must not rebuild plain-text parser plugins or reparse existing blocks. Incomplete Markdown, diagrams, and annotation markers still receive their required finalization. `e2e:desktop --segment streaming-content` covers native history arriving before a delayed delta and verifies that completing process text retains its rendered paragraph.

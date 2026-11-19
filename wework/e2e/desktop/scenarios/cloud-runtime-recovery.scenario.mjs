@@ -1,3 +1,4 @@
+import { assertFeedbackModelSnapshot } from '../modules/task-feedback-model-identity.mjs'
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -17,6 +18,8 @@ import {
 } from '../modules/response-protocol.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForTranscriptState } from '../modules/transcript-restoration.mjs'
+import { createRuntimeNotificationReconnect } from '../modules/runtime-notification-reconnect.mjs'
+import { createRuntimeImQuestions } from '../modules/runtime-im-questions.mjs'
 
 const PROMPT = 'WEWORK_E2E_CLOUD_STREAM_RECOVERY'
 const PARTIAL = 'CLOUD_STREAM_PARTIAL'
@@ -24,10 +27,17 @@ const COMPLETED = `${PARTIAL}_COMPLETED_WHILE_DISCONNECTED`
 const ASSISTANT = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
 const PAUSE = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
 
+export async function assertSingleRecoveredCloudAnswer(control) {
+  const text = await control.command('getText', ASSISTANT)
+  assert.equal(text.split(COMPLETED).length - 1, 1, 'Recovery duplicated the completed answer')
+}
+
 // Extend the existing CI checkpoint without another Backend/Executor bootstrap.
 // Only the model is scripted; the relay, history, task state and Electron stay real.
 export function createDesktopScenario(options) {
   const existing = createCloudModelRecovery(options)
+  const notifications = createRuntimeNotificationReconnect(options)
+  const questions = createRuntimeImQuestions(options)
   const appEnvironment = { ...existing.appEnvironment }
   let cloud
   let proxy
@@ -49,6 +59,8 @@ export function createDesktopScenario(options) {
       existing.setCloudEnvironment(value)
     },
     async handleHttp(request, response, url) {
+      if (await questions.handleHttp(request, response, url)) return true
+      if (await notifications.handleHttp(request, response, url)) return true
       if (!active) return existing.handleHttp?.(request, response, url) ?? false
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -79,6 +91,8 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
+      // The base recovery restarts Backend and waits for the App device only.
+      await cloud.waitForDevice(CLOUD_DEVICE_ID, cloud.remoteExecutorLogPath)
       active = true
       const request = (path, body) =>
         fetchJson(`${cloud.backendUrl}${path}`, {
@@ -146,23 +160,46 @@ export function createDesktopScenario(options) {
           'Cloud recovery did not settle the mounted conversation',
           options.uiTimeoutMs
         )
-        const text = await control.command('getText', ACTIVE_WORKBENCH_SELECTOR)
+        await assertSingleRecoveredCloudAnswer(control)
         assert.equal(
-          text.split(COMPLETED).length - 1,
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+          ),
+          '1',
+          'Recovery duplicated the original user message'
+        )
+        assert.equal(
+          Number(await control.command('getElementCount', ASSISTANT)),
           1,
-          'Recovery duplicated the completed answer'
+          'Recovery duplicated the assistant message'
         )
         assert.equal(control.readyCount, readyCount, 'Cloud recovery required a renderer reload')
+        await assertFeedbackModelSnapshot(control, address, CLOUD_PUBLIC_MODEL_NAME)
       } finally {
         finishModel?.()
         proxy.disconnectWebSockets(false)
         active = false
       }
+      await notifications.verify(cloud, control)
+      await questions.verify(cloud, control)
     },
     async cleanup() {
-      finishModel?.()
-      await proxy?.stop()
-      await existing.cleanup?.()
+      const errors = []
+      for (const cleanup of [
+        () => finishModel?.(),
+        () => notifications.cleanup(),
+        () => questions.cleanup(),
+        () => proxy?.stop(),
+        () => existing.cleanup?.(),
+      ]) {
+        try {
+          await cleanup()
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Cloud recovery cleanup failed')
     },
   }
 }

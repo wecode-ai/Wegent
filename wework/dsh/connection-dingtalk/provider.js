@@ -1,4 +1,5 @@
 import { createReadCursor } from './read-cursor.js'
+import { readImages } from './read-images.js'
 
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 
@@ -10,6 +11,7 @@ export function createProvider() {
       let authTarget
       try {
         authTarget = await ctx.cli.describe('dingtalk')
+        await requireAuthentication(ctx)
         await activeProfile(ctx)
         return { status: 'ready', authTarget }
       } catch (error) {
@@ -22,6 +24,7 @@ export function createProvider() {
     },
     async listResources(ctx, input) {
       const profile = await activeProfile(ctx)
+      await requireAuthentication(ctx)
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
       if (input.scope === 'all') {
@@ -43,7 +46,21 @@ export function createProvider() {
       if (query.length > 256) throw invalid('Search query is too long')
       const args = { query, profile }
       if (kind === 'group' && input.cursor) args.cursor = input.cursor
-      const response = await readTool(ctx, kind === 'group' ? 'searchGroups' : 'searchUsers', args)
+      let response
+      try {
+        response = await readTool(ctx, kind === 'group' ? 'searchGroups' : 'searchUsers', args)
+      } catch (error) {
+        if (
+          !['connection_cli_request_unavailable', 'connection_cli_request_failed'].includes(
+            error.code
+          )
+        )
+          throw error
+        // A token can expire between connection checks. Re-read auth state before
+        // showing a generic provider failure.
+        await requireAuthentication(ctx)
+        throw error
+      }
       const rows = kind === 'group' ? response.result?.groups : response.result
       if (!Array.isArray(rows)) throw invalid('Invalid search response')
       return {
@@ -67,6 +84,7 @@ export function createProvider() {
         throw invalid('Invalid resource scope')
       const profile = required(input, 'profile')
       if (!['group', 'direct'].includes(input.kind)) throw invalid('Invalid conversation kind')
+      validateCollection(input)
       await ownIdentity(ctx, profile, identities)
       return input
     },
@@ -109,6 +127,12 @@ export function createProvider() {
         message => Date.parse(message.at) >= since && Date.parse(message.at) <= until
       )
       const hasMore = page.hasMore && !reachedStart
+      if (state.includeImages) {
+        for (const item of items) {
+          const original = page.messages.find(message => message.messageId === item.id)
+          item.images = await readImages(ctx, source, original, readTool)
+        }
+      }
       const time = hasMore ? required(page.nextPage, 'time') : undefined
       if (hasMore && (!Number.isFinite(Date.parse(time)) || time === (state.time ?? state.end)))
         throw invalid('Invalid native conversation pagination')
@@ -122,6 +146,7 @@ export function createProvider() {
       }
     },
     async collect(ctx, { source, checkpoint }) {
+      validateCollection(source)
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const until = checkpoint?.until ?? new Date().toISOString()
@@ -159,6 +184,7 @@ function nativeMessage(message, source, ownId, limit) {
     senderId: message.senderId ?? null,
     senderName: message.sender ?? null,
     isOwn: message.senderId === ownId,
+    isSelfConversation: source.kind === 'direct' && source.id === ownId,
     conversationId,
     topicId: message.threadId ?? null,
     ...(message.quotedMessage ? { quotedMessage: boundedQuote(message.quotedMessage) } : {}),
@@ -175,7 +201,9 @@ function readWindow(input) {
   const start = input.since === undefined ? new Date(now - 86400000).toISOString() : input.since
   const since = typeof start === 'string' ? Date.parse(start) : NaN
   const limit = input.limit === undefined ? 20 : input.limit
+  const includeImages = input.includeImages ?? false
   if (
+    typeof includeImages !== 'boolean' ||
     !Number.isFinite(since) ||
     since < now - 7 * 86400000 ||
     since > now ||
@@ -184,7 +212,7 @@ function readWindow(input) {
     limit > 20
   )
     throw invalid('Read at most twenty messages from the past seven days')
-  return { start, end: new Date(now).toISOString(), limit }
+  return { start, end: new Date(now).toISOString(), limit, includeImages }
 }
 
 async function readMessagePage(ctx, source, window, ownId) {
@@ -204,16 +232,30 @@ async function readMessagePage(ctx, source, window, ownId) {
     selfConversationId = required(page.messages[0], 'conversationId')
   }
   const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  const allMessages = source.collectionKey === 'all-messages'
   if (source.scope !== 'all') {
-    if (source.kind === 'group') args.group = required(source, 'id')
+    if (source.kind === 'group')
+      args[allMessages ? 'conversationIds' : 'group'] = required(source, 'id')
     else args.senderIds = required(source, 'id')
   }
   const response = await readTool(
     ctx,
-    source.kind === 'group' ? 'listMentions' : 'searchMessages',
+    source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages',
     args
   )
   return messagePage(source, response, ownId, window.cursor, selfConversationId)
+}
+
+function validateCollection(source) {
+  if (source.collectionKey === undefined) return
+  if (
+    source.collectionKey !== 'all-messages' ||
+    source.kind !== 'group' ||
+    source.scope !== undefined ||
+    required(source, 'id') === '*' ||
+    /[,\r\n]/.test(source.id)
+  )
+    throw invalid('All-message intake requires one exact group')
 }
 
 function validateNativePage(page, limit) {
@@ -257,10 +299,11 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
+      // Bot notifications can come from another account and feed our own task output back in.
+      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) continue
       const sender = required(message, 'senderOpenDingTalkId')
       const manualSelfMessage =
         message.sendType === 'user' &&
-        message.messageAiSendFlag === undefined &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
       if (
@@ -274,6 +317,8 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
         text: required(message, 'content'),
         senderId: sender,
         senderName: message.sender ?? null,
+        isOwn: sender === ownId,
+        isSelfConversation: direct && manualSelfMessage && sender === ownId,
         at: required(message, 'createTime'),
         conversationId,
         quotedMessageId: message.quotedMessage?.openMessageId ?? null,
@@ -301,6 +346,15 @@ async function activeProfile(ctx) {
     })
   }
   return response.currentProfile
+}
+
+async function requireAuthentication(ctx) {
+  const response = await readTool(ctx, 'authStatus')
+  if (response.authenticated !== true || response.token_valid === false)
+    throw Object.assign(new Error('Authorize the account'), {
+      code: 'connector_auth_required',
+    })
+  return response
 }
 
 async function ownIdentity(ctx, profile, cache) {

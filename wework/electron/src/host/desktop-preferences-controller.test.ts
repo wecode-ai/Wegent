@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   DesktopPreferencesController,
+  resolveAppshotsShortcut,
   resolvePopoutShortcut,
 } from './desktop-preferences-controller.js'
 
@@ -8,6 +9,7 @@ function fixture(initial: Record<string, unknown> = {}) {
   let preferences = initial
   const store = {
     read: vi.fn(async () => preferences),
+    readSnapshot: vi.fn(async () => ({ preferences, readable: true })),
     update: vi.fn(async (patch: Record<string, unknown>) => {
       preferences = { ...preferences, ...patch }
       return preferences
@@ -16,6 +18,7 @@ function fixture(initial: Record<string, unknown> = {}) {
   const effects = {
     isShuttingDown: vi.fn(() => false),
     configurePopoutShortcut: vi.fn(),
+    configureAppshotsShortcut: vi.fn(),
     setPerformanceRecordingEnabled: vi.fn<(_enabled: boolean) => Promise<void>>(
       async () => undefined
     ),
@@ -34,6 +37,16 @@ function deferred<T>() {
 }
 
 describe('DesktopPreferencesController', () => {
+  test('leaves active desktop effects unchanged when preferences cannot be read', async () => {
+    const { controller, store, effects } = fixture({ popoutWindowShortcut: 'Ctrl+Alt+P' })
+    store.readSnapshot.mockResolvedValueOnce({ preferences: {}, readable: false })
+    await expect(controller.update({ popoutWindowShortcut: 'Ctrl+Alt+Q' })).rejects.toThrow(
+      'unreadable'
+    )
+    expect(effects.configurePopoutShortcut).not.toHaveBeenCalled()
+    expect(effects.setPerformanceRecordingEnabled).not.toHaveBeenCalled()
+    expect(store.update).not.toHaveBeenCalled()
+  })
   test('does not read or restore recording after shutdown starts', async () => {
     const { controller, store, effects } = fixture({ performanceRecordingEnabled: true })
     effects.isShuttingDown.mockReturnValue(true)
@@ -184,5 +197,27 @@ describe('DesktopPreferencesController', () => {
     expect(resolvePopoutShortcut({})).toBe('Alt+Shift+Space')
     expect(resolvePopoutShortcut({ popoutWindowShortcut: null })).toBeNull()
     expect(resolvePopoutShortcut({ popoutWindowShortcut: ' Ctrl+Space ' })).toBe('Ctrl+Space')
+    expect(resolveAppshotsShortcut({})).toBe('CommandOrControl+Shift+2')
+    expect(resolveAppshotsShortcut({ appshotsShortcut: null })).toBeNull()
+    expect(resolveAppshotsShortcut({ appshotsShortcut: ' Command+Shift+3 ' })).toBe(
+      'Command+Shift+3'
+    )
+  })
+
+  test('configures the Appshots shortcut before persistence and restores it on failure', async () => {
+    const { controller, store, effects } = fixture({ appshotsShortcut: 'Command+Shift+2' })
+    store.update.mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(controller.update({ appshotsShortcut: 'Command+Shift+3' })).rejects.toThrow(
+      'disk full'
+    )
+
+    expect(effects.configureAppshotsShortcut.mock.calls).toEqual([
+      ['Command+Shift+3'],
+      ['Command+Shift+2'],
+    ])
+    expect(effects.configureAppshotsShortcut.mock.invocationCallOrder[0]).toBeLessThan(
+      store.update.mock.invocationCallOrder[0]!
+    )
   })
 })

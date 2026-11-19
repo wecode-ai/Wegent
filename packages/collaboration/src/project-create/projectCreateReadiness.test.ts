@@ -92,13 +92,18 @@ function fixture(location: ProjectCreateLocation, initialTemplate = template) {
   return { props, project, create, configure };
 }
 
-it("waits for cloud template device discovery before capturing the authorization selection", async () => {
+it("creates a template without waiting for optional device discovery", async () => {
   const { props, project, create, configure } = fixture("cloud");
   await render(props);
-  expect(controller.state.canSubmit).toBe(false);
+  expect(controller.state.canSubmit).toBe(true);
   await act(async () => controller.commands.submit());
-  expect(create).not.toHaveBeenCalled();
-  expect(configure).not.toHaveBeenCalled();
+  expect(create).toHaveBeenCalledOnce();
+  expect(configure).toHaveBeenCalledWith(
+    project,
+    expect.objectContaining({ executionEnvironmentDeviceIds: [] }),
+  );
+  create.mockClear();
+  configure.mockClear();
   await render({
     ...props,
     resourceSetup: {

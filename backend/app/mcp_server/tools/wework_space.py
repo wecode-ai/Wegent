@@ -44,6 +44,7 @@ from app.schemas.delivery import (
     LoopItemUpdate,
 )
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention
+from app.services.board_tools import candidates
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
@@ -62,9 +63,6 @@ from app.services.project_chat.issue_comments import (
     add_issue_comment,
     list_issue_comments,
 )
-from app.services.project_chat.service import project_chat_service
-from app.services.workspaces import workspace_service
-from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
@@ -304,6 +302,7 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
         return {
             **context,
             "space": _project_view(project),
+            "space_ref": {"project_store": "backend", "space_id": str(project.id)},
             "item": _read_item(db, project, context["item_id"], token_info.user_id),
         }
 
@@ -334,20 +333,6 @@ def update_issue_status(
             comment=comment,
         )
         return _item_view(db, decision.item, token_info.user_id)
-
-
-@mcp_tool(server="wework_space")
-def list_spaces(token_info: MCPAuthInfo) -> list[dict[str, Any]]:
-    """List Backend project spaces available to the authenticated user or Task."""
-
-    with SessionLocal() as db:
-        context = _board_context(db, token_info)
-        projects = cloud_project_service.list_accessible(db, token_info.user_id)
-        if context:
-            projects = [
-                value for value in projects if str(value.id) == context["space_id"]
-            ]
-        return [_project_view(project) for project in projects]
 
 
 @mcp_tool(server="wework_space")
@@ -393,64 +378,23 @@ def update_space(
         return _project_view(updated)
 
 
-@mcp_tool(server="wework_space")
+@mcp_tool(
+    server="wework_space",
+    description=(
+        "List project Issues (事项), distinct from personal tasks and conversations. "
+        "Use the current project's space_id for unqualified Issue requests. "
+        "Identify the project and Issue ID in results; for an empty result, "
+        "state that the queried project has no matching Issues."
+    ),
+)
 def list_board_items(
     token_info: MCPAuthInfo, space_id: str = ""
 ) -> list[dict[str, Any]]:
-    """List board items in the current Backend project space."""
+    """List project Issues (事项), distinct from personal tasks and conversations."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         return _list_items(db, project, token_info.user_id)
-
-
-@mcp_tool(server="wework_space")
-def search_board_items(
-    token_info: MCPAuthInfo,
-    query: str = "",
-    space_id: str = "",
-    status: str = "",
-    priority: str = "",
-    tag: str = "",
-    creator_user_id: int = 0,
-    parent_id: str = "",
-    has_children: bool | None = None,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    """Search board items using text and structured filters."""
-
-    with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        items = _list_items(db, project, token_info.user_id)
-        parent_ids = {str(item.get("parent_id") or "") for item in items}
-        needle = query.casefold().strip()
-
-        def matches(item: dict[str, Any]) -> bool:
-            text = " ".join(
-                [
-                    str(item.get("id") or ""),
-                    str(item.get("title") or ""),
-                    str(item.get("description") or ""),
-                    " ".join(item.get("tags") or []),
-                ]
-            ).casefold()
-            return (
-                (not needle or needle in text)
-                and (not status or item.get("status") == status)
-                and (not priority or item.get("priority") == priority)
-                and (not tag or tag in (item.get("tags") or []))
-                and (
-                    not creator_user_id
-                    or item.get("created_by_user_id") == creator_user_id
-                )
-                and (not parent_id or item.get("parent_id") == parent_id)
-                and (
-                    has_children is None
-                    or ((str(item.get("id")) in parent_ids) == has_children)
-                )
-            )
-
-        return [item for item in items if matches(item)][: max(1, min(limit, 200))]
 
 
 @mcp_tool(server="wework_space")
@@ -522,45 +466,7 @@ def get_assignment_candidates(
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        members = cloud_project_service.list_members(db, project.id, token_info.user_id)
-        robots = project_chat_service.list_agents(
-            db, user_id=token_info.user_id, project_id=str(project.id)
-        )
-        teams = (
-            workspace_service.list_project_collaboration_groups(
-                db, project.id, token_info.user_id
-            )
-            if workspace_id_for_project(db, project.id) is not None
-            else []
-        )
-        return {
-            "members": [
-                {
-                    "id": value["user_id"],
-                    "name": value["user_name"],
-                    "role": value["role"],
-                    "capability": value.get("capability_description") or "",
-                }
-                for value in members
-            ],
-            "robots": [
-                {
-                    "id": robot.id,
-                    "name": robot.name or "AI",
-                    "runtime": robot.runtime,
-                    "capability": robot.capability_description or "",
-                }
-                for robot in robots
-            ],
-            "groups": [
-                {
-                    "id": team["id"],
-                    "name": team["name"],
-                    "capability": team.get("description") or "",
-                }
-                for team in teams
-            ],
-        }
+        return candidates.read(db, project, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")
@@ -756,6 +662,18 @@ def read_space_file(
         )
 
 
+def _item_attachments(
+    db: Session, project: CloudProject, item_id: str, user_id: int
+) -> list[dict[str, Any]]:
+    """Read attachment metadata using the authorized caller's Session."""
+    _read_item(db, project, item_id, user_id)
+    values = loop_item_attachment_provider_router.list(db, item_id, user_id)
+    return [
+        LoopItemAttachmentResponse.model_validate(value).model_dump(mode="json")
+        for value in values
+    ]
+
+
 @mcp_tool(server="wework_space")
 def list_item_attachments(
     token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
@@ -765,14 +683,7 @@ def list_item_attachments(
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        _read_item(db, project, resolved_item_id, token_info.user_id)
-        values = loop_item_attachment_provider_router.list(
-            db, resolved_item_id, token_info.user_id
-        )
-        return [
-            LoopItemAttachmentResponse.model_validate(value).model_dump(mode="json")
-            for value in values
-        ]
+        return _item_attachments(db, project, resolved_item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")
@@ -918,6 +829,18 @@ def upload_delivery_asset(
         return DeliveryAssetResponse.model_validate(asset).model_dump(mode="json")
 
 
+def _item_deliveries(
+    db: Session, project: CloudProject, item_id: str, user_id: int
+) -> list[dict[str, Any]]:
+    """Read delivery summaries using the authorized caller's Session."""
+    _read_item(db, project, item_id, user_id)
+    external_loop_item_provider.ensure_shadow(db, item_id, user_id)
+    return [
+        _delivery_view(db, delivery)
+        for delivery in delivery_service.list_deliveries(db, item_id, user_id)
+    ]
+
+
 @mcp_tool(server="wework_space")
 def list_deliveries(
     token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
@@ -927,16 +850,7 @@ def list_deliveries(
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        _read_item(db, project, resolved_item_id, token_info.user_id)
-        external_loop_item_provider.ensure_shadow(
-            db, resolved_item_id, token_info.user_id
-        )
-        return [
-            _delivery_view(db, delivery)
-            for delivery in delivery_service.list_deliveries(
-                db, resolved_item_id, token_info.user_id
-            )
-        ]
+        return _item_deliveries(db, project, resolved_item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")

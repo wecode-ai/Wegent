@@ -54,7 +54,11 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
+OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "message"`、`role: "developer"` 形式的 Codex 子代理消息。出站条目只发送标准消息字段，发送者和接收者保留在 Codex 的消息正文中。
+
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
+
+官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和助理共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
 
 例如，Kimi Responses 可配置为：
 
@@ -83,13 +87,26 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 #### 通用 Responses 工具兼容
 
-本机模型接口、云端模型、分身和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
+所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
+
+`model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。Responses 工具响应在收到真实工具结果前保持 HTTP 流开启，验证完整 CR 终止帧无需等待 EOF 就能触发工具执行。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
+本机模型接口、云端模型、助理和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
 
 `tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
 
 namespace 内的内置工具类型会返回请求校验错误，避免错误定义导致代理崩溃；省略类型的既有 function 定义仍按原有规则转换。
 
 `responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
+#### 旧 DeepSeek 配置
+
+旧配置已保存 `tool_profile: "custom"` 时，仅更改默认值不能修复 `exec` 被拒绝的问题。
+直接调用 `api.deepseek.com` Responses 且模式为 `auto` 时，仍遵循其实际工具能力：
+保留原生 `apply_patch`，将其他 custom 工具、namespace 和客户端工具搜索转换为可逆
+function 协议。没有旧 profile 的配置使用上述通用 function 默认策略。
+规则按实际端点匹配，不猜测模型名称，也不失败后重试。显式 `standard` 和 `passthrough`
+模式仍各自优先；其他网关使用通用策略。
 
 #### Kimi K3 Chat Completions 兼容
 
@@ -124,7 +141,7 @@ WebSocket 重试，暂时无法由界面识别。
 
 ### Codex 直连模型过载恢复
 
-使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+用户配置的原生 Codex provider 在未选择 Wework 兼容路由时仍可直连模型，请求不经过 compat proxy。Codex
 app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
 `turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
 最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。
@@ -145,7 +162,13 @@ executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历�
 毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
 executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
 
+### Codex 外部上下文转换
+
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+
 ### Anthropic 空输出恢复
+
+对所有 Anthropic Messages 上游，executor 先把 Codex 子代理的 `agent_message` 规范为带 `developer` 角色的消息，再由 Anthropic 适配器将内容写入上游请求的 `system` 字段。`model-sse-parsing` 检查点使用真实 Codex 父子代理和模拟上游，验证子代理任务及完成结果都通过该字段送达。
 
 部分 Anthropic Messages 兼容服务可能在 `message_delta` 中返回结束原因和大于零的 `output_tokens`，却没有发送任何文本、思考内容或工具调用。executor 的 Codex compat proxy 会把这种不完整响应转换为失败事件，而不是错误地发出成功完成事件。Codex 随后按流错误恢复机制重试当前模型请求，避免 Wework 在没有 assistant 回复时提前结束任务。
 

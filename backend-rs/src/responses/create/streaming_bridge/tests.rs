@@ -8,10 +8,9 @@ use super::events::message_id;
 use super::*;
 
 /// The HTTP+Callback consumer must not repeat the producer's side effects.
-/// Source sequence (`openapi_responses.py:1372-1379`, `session.py:267-291`,
-/// `:324-344`, `:460-479`): one `DEL chat:cancel` in `register_stream`,
-/// one `GET chat:cancel` per delivered event, then `close()` and one
-/// `DEL chat:cancel` plus `DEL chat:streaming` on cleanup. The
+/// Registration guards committed cancel intents atomically. Each delivered
+/// event still reads cancellation once; cleanup closes the intent and flag
+/// before deleting streaming content. The
 /// `/internal/callback` producer owns every streaming-state write and the
 /// terminal completion, so this mode never persists or completes.
 #[test]
@@ -29,10 +28,10 @@ fn the_callback_consumer_keeps_the_source_side_effect_sequence() {
         .expect("callback open arm");
     assert_eq!(
         callback_arm
-            .matches("redis.del(self.cancel_key.as_str())")
+            .matches("register_stream(self.redis.as_ref(), self.subtask_id).await")
             .count(),
         1,
-        "register_stream clears the cancellation flag exactly once"
+        "register_stream performs exactly one intent-guarded registration"
     );
     assert!(
         !callback_arm.contains("is_cancelled"),
@@ -47,10 +46,10 @@ fn the_callback_consumer_keeps_the_source_side_effect_sequence() {
     let cleanup = &source[cleanup_start..cleanup_end];
     assert_eq!(
         cleanup
-            .matches("redis.del(self.cancel_key.as_str())")
+            .matches("unregister_stream(Some(redis), self.subtask_id).await")
             .count(),
         1,
-        "raw_chat_stream's finally runs one unregister_stream DEL: the dispatch \
+        "raw_chat_stream's finally runs one atomic unregister: the dispatch \
          task's own unregister is the separate dispatch_exit_unregister stage"
     );
     assert!(
@@ -84,9 +83,11 @@ fn the_callback_consumer_keeps_the_source_side_effect_sequence() {
         "the producer owns a callback stream's registration"
     );
     assert_eq!(
-        inner.matches("redis.del(self.cancel_key.as_str())").count(),
+        inner
+            .matches("unregister_stream(self.redis.as_ref(), self.subtask_id).await")
+            .count(),
         1,
-        "the dispatch exit emits exactly one unregister DEL"
+        "the dispatch exit emits exactly one atomic unregister"
     );
 
     // No periodic cancel read: the source checks once per delivered event.

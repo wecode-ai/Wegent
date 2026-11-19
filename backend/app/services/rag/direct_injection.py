@@ -442,6 +442,7 @@ async def get_original_documents_from_knowledge_base(
             offset=0,
             limit=10_000_000,
             knowledge_base_ids=knowledge_base_ids,
+            entrypoint="direct_injection",
         )
         records = build_document_records(results, knowledge_base_ids)
         logger.info(
@@ -495,6 +496,7 @@ async def get_original_documents_from_knowledge_base(
             offset=0,
             limit=10_000_000,
             knowledge_base_ids=[kb_id],
+            entrypoint="direct_injection",
         )
         records.extend(build_document_records(results, [kb_id]))
 

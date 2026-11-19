@@ -67,7 +67,7 @@ fn the_bot_model_config_is_resolved_before_the_knowledge_acl() {
         .find("let mut skills = get_bot_skills(")
         .expect("skills resolution");
     let bot_config = source
-        .find("let built_agent_config = build_agent_config(")
+        .find("let built_agent_config =")
         .expect("bot config entry");
     let knowledge = source
         .find("let knowledge = resolve_knowledge(")
@@ -113,4 +113,55 @@ fn wegent_identity_headers_are_stripped_and_encoded() {
         .decode(&encoded[4..])
         .unwrap();
     assert_eq!(String::from_utf8(decoded).unwrap(), "示例智能体");
+}
+
+#[test]
+fn the_web_runtime_guidance_matches_the_source_block() {
+    let guidance = web_runtime_guidance_text(
+        "Chat",
+        None,
+        false,
+        None,
+        None,
+        None,
+        "<base_prompt>\nprompt\n</base_prompt>",
+    );
+    assert!(
+        guidance
+            .starts_with("<base_prompt>\nprompt\n</base_prompt>\n\n<wegent_runtime_guidance>\n")
+    );
+    assert!(guidance.contains("This request was started from the Wegent web UI."));
+    assert!(guidance.contains("- You are running in: Wegent web chat runtime."));
+    assert!(guidance.contains("User-facing file access:"));
+    assert!(guidance.contains("Interaction rules:"));
+    assert!(guidance.ends_with("</wegent_runtime_guidance>"));
+    // A prompt that already carries the marker stays untouched.
+    assert_eq!(
+        web_runtime_guidance_text("Chat", None, false, None, None, None, &guidance),
+        guidance
+    );
+}
+
+#[test]
+fn the_web_runtime_environment_prefers_device_then_workspace_then_shell() {
+    assert_eq!(
+        super::web_runtime_environment("Chat", Some("app"), true, None),
+        "local device selected in Wegent"
+    );
+    assert_eq!(
+        super::web_runtime_environment("Chat", Some("cloud"), true, None),
+        "cloud device or remote sandbox selected in Wegent"
+    );
+    assert_eq!(
+        super::web_runtime_environment("Chat", None, true, None),
+        "selected Wegent device"
+    );
+    assert_eq!(
+        super::web_runtime_environment("ClaudeCode", None, false, Some("cloud")),
+        "Wegent-managed cloud sandbox"
+    );
+    assert_eq!(
+        super::web_runtime_environment("Chat", None, false, None),
+        "Wegent web chat runtime"
+    );
 }

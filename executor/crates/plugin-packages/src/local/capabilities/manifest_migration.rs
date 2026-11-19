@@ -7,6 +7,8 @@ use super::*;
 
 const WORKBENCH_MANIFEST: &str = "manifest-v2.json";
 const WORKBENCH_VERSION: i64 = 2;
+const LEGACY_MANIFEST: &str = "manifest.json";
+const EMPTY_MANIFEST_BACKUP_PREFIX: &str = "manifest.json.empty-";
 
 fn is_workbench_manifest(path: &Path) -> bool {
     path.file_name()
@@ -65,7 +67,7 @@ pub(super) fn validate_current(path: &Path, value: &Value) -> Result<(), Capabil
     Ok(())
 }
 
-/// Import once without changing the legacy file or following an alias to it.
+/// Import once, preserving valid legacy files and setting empty ones aside.
 pub(super) fn initialize(path: &Path) -> Result<(), CapabilitySyncError> {
     if !is_workbench_manifest(path) {
         return Ok(());
@@ -85,13 +87,17 @@ pub(super) fn initialize(path: &Path) -> Result<(), CapabilitySyncError> {
     if regular_destination(path)? {
         return validate_current(path, &serde_json::from_slice(&fs::read(path)?)?);
     }
-    let legacy = parent.join("manifest.json");
+    let legacy = parent.join(LEGACY_MANIFEST);
     if legacy.is_symlink() {
         return Err(CapabilitySyncError::invalid_payload(
             "Legacy manifest must not be a file symlink; preserve it as an independent file before import",
         ));
     }
     let mut value = match fs::read(&legacy) {
+        Ok(bytes) if bytes.is_empty() => {
+            backup_empty_legacy_manifest(parent, &legacy)?;
+            default_manifest()
+        }
         Ok(bytes) => serde_json::from_slice(&bytes)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => default_manifest(),
         Err(error) => return Err(error.into()),
@@ -108,6 +114,28 @@ pub(super) fn initialize(path: &Path) -> Result<(), CapabilitySyncError> {
         .map_err(|error| error.error)?;
     #[cfg(unix)]
     fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn backup_empty_legacy_manifest(parent: &Path, legacy: &Path) -> Result<(), CapabilitySyncError> {
+    let directory = tempfile::Builder::new()
+        .prefix(EMPTY_MANIFEST_BACKUP_PREFIX)
+        .tempdir_in(parent)?;
+    let backup = directory.path().join(LEGACY_MANIFEST);
+    fs::rename(legacy, &backup)?;
+    let directory = directory.keep();
+    #[cfg(unix)]
+    {
+        fs::File::open(&directory)?.sync_all()?;
+        fs::File::open(parent)?.sync_all()?;
+    }
+    crate::logging::log_executor_event(
+        "empty legacy capability manifest backed up",
+        &[(
+            "backup",
+            directory.join(LEGACY_MANIFEST).display().to_string(),
+        )],
+    );
     Ok(())
 }
 

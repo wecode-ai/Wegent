@@ -31,10 +31,11 @@ use brz_redis::Redis as _;
 use brz_socket_io::ClientError;
 use serde_json::{Map, Value, json};
 
+use super::mcp_app_ownership::{self, AppInstance, Ownership};
 use crate::device_commands::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
-    MAX_OUTPUT_BYTES, build_local_device_command_argv, python_str, python_truthy,
-    resolve_local_device_command,
+    MAX_OUTPUT_BYTES, add_executor_command_key, build_local_device_command_argv, python_str,
+    python_truthy, resolve_local_device_command,
 };
 use crate::http_compat::FastApiError;
 use crate::runtime_transcript_search::request::SearchRequest;
@@ -84,9 +85,10 @@ enum CommandFailure {
 }
 
 /// `WeworkRuntimeNamespace.on_runtime_request`.
-pub(crate) async fn handle(
+pub(super) async fn handle(
     app: &AppState,
     identity: &Identity,
+    ownership: &Ownership,
     data: Value,
 ) -> Result<Value, ClientError> {
     let user_id = identity.user_id;
@@ -173,7 +175,17 @@ pub(crate) async fn handle(
             Err(CommandFailure::Internal) => return Err(internal_error()),
         }
     } else {
-        match runtime_rpc::call(
+        let operation = params["method"]
+            .as_str()
+            .filter(|method| matches!(*method, "retain" | "release"));
+        let owned_app = if method == mcp_app_ownership::METHOD {
+            operation
+                .zip(AppInstance::parse(&device_id, &params))
+                .map(|(op, instance)| (op == "retain", instance))
+        } else {
+            None
+        };
+        let result = runtime_rpc::call(
             app,
             rpc_user_id,
             &device_id,
@@ -182,8 +194,23 @@ pub(crate) async fn handle(
             timeout_seconds,
             project_transcript,
         )
-        .await
-        {
+        .await;
+        if let Some((retain, instance)) = owned_app {
+            let succeeded = result.as_ref().is_ok_and(|value| value["success"] != false);
+            if retain {
+                let cleanup = if succeeded {
+                    ownership.retain(instance)
+                } else {
+                    Some(instance)
+                };
+                if let Some(instance) = cleanup {
+                    instance.release(app, rpc_user_id).await;
+                }
+            } else if succeeded {
+                ownership.forget(&instance);
+            }
+        }
+        match result {
             Ok(result) => result,
             Err(CallFailure::Rpc(error)) => return Ok(ipc_rpc_error(&request_id, &error)),
             Err(CallFailure::Internal) => return Err(internal_error()),
@@ -506,6 +533,35 @@ fn project_session_denied(error: FastApiError) -> CallFailure {
     })
 }
 
+/// Sync the saved auth file through the same owner-scoped device command path.
+pub(super) async fn sync_runtime_auth_file(
+    app: &AppState,
+    user_id: i64,
+    device_id: &str,
+    runtime: &str,
+    content: &str,
+) -> bool {
+    let params = Map::from_iter([
+        ("command_key".to_string(), json!("sync_runtime_auth_file")),
+        (
+            "env".to_string(),
+            json!({
+                "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
+                "WEGENT_RUNTIME_CONFIG_CONTENT": content,
+            }),
+        ),
+    ]);
+    execute_device_command(
+        app,
+        user_id,
+        device_id,
+        &params,
+        DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    )
+    .await
+    .is_ok_and(|ack| ack["success"] == true)
+}
+
 /// `relay_ipc_request`'s `device.execute_command` branch through
 /// `LocalDeviceCommandService.execute_command`.
 #[allow(clippy::result_large_err)]
@@ -582,59 +638,24 @@ async fn execute_device_command(
         )));
     };
 
-    let args = params
-        .get("args")
-        .filter(|value| value.is_array())
-        .cloned()
-        .unwrap_or_else(|| json!([]));
-    let env = params
-        .get("env")
-        .filter(|value| value.is_object())
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let argv_args: Vec<String> = args
-        .as_array()
-        .map(|items| items.iter().map(python_str).collect())
-        .unwrap_or_default();
-    let argv =
-        build_local_device_command_argv(&definition.command, &argv_args).map_err(|error| {
-            tracing::error!(%error, user_id, "device command argv construction failed");
-            CommandFailure::Internal
-        })?;
-
-    let path = params.get("path").and_then(Value::as_str);
-    let cwd = params.get("cwd").and_then(Value::as_str);
-    let cwd = match path {
-        Some(path) if !path.is_empty() => Some(path),
-        _ => cwd,
-    };
-    let mut payload = Map::new();
-    payload.insert(
-        "command".to_string(),
-        Value::String(definition.command.to_string()),
-    );
-    payload.insert(
-        "cwd".to_string(),
-        cwd.map_or(Value::Null, |cwd| Value::String(cwd.to_string())),
-    );
-    payload.insert("args".to_string(), args);
-    payload.insert(
-        "argv".to_string(),
-        Value::Array(argv.into_iter().map(Value::String).collect()),
-    );
-    payload.insert("env".to_string(), env);
-    payload.insert("timeout_seconds".to_string(), Value::from(timeout_seconds));
-    payload.insert(
-        "max_output_bytes".to_string(),
-        Value::from(max_output_bytes),
-    );
+    let payload = command_payload(
+        &command_key,
+        &definition,
+        params,
+        timeout_seconds,
+        max_output_bytes,
+    )
+    .map_err(|error| {
+        tracing::error!(%error, user_id, "device command argv construction failed");
+        CommandFailure::Internal
+    })?;
 
     let result = call_device_command(
         app,
         user_id,
         &route.runtime_device_id,
         &socket_id,
-        Value::Object(payload),
+        payload,
         timeout_seconds,
     )
     .await?;
@@ -644,6 +665,49 @@ async fn execute_device_command(
         ));
     }
     Ok(result)
+}
+
+fn command_payload(
+    command_key: &str,
+    definition: &crate::device_commands::CommandDefinition,
+    params: &Map<String, Value>,
+    timeout_seconds: i64,
+    max_output_bytes: i64,
+) -> Result<Value, crate::device_commands::CommandRegistryError> {
+    let args = params
+        .get("args")
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let argv_args = args
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(python_str)
+        .collect::<Vec<_>>();
+    let argv = build_local_device_command_argv(&definition.command, &argv_args)?;
+    let cwd = params
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .or_else(|| params.get("cwd").and_then(Value::as_str));
+    let mut payload = json!({
+        "command": definition.command,
+        "cwd": cwd,
+        "args": args,
+        "argv": argv,
+        "env": params.get("env").filter(|value| value.is_object()).cloned().unwrap_or_else(|| json!({})),
+        "timeout_seconds": timeout_seconds,
+        "max_output_bytes": max_output_bytes,
+    });
+    add_executor_command_key(
+        payload
+            .as_object_mut()
+            .expect("command payload is an object"),
+        command_key,
+        definition.native_git,
+    );
+    Ok(payload)
 }
 
 /// The `device:execute_command` `sio.call` round trip.
@@ -857,6 +921,47 @@ mod tests {
             error.message,
             "Runtime RPC 'runtime.tasks.list' returned an invalid failure response"
         );
+    }
+
+    #[test]
+    fn command_payload_preserves_the_resolved_command_key_for_executor_gates() {
+        let payload = command_payload(
+            "git_clone", &crate::device_commands::CommandDefinition {
+                command: "git clone".into(), post_processor: None, native_git: true,
+            }, &object(json!({
+                "args":["--branch","invalid..branch","--single-branch","https://example.test/repo.git","/target"],
+                "path":"/parent", "cwd":"/ignored", "env":{"GIT_TERMINAL_PROMPT":"0"},
+            })), 300, 512,
+        ).unwrap();
+        assert_eq!(payload["command_key"], "git_clone");
+        assert_eq!(
+            payload["argv"],
+            json!([
+                "git",
+                "clone",
+                "--branch",
+                "invalid..branch",
+                "--single-branch",
+                "https://example.test/repo.git",
+                "/target"
+            ])
+        );
+        assert_eq!(payload["cwd"], "/parent");
+        assert_eq!(payload["env"]["GIT_TERMINAL_PROMPT"], "0");
+        assert_eq!(payload["timeout_seconds"], 300);
+        assert_eq!(payload["max_output_bytes"], 512);
+    }
+
+    #[test]
+    fn overridden_commands_do_not_enter_native_git_execution() {
+        let definition = crate::device_commands::CommandDefinition {
+            command: "echo overridden".into(),
+            post_processor: None,
+            native_git: false,
+        };
+        let payload = command_payload("git_clone", &definition, &Map::new(), 60, 512).unwrap();
+        assert!(payload.get("command_key").is_none());
+        assert_eq!(payload["argv"], json!(["echo", "overridden"]));
     }
 
     #[test]

@@ -10,6 +10,7 @@ use brz_redis::{
 };
 
 use super::*;
+use crate::socketio::runtime::SocketRuntimeWorkers;
 
 /// One canned `GET` outcome for the disconnect gate.
 #[derive(Clone, Copy)]
@@ -415,4 +416,93 @@ fn registration_fingerprints_trim_the_source_fields() {
     assert_eq!(fingerprint.bind_shell, "openclaw");
     assert_eq!(fingerprint.runtime_transfer_port, Some(17888));
     assert_eq!(fingerprint.runtime_instance_id, "");
+}
+
+/// `_register_device_session` returns the canonical record-scoped route so the
+/// Runtime can address the exact installation; recording `20261105033227`
+/// includes `device_route_id` in every successful registration ACK.
+#[test]
+fn the_registration_ack_carries_the_canonical_route_id() {
+    let ack = serde_json::to_value(RegisterAck {
+        success: true,
+        device_id: "reported-device",
+        device_route_id: "canonical-route",
+    })
+    .expect("the acknowledgement serializes");
+    assert_eq!(
+        ack,
+        serde_json::json!({
+            "success": true,
+            "device_id": "reported-device",
+            "device_route_id": "canonical-route",
+        })
+    );
+}
+
+/// `_schedule_background_task` after registration: one capability sync and one
+/// execution reconciliation, each queued exactly once.
+///
+/// Source schedules both before the handler returns its ACK
+/// (`device_namespace.py:1815-1826`), so a reply that never applies (socket
+/// closed) cannot suppress them. `after_reply` would only run for a completed
+/// reply (`brz-socket-io business.rs:352-385`).
+#[tokio::test]
+async fn the_registration_follow_ups_are_queued_once_on_the_handler_path() {
+    let (runtime, workers) = SocketRuntime::new();
+    let SocketRuntimeWorkers {
+        jobs: mut register_jobs,
+        mut reconcile_jobs,
+        ..
+    } = workers;
+
+    enqueue_registration_follow_ups(&runtime, 42, "app-record-7");
+
+    let sync = register_jobs
+        .try_recv()
+        .expect("the capability sync is queued");
+    assert!(matches!(
+        sync,
+        DeviceJob::RegisterSync { user_id: 42, ref device_id } if device_id == "app-record-7"
+    ));
+    let reconcile = reconcile_jobs
+        .try_recv()
+        .expect("the execution reconciliation is queued");
+    assert_eq!(reconcile.user_id, 42);
+    assert_eq!(reconcile.device_id, "app-record-7");
+    assert!(!reconcile.needs_confirmation_only);
+    assert!(
+        register_jobs.try_recv().is_err(),
+        "the registration sync is queued exactly once"
+    );
+    assert!(
+        reconcile_jobs.try_recv().is_err(),
+        "the reconciliation is queued exactly once"
+    );
+}
+
+/// The scheduling lives on the handler's guaranteed path, not in
+/// `after_reply`, so a closed session cannot drop it.
+#[test]
+fn registration_schedules_the_follow_ups_before_returning_the_reply() {
+    let source = include_str!("device_lifecycle.rs");
+    let production = source.split("#[cfg(test)]").next().expect("production");
+    let register = production
+        .split("async fn register_session(")
+        .nth(1)
+        .and_then(|tail| tail.split("\n/// ").next())
+        .expect("the registration handler");
+    assert!(
+        register.contains("enqueue_registration_follow_ups(runtime, user_id, &route_id)"),
+        "the follow-ups are scheduled on the handler path"
+    );
+    assert!(
+        !register.contains(".after_reply("),
+        "a closed-session reply must not be able to drop the follow-ups"
+    );
+    let helper = production
+        .split("fn enqueue_registration_follow_ups(")
+        .nth(1)
+        .expect("the follow-up helper");
+    assert!(helper.contains("DeviceJob::RegisterSync"));
+    assert!(helper.contains("enqueue_reconcile"));
 }

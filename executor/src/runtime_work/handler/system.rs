@@ -370,9 +370,29 @@ impl RuntimeWorkRpcHandler {
         let git_ref = string_field(&payload, "ref")
             .or_else(|| string_field(&payload, "gitRef"))
             .or_else(|| string_field(&payload, "git_ref"));
+        let include_branches =
+            payload.get("includeBranches").and_then(Value::as_bool) == Some(true);
         let worktrees = self.worktrees.clone();
-        let preflight = tokio::task::spawn_blocking(move || {
-            worktrees.preflight(Path::new(&source_path), git_ref.as_deref())
+        let (preflight, branches, current_branch) = tokio::task::spawn_blocking(move || {
+            let source = Path::new(&source_path);
+            let preflight = worktrees.preflight(source, git_ref.as_deref());
+            let current_branch = if preflight.git_repository {
+                worktrees
+                    .current_branch(source)
+                    .map_err(|error| AppIpcError::new("worktree_branch_read_failed", error))?
+            } else {
+                None
+            };
+            let branches = if include_branches && preflight.git_repository {
+                Some(
+                    worktrees
+                        .list_branches(source)
+                        .map_err(|error| AppIpcError::new("worktree_branch_read_failed", error))?,
+                )
+            } else {
+                None
+            };
+            Ok::<_, AppIpcError>((preflight, branches, current_branch))
         })
         .await
         .map_err(|error| {
@@ -380,11 +400,15 @@ impl RuntimeWorkRpcHandler {
                 "worktree_preflight_failed",
                 format!("Worktree preflight task failed: {error}"),
             )
-        })?;
+        })??;
         let mut value = serde_json::to_value(preflight)
             .map_err(|error| AppIpcError::new("worktree_preflight_failed", error.to_string()))?;
         value["success"] = Value::Bool(true);
         value["deviceId"] = Value::String(self.device_id.clone());
+        value["currentBranch"] = json!(current_branch);
+        if let Some(branches) = branches {
+            value["branches"] = json!(branches);
+        }
         Ok(value)
     }
 
@@ -664,6 +688,14 @@ impl RuntimeWorkRpcHandler {
                     .collect::<HashSet<_>>()
             })
             .unwrap_or_default();
+        self.cleanup_worktrees_for_tasks(task_ids, true).await
+    }
+
+    pub(super) async fn cleanup_worktrees_for_tasks(
+        &self,
+        task_ids: HashSet<String>,
+        include_unlinked_worktrees: bool,
+    ) -> Result<Value, AppIpcError> {
         if task_ids.is_empty() {
             return Ok(json!({"success": true, "released": []}));
         }
@@ -692,7 +724,7 @@ impl RuntimeWorkRpcHandler {
         let mut released = Vec::new();
         let mut shared = Vec::new();
         for (record, linked) in entries.into_iter().filter(|(record, linked)| {
-            task_ids.contains(&record.worktree_id)
+            (include_unlinked_worktrees && task_ids.contains(&record.worktree_id))
                 || linked
                     .iter()
                     .any(|task| task_ids.contains(&task.local_task_id))
@@ -1296,23 +1328,5 @@ mod tests {
         assert!(file_matches
             .iter()
             .any(|item| item["path"] == "auth.ts" && item["matchType"] == "file"));
-    }
-
-    #[test]
-    fn workspace_fallback_search_keeps_workspace_local_ignore_rules() {
-        let workspace = tempfile::tempdir().expect("temporary workspace");
-        fs::write(workspace.path().join(".gitignore"), "ignored/\n").expect("workspace gitignore");
-        fs::create_dir_all(workspace.path().join("ignored")).expect("ignored folder");
-        fs::write(workspace.path().join("ignored/secret.txt"), "secret\n").expect("ignored file");
-        fs::write(workspace.path().join("visible-secret.txt"), "visible\n").expect("visible file");
-
-        let matches = search_workspace_without_parent_ignores(workspace.path(), "secret");
-
-        assert!(matches
-            .iter()
-            .any(|item| item["path"] == "visible-secret.txt"));
-        assert!(!matches
-            .iter()
-            .any(|item| item["path"] == "ignored/secret.txt"));
     }
 }

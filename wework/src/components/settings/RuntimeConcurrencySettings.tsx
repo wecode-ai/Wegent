@@ -1,4 +1,5 @@
-import { useContext, useEffect, useState } from 'react'
+import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeSettings } from '@/types/api'
@@ -32,43 +33,43 @@ export function RuntimeConcurrencySettings() {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const runtimeWorkApi = workbench?.services?.runtimeWorkApi
-  const [runtimeSettings, setRuntimeSettings] = useState(DEFAULT_RUNTIME_SETTINGS)
-  const [loadedScope, setLoadedScope] = useState<{
-    api: typeof runtimeWorkApi
-    revision: number
-  } | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [loadFailed, setLoadFailed] = useState(false)
-  const [reload, setReload] = useState(0)
-
-  const loading = loadedScope?.api !== runtimeWorkApi || loadedScope?.revision !== reload
-
-  useEffect(() => {
-    let cancelled = false
-    Promise.resolve()
-      .then(() => runtimeWorkApi?.getRuntimeSettings())
-      .then(settings => {
-        if (!cancelled) {
-          if (settings) setRuntimeSettings(settings)
-          setLoadFailed(false)
-          setError(null)
+  const resource = useMemo(
+    () =>
+      createAsyncResource<RuntimeSettings>(
+        'runtime-concurrency',
+        async () => (await runtimeWorkApi?.getRuntimeSettings()) ?? DEFAULT_RUNTIME_SETTINGS,
+        {
+          initialData: DEFAULT_RUNTIME_SETTINGS,
+          refreshOnSubscribe: true,
+          failure: error =>
+            console.error('[Wework] Failed to load runtime concurrency settings', error),
         }
-      })
-      .catch(loadError => {
-        console.error('[Wework] Failed to load runtime concurrency settings', loadError)
-        if (!cancelled) {
-          setLoadFailed(true)
-          setError(t('workbench.general_settings_load_failed'))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadedScope({ api: runtimeWorkApi, revision: reload })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [runtimeWorkApi, reload, t])
+      ),
+    [runtimeWorkApi]
+  )
+  const query = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const [form, setForm] = useState({ resource, saving: false, error: null as string | null })
+  if (form.resource !== resource) setForm({ resource, saving: false, error: null })
+  const setSaving = (saving: boolean) =>
+    setForm(current => (current.resource === resource ? { ...current, saving } : current))
+  const setError = (error: string | null) =>
+    setForm(current => (current.resource === resource ? { ...current, error } : current))
+  const runtimeSettings = query.data ?? DEFAULT_RUNTIME_SETTINGS
+  const setRuntimeSettings = (
+    change: RuntimeSettings | ((previous: RuntimeSettings) => RuntimeSettings)
+  ) => {
+    resource.update(previous =>
+      typeof change === 'function' ? change(previous ?? DEFAULT_RUNTIME_SETTINGS) : change
+    )
+  }
+  const loading = query.status === 'idle' || query.status === 'loading'
+  const loadFailed = query.status === 'error'
+  const saving = form.saving
+  const error = form.error ?? (loadFailed ? t('workbench.general_settings_load_failed') : null)
 
   const saveConcurrency = async (key: keyof RuntimeSettings, value: number) => {
     const previousValue = runtimeSettings
@@ -137,8 +138,7 @@ export function RuntimeConcurrencySettings() {
               data-testid="general-concurrency-retry-button"
               onClick={() => {
                 setError(null)
-                setLoadFailed(false)
-                setReload(value => value + 1)
+                void resource.reload()
               }}
               className="ml-2 min-h-6 underline max-md:min-h-11"
             >

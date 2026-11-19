@@ -23,6 +23,9 @@ use crate::logging::log_executor_event;
 mod tool_catalog;
 use tool_catalog::effective_tools;
 
+mod custom_tools;
+pub(crate) use custom_tools::CustomToolConversion;
+
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const TOOL_SEARCH_NAME: &str = "tool_search";
 pub(super) const BRIDGED_TOOL_SEARCH_NAME: &str = "search_deferred_tools";
@@ -266,21 +269,10 @@ impl<S> ChatStreamState<S> {
     }
 
     fn handle_block(&mut self, block: &str, strict: bool) {
-        let mut event_name = None;
-        let mut data_lines = Vec::new();
-        for raw_line in block.lines() {
-            let line = raw_line.trim_start_matches('\u{feff}').trim_start();
-            if let Some(value) = line.strip_prefix("event:") {
-                event_name = Some(value.trim());
-            } else if let Some(value) = line.strip_prefix("data:") {
-                data_lines.push(value.trim_start());
-            }
-        }
-        if data_lines.is_empty() {
+        let Some(event) = super::sse::Event::parse(block) else {
             return;
-        }
-        let data = data_lines.join("\n");
-        let data = data.trim();
+        };
+        let data = event.data.trim();
         if data == "[DONE]" {
             self.saw_done = true;
             self.finish();
@@ -297,7 +289,10 @@ impl<S> ChatStreamState<S> {
                 return;
             }
         };
-        if event_name.is_some_and(|value| value.eq_ignore_ascii_case("error")) {
+        if event
+            .name
+            .is_some_and(|value| value.eq_ignore_ascii_case("error"))
+        {
             let message = meaningful_error_message(chunk.get("error").unwrap_or(&chunk))
                 .unwrap_or_else(|| "upstream error event in SSE stream".to_owned());
             self.emit(self.failed_event(message));
@@ -774,6 +769,7 @@ use input_translation::append_input;
 use input_translation::append_tool_image_content;
 use input_translation::backfill_kimi_tool_call_reasoning;
 use input_translation::collapse_system_messages;
+pub(super) use input_translation::detached_context_message;
 use input_translation::flush_tool_image_content_to_responses;
 pub(super) use input_translation::friendly_apply_patch_output;
 use input_translation::json_string;
@@ -793,6 +789,4 @@ use tool_schema::bridged_tool_search_description;
 use tool_schema::bridged_tool_search_parameters;
 use tool_schema::build_tool_context;
 use tool_schema::chat_tools;
-#[cfg(test)]
-use tool_schema::is_kimi_k3_model;
 use tool_schema::request_uses_kimi_k3;

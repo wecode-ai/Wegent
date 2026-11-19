@@ -11,7 +11,9 @@ import {
 } from '../e2e/desktop/modules/model-tool-catalog.mjs'
 import {
   selectMcpTool,
+  selectMcpToolRequest,
   requestToolSearchResults,
+  selectToolSearch,
   toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
@@ -45,6 +47,27 @@ variants.push({
 const inputOf = event =>
   event.item.type === 'custom_tool_call' ? event.item.input : JSON.parse(event.item.arguments).input
 const finalCall = events => events.find(event => event.type === 'response.output_item.done')
+
+test.each(['function_call_output', 'custom_tool_call_output'])(
+  'reads the bound Issue success marker from %s without confusing another call',
+  type => {
+    const marker = 'REMOTE_AGENT_DISPATCH_BOARD_READ_OK'
+    const output = type === 'function_call_output' ? marker : [{ type: 'input_text', text: marker }]
+    expect(
+      toolOutputText(
+        {
+          input: [
+            { type, call_id: 'other-call', output: 'Bound Issue read failed' },
+            { type, call_id: 'bound-issue-read', output },
+          ],
+        },
+        'bound-issue-read'
+      )
+    ).toBe(marker)
+    expect(toolOutputText({ input: [] }, 'bound-issue-read')).toBeNull()
+  }
+)
+
 const metadata = {
   name: 'mcp__wework_space__get_current_context',
   description:
@@ -163,6 +186,67 @@ test('native discovery rejects empty and unbounded results', async () => {
   )
 })
 
+test('generic MCP rendering discovers its exact tool despite shared routing descriptions', async () => {
+  const target = {
+    name: 'github__issues__get_issue_details',
+    description: 'Get GitHub issue details. exec tool declaration: get_issue_details',
+  }
+  const catalog = [
+    target,
+    ...Array.from({ length: 35 }, (_, index) => ({
+      name: `wework_control__operation_${index}`,
+      description: 'Wework control routing: GitHub bindings, Issue scope and display details.',
+    })),
+  ]
+  const broadSearch = selectToolSearch(variants[0], 'github issue details')
+  await expect(run(broadSearch.codeMode.input, catalog, {})).rejects.toThrow(
+    'between one and eight'
+  )
+
+  const qualifiedSearch = selectToolSearch(
+    variants[0],
+    'github issue details',
+    'mcp__github__issues__get_issue_details'
+  )
+  expect(await run(qualifiedSearch.codeMode.input, catalog, {})).toEqual([{ tools: [target] }])
+})
+
+test.each(['mcp__wework_space__get_current_context', 'wework_space__get_current_context'])(
+  'qualified discovery selects the real identity %s despite description and suffix collisions',
+  async name => {
+    const target = { ...metadata, name }
+    const catalog = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        name: `mcp__wework_space__unrelated_${index}`,
+        description: metadata.description,
+      })),
+      { ...metadata, name: 'mcp__another_server__get_current_context' },
+      target,
+    ]
+    const selected = selectMcpToolRequest(variants[0], 'get_current_context', {}, metadata.name)
+    expect(selected.mode).toBe('search')
+    expect(await run(selected.codeMode.input, catalog, {})).toEqual([{ tools: [target] }])
+  }
+)
+
+test.each([
+  ['missing', [{ ...metadata, name: 'mcp__another_server__get_current_context' }]],
+  ['ambiguous', [metadata, { ...metadata, name: 'wework_space__get_current_context' }]],
+])(
+  'qualified discovery rejects a %s identity with actual catalog diagnostics',
+  async (_, catalog) => {
+    const selected = discoverySelection(
+      variants[0],
+      'wework_space get_current_context',
+      metadata.name
+    )
+    await expect(run(selected.codeMode.input, catalog, {})).rejects.toThrow('one exact capability')
+    await expect(run(selected.codeMode.input, catalog, {})).rejects.toThrow(
+      JSON.stringify(catalog.map(tool => tool.name))
+    )
+  }
+)
+
 test('late permission options reach the real selected native command', async () => {
   const selection = programmaticSelection(variants[0], 'exec_command', { cmd: 'printf approved' })
   selection.arguments.sandbox_permissions = 'require_escalated'
@@ -206,7 +290,34 @@ test('uses the latest native exec definition across incremental Lite catalog upd
   expect(discoverySelection({ ...request, tools: [top] }, 'get_goal').codeMode.description).toBe(
     'current'
   )
-  expect(() => discoverySelection({ ...request, tools: [entry] }, 'get_goal')).toThrow()
+  expect(discoverySelection({ ...request, tools: [entry] }, 'get_goal').codeMode).toEqual({
+    ...entry,
+    input: expect.any(String),
+  })
+})
+
+test('selects the current API exec after a native Lite conversation changes provider', () => {
+  const current = {
+    type: 'function',
+    name: 'exec',
+    parameters: { properties: { input: { type: 'string' } } },
+  }
+  const input = variants[1].input
+  const request = { input, tools: [current] }
+  expect(discoverySelection(request, 'read_task').codeMode).toEqual({
+    ...current,
+    input: expect.any(String),
+  })
+  expect(programmaticSelection(request, 'get_goal', {}).codeMode).toEqual({
+    ...current,
+    targetName: 'get_goal',
+  })
+  expect(() => discoverySelection({ input, tools: [] }, 'read_task')).toThrow(
+    'Expected exactly one native Code Mode discovery declaration'
+  )
+  expect(() =>
+    discoverySelection({ input, tools: [current, ...variants[1].input[0].tools] }, 'read_task')
+  ).toThrow('Expected exactly one native Code Mode discovery declaration')
 })
 
 test('keeps actual structured results and native permission-denial text', async () => {

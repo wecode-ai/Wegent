@@ -44,7 +44,9 @@ class PluginAuthMigrationService:
         automatic: bool = False,
         local_login: bool = False,
     ) -> PluginMigrationResponse:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, installed_id=request.installed_plugin_id
+        )
         identity = resolve_runtime_route_identity(
             db, user_id=user_id, submitted_device_id=request.device_id
         )
@@ -218,11 +220,13 @@ class PluginAuthMigrationService:
     def _validated(
         self, db: Session, user_id: int, device_id: str, migration_id: str
     ) -> tuple[Kind, Kind, PluginAccountAuthDefinition]:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, migration_id=migration_id)
         row = self._query(db, user_id, migration_id).populate_existing().first()
         if row is None or row.json["spec"]["expires_at"] <= time.time():
             raise PluginAccountAuthError("plugin_auth_migration_expired", 403)
         spec = row.json["spec"]
+        if spec.get("localPrincipal") is not None:
+            raise PluginAccountAuthError("plugin_auth_migration_device_mismatch", 403)
         if spec.get("automatic"):
             from app.services.plugin_auth_automation import PluginAuthAutomationService
 
@@ -256,7 +260,7 @@ class PluginAuthMigrationService:
     def prepare(
         self, db: Session, *, user_id: int, device_id: str, migration_id: str
     ) -> dict:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, migration_id=migration_id)
         from app.services.plugin_auth_transfers import PluginAuthTransferService
 
         transfers = PluginAuthTransferService(self.connections)

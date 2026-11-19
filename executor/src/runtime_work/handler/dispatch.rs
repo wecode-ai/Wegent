@@ -38,11 +38,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
             | "runtime.stand_in.telemetry.ack" => {
-                boxed_rpc(move || async move { self.stand_in_telemetry_rpc(method, payload) })
+                boxed_rpc(move || async move { self.stand_in_telemetry_rpc(method, payload).await })
             }
             "runtime.stand_in.list" => {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
             }
+            "runtime.stand_in.device_identity" => boxed_rpc(move || async move {
+                Ok(json!({"deviceId":self.device_id,"backendDeviceId":self.cloud_device_id()?}))
+            }),
             "runtime.stand_in.personal.get" => {
                 boxed_rpc(
                     move || async move { self.personal_stand_in_settings(payload, false).await },
@@ -119,9 +122,35 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.observations.sync" => {
+                boxed_rpc(
+                    move || async move { self.sync_cloud_connection_subscription(payload).await },
+                )
+            }
+            "runtime.connections.subscriptions.cancel" => boxed_rpc(move || async move {
+                self.cancel_connection_subscription_from_ui(payload).await
+            }),
+            "runtime.connections.observations.refresh" => {
+                boxed_rpc(move || async move { self.refresh_connection_observation(payload).await })
+            }
+            "runtime.connections.observers.start" => boxed_rpc(move || async move {
+                self.connection_observer_operation("start", payload).await
+            }),
+            "runtime.connections.observers.renew" => boxed_rpc(move || async move {
+                self.connection_observer_operation("renew", payload).await
+            }),
+            "runtime.connections.observers.refresh" => boxed_rpc(move || async move {
+                self.connection_observer_operation("refresh", payload).await
+            }),
+            "runtime.connections.observers.stop" => boxed_rpc(move || async move {
+                self.connection_observer_operation("stop", payload).await
+            }),
             "runtime.connections.git.read" => {
                 boxed_rpc(move || async move { super::super::git_connections::read(payload).await })
             }
+            "runtime.connections.observations.collect" => boxed_rpc(move || async move {
+                self.collect_cloud_connection_observation(payload).await
+            }),
             "runtime.connections.git.webhooks" => {
                 boxed_rpc(move || async move { self.git_connection_webhook(payload).await })
             }
@@ -146,16 +175,11 @@ impl RuntimeWorkRpcHandler {
                     .await
                 }
             }),
-            "runtime.connections.dependencies.install" => boxed_rpc(move || async move {
-                {
-                    self.connection_call(
-                        "installDependencies",
-                        payload["providerId"].as_str(),
-                        payload.clone(),
-                    )
-                    .await
-                }
-            }),
+            "runtime.connections.dependencies.install" => {
+                boxed_rpc(
+                    move || async move { self.install_connection_dependencies(payload).await },
+                )
+            }
             "runtime.connections.mcp" => boxed_rpc(move || async move {
                 {
                     let mut payload = payload;
@@ -227,7 +251,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.list" => {
                 boxed_rpc(move || async move { self.list_tasks(&payload).await })
             }
-            "runtime.tasks.get" => boxed_rpc(move || async move { self.get_task(&payload) }),
+            "runtime.tasks.get" => {
+                boxed_rpc(move || async move { self.get_task_with_active_provider(&payload).await })
+            }
             "runtime.tasks.running_count" => {
                 boxed_rpc(move || async move { Ok(self.running_task_count()) })
             }
@@ -281,7 +307,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
             }
             "runtime.tasks.send" => {
-                boxed_rpc(move || async move { self.send_message(payload).await })
+                boxed_rpc(move || async move { self.send_message_from_owner(payload, true).await })
             }
             "runtime.tasks.interrupt_and_send" => {
                 boxed_rpc(move || async move { self.interrupt_and_send(payload).await })
@@ -289,9 +315,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.rollback" => {
                 boxed_rpc(move || async move { self.rollback_task(payload).await })
             }
-            "runtime.tasks.guidance" => {
-                boxed_rpc(move || async move { self.send_guidance(payload).await })
-            }
+            "runtime.tasks.guidance" => boxed_rpc(move || async move {
+                self.send_guidance_with_context(payload, None, true).await
+            }),
             "runtime.tasks.compact" => {
                 boxed_rpc(move || async move { self.compact_task(payload).await })
             }
@@ -439,7 +465,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.switch_codex_account(payload).await })
             }
             "runtime.codex.auth.login.start" => {
-                boxed_rpc(move || async move { self.start_codex_login().await })
+                boxed_rpc(move || async move { self.start_codex_login(payload).await })
             }
             "runtime.codex.auth.login.cancel" => {
                 boxed_rpc(move || async move { self.cancel_codex_login(payload).await })

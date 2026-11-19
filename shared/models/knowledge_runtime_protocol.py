@@ -258,7 +258,7 @@ class RemoteListChunkRecord(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteListChunksResponse(KnowledgeRuntimeProtocolModel):
-    """Chunk listing response returned by knowledge_runtime."""
+    """Visible chunks and count in one bounded external-index window."""
 
     chunks: list[RemoteListChunkRecord]
     total: int

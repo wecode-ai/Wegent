@@ -188,7 +188,12 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
     if (content) {
       const record = JSON.parse(content)
       if (record.schemaVersion === 1 && record.address && record.token) {
-        return { baseUrl: `http://${record.address}`, token: record.token, runtimePath }
+        return {
+          baseUrl: `http://${record.address}`,
+          token: record.token,
+          runtimePath,
+          executorHome,
+        }
       }
     }
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -537,6 +542,8 @@ async function withBrowserMcp(identity, label, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
+      WEGENT_EXECUTOR_HOME: identity.executorHome,
+      WEGENT_EXECUTOR_LOG_DIR: dirname(identity.runtimePath),
       WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
@@ -608,6 +615,9 @@ async function withBrowserMcp(identity, label, callback) {
         resolve()
       })
     })
+    await writeFile(join(dirname(identity.runtimePath), 'direct-browser-mcp.stderr.log'), stderr, {
+      flag: 'a',
+    })
     assert.equal(stderr.includes('lifecycle=fatal'), false, stderr)
     assert.ok(
       stderr.includes(`bridge_url=${identity.baseUrl}`),
@@ -637,7 +647,13 @@ function parseToolJson(text) {
   return JSON.parse(text)
 }
 
-export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  executorHome,
+  resultDir,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let cacheResourceRequests = 0
 
   return {
@@ -786,7 +802,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FRESH_CHAT_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       const backgroundTaskId = await waitForDifferentRuntimeTaskId(control, taskId, uiTimeoutMs)
       const backgroundBrowserLabel = await readBrowserPanelLabel(

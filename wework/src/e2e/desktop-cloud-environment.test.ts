@@ -1,10 +1,15 @@
 // @vitest-environment node
 
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { RealCloudEnvironment } from '../../e2e/desktop/modules/cloud-environment.mjs'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, readFile: vi.fn(actual.readFile) }
+})
 
 test('remote executor owns its logs and Homes independently of the desktop host', async () => {
   const inheritedHomes = [
@@ -71,12 +76,13 @@ test('backend restart requires fresh registration before accepting cached online
   environment.backendEnv = { TERMINAL_PROTOCOL_V2_ENABLED: 'true' }
   environment.backendLogPath = join(directory, 'backend.log')
   environment.remoteExecutorLogPath = join(directory, 'executor.log')
-  const registration = '[Device WS] Device registered: user=1, device=wework-e2e-cloud-device\n'
-  await writeFile(environment.backendLogPath, registration)
+  const registration =
+    'local backend registered backend_url=http://127.0.0.1:8000 device_id=wework-e2e-cloud-device\n'
+  await writeFile(environment.remoteExecutorLogPath, registration)
   const launchBackend = vi.fn(async () => {
     await appendFile(
-      environment.backendLogPath,
-      '[Device WS] Device registered: user=1, device=wework-e2e-cloud-device-other\n'
+      environment.remoteExecutorLogPath,
+      'local backend registered backend_url=http://127.0.0.1:8000 device_id=wework-e2e-cloud-device-other\n'
     )
   })
   const waitForDevice = vi.fn(async () => {})
@@ -89,7 +95,7 @@ test('backend restart requires fresh registration before accepting cached online
     expect(waitForDevice).not.toHaveBeenCalled()
     expect(environment.backendEnv.TERMINAL_PROTOCOL_V2_ENABLED).toBe('false')
   } finally {
-    await appendFile(environment.backendLogPath, registration)
+    await appendFile(environment.remoteExecutorLogPath, registration)
     try {
       await restart
     } finally {
@@ -115,4 +121,48 @@ test('a completed cloud turn remains an active conversation and must settle the 
   expect(environment.runtimeTask).toHaveBeenCalledTimes(3)
   environment.runtimeTask.mockResolvedValue({ ...address, running: false, status: 'failed' })
   await expect(environment.waitForRuntimeTask(address)).rejects.toThrow('settled as failed')
+})
+
+test('authorization readiness requires a successful poll for the exact new session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-cloud-authorization-'))
+  const cloud = new RealCloudEnvironment({})
+  cloud.backendApiLogPath = join(directory, 'api.log')
+  const id = '12345678-1234-1234-1234-123456789abc'
+  const pending = `[API] GET /api/auth/wework/sessions/${id}/poll?poll_token=fixture-poll`
+  await writeFile(cloud.backendApiLogPath, `${pending} 500 0ms 200 0\n`)
+  const settled = vi.fn()
+  const readOffset = vi.mocked(readFile).mock.results.length
+  const ready = cloud.waitForAuthorizationPolling(id).then(settled)
+  try {
+    await appendFile(
+      cloud.backendApiLogPath,
+      '[API] GET /api/auth/wework/sessions/other-session/poll?poll_token=fixture-other 200 0ms\n'
+    )
+    await vi.waitFor(async () => {
+      const observed = await Promise.all(
+        vi
+          .mocked(readFile)
+          .mock.results.slice(readOffset)
+          .map(result => result.value)
+      )
+      expect(
+        observed.some(
+          value => String(value).includes('other-session') && String(value).includes('500 0ms')
+        )
+      ).toBe(true)
+    })
+    const prematurelyReady = await Promise.race([
+      ready.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 150)),
+    ])
+    expect(prematurelyReady).toBe(false)
+  } finally {
+    await appendFile(cloud.backendApiLogPath, `${pending} 200 0ms\n`)
+    try {
+      await ready
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+  expect(settled).toHaveBeenCalledOnce()
 })

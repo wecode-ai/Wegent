@@ -27,6 +27,7 @@ pub(crate) struct Admission {
     pub waiting_runtime: bool,
 }
 pub(crate) struct Execution {
+    pub runtime_task_id: String,
     pub id: i64,
     pub status: String,
     pub device_id: String,
@@ -69,9 +70,19 @@ pub(crate) async fn prepare_on(
         )
         .await?
         .context("Execution device is unavailable")?;
-        if !routing::allowed_devices_on(query, &issue.cloud_project_id, &input.agent_id)
-            .await?
-            .contains(&device.id)
+        let personal = super::device_access::DeviceAccess {
+            actor: input.assigner,
+            automatic: authority::truthy(&input.context["run_id"]),
+            selection: &input.runtime_selection,
+        }
+        .permits_owner(
+            super::device_access::personal_owner(input.owner, &device.json),
+            device.id,
+        );
+        if !personal
+            && !routing::allowed_devices_on(query, &issue.cloud_project_id, &input.agent_id)
+                .await?
+                .contains(&device.id)
         {
             bail!("Execution authorization is revoked or unavailable")
         }
@@ -135,6 +146,17 @@ pub(crate) async fn enqueue_intent_on(
     scope: &str,
     input: &Admission,
 ) -> MysqlResult<Execution> {
+    let valid =
+        super::runner_recovery::revalidate_on(&mut &mut *tx, issue, &input.runtime_selection, 0)
+            .await
+            .map_err(|error| brz_mysql::MysqlError::InvalidQuery {
+                reason: error.to_string(),
+            })?;
+    if !valid {
+        return Err(brz_mysql::MysqlError::InvalidQuery {
+            reason: "ISSUE_RUNNER_CONFLICT: recovery binding or execution occupancy changed before admission".into(),
+        });
+    }
     let status = if input.waiting_runtime {
         "waiting_runtime"
     } else if input.requires_approval {
@@ -190,10 +212,11 @@ pub(crate) async fn enqueue_intent_on(
         .unwrap_or_else(|| format!("codex-queue-{id}"));
     tx.execute(
         "UPDATE loop_item_executions SET runtime_task_id=? WHERE id=?",
-        (runtime_task_id, id),
+        (runtime_task_id.as_str(), id),
     )
     .await?;
     Ok(Execution {
+        runtime_task_id,
         id,
         status: status.into(),
         device_id: input.device_id.clone(),
@@ -210,7 +233,7 @@ fn priority(value: &str) -> i64 {
     }
 }
 
-fn validate_non_secret_plugins(plugins: &Value) -> Result<()> {
+pub(crate) fn validate_non_secret_plugins(plugins: &Value) -> Result<()> {
     if plugins.is_null() {
         return Ok(());
     }

@@ -59,7 +59,8 @@ function apiFor(listMembers = vi.fn(async () => [member])) {
 async function render(
   api: SharedWorkspaceApi,
   projectId = 'project-1',
-  workspaceId = 'workspace-1'
+  workspaceId = 'workspace-1',
+  onProjectChanged?: (project: CollaborationProject) => void
 ) {
   if (!root) {
     container = document.createElement('div')
@@ -76,6 +77,7 @@ async function render(
         agents={[]}
         locale="en"
         canManage
+        onProjectChanged={onProjectChanged}
       />
     )
   )
@@ -89,6 +91,32 @@ afterEach(() => {
 })
 
 describe('project collaboration-group loading', () => {
+  it('publishes the advanced project version after group writes and retries refresh without repeating the write', async () => {
+    const api = apiFor()
+    const latest = { id: 'project-1', version: 5 } as CollaborationProject
+    api.projects.get = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(latest)
+    const onProjectChanged = vi.fn()
+    await render(api, 'project-1', 'workspace-1', onProjectChanged)
+    await act(async () =>
+      view.props!.commands.createCollaborationGroup!({
+        name: 'Delivery',
+        leader: { kind: 'agent', id: 'agent-1' },
+        members: [],
+      })
+    )
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(
+      container.querySelector('[data-testid="project-groups-refresh-error"]')?.textContent
+    ).toContain('Configuration saved')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="project-groups-refresh-retry"]')!
+        .click()
+    )
+    expect(onProjectChanged).toHaveBeenCalledExactlyOnceWith(latest)
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="project-groups-refresh-error"]')).toBeNull()
+  })
   it('keeps groups and agents usable after members fail, completes mutations, and retries members', async () => {
     const listMembers = vi
       .fn()
@@ -142,6 +170,26 @@ describe('project collaboration-group loading', () => {
     await render(api, 'project-2')
     await act(async () => resolveOld([member]))
     expect(view.props!.members[0].user_name).toBe('Bob')
+  })
+
+  it('distinguishes a failed collection from an empty result and recovers with a read-only retry', async () => {
+    const api = apiFor()
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue([group])
+    await render(api)
+    expect(view.props!.collectionState).toBe('error')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('connection')
+    expect(container.textContent).not.toContain('Failed to fetch')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="project-groups-load-retry"]')!
+        .click()
+    )
+    expect(view.props!.collectionState).toBe('ready')
+    expect(view.props!.groups).toEqual([group])
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.projects.updateCollaborationGroup).not.toHaveBeenCalled()
   })
 
   it('reports initial group reload failures without discarding successfully loaded members', async () => {
@@ -361,4 +409,27 @@ it('ignores A post-save reload already in flight when B becomes active', async (
     await pending
   })
   expect(view.props!.groups.map(value => value.id)).toEqual(['b-group'])
+})
+
+it('accepts updated agent props without restarting member or group reads', async () => {
+  const api = apiFor()
+  await render(api)
+  const updated = { ...agent, name: 'Updated agent' }
+  await act(async () =>
+    root!.render(
+      <ProjectCollaborationGroups
+        api={api}
+        projectId="project-1"
+        workspaceId="workspace-1"
+        members={[{ ...member, user_name: 'Seed changed' }]}
+        agents={[updated]}
+        locale="en"
+        canManage
+      />
+    )
+  )
+  expect(view.props!.agents).toEqual([updated])
+  expect(view.props!.members).toEqual([member])
+  expect(api.projects.listCollaborationGroups).toHaveBeenCalledOnce()
+  expect(api.members.list).toHaveBeenCalledOnce()
 })

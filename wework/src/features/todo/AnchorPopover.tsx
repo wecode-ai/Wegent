@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useFocusRequest, useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { createPortal } from 'react-dom'
 
 const POPOVER_WIDTH = 280
@@ -85,71 +86,63 @@ export function AnchorPopover({
     }
   }, [anchor, wide, profile])
 
-  useEffect(() => {
-    if (!anchor) return
-    const frame = window.requestAnimationFrame(() => popoverRef.current?.focus())
-    return () => window.cancelAnimationFrame(frame)
-  }, [anchor])
-
-  useEffect(() => {
-    if (!anchor) return
+  useFocusRequest(popoverRef, anchor ?? undefined, {
+    enabled: Boolean(anchor),
+    animationFrame: true,
+  })
+  const attachPopover = useCallback((node: HTMLDivElement | null) => {
+    popoverRef.current = node
+    if (!node) return
     openPopoverCount += 1
     document.body.setAttribute(OPEN_POPOVER_BODY_ATTRIBUTE, '')
     return () => {
+      popoverRef.current = null
       openPopoverCount = Math.max(0, openPopoverCount - 1)
-      if (openPopoverCount === 0) {
-        document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
-      }
+      if (openPopoverCount === 0) document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
     }
-  }, [anchor])
-
-  useEffect(() => {
-    if (suspended) return
-    const handlePointerDown = (event: PointerEvent) => {
+  }, [])
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target as Node
-      if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) {
-        onClose()
-      }
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) onClose()
+    },
+    { enabled: !suspended }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') {
         event.stopPropagation()
         onClose()
       }
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    // Capture-phase so Escape closes the popover before an enclosing editor's
-    // own Escape handler can close the whole detail panel.
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown, true)
-    }
-  }, [anchor, onClose, suspended])
+    },
+    { enabled: !suspended, capture: true }
+  )
 
   if (!anchor || !position) return null
 
   return createPortal(
     <div
-      ref={popoverRef}
+      ref={attachPopover}
       data-testid={testId}
       role="dialog"
       tabIndex={-1}
       aria-label={title}
       inert={suspended}
       aria-hidden={suspended || undefined}
-      className={`electron-titlebar-interactive-region fixed ${suspended ? 'z-modal' : 'z-system-popover'} border border-border/70 bg-popover text-text-primary shadow-lg ${profile ? 'flex flex-col overflow-hidden rounded-2xl' : `rounded-xl ${header ? '' : 'p-1'}`}`}
+      className={`electron-titlebar-interactive-region fixed flex flex-col overflow-hidden ${suspended ? 'z-modal' : 'z-system-popover'} border border-border/70 bg-popover text-text-primary shadow-lg ${profile ? 'rounded-2xl' : `rounded-xl ${header ? '' : 'p-1'}`}`}
       style={{
         left: position.left,
         width: position.width,
         bottom: position.bottom,
         top: position.top,
-        maxHeight: profile ? position.maxHeight : undefined,
+        maxHeight: position.maxHeight,
       }}
     >
       {header ??
         (!profile && (
-          <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>
+          <p className="shrink-0 px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>
         ))}
       <div
         ref={bodyRef}
@@ -158,8 +151,8 @@ export function AnchorPopover({
           profile
             ? 'min-h-0 overflow-y-auto overscroll-contain'
             : wide
-              ? `overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
-              : `max-h-[264px] overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
+              ? `min-h-0 overflow-y-auto overscroll-contain ${header ? '' : 'px-1 pb-1'}`
+              : `min-h-0 max-h-[264px] overflow-y-auto overscroll-contain ${header ? '' : 'px-1 pb-1'}`
         }
         style={wide ? { maxHeight: 'min(400px, calc(100vh - 112px))' } : undefined}
       >

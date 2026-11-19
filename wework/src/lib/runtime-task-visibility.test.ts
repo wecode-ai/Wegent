@@ -1,5 +1,27 @@
 import { describe, expect, test } from 'vitest'
-import { isPrimaryStandInConversation } from './runtime-task-visibility'
+import { isPrimaryStandInConversation, isStandInMemoryReviewTask } from './runtime-task-visibility'
+
+describe('memory review task visibility', () => {
+  test('identifies scheduled memory maintenance by its stored origin', () => {
+    expect(
+      isStandInMemoryReviewTask({
+        runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+      })
+    ).toBe(true)
+  })
+
+  test.each([
+    {},
+    { runtimeHandle: { origin: null } },
+    { runtimeHandle: { origin: [] } },
+    { runtimeHandle: { origin: { type: 'stand_in_schedule', weeklyReview: true } } },
+    { runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: false } } },
+    { runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: 'true' } } },
+    { runtimeHandle: { origin: { type: 'stand_in_task', memoryReview: true } } },
+  ])('keeps unrelated or incomplete origins visible: %j', task => {
+    expect(isStandInMemoryReviewTask(task)).toBe(false)
+  })
+})
 
 describe('primary stand-in conversation visibility', () => {
   const primary = {
@@ -17,6 +39,28 @@ describe('primary stand-in conversation visibility', () => {
         runtimeHandle: { origin: { type: 'stand_in_identity', userId: 0 } },
       })
     ).toBe(true)
+  })
+
+  test('keeps the homepage context out of ordinary task navigation without hiding unrelated work', () => {
+    const home = {
+      taskId: 'stand-in-chat-7-primary-collaboration',
+      runtimeHandle: {
+        origin: { type: 'stand_in_identity', userId: 7, conversationScope: 'collaboration' },
+      },
+    }
+    expect(isPrimaryStandInConversation(home)).toBe(true)
+    expect(isPrimaryStandInConversation({ ...home, runtimeHandle: primary.runtimeHandle })).toBe(
+      false
+    )
+    expect(isPrimaryStandInConversation({ ...primary, runtimeHandle: home.runtimeHandle })).toBe(
+      false
+    )
+    expect(
+      isPrimaryStandInConversation({
+        ...home,
+        runtimeHandle: { origin: { ...home.runtimeHandle.origin, userId: 8 } },
+      })
+    ).toBe(false)
   })
 
   test.each([

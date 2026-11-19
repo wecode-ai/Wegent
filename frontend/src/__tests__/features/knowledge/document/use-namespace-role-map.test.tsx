@@ -5,6 +5,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import {
   clearNamespaceRoleMapCache,
   useNamespaceRoleMap,
+  useNamespaceRoleState,
 } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 
 let mockUser = { id: 1 }
@@ -14,7 +15,7 @@ jest.mock('@/apis/client', () => ({
   __esModule: true,
   default: { getCacheScope: () => mockScope },
 }))
-jest.mock('@/apis/groups', () => ({ listGroups: () => mockListGroups() }))
+jest.mock('@/apis/groups', () => ({ listGroups: (params: unknown) => mockListGroups(params) }))
 jest.mock('@/features/common/UserContext', () => ({ useUser: () => ({ user: mockUser }) }))
 
 beforeEach(() => {
@@ -78,4 +79,39 @@ it('reloads an explicitly invalidated in-flight read within the same scope', asy
   await act(async () => resolveOld({ items: [{ name: 'space', my_role: 'Owner' }] }))
   await waitFor(() => expect(result.current.get('space')).toBe('Reporter'))
   expect(mockListGroups).toHaveBeenCalledTimes(2)
+})
+
+it('loads every group page before exposing the complete role set', async () => {
+  mockListGroups.mockResolvedValueOnce({
+    items: Array.from({ length: 100 }, (_, id) => ({ name: `space-${id}`, my_role: 'Reporter' })),
+    total: 101,
+  })
+  mockListGroups.mockResolvedValueOnce({
+    items: [{ name: 'last-space', my_role: 'Owner' }],
+    total: 101,
+  })
+  const { result } = renderHook(() => useNamespaceRoleMap())
+  await waitFor(() => expect(result.current.get('last-space')).toBe('Owner'))
+  expect(mockListGroups).toHaveBeenNthCalledWith(2, { page: 2, limit: 100 })
+})
+
+it('reports a later page failure without granting partial roles and can retry', async () => {
+  const firstPage = {
+    items: Array.from({ length: 100 }, (_, id) => ({ name: `space-${id}`, my_role: 'Owner' })),
+    total: 101,
+  }
+  mockListGroups
+    .mockResolvedValueOnce(firstPage)
+    .mockRejectedValueOnce(new Error('second page failed'))
+  const { result } = renderHook(() => useNamespaceRoleState())
+  await waitFor(() => expect(result.current.failed).toBe(true))
+  expect(result.current.roleMap.size).toBe(0)
+  expect(result.current.loading).toBe(false)
+  mockListGroups.mockResolvedValueOnce({
+    items: [{ name: 'recovered', my_role: 'Owner' }],
+    total: 1,
+  })
+  await act(async () => result.current.refresh())
+  expect(result.current.failed).toBe(false)
+  expect(result.current.roleMap.get('recovered')).toBe('Owner')
 })

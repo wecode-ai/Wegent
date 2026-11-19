@@ -40,6 +40,7 @@ from app.models.user import User
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import ProjectChatWorkspaceBindingView
 from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
@@ -477,7 +478,14 @@ def _matches_issue_device_affinity(
     """Keep every execution of one Issue on its latest claimed device."""
 
     from app.services.device.identity import resolve_owned_device_alias
+    from app.services.runner_recovery import original_session, session_matches
     from app.services.runner_routing import issue_binding
+
+    if original_session(execution):
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=submitted_device_id
+        )
+        return runner is not None and session_matches(db, execution, runner.id)
 
     try:
         bound = issue_binding(db, execution.loop_item_id)
@@ -512,7 +520,7 @@ def _execution_is_claimable_by_device(
 
     from app.services.collaboration_revocation import execution_authorized
     from app.services.device.identity import resolve_owned_device_alias
-    from app.services.runner_routing import execution_environment_ids
+    from app.services.runner_routing import execution_device_authorized
 
     if execution.assignment_pending:
         return False
@@ -523,10 +531,7 @@ def _execution_is_claimable_by_device(
     if (
         not execution_authorized(db, execution)
         or runner is None
-        or runner.id
-        not in execution_environment_ids(
-            db, execution.cloud_project_id, execution.agent_id
-        )
+        or not execution_device_authorized(db, execution, runner)
     ):
         return False
     if execution.uses_runner_routing:
@@ -536,13 +541,19 @@ def _execution_is_claimable_by_device(
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=submitted_device_id
         )
-        return runner is not None and eligible_runner(db, execution, runner)
-    return _matches_issue_device_affinity(
-        db,
-        execution=execution,
-        owner_user_id=owner_user_id,
-        submitted_device_id=submitted_device_id,
-    )
+        device_permitted = runner is not None and eligible_runner(db, execution, runner)
+    else:
+        device_permitted = _matches_issue_device_affinity(
+            db,
+            execution=execution,
+            owner_user_id=owner_user_id,
+            submitted_device_id=submitted_device_id,
+        )
+    if not device_permitted:
+        return False
+    from app.services.loop_item_executions.workday import permits_execution_start
+
+    return permits_execution_start(db, execution, utcnow())
 
 
 def _agent_limits(db: Session, agent_ids: set[str]) -> dict[str, int]:
@@ -1460,9 +1471,13 @@ class LoopItemExecutionService:
         ):
             return None
 
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )
@@ -1505,6 +1520,7 @@ class LoopItemExecutionService:
         db.refresh(candidate)
         return candidate
 
+    @execution_resource_scope()
     def claim_next_for_device(
         self,
         db: Session,
@@ -1575,9 +1591,13 @@ class LoopItemExecutionService:
         )
         if candidate is None:
             return None
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )
@@ -1652,7 +1672,12 @@ class LoopItemExecutionService:
             .populate_existing()
         ):
             if execution_authorized(db, execution):
-                authorized_ids.append(execution.id)
+                from app.services.loop_item_executions.workday import (
+                    permits_execution_start,
+                )
+
+                if permits_execution_start(db, execution, utcnow(), commit=False):
+                    authorized_ids.append(execution.id)
             else:
                 cancelled = self.cancel(
                     db,
@@ -1958,6 +1983,9 @@ class LoopItemExecutionService:
         """Commit Runtime acceptance and its activity projection together."""
 
         try:
+            from app.services.loop_items.locking import lock_execution_issue
+
+            lock_execution_issue(db, execution_id)
             row = self.confirm_runtime_accepted(
                 db,
                 execution_id=execution_id,
@@ -2130,6 +2158,9 @@ class LoopItemExecutionService:
         key is (project, task, agent, runtime ids), making this idempotent.
         """
 
+        from app.services.loop_items.locking import lock_existing_issue
+
+        lock_existing_issue(db, execution.loop_item_id)
         current = db.get(
             LoopItemExecution,
             execution.id,
@@ -2591,6 +2622,9 @@ class LoopItemExecutionService:
 
         if terminal_status not in TERMINAL_STATUSES:
             raise ValueError(f"Unsupported terminal status: {terminal_status}")
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         now = utcnow()
         values: dict[str, Any] = {
             "status": terminal_status,
@@ -2868,8 +2902,10 @@ class LoopItemExecutionService:
         """Apply the elected execution outcome without committing or pushing."""
 
         from app.models.delivery import ProjectAutomationRun
+        from app.services.loop_items.locking import lock_existing_issue
         from app.services.project_chat.service import project_chat_service
 
+        lock_existing_issue(db, execution.loop_item_id)
         activity = self._linked_activity(db, execution)
         if activity is not None:
             project_chat_service._record_runtime_sequence(
@@ -3249,10 +3285,13 @@ class LoopItemExecutionService:
         """Serialize Runtime observations with lease and cancellation writes.
 
         Refresh the execution under its lock so an acknowledgement cannot make
-        an observed event fail a stale version check. All activity writers keep
-        the execution -> activity lock order.
+        an observed event fail a stale version check. Writers lock Issue before
+        execution and activity so replies and cancellation cannot invert this order.
         """
 
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         execution = (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.id == execution_id)
@@ -3279,6 +3318,13 @@ class LoopItemExecutionService:
         allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
+
+        from app.services.runtime_event_context import (
+            runtime_event_is_private_discussion,
+        )
+
+        if runtime_event_is_private_discussion(payload):
+            return None
 
         # Thread metadata, Goal and lifecycle notifications can retain the
         # previous request's turn identity while a continuation starts. Per-turn
@@ -3541,6 +3587,7 @@ class LoopItemExecutionService:
             execution_target_id=None,
         )
 
+    @execution_resource_scope()
     def build_executor_runtime_payload(
         self,
         db: Session,
@@ -4269,7 +4316,7 @@ class LoopItemExecutionService:
         limits = _agent_limits(
             db, {execution.agent_id for execution in rows if execution.agent_id}
         )
-        return [
+        items = [
             {
                 "id": execution.id,
                 "workspace_id": workspace_id_for_project(
@@ -4342,6 +4389,42 @@ class LoopItemExecutionService:
             }
             for execution in rows
         ]
+        agent_ids = {
+            str(row["agent_id"]) for row in items if row["agent_id"] is not None
+        }
+        private_agent_owners = (
+            {
+                agent.id: agent.created_by_user_id
+                for agent in db.query(ProjectChatAgent)
+                .filter(ProjectChatAgent.id.in_(agent_ids))
+                .all()
+                if isinstance(agent.metadata_json, dict)
+                and agent.metadata_json.get("visibility") == "private"
+            }
+            if agent_ids
+            else {}
+        )
+        for row in items:
+            if (
+                row["agent_id"] not in private_agent_owners
+                or row["executor_owner_user_id"] == viewer_user_id
+                or private_agent_owners[row["agent_id"]] == viewer_user_id
+            ):
+                continue
+            for key in (
+                "backend_task_id",
+                "execution_device_id",
+                "runtime_device_id",
+                "runtime_task_id",
+                "runtime_instance_id",
+                "runtime_profile_id",
+                "runtime_source",
+                "waiting_runtime_reason",
+            ):
+                row[key] = None
+            for key in ("error_message", "execution_note", "termination_reason"):
+                row[key] = ""
+        return items
 
     def active_for_item(
         self, db: Session, *, item_id: str
@@ -4396,12 +4479,31 @@ class LoopItemExecutionService:
         # lease period: a dead executor would otherwise block the device slot
         # for up to two lease periods (10 minutes) while new runs queue.
         stale_threshold = current - timedelta(seconds=min(lease_seconds, 60))
+        from app.services.loop_item_executions.collaboration_failure import (
+            expired_manager_failures,
+        )
+
+        for execution, activity in expired_manager_failures(db, before=stale_threshold):
+            self.fail(
+                db,
+                execution_id=execution.id,
+                error=activity.content or "Collaboration manager failed.",
+                expected_status=execution.status,
+                expected_version=execution.version,
+            )
         stale_rows = (
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.status.in_(CAPACITY_STATUSES),
                 ~loop_datetime_is_unset(LoopItemExecution.lease_expires_at),
                 LoopItemExecution.lease_expires_at < stale_threshold,
+                or_(
+                    LoopItemExecution.sync_state != SYNC_STALE,
+                    and_(
+                        LoopItemExecution.status == STATUS_CLAIMED,
+                        loop_datetime_is_unset(LoopItemExecution.start_requested_at),
+                    ),
+                ),
             )
             .all()
         )
@@ -4495,6 +4597,9 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Apply a trusted snapshot and restore its missing activity projection."""
 
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return row
@@ -4701,7 +4806,7 @@ class LoopItemExecutionService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.status == STATUS_RUNNING,
-                LoopItemExecution.started_at.isnot(None),
+                ~loop_datetime_is_unset(LoopItemExecution.started_at),
                 LoopItemExecution.started_at < threshold,
             )
             .all()

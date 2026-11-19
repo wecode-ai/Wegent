@@ -1,9 +1,80 @@
 //! Recipient-owned durable Issue wakeups are independent of human notifications.
-use brz_mysql::{FromMysqlRow, Json};
+use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlTransaction};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{http_compat::FastApiError, state::AppState};
+
+#[cfg(test)]
+#[path = "stand_in_issue_events_mention_tests.rs"]
+mod mention_tests;
+#[cfg(test)]
+pub(crate) use mention_tests::verify as verify_mentions;
+
+/// Commit a validated mention with its comment, after locking the owning Issue.
+/// The user and inbox locks match Python's Issue -> recipient -> inbox order.
+pub(crate) async fn enqueue_mention_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    project: &str,
+    issue: &str,
+    comment: &str,
+) -> MysqlResult<()> {
+    use crate::background_jobs::project::store;
+
+    // Keep sorted keys and Python's default JSON spacing for cross-writer dedupe.
+    let payload = json!({"commentId":comment,"itemId":issue,"projectId":project});
+    let id = crate::hex_sha256(
+        format!(
+            "stand-in:{user}:{}",
+            wegent_python_compat::py_json::python_dumps(&payload)
+        )
+        .as_bytes(),
+    );
+    let _: (i64,) = tx
+        .fetch_optional("SELECT id FROM users WHERE id=? FOR UPDATE", (user,))
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    let inbox_id = format!("stand-in-inbox:{user}");
+    // Insert before taking a current read to avoid locking an empty index gap
+    // shared by first-time recipients.
+    store::insert_once(
+        tx,
+        "stand_in_issue_inbox",
+        json!({"id":inbox_id,"user_id":user,"next_item_number":1}),
+    )
+    .await?;
+    let sequence = store::locked(tx, "stand_in_issue_inbox", &inbox_id)
+        .await?
+        .filter(|inbox| inbox.user_id == user)
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?
+        .next_item_number;
+    store::insert_once(
+        tx,
+        "stand_in_issue_event",
+        json!({
+            "id":id,"parent_id":inbox_id,"user_id":user,"sort_order":sequence,"metadata":payload
+        }),
+    )
+    .await?;
+    // The no-op upsert keeps the sequence of an existing event. Read the
+    // current row because MySQL can report a no-op update as an affected row.
+    let (event_sequence,): (i64,) = tx
+        .fetch_optional(
+            "SELECT CAST(sort_order AS SIGNED) FROM loop_items WHERE id=? AND parent_id=? AND resource_type='stand_in_issue_event' AND user_id=? FOR UPDATE",
+            (id.as_str(), inbox_id.as_str(), user),
+        )
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    if event_sequence != sequence {
+        return Ok(());
+    }
+    tx.execute(
+        "UPDATE loop_items SET next_item_number=? WHERE id=? AND resource_type='stand_in_issue_inbox' AND user_id=?",
+        (sequence + 1, inbox_id.as_str(), user),
+    ).await?;
+    Ok(())
+}
 
 #[derive(Default, Deserialize)]
 struct EventQuery {
@@ -56,7 +127,32 @@ async fn list_stand_in_issue_events(
             tracing::error!(%error, "Stand-in Issue event read failed");
             FastApiError::internal()
         })?;
-    Ok(page(rows, query.after))
+    let result = page(rows, query.after);
+    if let Some(events) = result["events"]
+        .as_array()
+        .filter(|events| !events.is_empty())
+    {
+        let identities = events
+            .iter()
+            .map(|event| {
+                json!({
+                    "sequence": event["sequence"],
+                    "projectId": event["payload"]["projectId"],
+                    "itemId": event["payload"]["itemId"],
+                    "assignmentId": event["payload"]["assignmentId"],
+                    "commentId": event["payload"]["commentId"]
+                })
+            })
+            .collect::<Vec<_>>();
+        tracing::info!(user_id = user.id, after = query.after, cursor = %result["cursor"], events = %json!(identities), "Stand-in Issue event page served");
+    } else {
+        tracing::debug!(
+            user_id = user.id,
+            after = query.after,
+            "Stand-in Issue event page empty"
+        );
+    }
+    Ok(result)
 }
 
 #[cfg(test)]

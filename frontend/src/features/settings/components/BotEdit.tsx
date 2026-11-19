@@ -36,13 +36,7 @@ import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTu
 import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
 
 import { Bot } from '@/types/api'
-import {
-  botApis,
-  CreateBotRequest,
-  KnowledgeBaseDefaultRef,
-  SkillRefMeta,
-  UpdateBotRequest,
-} from '@/apis/bots'
+import { botApis, CreateBotRequest, KnowledgeBaseDefaultRef, SkillRefMeta } from '@/apis/bots'
 import {
   isPredefinedModel,
   getModelFromConfig,
@@ -54,9 +48,10 @@ import {
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum, type ModelCategoryType } from '@/apis/models'
 import { filterSelectableShells, shellApis, UnifiedShell } from '@/apis/shells'
-import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
+import type { UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useBotSkillOptions } from '@/hooks/useBotSkillOptions'
 import {
   adaptMcpConfigForShell,
   isMcpCapableShellType,
@@ -76,8 +71,10 @@ export interface BotFormData {
   shell_name: string
   agent_config: Record<string, unknown>
   model_category_type?: ModelCategoryType
+  model_id: number | null
   secondary_model_name: string | null
   secondary_model_namespace: string
+  secondary_model_id: number | null
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
@@ -126,11 +123,26 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Existing Agent context; never applied when creating or cloning a Bot */
+  teamId?: number
+  /** Team groups that authorize shared Skills when saving a member Bot */
+  targetGroupNames?: string[]
+  /** Whether a cloned Bot is saved into a different namespace from its source Team */
+  crossNamespaceClone?: boolean
+  /** Whether the owning Team's target groups are still being resolved */
+  targetGroupsLoading?: boolean
+  /** Whether the owning Team's target groups failed to load */
+  targetGroupsError?: boolean
+  /** Retry loading the owning Team's target groups */
+  onRetryTargetGroups?: () => void
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
   /** Allow a Chat Bot to bind a generation model as its primary model */
   allowGenerationPrimaryModel?: boolean
 }
+
+const EMPTY_TARGET_GROUP_NAMES: string[] = []
+
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
     bots,
@@ -147,6 +159,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    teamId,
+    targetGroupNames = EMPTY_TARGET_GROUP_NAMES,
+    crossNamespaceClone = false,
+    targetGroupsLoading = false,
+    targetGroupsError = false,
+    onRetryTargetGroups,
     modelCategoryType = 'llm',
     allowGenerationPrimaryModel = false,
   },
@@ -165,6 +183,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedModelNamespace, setSelectedModelNamespace] = useState<string | undefined>(
     undefined
   )
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
   const [selectedSecondaryModel, setSelectedSecondaryModel] = useState('')
   const [selectedSecondaryModelType, setSelectedSecondaryModelType] = useState<
     ModelTypeEnum | undefined
@@ -172,6 +191,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedSecondaryModelNamespace, setSelectedSecondaryModelNamespace] = useState<
     string | undefined
   >(undefined)
+  const [selectedSecondaryModelId, setSelectedSecondaryModelId] = useState<number | null>(null)
+  const modelSelectionChanged = useRef({ primary: false, secondary: false })
   const [selectedProtocol, setSelectedProtocol] = useState('')
   // Whether to restrict available models (allowed_models whitelist)
   const [restrictModels, setRestrictModels] = useState(false)
@@ -216,9 +237,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
     baseBot?.skill_refs || {}
   )
-  const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([])
-  const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
-  const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
 
   const resetAgentDependentConfig = useCallback(() => {
@@ -321,6 +339,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const updateAgentName = useCallback(
     (value: string) => {
       if (value !== agentName) {
+        modelSelectionChanged.current = { primary: true, secondary: true }
+        setSelectedModelId(null)
+        setSelectedSecondaryModelId(null)
         resetAgentDependentConfig()
 
         // Adapt MCP config when switching agent type.
@@ -436,40 +457,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     [scope]
   )
 
-  useEffect(() => {
-    // Only fetch skills when the selected runtime can deploy them.
-    if (!supportsSkills) {
-      setAllSkills([])
-      setAvailableSkills([])
-      setLoadingSkills(false)
-      return
-    }
-
-    const fetchSkills = async () => {
-      setLoadingSkills(true)
-      try {
-        // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-        const skillsData =
-          scope === 'public'
-            ? await fetchPublicSkillsList()
-            : await fetchUnifiedSkillsList({
-                scope: scope,
-                groupName: groupName,
-              })
-        setAllSkills(skillsData)
-        // Filter skills based on current shell type
-        setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:skills.loading_failed'),
-        })
-      } finally {
-        setLoadingSkills(false)
-      }
-    }
-    fetchSkills()
-  }, [supportsSkills, toast, t, filterSkillsByShellType, filterSelectableSkills, scope, groupName])
+  const {
+    skills: allSkills,
+    loading: loadingSkills,
+    error: skillsError,
+    reload: reloadSkills,
+  } = useBotSkillOptions(
+    {
+      botId: editingBotId > 0 ? editingBotId : undefined,
+      namespace: editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default',
+      targetGroupNames:
+        targetGroupNames.length > 0 && !crossNamespaceClone ? targetGroupNames : undefined,
+    },
+    supportsSkills,
+    scope === 'public'
+  )
+  const availableSkills = useMemo(
+    () => filterSkillsByShellType(filterSelectableSkills(allSkills)),
+    [allSkills, filterSkillsByShellType, filterSelectableSkills]
+  )
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -529,7 +535,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         const agentMatches = baseBotShellName === agentName
         const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config)
 
-        if (hasConfig && agentMatches && isPredefined) {
+        if (hasConfig && agentMatches && isPredefined && !modelSelectionChanged.current.primary) {
           const savedModelName = getModelFromConfig(baseBot.agent_config)
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
           const savedModelNamespace = getModelNamespaceFromConfig(baseBot.agent_config)
@@ -543,10 +549,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             setSelectedModel(savedModelName)
             setSelectedModelType(foundModel?.type ?? savedModelType)
             setSelectedModelNamespace(foundModel?.namespace || savedModelNamespace || 'default')
+            // Restoring a saved reference is not an explicit catalog selection.
+            setSelectedModelId(null)
           } else {
             setSelectedModel('')
             setSelectedModelType(undefined)
             setSelectedModelNamespace(undefined)
+            setSelectedModelId(null)
           }
         }
 
@@ -556,12 +565,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             model.name === baseBot?.secondary_model_name &&
             (model.namespace || 'default') === (baseBot?.secondary_model_namespace || 'default')
         )
-        if (baseBot?.secondary_model_name) {
+        if (baseBot?.secondary_model_name && !modelSelectionChanged.current.secondary) {
           setSelectedSecondaryModel(baseBot.secondary_model_name)
           setSelectedSecondaryModelType(secondaryModel?.type)
-          setSelectedSecondaryModelNamespace(
-            secondaryModel?.namespace || baseBot.secondary_model_namespace || 'default'
-          )
+          setSelectedSecondaryModelNamespace(baseBot.secondary_model_namespace || 'default')
+          // Catalog metadata is for display; it cannot identify the owner's saved binding.
+          setSelectedSecondaryModelId(null)
         }
         // Note: Don't clear selectedModel here if agent changed,
         // as it's already cleared in the agent select onChange handler
@@ -575,9 +584,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setSelectedModel('')
         setSelectedModelType(undefined)
         setSelectedModelNamespace(undefined)
+        setSelectedModelId(null)
         setSelectedSecondaryModel('')
         setSelectedSecondaryModelType(undefined)
         setSelectedSecondaryModelNamespace(undefined)
+        setSelectedSecondaryModelId(null)
       } finally {
         setLoadingModels(false)
       }
@@ -603,6 +614,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Reset base form when switching editing object
   useEffect(() => {
+    modelSelectionChanged.current = { primary: false, secondary: false }
+    setSelectedModelId(null)
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
@@ -622,6 +635,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setSelectedSecondaryModel(baseBot?.secondary_model_name || '')
     setSelectedSecondaryModelType(undefined)
     setSelectedSecondaryModelNamespace(baseBot?.secondary_model_namespace || undefined)
+    setSelectedSecondaryModelId(null)
     setAgentConfigError(false)
 
     if (baseBot?.agent_config) {
@@ -849,8 +863,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       shell_name: agentName.trim(),
       agent_config: parsedAgentConfig,
       model_category_type: selectedModelObject?.modelCategoryType,
+      model_id: isCustomModel || isDifyAgent ? null : selectedModelId,
       secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
       secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
+      secondary_model_id: primaryModelIsVideo ? selectedSecondaryModelId : null,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       default_knowledge_base_refs: defaultKnowledgeBaseRefs,
@@ -897,6 +913,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedSecondaryModel,
     selectedSecondaryModelNamespace,
     selectedModelObject?.modelCategoryType,
+    selectedModelId,
+    selectedSecondaryModelId,
   ])
 
   // Save bot and return the bot id
@@ -950,8 +968,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botData.name,
           shell_name: botData.shell_name,
           agent_config: botData.agent_config,
+          model_id: botData.model_id,
           secondary_model_name: botData.secondary_model_name,
           secondary_model_namespace: botData.secondary_model_namespace,
+          secondary_model_id: botData.secondary_model_id,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
@@ -960,10 +980,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          target_group_names: crossNamespaceClone ? [] : targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          const updated = await botApis.updateBot(editingBotId, {
+            ...botReq,
+            team_id: teamId,
+            target_group_names: crossNamespaceClone ? [] : targetGroupNames,
+          })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
           return updated.id
         } else {
@@ -981,7 +1006,19 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
+  }, [
+    validateBot,
+    getBotData,
+    editingBotId,
+    setBots,
+    toast,
+    t,
+    scope,
+    groupName,
+    teamId,
+    targetGroupNames,
+    crossNamespaceClone,
+  ])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -1120,8 +1157,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botName.trim(),
           shell_name: agentName.trim(), // Use shell_name instead of shell_type
           agent_config: parsedAgentConfig as Record<string, unknown>,
+          model_id: isCustomModel || isDifyAgent ? null : selectedModelId,
           secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
           secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
+          secondary_model_id: primaryModelIsVideo ? selectedSecondaryModelId : null,
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
@@ -1142,11 +1181,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          target_group_names: crossNamespaceClone ? [] : targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
           // Edit existing bot
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          const updated = await botApis.updateBot(editingBotId, {
+            ...botReq,
+            team_id: teamId,
+            target_group_names: crossNamespaceClone ? [] : targetGroupNames,
+          })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
         } else {
           // Create new bot
@@ -1206,13 +1250,22 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
               <Button
                 onClick={handleSave}
-                disabled={botSaving}
+                disabled={botSaving || targetGroupsLoading || targetGroupsError}
                 variant="primary"
                 data-testid="save-button"
               >
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {botSaving ? t('common:actions.saving') : t('common:actions.save')}
               </Button>
+              {targetGroupsError && onRetryTargetGroups && (
+                <Button
+                  onClick={onRetryTargetGroups}
+                  variant="outline"
+                  data-testid="retry-target-groups-button"
+                >
+                  {t('common:actions.retry')}
+                </Button>
+              )}
             </div>
           ))}
       </div>
@@ -1354,22 +1407,29 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       specialOptions={videoPrimaryRequired ? [] : noModelOption}
                       labels={modelCascadeLabels}
                       onSelectModel={model => {
+                        modelSelectionChanged.current.primary = true
                         setSelectedModel(model.name)
                         setSelectedModelType(model.type)
                         setSelectedModelNamespace(model.namespace || 'default')
+                        setSelectedModelId(model.id ?? null)
                         if (model.modelCategoryType !== 'video') {
+                          modelSelectionChanged.current.secondary = true
                           setSelectedSecondaryModel('')
                           setSelectedSecondaryModelType(undefined)
                           setSelectedSecondaryModelNamespace(undefined)
+                          setSelectedSecondaryModelId(null)
                         }
                       }}
                       onSelectSpecialOption={() => {
+                        modelSelectionChanged.current = { primary: true, secondary: true }
                         setSelectedModel('')
                         setSelectedModelType(undefined)
                         setSelectedModelNamespace(undefined)
+                        setSelectedModelId(null)
                         setSelectedSecondaryModel('')
                         setSelectedSecondaryModelType(undefined)
                         setSelectedSecondaryModelNamespace(undefined)
+                        setSelectedSecondaryModelId(null)
                       }}
                       placeholder={
                         !agentName
@@ -1510,14 +1570,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     specialOptions={[]}
                     labels={modelCascadeLabels}
                     onSelectModel={model => {
+                      modelSelectionChanged.current.secondary = true
                       setSelectedSecondaryModel(model.name)
                       setSelectedSecondaryModelType(model.type)
                       setSelectedSecondaryModelNamespace(model.namespace || 'default')
+                      setSelectedSecondaryModelId(model.id ?? null)
                     }}
                     onSelectSpecialOption={() => {
+                      modelSelectionChanged.current.secondary = true
                       setSelectedSecondaryModel('')
                       setSelectedSecondaryModelType(undefined)
                       setSelectedSecondaryModelNamespace(undefined)
+                      setSelectedSecondaryModelId(null)
                     }}
                     placeholder={t('settings:bot.secondary_llm_model_placeholder')}
                     disabled={loadingModels || !agentName || readOnly}
@@ -1582,15 +1646,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     </Button>
                   </div>
                   <div className="bg-base rounded-md p-2 min-h-[80px]">
-                    {loadingSkills ? (
+                    {skillsError ? (
+                      <Button variant="ghost" data-testid="bot-skills-retry" onClick={reloadSkills}>
+                        {t('common:skills.loading_failed')} · {t('common:actions.retry')}
+                      </Button>
+                    ) : null}
+                    {loadingSkills && (
                       <div className="text-sm text-text-muted">
                         {t('common:skills.loading_skills')}
                       </div>
-                    ) : availableSkills.length === 0 && selectedSkills.length === 0 ? (
-                      <div className="text-sm text-text-muted">
-                        {t('common:skills.no_skills_available')}
-                      </div>
-                    ) : (
+                    )}
+                    {!loadingSkills &&
+                      !skillsError &&
+                      availableSkills.length === 0 &&
+                      selectedSkills.length === 0 && (
+                        <div className="text-sm text-text-muted">
+                          {t('common:skills.no_skills_available')}
+                        </div>
+                      )}
+                    {(availableSkills.length > 0 || selectedSkills.length > 0) && (
                       <div className="space-y-2">
                         {availableSkills.length > 0 && (
                           <RichSkillSelector
@@ -1791,30 +1865,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         onClose={() => setSkillManagementModalOpen(false)}
         scope={scope}
         groupName={groupName}
-        onSkillsChange={() => {
-          // Reload skills list when skills are changed
-          const fetchSkills = async () => {
-            try {
-              // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-              const skillsData =
-                scope === 'public'
-                  ? await fetchPublicSkillsList()
-                  : await fetchUnifiedSkillsList({
-                      scope: scope,
-                      groupName: groupName,
-                    })
-              setAllSkills(skillsData)
-              // Filter skills based on current shell type
-              setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
-            } catch {
-              toast({
-                variant: 'destructive',
-                title: t('common:skills.loading_failed'),
-              })
-            }
-          }
-          fetchSkills()
-        }}
+        onSkillsChange={reloadSkills}
       />
 
       {/* Prompt Fine-tune Dialog */}

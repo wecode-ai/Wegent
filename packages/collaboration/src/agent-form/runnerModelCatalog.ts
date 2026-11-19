@@ -28,6 +28,8 @@ export function runnerModelCatalog(
               providerId: nativeModel.provider,
               providerName: nativeModel.account_label,
               providerType: nativeModel.provider === 'openai' ? 'official' : 'provider',
+              defaultReasoningEffort: nativeModel.default_reasoning_effort,
+              supportedReasoningEfforts: nativeModel.supported_reasoning_efforts ?? undefined,
             })
           : { provider: 'local' }
       return {

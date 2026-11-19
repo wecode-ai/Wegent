@@ -7,6 +7,14 @@ import type { HttpClient } from './http'
 import { createRuntimeWorkApi } from './runtimeWork'
 
 describe('createRuntimeWorkApi', () => {
+  test('lists only the explicitly addressed computer and preserves cancellation', async () => {
+    const get = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+    const api = createRuntimeWorkApi({ get } as unknown as HttpClient)
+    const signal = new AbortController().signal
+    await api.listRuntimeWork({ deviceId: 'app-record-22', signal })
+    expect(get).toHaveBeenCalledExactlyOnceWith('/runtime-work?device_id=app-record-22', { signal })
+  })
+
   test('forwards cancellation separately from the serialized transcript request', async () => {
     const controller = new AbortController()
     const post = vi.fn().mockResolvedValue({ messages: [], turns: [] })
@@ -254,59 +262,6 @@ describe('createRuntimeWorkApi', () => {
       workspacePath: '/Users/crystal/Documents/hello-0',
       runtime: 'codex',
       label: 'Hello project',
-    })
-  })
-
-  test('binds private IM sessions to a runtime task address', async () => {
-    const post = vi.fn().mockResolvedValue({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-1',
-      },
-      boundSessionKeys: ['session-a', 'session-b'],
-      notifiedCount: 2,
-    })
-    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
-
-    await expect(
-      api.bindRuntimeTaskImSessions({
-        address: {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-1',
-        },
-        taskTitle: '修复 IM 通知标题',
-        sessionKeys: ['session-a', 'session-b'],
-        modelSelection: {
-          modelName: 'gpt-5.6-luna',
-          modelType: 'public',
-          options: { reasoningEffort: 'low' },
-        },
-      })
-    ).resolves.toEqual({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-1',
-      },
-      boundSessionKeys: ['session-a', 'session-b'],
-      notifiedCount: 2,
-    })
-
-    expect(post).toHaveBeenCalledWith('/runtime-work/im-sessions', {
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-1',
-      },
-      taskTitle: '修复 IM 通知标题',
-      sessionKeys: ['session-a', 'session-b'],
-      modelSelection: {
-        modelName: 'gpt-5.6-luna',
-        modelType: 'public',
-        options: { reasoningEffort: 'low' },
-      },
     })
   })
 })

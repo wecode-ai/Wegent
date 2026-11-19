@@ -21,6 +21,35 @@ from app.core import socketio as socketio_core
 from app.core import socketio_redis
 
 
+@pytest.mark.parametrize("requested_interval,expected_interval", [(30, 15), (1, 1)])
+async def test_ack_probe_runs_before_idle_subscription_expires(
+    monkeypatch: pytest.MonkeyPatch,
+    requested_interval: float,
+    expected_interval: float,
+) -> None:
+    manager = socketio_redis.ObservedRedisManager(
+        "redis://localhost", redis_options={"socket_timeout": 30}
+    )
+    probes = []
+    intervals = []
+
+    async def check_ack() -> None:
+        probes.append(True)
+
+    async def sleep(interval: float) -> None:
+        intervals.append(interval)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(manager, "check_ack", check_ack)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await manager.run_ack_probe(requested_interval)
+
+    assert probes == [True]
+    assert intervals == [expected_interval]
+
+
 class MemoryPubSubManager(AsyncPubSubManager):
     """Replace the broker transport while using the real Socket.IO callbacks."""
 

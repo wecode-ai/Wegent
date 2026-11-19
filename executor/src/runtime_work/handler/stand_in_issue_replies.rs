@@ -4,13 +4,39 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 fn issue_reply_role<'a>(roles: &'a [Value], origin: &Value) -> Option<&'a Value> {
-    roles.iter().find(|role| {
-        role["id"] == origin["standInId"]
-            && (role["enabled"] == true || origin["trigger"] == "manual")
-    })
+    roles.iter().find(|role| role["id"] == origin["standInId"])
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn read_stand_in_issue(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+        origin: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let project = origin["cloudProjectId"].as_str().unwrap_or_default();
+        let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
+        let issue = if origin["projectStore"] == "local" {
+            serde_json::to_value(store.get_task(project, issue_id).map_err(settings_error)?)
+                .unwrap()
+        } else {
+            self.verify_runtime_user(&json!({"userId":user})).await?;
+            self.runtime_http(
+                reqwest::Method::GET,
+                &format!("/v1/loop-items/{issue_id}"),
+                None,
+            )
+            .await?
+        };
+        if issue["cloud_project_id"] != project {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Issue does not belong to this project",
+            ));
+        }
+        Ok(issue)
+    }
+
     pub(super) async fn validate_stand_in_issue_request(
         &self,
         request: &ExecutionRequest,
@@ -34,7 +60,7 @@ impl RuntimeWorkRpcHandler {
             .personal_stand_in(user, &self.device_id)
             .map_err(|error| error.to_string())?;
         let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
-        let mut link = self
+        let link = self
             .local_task_link(task)
             .ok_or("Issue conversation is unavailable")?;
         if [
@@ -54,17 +80,15 @@ impl RuntimeWorkRpcHandler {
         {
             return Err("Issue conversation owner does not match".into());
         }
-        let role = issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
-        link.runtime_handle["origin"] = origin.clone();
-        self.validate_stand_in_work_authority(
-            &store,
-            user,
-            role,
-            &link,
-            origin["trigger"] == "manual",
-        )
-        .await
-        .map_err(|error| error.message)
+        issue_reply_role(&roles, origin).ok_or("Issue stand-in is unavailable")?;
+        let issue = self
+            .read_stand_in_issue(&store, user, origin)
+            .await
+            .map_err(|error| error.message)?;
+        if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
+            return Err("Issue execution permission is unavailable".into());
+        }
+        Ok(())
     }
 
     pub(super) fn persist_stand_in_issue_reply(&self, task: &str, message: &CodexNotification) {
@@ -75,6 +99,18 @@ impl RuntimeWorkRpcHandler {
         if self.store.read_task(task, |link| {
             link.runtime_handle["origin"]["type"] == "issue_dispatch"
                 && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
+                && !super::super::util::is_private_discussion(&runtime_event_request_from_link(
+                    link,
+                ))
+                && crate::runtime_work::lifecycle::native_execution_state(link).map_or(
+                    true,
+                    |state| {
+                        state.latest_turn_id == codex_notification_turn_id(message)
+                            && state.process_generation == Some(message.process_generation())
+                            && (notification.method != "turn/started"
+                                || state.native_sequence == message.sequence())
+                    },
+                )
         }) != Some(true)
         {
             return;
@@ -140,7 +176,8 @@ impl RuntimeWorkRpcHandler {
             {
                 return;
             }
-            let report = json!({"origin":origin,"body":text,"messageId":key});
+            let report =
+                json!({"origin":origin,"body":text,"messageId":key,"publicTurn":public_turn});
             if !link.runtime_handle["standInIssueReplies"].is_object() {
                 link.runtime_handle["standInIssueReplies"] = json!({});
             }
@@ -200,7 +237,7 @@ impl RuntimeWorkRpcHandler {
                 match handler.publish_stand_in_issue_reply(&task, &report).await {
                     Ok(()) => {
                         if let Err(error) = handler.store.try_update_task(&task, |link| {
-                            link.runtime_handle["standInIssueReplies"][&key] = json!({"sent":true});
+                            link.runtime_handle["standInIssueReplies"][&key] = json!({"sent":true,"messageId":report["messageId"],"origin":report["origin"],"publicTurn":report["publicTurn"]});
                         }) {
                             log_executor_event(
                                 "Stand-in public receipt persistence failed",
@@ -254,20 +291,11 @@ impl RuntimeWorkRpcHandler {
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
         let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
-        let role = issue_reply_role(&roles, origin)
+        issue_reply_role(&roles, origin)
             .ok_or_else(|| AppIpcError::new("source_removed", "Stand-in is no longer available"))?;
-        let mut link = self
-            .local_task_link(task)
+        self.local_task_link(task)
             .ok_or_else(|| AppIpcError::new("source_removed", "Conversation no longer exists"))?;
-        link.runtime_handle["origin"] = origin.clone();
-        self.validate_stand_in_work_authority(
-            &store,
-            user,
-            role,
-            &link,
-            origin["trigger"] == "manual",
-        )
-        .await?;
+        self.read_stand_in_issue(&store, user, origin).await?;
         if origin["projectStore"] == "local" {
             store
                 .publish_stand_in_reply(
@@ -284,7 +312,7 @@ impl RuntimeWorkRpcHandler {
         }
         let response = self.runtime_request(reqwest::Method::POST, &format!("/v1/cloud-projects/{}/loop-items/{}/activity-comments", origin["cloudProjectId"].as_str().unwrap_or_default(), origin["loopItemId"].as_str().unwrap_or_default()), Some(&json!({
             "body":report["body"],"stand_in":{
-                "device_id":self.device_id,"task_id":task,"role_id":origin["standInId"],
+                "device_id":self.cloud_device_id()?,"task_id":task,"role_id":origin["standInId"],
                 "role_name":origin["roleName"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Stand-in"),
                 "message_id":report["messageId"],"human_assignment_id":if origin["trigger"] == "mention" {Value::Null} else {origin["humanAssignmentId"].clone()},
                 "trigger_comment_id":origin["triggerCommentId"]
@@ -310,7 +338,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn paused_issue_intake_allows_only_trusted_manual_requests() {
+    async fn issue_conversations_do_not_depend_on_intake_or_current_assignment() {
         let root = tempfile::tempdir().unwrap();
         let (handler, store, origin, mut settings) = paused_issue_fixture(root.path());
         let mut request = ExecutionRequest::default();
@@ -339,14 +367,11 @@ mod tests {
             link.runtime_handle["origin"] = automatic.clone()
         });
         request.extra.insert("origin".into(), automatic.clone());
-        assert!(issue_reply_role(&roles, &automatic).is_none());
-        assert_eq!(
-            handler
-                .validate_stand_in_issue_request(&request)
-                .await
-                .unwrap_err(),
-            "Issue stand-in is unavailable"
-        );
+        assert!(issue_reply_role(&roles, &automatic).is_some());
+        handler
+            .validate_stand_in_issue_request(&request)
+            .await
+            .unwrap();
         assert!(issue_reply_role(&[], &origin).is_none());
         handler.store.update_task("issue-chat", |link| {
             link.runtime_handle["origin"] = origin.clone()
@@ -384,13 +409,23 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(
-            handler
-                .validate_stand_in_issue_request(&request)
-                .await
-                .unwrap_err(),
-            "Issue is no longer assigned to you"
-        );
+        handler
+            .validate_stand_in_issue_request(&request)
+            .await
+            .unwrap();
+        let issue = store.get_task(project, issue_id).unwrap();
+        store
+            .update_task(
+                project,
+                issue_id,
+                serde_json::from_value(json!({"version":issue.version,"assignee_user_id":null}))
+                    .unwrap(),
+            )
+            .unwrap();
+        handler
+            .validate_stand_in_issue_request(&request)
+            .await
+            .unwrap();
     }
 
     fn paused_issue_fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value, Value) {
@@ -418,6 +453,63 @@ mod tests {
             ..Default::default()
         });
         (handler, store, origin, settings)
+    }
+
+    #[tokio::test]
+    async fn queued_stand_in_turns_recheck_current_issue_execution_permission() {
+        use axum::{routing::get, Json, Router};
+
+        let root = tempfile::tempdir().unwrap();
+        let (mut handler, _, mut origin, _) = paused_issue_fixture(root.path());
+        origin["projectStore"] = json!("cloud");
+        handler.store.update_task("issue-chat", |link| {
+            link.runtime_handle["origin"] = origin.clone()
+        });
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin.clone());
+        let issue = Arc::new(Mutex::new(json!({
+            "cloud_project_id":origin["cloudProjectId"],"permissions":{"execute":true}
+        })));
+        let current = issue.clone();
+        let router = Router::new()
+            .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
+            .route(
+                &format!(
+                    "/api/v1/loop-items/{}",
+                    origin["loopItemId"].as_str().unwrap()
+                ),
+                get(move || {
+                    let value = current.lock().unwrap().clone();
+                    async move { Json(value) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "test".into(),
+            ..Default::default()
+        })));
+        let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+        handler
+            .validate_project_coordinator_request(&request)
+            .await
+            .unwrap();
+        for permission in [json!(false), Value::Null] {
+            issue.lock().unwrap()["permissions"]["execute"] = permission;
+            assert_eq!(
+                handler
+                    .validate_project_coordinator_request(&request)
+                    .await
+                    .unwrap_err(),
+                "Issue execution permission is unavailable"
+            );
+        }
+        issue.lock().unwrap()["permissions"]["execute"] = json!(true);
+        handler
+            .validate_project_coordinator_request(&request)
+            .await
+            .unwrap();
+        server.abort();
     }
 
     #[tokio::test]

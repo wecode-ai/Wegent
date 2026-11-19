@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict'
+
 export async function assertMarkdownPreviewAndSource(control, text, options = {}) {
   await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
     ...options,

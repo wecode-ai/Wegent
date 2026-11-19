@@ -14,11 +14,12 @@ import {
   releaseUpgradeChannels,
   releaseUpgradePlan,
   releaseVerificationChannels,
+  releasePublicationChannels,
   verifyReleaseUpgradePlan,
   upgradeSource,
 } from './lib/upgrade-evidence.mjs'
 
-function publishedCatalog(channel, versions) {
+function publishedCatalog(channel, versions, minSourceVersion = '0.5.0') {
   return {
     schemaVersion: 1,
     channel,
@@ -26,7 +27,7 @@ function publishedCatalog(channel, versions) {
     arch: 'x64',
     releases: versions.map(version => ({
       version,
-      minSourceVersion: '0.5.0',
+      minSourceVersion,
       sha256: 'a'.repeat(64),
       sourceSha: '1'.repeat(40),
       url: `https://example.com/${version}.tar.gz`,
@@ -40,6 +41,38 @@ function publishedCatalog(channel, versions) {
 }
 
 const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
+
+test('next release candidates respect the current source floor and require exact-pair proof', async () => {
+  const policy = JSON.parse(
+    readFileSync(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
+  )
+  const major = Number(policy.minSourceVersion.split('.')[0]) + 1
+  const target = { version: `${major}.0.0-beta.1`, minSourceVersion: policy.minSourceVersion }
+  const catalog = publishedCatalog('beta', ['0.0.0', policy.minSourceVersion], '0.0.0')
+  const plan = releaseUpgradePlan([catalog], target, 'beta')
+  assert.equal(plan.baselineVersion, policy.minSourceVersion)
+  assert.equal(plan.baseline.version, policy.minSourceVersion)
+  assert.equal(plan.previous.version, policy.minSourceVersion)
+  assert.throws(
+    () =>
+      releaseUpgradePlan([{ ...catalog, releases: catalog.releases.slice(0, 1) }], target, 'beta'),
+    /No eligible published upgrade source/
+  )
+  await assert.rejects(
+    verifyReleaseUpgradePlan(plan, async () => null),
+    /publication blocked/
+  )
+})
+
+test('a stable bridge preserves the existing Beta channel while ordinary releases advance both', () => {
+  const policy = { releasePurpose: 'bridge' }
+  assert.deepEqual(releasePublicationChannels('stable', policy), ['stable'])
+  assert.deepEqual(releaseVerificationChannels('stable', '', '', policy), ['stable'])
+  assert.deepEqual(releasePublicationChannels('stable'), ['stable', 'beta'])
+  assert.throws(() => releasePublicationChannels('beta', policy), /only to stable/)
+  assert.throws(() => releasePublicationChannels('stable', { releasePurpose: 'unknown' }))
+  assert.throws(() => releaseVerificationChannels('stable', 'beta', '', policy), /outside/)
+})
 
 test('channel shards preserve target publication boundaries', () => {
   assert.deepEqual(releaseVerificationChannels('stable'), ['stable', 'beta'])
@@ -333,6 +366,11 @@ test('generated policies keep the previous client upgradeable and carry X into t
         toVersion: target.version,
         fromSourceSha: source.sourceSha,
         toSourceSha: target.sourceSha,
+        rollbackProtection: {
+          ...input().evidence.rollbackProtection,
+          version: target.version,
+          packageSha256: target.sha256,
+        },
       }
       return verifiedUpgradeEdge({
         ...input(),
@@ -381,6 +419,30 @@ function input() {
     channel: 'stable',
     upgrade: 'passed',
     rollback: 'passed',
+    reupgrade: 'passed',
+    rollbackProtection: {
+      version: to.version,
+      packageSha256: to.sha256,
+      kind: 'confirmation-required',
+      historyPreserved: true,
+      downloadPrevented: true,
+      retryConfirmed: true,
+    },
+    credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
+      stage,
+      format: index === 0 ? 2 : 3,
+      storageVersion: index % 2 === 0 ? 2 : 3,
+      modelAuthenticated: true,
+      cloudDeviceSignature: true,
+      ...(['upgraded', 'rolled-back'].includes(stage) ? { writeAuthenticated: true } : {}),
+    })),
+    manifestRecovery: {
+      schemaVersion: 2,
+      backup: 'manifest.json.empty-recovered',
+      historicalBackup: 'manifest.json.empty-previous-upgrade',
+      restarted: true,
+      rolledBack: true,
+    },
   }
   return {
     from,
@@ -399,6 +461,14 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
   for (const change of [
     { kind: 'regression' },
     { rollback: 'not-run' },
+    { reupgrade: 'not-run' },
+    { credentials: [] },
+    {
+      credentials: input().evidence.credentials.map(entry => ({
+        ...entry,
+        cloudDeviceSignature: false,
+      })),
+    },
     { platform: 'macos' },
     { channel: 'beta' },
     { source: 'c'.repeat(64) },
@@ -406,6 +476,9 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
     { suiteVersion: 2 },
     { fromSourceSha: 'f'.repeat(40) },
     { toSourceSha: undefined },
+    { manifestRecovery: undefined },
+    { manifestRecovery: { ...input().evidence.manifestRecovery, restarted: false } },
+    { manifestRecovery: { ...input().evidence.manifestRecovery, rolledBack: false } },
   ]) {
     const value = input()
     Object.assign(value.evidence, change)
@@ -415,6 +488,25 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
 test('locally generated regression fixtures cannot become production release evidence', () => {
   const value = input()
   value.to.fixture = true
+  assert.throws(() => verifiedUpgradeEdge(value), /exact-package/)
+})
+test('a format-preserving package needs exact quarantine proof instead of a protected-format round trip', () => {
+  const value = input()
+  value.evidence.reupgrade = 'not-run'
+  value.evidence.credentials.pop()
+  for (const stage of value.evidence.credentials) {
+    stage.format = 2
+    stage.storageVersion = 2
+  }
+  value.evidence.rollbackProtection = {
+    version: value.to.version,
+    packageSha256: value.to.sha256,
+    kind: 'blocked',
+    historyPreserved: true,
+    downloadPrevented: true,
+  }
+  assert.equal(verifiedUpgradeEdge(value).to, value.to.version)
+  value.evidence.rollbackProtection.packageSha256 = 'c'.repeat(64)
   assert.throws(() => verifiedUpgradeEdge(value), /exact-package/)
 })
 test('a new baseline with no incoming edges does not invent historical compatibility', () => {

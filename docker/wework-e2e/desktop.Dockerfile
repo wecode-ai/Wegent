@@ -7,13 +7,21 @@ ARG UV_VERSION=0.11.17
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Use the independently hosted kernel.org mirror while preserving Ubuntu's
+# suites and archive signing keyring. Package signatures remain mandatory.
+RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://mirrors.edge.kernel.org/ubuntu#g' \
+      /etc/apt/sources.list.d/ubuntu.sources \
+  && getent ahostsv4 mirrors.edge.kernel.org \
+  && apt-get -o APT::Update::Error-Mode=any update \
+  && apt-get install -y --no-install-recommends \
     apparmor \
     build-essential \
     ca-certificates \
     curl \
+    file \
     fontconfig \
     fonts-noto-cjk \
+    gdb \
     gnupg \
     gh \
     git \
@@ -34,6 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxss1 \
     mysql-server \
     openbox \
+    openjdk-21-jre-headless \
+    pcmanfm \
     python3 \
     python3-venv \
     redis-server \
@@ -41,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     umoci \
     x11-utils \
+    xdg-utils \
     xvfb \
     zstd \
   && curl --proto '=https' --tlsv1.2 -fsSL \
@@ -60,6 +71,12 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 ENV IS_SANDBOX=1
 
 RUN node --version \
+  && java -version \
+  && keytool -help >/dev/null \
+  && gdb --version \
+  && command -v file \
+  && command -v xdg-mime \
+  && command -v pcmanfm \
   && fc-match --format '%{family}\n' ':lang=zh-cn' | grep -F 'Noto Sans CJK' \
   && pnpm --version \
   && gh --version \

@@ -15,7 +15,10 @@ import {
 } from "../project-board/IssueChildrenProgress";
 import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
 import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
-import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
+import type {
+  SharedWorkspaceRuntimeApi,
+  SharedWorkspaceProjectsApi,
+} from "../ports/SharedWorkspaceApi";
 import type { CollaborationTranslate } from "../i18n";
 import { runnerEnvironmentError } from "../execution-environment/runnerEnvironmentError";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
@@ -46,6 +49,9 @@ import {
   BoardViewNotice,
   collectProjectTags,
   boardDropHint,
+  isBaseBoardStatusGroupingEnabled,
+  useBaseBoardStatusMigration,
+  BaseBoardStatusMigrationNotice,
   type ProjectBoardViews,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
@@ -109,6 +115,8 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  projectApi?: Pick<SharedWorkspaceProjectsApi, "get" | "update">;
+  onProjectMigrated?(project: CollaborationProject): void;
   participationUserId?: import("../issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
@@ -142,7 +150,10 @@ interface ProjectBoardAdapterProps {
     config: ProjectBoardViews,
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
   ): Promise<void>;
-  onOpen(issue: CollaborationIssue): void;
+  onOpen(
+    issue: CollaborationIssue,
+    board?: import("../issue-detail/issueCommentActions").IssueCommentBoardContext,
+  ): void;
   onOpenChildren?(issue: CollaborationIssue): void;
   onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
@@ -172,6 +183,8 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  projectApi,
+  onProjectMigrated,
   participationUserId,
   parentGroupingEnabled = false,
   emptyState,
@@ -248,6 +261,15 @@ export function ProjectBoardAdapter({
     (project.project_store === "local" ||
       project.access_role === "Owner" ||
       project.access_role === "Maintainer");
+  const baseBoardStatusGrouping =
+    supportsOrder && isBaseBoardStatusGroupingEnabled();
+  const baseBoardMigration = useBaseBoardStatusMigration({
+    api: projectApi ?? null,
+    project,
+    enabled: baseBoardStatusGrouping && Boolean(onProjectMigrated),
+    canManage: canManageViews,
+    onMigrated: (updated) => onProjectMigrated?.(updated),
+  });
   const runtimeWork = useBrowserBoardRuntimeWork(
     isIssueRunning && renderIssueCard ? undefined : runtime,
     taskBindings,
@@ -255,13 +277,11 @@ export function ProjectBoardAdapter({
   const filterScope = `${project.project_store}:${project.id}:${handlingUserId ?? "anonymous"}`;
   const [personalFilter, setPersonalFilter] = useState({
     scope: filterScope,
-    enabled: false,
+    enabled: null as boolean | null,
   });
   if (personalFilter.scope !== filterScope) {
-    setPersonalFilter({ scope: filterScope, enabled: false });
+    setPersonalFilter({ scope: filterScope, enabled: null });
   }
-  const needsMyInput =
-    personalFilter.scope === filterScope && personalFilter.enabled;
   const myIssues = useMemo(
     () =>
       issues.filter((issue) => {
@@ -285,6 +305,10 @@ export function ProjectBoardAdapter({
       }),
     [issues, handlingUserId, taskBindings, isIssueRunning, runtimeWork?.work],
   );
+  const needsMyInput =
+    personalFilter.scope === filterScope
+      ? (personalFilter.enabled ?? myIssues.length > 0)
+      : myIssues.length > 0;
   const visibleIssues = needsMyInput ? myIssues : issues;
   const availableTags = useMemo(
     () => collectProjectTags(project, issues),
@@ -356,6 +380,7 @@ export function ProjectBoardAdapter({
     translate,
   });
   const controller = useStandardCloudBoardController({
+    baseBoardStatusGrouping,
     currentUserId: handlingUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: translate(
@@ -489,7 +514,7 @@ export function ProjectBoardAdapter({
                 type="button"
                 data-testid="project-needs-my-input-filter"
                 aria-pressed={needsMyInput}
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary/30 bg-muted text-text-primary" : "border-border bg-background text-text-secondary"}`}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary bg-text-primary text-background hover:bg-text-primary/80" : "border-border bg-background text-text-secondary hover:bg-muted"}`}
                 onClick={() =>
                   setPersonalFilter({
                     scope: filterScope,
@@ -498,7 +523,11 @@ export function ProjectBoardAdapter({
                 }
               >
                 {translate("todo.home_my_todos")}
-                <span>{myIssues.length}</span>
+                <span
+                  className={`min-w-5 rounded-full px-1.5 text-center ${needsMyInput ? "bg-background/20 text-background" : "bg-muted text-text-primary"}`}
+                >
+                  {myIssues.length}
+                </span>
               </button>
             )}
             {tagFilter.control}
@@ -593,7 +622,9 @@ export function ProjectBoardAdapter({
                   ariaLabel: translate(
                     "todo.board_create_in_column",
                     undefined,
-                    { column: column.label },
+                    {
+                      column: column.label,
+                    },
                   ),
                   label: translate("todo.board_create_first"),
                   onClick: () => {
@@ -645,26 +676,40 @@ export function ProjectBoardAdapter({
           ) : null
         }
         renderExternalGroupPicker={() => null}
-        renderGroupPicker={(value, onChange) => (
-          <ProjectBoardGroupPicker
-            fields={[
-              { id: "status", name: labels.groupStatus, type: "status" },
-              {
-                id: "priority",
-                name: labels.groupPriority,
-                type: "singleSelect",
-              },
-              { id: "assignee", name: labels.groupAssignee, type: "user" },
-              { id: "tag", name: labels.groupTag, type: "tag" },
-            ]}
-            value={value}
-            onChange={(id) => onChange(id as ProjectBoardGroupBy)}
-            testIdPrefix="cloud-board-group"
-            searchPlaceholder={translate("board.group.search", "搜索分组字段")}
-            chooseLabel={translate("board.group.choose", "选择分组字段")}
-            emptyLabel={translate("board.group.empty", "没有匹配字段")}
-          />
-        )}
+        renderStatus={() =>
+          baseBoardMigration.error ? (
+            <BaseBoardStatusMigrationNotice
+              error={baseBoardMigration.error}
+              retry={baseBoardMigration.retry}
+              translate={translate}
+            />
+          ) : null
+        }
+        renderGroupPicker={(value, onChange) =>
+          baseBoardStatusGrouping ? null : (
+            <ProjectBoardGroupPicker
+              fields={[
+                { id: "status", name: labels.groupStatus, type: "status" },
+                {
+                  id: "priority",
+                  name: labels.groupPriority,
+                  type: "singleSelect",
+                },
+                { id: "assignee", name: labels.groupAssignee, type: "user" },
+                { id: "tag", name: labels.groupTag, type: "tag" },
+              ]}
+              value={value}
+              onChange={(id) => onChange(id as ProjectBoardGroupBy)}
+              testIdPrefix="cloud-board-group"
+              searchPlaceholder={translate(
+                "board.group.search",
+                "搜索分组字段",
+              )}
+              chooseLabel={translate("board.group.choose", "选择分组字段")}
+              emptyLabel={translate("board.group.empty", "没有匹配字段")}
+            />
+          )
+        }
         renderBoardSettingsAction={
           onOpenArchive
             ? () => (
@@ -759,7 +804,13 @@ export function ProjectBoardAdapter({
             archiveLabel: translate("todo.archive_issue", "归档任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
             dragEnabled: canEditCollaborationIssue(issue),
-            onOpen: () => onOpen(issue),
+            onOpen: () =>
+              onOpen(issue, {
+                columns: controller.columns,
+                groupBy: controller.state.groupBy,
+                name: savedViews.view?.name ?? project.name,
+                sourceColumnKey: column.key,
+              }),
           };
           const progress = childrenProgress.get(issue.id);
           const childrenAction =
@@ -786,7 +837,7 @@ export function ProjectBoardAdapter({
               display: issueDisplay,
               focused,
               issue,
-              onOpen: () => onOpen(issue),
+              onOpen: cardProps.onOpen,
               onDelete: cardProps.onArchive,
               previewDisabled,
               taskBindings: taskBindings.filter(

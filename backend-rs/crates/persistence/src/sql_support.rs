@@ -50,6 +50,21 @@ impl MysqlValue for StatementArg {
     }
 }
 
+/// SQLAlchemy's `column IN (...)` rendering for an id list.
+///
+/// A non-empty list binds one parameter per id; the empty list keeps the
+/// driver's always-false `IN (NULL) AND (1 != 1)` guard with no parameters.
+pub fn id_in_clause(column: &str, ids: &[i64]) -> (String, Vec<StatementArg>) {
+    if ids.is_empty() {
+        return (format!("{column} IN (NULL) AND (1 != 1)"), Vec::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(", ");
+    (
+        format!("{column} IN ({placeholders})"),
+        ids.iter().map(|id| StatementArg::Int(*id)).collect(),
+    )
+}
+
 /// One SQL `sum()` DECIMAL aggregate converted like the source's
 /// `int(Decimal)`.
 ///

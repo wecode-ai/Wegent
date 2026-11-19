@@ -1,3 +1,13 @@
+.focusTarget:focus-visible {
+  outline: 2px solid
+    color-mix(
+      in srgb,
+      rgb(var(--color-focus-ring)) 80%,
+      rgb(var(--color-text-primary)) 20%
+    );
+  outline-offset: 2px;
+}
+
 .progress {
   will-change: width;
   transition: width 320ms cubic-bezier(0.19, 1, 0.22, 1);

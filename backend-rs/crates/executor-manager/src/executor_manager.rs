@@ -46,6 +46,10 @@ const SANDBOX_MUTATION_TIMEOUT: Duration = Duration::from_secs(180);
 const DELETE_EXECUTOR_TIMEOUT: Duration = Duration::from_secs(30);
 /// `ArchiveService._call_executor_restore`'s httpx timeout.
 const EXECUTOR_RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
+const EXECUTOR_PREPARE_TIMEOUT: Duration = Duration::from_secs(180);
+/// `RemoteWorkspaceService`'s `request_timeout` default (5.0s,
+/// `remote_workspace_service.py:44`) used by the executor address probe.
+const EXECUTOR_ADDRESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `_ExecutorRuntimeClient.get_sandbox`'s result: the source's
 /// `(payload, error)` pair collapsed to the branches `delete_task` reads.
@@ -57,6 +61,13 @@ pub enum SandboxLookup {
     NotFound,
     /// Any other failure (`(None, Some(error))`).
     Failed,
+}
+
+/// The executor binding returned after preparing a runtime.
+#[derive(Debug, serde::Deserialize)]
+pub struct PreparedExecutor {
+    pub executor_name: String,
+    pub executor_namespace: Option<String>,
 }
 
 /// `cleanup_sandbox_by_task_id`'s request body.
@@ -97,6 +108,7 @@ struct ExecutorRestoreRequest<'a> {
 #[derive(Clone)]
 pub struct ExecutorManager {
     client: Client,
+    recovery_client: Client,
     base: String,
     /// `settings.EXECUTOR_CANCEL_TASK_URL`, which the source keeps as an
     /// independent absolute URL rather than deriving it from the manager base.
@@ -159,8 +171,16 @@ impl ExecutorManager {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .context("failed to build the executor-manager HTTP client")?;
+        // A Pod may take seconds to prepare or restore before sending headers.
+        // The requests on this client still carry their individual deadlines.
+        let recovery_client = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .read_timeout(EXECUTOR_PREPARE_TIMEOUT)
+            .build()
+            .context("failed to build the executor recovery HTTP client")?;
         Ok(Self {
             client,
+            recovery_client,
             base: base.into().trim_end_matches('/').to_owned(),
             cancel_url,
         })
@@ -198,6 +218,45 @@ impl ExecutorManager {
             Ok(_) => SandboxLookup::Found,
             Err(_) => SandboxLookup::Failed,
         }
+    }
+
+    /// `RemoteWorkspaceService._get_executor_payload`
+    /// (`remote_workspace_service.py:522-581`): GET
+    /// `{base}/executor-manager/executor/address?executor_name=...&executor_namespace=...`.
+    /// A transport failure, a non-200 response, an empty body, or a non-object
+    /// payload yields `None`; the callers treat that as "still alive".
+    pub async fn executor_address(
+        &self,
+        executor_name: &str,
+        executor_namespace: &str,
+    ) -> Option<serde_json::Value> {
+        let endpoint = self
+            .recovery_client
+            .endpoint_named(
+                format!("{}/executor-manager/executor/address", self.base),
+                format!("{}/executor-manager/executor/address", self.base),
+            )
+            .ok()?;
+        let response = endpoint
+            .get()
+            .query(&[
+                ("executor_name", executor_name),
+                ("executor_namespace", executor_namespace),
+            ])
+            .timeout(EXECUTOR_ADDRESS_TIMEOUT)
+            .send()
+            .await
+            .ok()?;
+        if response.status().as_u16() != 200 {
+            return None;
+        }
+        let body = response.bytes().await.ok()?;
+        if body.is_empty() {
+            return None;
+        }
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .filter(serde_json::Value::is_object)
     }
 
     /// `_ExecutorRuntimeClient.delete_sandbox`: `(deleted, error)`.
@@ -290,6 +349,28 @@ impl ExecutorManager {
         );
     }
 
+    /// Deliver the cancellation to the running subtask's executor. The
+    /// executor callback owns the terminal state transition.
+    pub async fn cancel_subtask(
+        &self,
+        task_id: i64,
+        subtask_id: i64,
+        executor_name: Option<&str>,
+    ) -> Result<bool> {
+        let mut payload = serde_json::json!({"task_id": task_id, "subtask_id": subtask_id});
+        if let Some(name) = executor_name.filter(|name| !name.is_empty()) {
+            payload["executor_name"] = serde_json::json!(name);
+        }
+        let response = self
+            .client
+            .post(format!("{}/executor-manager/v1/cancel", self.base))?
+            .json(&payload)
+            .timeout(CANCEL_TASK_TIMEOUT)
+            .send()
+            .await?;
+        Ok(response.status().as_u16() == 200)
+    }
+
     /// `executor_kinds_service.delete_executor_task_sync`: a synchronous POST
     /// to `EXECUTOR_DELETE_TASK_URL`. A failure is reported to the caller,
     /// which logs and continues.
@@ -325,6 +406,36 @@ impl ExecutorManager {
         }
     }
 
+    /// Prepare an executor with the normal execution request without dispatching it.
+    pub async fn prepare_executor(&self, request: &impl Serialize) -> Result<PreparedExecutor> {
+        let url = format!("{}/executor-manager/executors/prepare", self.base);
+        let response = self
+            .recovery_client
+            .post(url)?
+            .json(request)
+            .timeout(EXECUTOR_PREPARE_TIMEOUT)
+            .send()
+            .await
+            .context("Could not prepare the executor")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let payload = response.json::<serde_json::Value>().await.ok();
+            if let Some(detail) = payload.as_ref().and_then(|value| value["detail"].as_str()) {
+                anyhow::bail!("{detail}");
+            }
+            anyhow::bail!("Executor preparation returned HTTP {status}");
+        }
+        let executor = response
+            .json::<PreparedExecutor>()
+            .await
+            .context("Executor preparation returned an invalid binding")?;
+        anyhow::ensure!(
+            !executor.executor_name.trim().is_empty(),
+            "Executor preparation returned an empty executor name"
+        );
+        Ok(executor)
+    }
+
     /// `ArchiveService._call_executor_restore`: `POST
     /// {base}/executor-manager/executor/restore` with a 120s timeout. The
     /// source returns the decoded JSON body, or `None` on any transport error,
@@ -338,7 +449,7 @@ impl ExecutorManager {
         runtime_type: &str,
     ) -> Option<serde_json::Value> {
         let endpoint = self
-            .client
+            .recovery_client
             .endpoint_named(
                 format!("{}/executor-manager/executor/restore", self.base),
                 format!("{}/executor-manager/executor/restore", self.base),

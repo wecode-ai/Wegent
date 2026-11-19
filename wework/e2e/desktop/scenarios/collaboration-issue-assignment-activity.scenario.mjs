@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
+import { verifyIssueCommentWorkflow } from '../modules/issue-comment-workflow.mjs'
 import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
@@ -31,7 +32,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let issue
   let commentId
 
-  async function request(path, options = {}, token = ownerToken) {
+  async function request(path, options = {}, token = ownerToken, expectedStatus) {
     const response = await fetch(`${backendUrl}${path}`, {
       ...options,
       headers: {
@@ -41,7 +42,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       },
     })
     const text = await response.text()
-    assert.equal(response.ok, true, `${path}: HTTP ${response.status}: ${text}`)
+    assert.equal(
+      expectedStatus === undefined ? response.ok : response.status === expectedStatus,
+      true,
+      `${path}: HTTP ${response.status}: ${text}`
+    )
     return text ? JSON.parse(text) : null
   }
 
@@ -302,7 +307,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       assert.deepEqual(await request(`/api/v1/loop-items/${issue.id}/tasks`), [])
       await captureScreenshot(control, 'assignment-activity-01-cloud-persisted.png', CONTENT)
       await verifyIssueWebLink(control, { request, project, issue })
-      await verifyCommentAssignment(control, { request, project, owner, member })
+      await verifyCommentAssignment(control, {
+        request,
+        project,
+        owner,
+        member,
+        memberRequest: (path, expectedStatus) => request(path, {}, memberToken, expectedStatus),
+      })
+      await verifyIssueCommentWorkflow(control, { request, project, member, uiTimeoutMs })
       await verifyLocalProject(control)
     },
 

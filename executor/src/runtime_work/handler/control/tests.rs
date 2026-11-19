@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn conversation_view_exposes_persisted_startup_failure_without_the_execution_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let failure = json!({"code":"runtime_start_failed","message":"Cannot start native process","failedAt":123});
+    let view = handler.control_task_view(RuntimeTaskLink {
+        local_task_id: "failed-start".into(),
+        runtime: "codex".into(),
+        runtime_handle: json!({"startupFailure":failure,
+            "executionRequest":{"auth_token":"private-execution-token"}}),
+        ..Default::default()
+    });
+    assert_eq!(view["startup_failure"], failure);
+    assert!(view.get("runtimeHandle").is_none());
+    assert!(!view.to_string().contains("private-execution-token"));
+}
+
 pub(super) struct EnvGuard(&'static str, Option<std::ffi::OsString>);
 impl EnvGuard {
     pub(super) fn home(path: &str) -> Self {
@@ -38,6 +56,30 @@ pub(super) fn context(task: &str) -> ControlContext {
         task,
     );
     ControlContext::from_request(&request).unwrap()
+}
+
+#[test]
+fn continuation_restores_selected_mode_from_legacy_execution_snapshot() {
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+        for (selection_key, option_key) in [("modelSelection", "collaborationMode"), ("model_selection", "collaboration_mode")] {
+            for mode in ["default", "plan"] {
+                let mut link = seed(&handler, "target");
+                link.runtime_handle = json!({"executionRequest":{"collaboration_model":"single"},
+                    selection_key:{"modelName":"test","modelType":"runtime","options":{option_key:mode}}});
+                let payload = handler.control_execution_payload(&link, "Continue original work", "message").await.unwrap();
+                let mut request = execution_request(&payload).unwrap();
+                apply_runtime_payload_metadata(&mut request, &payload);
+                assert_eq!(request.extra["collaborationMode"], mode);
+                assert_eq!(request.extra["collaboration_model"], "single");
+                assert_eq!(request.task_id, "target");
+                assert!(!request.new_session);
+            }
+        }
+    });
 }
 
 #[test]
@@ -430,6 +472,7 @@ fn local_creation_binds_project_or_issue_and_preserves_personal_scope() {
                 .control_operation(&context("caller"), "create_conversation", args)
                 .await
                 .unwrap();
+            workbench_control::assert_output_contract("create_conversation", &result);
             assert_eq!(result["accepted"], true);
             let task = result["taskId"].as_str().unwrap();
             let binding = store

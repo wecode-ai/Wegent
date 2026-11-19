@@ -6,6 +6,7 @@ pub mod native_git;
 pub mod repository_identity;
 pub mod turn_file_changes;
 pub mod workspace_files;
+pub mod workspace_lifetime;
 
 use wegent_protocol as protocol;
 pub mod cargo_cache;

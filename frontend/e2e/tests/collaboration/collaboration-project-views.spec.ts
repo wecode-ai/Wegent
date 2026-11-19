@@ -6,11 +6,112 @@ import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
+import {
+  dragCollaborationIssueToColumn,
+  enableLegacyBoardGrouping,
+  showAllProjectIssues,
+  webApi,
+} from '../../utils/collaboration-test-support'
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
+
+projectTest(
+  'keeps the legacy milestone deep link through creation and refresh',
+  async ({ page, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const title = `Web milestone ${crypto.randomUUID()}`
+    await page.goto(`${path}?view=milestones`)
+    await expect(page.getByTestId('milestones-page')).toBeVisible()
+    await expect(page).toHaveURL(`${path}?view=milestones`)
+    await page.getByTestId('milestone-create').click()
+    await page.getByTestId('milestone-title').fill(title)
+    const saved = page.waitForResponse(
+      response =>
+        response.url().endsWith(`/cloud-projects/${projectId}/milestones`) &&
+        response.request().method() === 'POST'
+    )
+    await page.getByTestId('milestone-save').click()
+    const response = await saved
+    expect(response.ok()).toBe(true)
+    const milestone = (await response.json()) as { id: string }
+    await expect(page.getByTestId(`milestone-${milestone.id}`)).toContainText(title)
+    await page.reload()
+    await expect(page).toHaveURL(`${path}?view=milestones`)
+    await expect(page.getByTestId(`milestone-${milestone.id}`)).toContainText(title)
+  }
+)
+
+projectTest(
+  'counts authoritative root completions and exposes the personal project breakdown',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Excluded child', parent_id: issueId, status: 'completed' },
+    })
+    const removed = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Deleted root', status: 'completed' },
+    })
+    await webApi(page, `/api/v1/loop-items/${removed.id}`, { method: 'DELETE' })
+    const backfillPath = `/api/v1/cloud-projects/${projectId}/assistant-participations/backfill`
+    for (const dryRun of [true, false, false]) {
+      const result = await webApi<{
+        dryRun: boolean
+        created: number
+        items: Array<{ issueId: string }>
+      }>(page, backfillPath, { method: 'POST', body: { dryRun } })
+      expect(result.dryRun).toBe(dryRun)
+      expect(result.created).toBe(0)
+      expect(result.items.some(item => item.issueId === removed.id)).toBe(false)
+    }
+    const issue = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+    await webApi(page, `/api/v1/loop-items/${issueId}`, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed' },
+    })
+    type Metrics = {
+      definition_version: string
+      as_of: string
+      window: { start: string; end: string }
+      completion: { completed: number; denominator: number; unknown: number; per_member: number }
+      activity: { ai_active_seconds: number; ai_active_hours: number }
+    }
+    const metrics = await webApi<Metrics>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/collaboration-metrics`
+    )
+    expect(metrics.definition_version).toBe('collab-v2')
+    expect(metrics.completion).toMatchObject({
+      completed: 1,
+      denominator: 2,
+      unknown: 0,
+      per_member: 0.5,
+    })
+    expect(Date.parse(metrics.window.end) - Date.parse(metrics.window.start)).toBe(
+      7 * 24 * 3600 * 1000
+    )
+    expect(metrics.window.end).toBe(metrics.as_of)
+    expect(metrics.activity.ai_active_seconds).toBe(0)
+    expect(metrics.activity.ai_active_hours).toBe(0)
+    const personal = await webApi<{ projects: Array<{ project_id: string; completed: number }> }>(
+      page,
+      '/api/v1/collaboration-metrics/me'
+    )
+    expect(personal.projects.find(project => project.project_id === projectId)?.completed).toBe(1)
+    const completed = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+    await webApi(page, `/api/v1/loop-items/${issueId}`, {
+      method: 'PATCH',
+      body: { version: completed.version, status: 'pending' },
+    })
+    expect(
+      (await webApi<Metrics>(page, `/api/v1/cloud-projects/${projectId}/collaboration-metrics`))
+        .completion.completed
+    ).toBe(0)
+  }
+)
 
 projectTest(
   'rejects subtree archiving through an editable parent with a private descendant',
@@ -89,7 +190,7 @@ projectTest(
     await page.goto(path)
     await dragIssueToLane(page, created.id, 'inbox', 'in_progress')
     await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(
-      /机器人没有符合配置且获项目授权的执行环境|No project-authorized execution environment matches this agent/
+      /项目设置 → 执行环境|Project settings → Execution environments/
     )
     await expect(
       page.getByTestId('cloud-todo-column-inbox').getByTestId(`cloud-todo-card-${created.id}`)
@@ -197,12 +298,14 @@ projectTest(
     })
 
     await page.goto(path)
+    await showAllProjectIssues(page)
     const sort = page.getByTestId('cloud-board-sort-by-pending')
     const completedSort = page.getByTestId('cloud-board-sort-by-completed')
     const assertOrder = async (lane: string, ids: string[]) => {
       const cards = page
         .getByTestId(`cloud-todo-column-${lane}`)
         .locator('article[data-testid^="collaboration-issue-"]')
+      await showAllProjectIssues(page)
       await expect(cards).toHaveCount(ids.length)
       for (const [index, id] of ids.entries()) {
         await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
@@ -328,6 +431,7 @@ for (const hiddenSiblings of [false, true])
           ).toBe('Developer')
         }
         await page.goto(path)
+        await showAllProjectIssues(page)
         const sort = page.getByTestId('cloud-board-sort-by-pending')
         await sort.click()
         await page.getByTestId('cloud-board-sort-by-pending-manual').click()
@@ -336,6 +440,7 @@ for (const hiddenSiblings of [false, true])
           .getByTestId('cloud-todo-column-pending')
           .locator('article[data-testid^="collaboration-issue-"]')
         const expectOrder = async (ids = [second.id, issueId, third.id]) => {
+          await showAllProjectIssues(page)
           await expect(cards).toHaveCount(3)
           for (const [index, id] of ids.entries())
             await expect(cards.nth(index)).toHaveAttribute(
@@ -458,6 +563,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
   projectTest(
     `saves manual ${groupBy} lane order across statuses and reloads`,
     async ({ page, scheduledProject: { path, issueId } }) => {
+      await enableLegacyBoardGrouping(page.context())
       const projectId = path.split('/').at(-1)!
       const project = await webApi<Resource & { current_user_id: number }>(
         page,
@@ -519,6 +625,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         },
       })
       await page.goto(path)
+      await showAllProjectIssues(page)
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
       const lane =
@@ -535,6 +642,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
             : 'tag-other'
       const sort = page.getByTestId(`cloud-board-sort-by-${lane}`)
       const assertOrder = async (ids: string[]) => {
+        await showAllProjectIssues(page)
         const cards = page
           .getByTestId(`cloud-todo-column-${lane}`)
           .locator('article[data-testid^="collaboration-issue-"]')

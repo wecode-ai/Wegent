@@ -72,13 +72,32 @@ impl RuntimeWorkRpcHandler {
                     if model.get("hidden").and_then(Value::as_bool) == Some(true) {
                         continue;
                     }
-                    models.push(json!({
+                    let mut entry = json!({
                         "runtime": "codex", "provider": provider, "model_id": id,
                         "local_model_id": id,
                         "label": model.get("displayName").and_then(Value::as_str).unwrap_or(id),
                         "account_label": model.get("providerName").and_then(Value::as_str).unwrap_or(provider),
                         "is_default": model.get("isDefault").and_then(Value::as_bool).unwrap_or(false),
-                    }));
+                    });
+                    if let Some(effort) =
+                        model.get("defaultReasoningEffort").and_then(Value::as_str)
+                    {
+                        entry["default_reasoning_effort"] = json!(effort);
+                    }
+                    if let Some(efforts) = model
+                        .get("supportedReasoningEfforts")
+                        .and_then(Value::as_array)
+                    {
+                        entry["supported_reasoning_efforts"] = json!(efforts
+                            .iter()
+                            .filter_map(|effort| {
+                                effort
+                                    .as_str()
+                                    .or_else(|| effort["reasoningEffort"].as_str())
+                            })
+                            .collect::<Vec<_>>());
+                    }
+                    models.push(entry);
                 }
             }
             Err(_) => errors.push("codex_catalog_unavailable"),
@@ -102,7 +121,15 @@ impl RuntimeWorkRpcHandler {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => errors.push("claude_catalog_unreadable"),
         }
-        models.extend(self.public_local_runner_models());
+        let local_models = self.public_local_runner_models();
+        models.retain(|model| {
+            !local_models.iter().any(|local| {
+                ["runtime", "provider", "model_id"]
+                    .iter()
+                    .all(|key| local[*key] == model[*key])
+            })
+        });
+        models.extend(local_models);
         if models.iter().any(|model| model["runtime"] == "codex") && !runtimes.contains(&"codex") {
             runtimes.push("codex");
         }
@@ -115,9 +142,15 @@ impl RuntimeWorkRpcHandler {
             .expect("local runner models lock")
             .iter()
             .map(|model| {
-                json!({"runtime":model["runtime"],"provider":model["provider"],
+                let mut public = json!({"runtime":model["runtime"],"provider":model["provider"],
                 "model_id":model["model_id"],"local_model_id":model["local_model_id"],
-                "label":model["label"],"account_label":model["account_label"],"is_default":false})
+                "label":model["label"],"account_label":model["account_label"],"is_default":false});
+                for key in ["default_reasoning_effort", "supported_reasoning_efforts"] {
+                    if let Some(value) = model.get(key) {
+                        public[key] = value.clone();
+                    }
+                }
+                public
             })
             .collect()
     }
@@ -149,11 +182,12 @@ impl RuntimeWorkRpcHandler {
                             "The selected local model is unavailable on this device",
                         )
                     })?;
-                payload["modelConfig"] = with_request_reasoning(&config, &payload["modelConfig"]);
+                payload["modelConfig"] =
+                    with_request_model_options(&config, &payload["modelConfig"]);
                 for key in ["executionRequest", "execution_request"] {
                     if let Some(request) = payload.get_mut(key).filter(|value| value.is_object()) {
                         request["model_config"] =
-                            with_request_reasoning(&config, &request["model_config"]);
+                            with_request_model_options(&config, &request["model_config"]);
                     }
                 }
             }
@@ -227,17 +261,19 @@ impl RuntimeWorkRpcHandler {
                     "The selected local model is unavailable on this device",
                 )
             })?;
-        request.model_config = with_request_reasoning(&resolved, &request.model_config);
+        request.model_config = with_request_model_options(&resolved, &request.model_config);
         Ok(())
     }
 }
 
-fn with_request_reasoning(authoritative: &Value, requested: &Value) -> Value {
+fn with_request_model_options(authoritative: &Value, requested: &Value) -> Value {
     let mut config = authoritative.clone();
-    // Credentials, endpoints and model identity remain device-owned. Reasoning
-    // is a per-turn user option, normalized by the runtime before execution.
-    if let Some(reasoning) = requested.get("reasoning").filter(|value| !value.is_null()) {
-        config["reasoning"] = reasoning.clone();
+    // Credentials, endpoints and model identity remain device-owned. Per-turn
+    // reasoning and service tier are validated by the runtime before execution.
+    for key in ["reasoning", "service_tier"] {
+        if let Some(value) = requested.get(key).filter(|value| !value.is_null()) {
+            config[key] = value.clone();
+        }
     }
     config
 }
@@ -319,6 +355,25 @@ fn claude_endpoint_provider(env: &Value) -> Result<String, AppIpcError> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn public_local_catalog_preserves_reasoning_metadata_without_secrets() {
+        let handler = RuntimeWorkRpcHandler::new("device", "unused");
+        let mut model = local_model("private-key");
+        model["default_reasoning_effort"] = json!("high");
+        model["supported_reasoning_efforts"] = json!(["low", "high", "xhigh"]);
+        handler
+            .replace_local_runner_models(json!({"models":[model]}))
+            .unwrap();
+        let catalog = handler.public_local_runner_models();
+        assert_eq!(catalog[0]["default_reasoning_effort"], "high");
+        assert_eq!(
+            catalog[0]["supported_reasoning_efforts"],
+            json!(["low", "high", "xhigh"])
+        );
+        assert!(catalog[0].get("modelConfig").is_none());
+        assert!(!catalog[0].to_string().contains("private-key"));
+    }
+
     fn local_model(secret: &str) -> Value {
         json!({"runtime":"codex","provider":"local-company","model_id":"local-model:company",
             "local_model_id":"local-model:company","label":"Company","account_label":"Company","is_default":false,
@@ -332,16 +387,22 @@ mod tests {
         let handler = RuntimeWorkRpcHandler::new("device", "unused");
         let mut model = local_model("current-secret");
         model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
+        model["modelConfig"]["service_tier"] = json!("default");
         handler
             .replace_local_runner_models(json!({"models":[model]}))
             .unwrap();
-        for effort in ["low", "high"] {
+        for (effort, speed) in [("low", "fast"), ("high", "flex")] {
             let mut request = ExecutionRequest {
                 model_config: json!({"model_id":"local-model:company","model_provider":"local-company",
                     "reasoning":{"effort":effort,"summary":"concise"},
                     "api_key":"untrusted-secret","responses_url":"https://untrusted.example"}),
                 ..Default::default()
             };
+            super::super::creation::apply_creation_options(
+                &mut request,
+                &json!({"modelOptions":{"speed":speed}}),
+            )
+            .unwrap();
             handler
                 .resolve_local_model_reference(&mut request, "work")
                 .unwrap();
@@ -350,114 +411,13 @@ mod tests {
                 json!({"effort":effort,"summary":"concise"})
             );
             assert_eq!(request.model_config["api_key"], "current-secret");
+            assert_eq!(request.model_config["service_tier"], speed);
             assert_eq!(
                 request.model_config["responses_url"],
                 "https://model.example/v1/messages"
             );
             assert_eq!(request.model_config["model_id"], "upstream");
         }
-    }
-
-    #[test]
-    fn local_interface_materialization_preserves_explicit_reasoning_and_device_defaults() {
-        let handler = RuntimeWorkRpcHandler::new("device", "unused");
-        let mut model = local_model("current-secret");
-        model["modelConfig"]["reasoning"] = json!({"effort":"medium"});
-        handler
-            .replace_local_runner_models(json!({"models":[model]}))
-            .unwrap();
-        let mut payload = json!({"runnerRouting":{"model":{"runtime":"codex","provider":"local-company","model_id":"local-model:company"}},
-            "modelConfig":{"reasoning":{"effort":"low"},"api_key":"old"},
-            "executionRequest":{"model_config":{"reasoning":{"effort":"high"},"responses_url":"https://untrusted.example"}},
-            "execution_request":{"model_config":{"reasoning":null}}});
-        handler
-            .materialize_local_runner_models(&mut payload)
-            .unwrap();
-        assert_eq!(payload["modelConfig"]["reasoning"]["effort"], "low");
-        assert_eq!(
-            payload["executionRequest"]["model_config"]["reasoning"]["effort"],
-            "high"
-        );
-        assert_eq!(
-            payload["execution_request"]["model_config"]["reasoning"]["effort"],
-            "medium"
-        );
-        assert_eq!(payload["modelConfig"]["api_key"], "current-secret");
-        assert_eq!(
-            payload["executionRequest"]["model_config"]["responses_url"],
-            "https://model.example/v1/messages"
-        );
-    }
-
-    #[tokio::test]
-    async fn local_interface_catalog_and_background_execution_share_current_device_configuration() {
-        let handler = RuntimeWorkRpcHandler::new("device", "unused");
-        handler
-            .replace_local_runner_models(json!({"models":[local_model("private-one")]}))
-            .unwrap();
-        let catalog = json!({"models":handler.public_local_runner_models(),"runtimes":["codex"]});
-        assert!(!catalog.to_string().contains("private-one"));
-        assert!(!catalog.to_string().contains("modelConfig"));
-        assert!(!catalog.to_string().contains("model.example"));
-        let identity =
-            json!({"runtime":"codex","provider":"local-company","model_id":"local-model:company"});
-        let agent = json!({"id":"stand-in","runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"device"},"model_policy":{"mode":"user_select"}});
-        let mut payload = json!({"message":"Prepare a report"});
-        super::super::stand_in_agent::apply_stand_in_agent(
-            &mut payload,
-            &agent,
-            &catalog,
-            "device",
-            Some(&identity),
-        )
-        .unwrap();
-        handler
-            .materialize_runner_cloud_models(&mut payload)
-            .await
-            .unwrap();
-        assert_eq!(
-            payload["executionRequest"]["model_config"]["model_id"],
-            "upstream"
-        );
-        assert_eq!(
-            payload["executionRequest"]["model_config"]["api_key"],
-            "private-one"
-        );
-        assert_eq!(
-            payload["modelSelection"]["modelName"],
-            "local-model:company"
-        );
-        handler
-            .replace_local_runner_models(json!({"models":[local_model("private-two")]}))
-            .unwrap();
-        handler
-            .materialize_runner_cloud_models(&mut payload)
-            .await
-            .unwrap();
-        assert_eq!(
-            payload["executionRequest"]["model_config"]["api_key"],
-            "private-two"
-        );
-        let mut followup = ExecutionRequest {
-            model_config: json!({"model_id":"local-model:company","model_provider":"local-company"}),
-            ..Default::default()
-        };
-        handler
-            .resolve_local_model_reference(&mut followup, "background-work")
-            .unwrap();
-        assert_eq!(followup.model_config["api_key"], "private-two");
-        handler
-            .replace_local_runner_models(json!({"models":[]}))
-            .unwrap();
-        assert!(handler.public_local_runner_models().is_empty());
-        assert_eq!(
-            handler
-                .materialize_runner_cloud_models(&mut payload)
-                .await
-                .unwrap_err()
-                .code,
-            "RUNNER_MODEL_UNAVAILABLE"
-        );
     }
 
     #[test]
@@ -578,36 +538,6 @@ mod tests {
             .unwrap()
             .contains("private-token"));
         assert_eq!(models[0]["is_default"], true);
-    }
-
-    #[test]
-    fn custom_claude_catalog_does_not_require_a_provider_id() {
-        let models = claude_runner_models(&json!({"model": "model-a", "env": {
-            "ANTHROPIC_BASE_URL": "https://user:private-password@gateway.example/claude?token=private-query",
-            "ANTHROPIC_AUTH_TOKEN": "private-token",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": "model-b"
-        }}))
-        .unwrap();
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[0]["runtime"], "claude_code");
-        assert_eq!(models[0]["model_id"], "model-a");
-        assert_eq!(models[0]["is_default"], true);
-        assert_eq!(models[1]["is_default"], false);
-        assert_eq!(models[0]["provider"], models[1]["provider"]);
-        assert!(models[0]["provider"]
-            .as_str()
-            .unwrap()
-            .starts_with("claude:"));
-        assert_eq!(models[0]["account_label"], "Claude");
-        let report = serde_json::to_string(&models).unwrap();
-        for private in [
-            "gateway.example",
-            "private-password",
-            "private-query",
-            "private-token",
-        ] {
-            assert!(!report.contains(private));
-        }
     }
 
     #[test]

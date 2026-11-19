@@ -54,12 +54,76 @@ pub fn emit_message_with_callback(
         Some((sid, id)) => format!("[\"{sid}\", \"{namespace}\", {id}]"),
         None => "null".to_string(),
     };
+    emit_message_with_skip_sid(event, data, namespace, room, "null", callback)
+}
+
+/// `AsyncPubSubManager.emit` with `skip_sid` set to one connection id.
+///
+/// `socketio.AsyncServer.emit(..., skip_sid=sid)` puts the excluded socket in
+/// the published message so every worker delivers it to the room except that
+/// socket; `None` keeps the source's JSON `null`.
+pub fn emit_message_skipping(
+    event: &str,
+    data: &str,
+    namespace: &str,
+    room: &str,
+    skip_sid: Option<&str>,
+) -> String {
+    let skip_sid = match skip_sid {
+        Some(sid) => format!("\"{sid}\""),
+        None => "null".to_string(),
+    };
+    emit_message_with_skip_sid(event, data, namespace, room, &skip_sid, "null".to_string())
+}
+
+/// The shared message envelope with the rendered `skip_sid` and `callback`.
+fn emit_message_with_skip_sid(
+    event: &str,
+    data: &str,
+    namespace: &str,
+    room: &str,
+    skip_sid: &str,
+    callback: String,
+) -> String {
     format!(
         "{{\"method\": \"emit\", \"event\": \"{event}\", \"data\": {data}, \"binary\": false, \
-         \"namespace\": \"{namespace}\", \"room\": \"{room}\", \"skip_sid\": null, \
+         \"namespace\": \"{namespace}\", \"room\": \"{room}\", \"skip_sid\": {skip_sid}, \
          \"callback\": {callback}, \"host_id\": \"{}\"}}",
         host_id()
     )
+}
+
+/// `device_socketio.publish_device_execution`'s direct-publish message:
+/// `method,event,data,namespace,room,host_id` only (no `binary`, `callback`,
+/// or `skip_sid`).
+///
+/// The Source builds a fresh `uuid.uuid4().hex` per publish instead of the
+/// manager's stable identity, so `adapter_emit_job` does not treat the emit as
+/// its own echo and delivers it to the device room exactly once.
+pub fn device_execution_message(
+    event: &str,
+    payload: &serde_json::Value,
+    namespace: &str,
+    room: &str,
+) -> String {
+    let data =
+        wegent_python_compat::json_compat::python_json_value(&serde_json::Value::Array(vec![
+            payload.clone(),
+        ]));
+    format!(
+        "{{\"method\": \"emit\", \"event\": {event:?}, \"data\": {data}, \
+         \"namespace\": {namespace:?}, \"room\": {room:?}, \"host_id\": {:?}}}",
+        fresh_host_id()
+    )
+}
+
+/// `uuid.uuid4().hex`, freshly generated for one direct publish.
+fn fresh_host_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).expect("OS randomness is available");
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -77,6 +141,24 @@ mod tests {
         assert!(first.chars().nth(12).is_some_and(|c| c == '4'));
         let variant = first.chars().nth(16).expect("hex digit at 16");
         assert!(matches!(variant, '8' | '9' | 'a' | 'b'));
+    }
+
+    #[test]
+    fn the_device_execution_message_carries_the_source_six_keys_and_a_fresh_host() {
+        let payload = serde_json::json!({"task_id": 1});
+        let first =
+            device_execution_message("task:execute", &payload, "/local-executor", "device:157:d");
+        let second =
+            device_execution_message("task:execute", &payload, "/local-executor", "device:157:d");
+        assert!(first.contains("\"method\": \"emit\""));
+        assert!(first.contains("\"event\": \"task:execute\""));
+        assert!(first.contains("\"data\": [{\"task_id\": 1}]"));
+        assert!(first.contains("\"namespace\": \"/local-executor\""));
+        assert!(first.contains("\"room\": \"device:157:d\""));
+        for absent in ["\"binary\"", "\"callback\"", "\"skip_sid\""] {
+            assert!(!first.contains(absent), "unexpected {absent}");
+        }
+        assert_ne!(first, second, "each publish gets a fresh identity");
     }
 
     #[test]

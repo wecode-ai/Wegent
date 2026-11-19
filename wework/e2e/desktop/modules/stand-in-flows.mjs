@@ -16,6 +16,12 @@ export async function openProjectStandIn(
   { connect = false, requirements = true, onConnections } = {}
 ) {
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  const projectLink = '[data-testid="personal-home-open-in-project"]'
+  if (
+    Number(await control.command('getElementCount', entry)) === 0 &&
+    Number(await control.command('getElementCount', projectLink)) > 0
+  )
+    await control.command('clickWhenEnabled', projectLink)
   // Returning from personal settings remounts the project page asynchronously.
   await control.command('clickWhenEnabled', entry)
   await control.command('waitFor', '[data-testid="stand-in-project-select"]')
@@ -73,4 +79,17 @@ export async function openConnectionTypePicker(control) {
   if (Number(await control.command('getElementCount', button)) > 0)
     await control.command('click', button)
   await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
+}
+
+export function standInSchedulerIntervalMs() {
+  const intervalMs = Number(process.env.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ?? 5000)
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
+    throw new Error('WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS must be a positive integer')
+  }
+  return intervalMs
+}
+
+/** Observe a complete scheduler period plus jitter before asserting no dispatch. */
+export async function waitForStandInSchedulerCycle() {
+  await new Promise(resolve => setTimeout(resolve, standInSchedulerIntervalMs() + 500))
 }

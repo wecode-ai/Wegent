@@ -37,6 +37,7 @@ export interface RuntimeExecutionState {
 }
 
 export interface RuntimeTaskSummary {
+  snapshotRevision?: string
   executionState?: RuntimeExecutionState
 
   taskId: string
@@ -176,6 +177,11 @@ export interface RuntimeSendRequest {
   message: string
   clientUserMessageId?: string
   queueIfBusy?: boolean
+  resourceEventKeys?: string[]
+  /** Private discussion retains the task identity without automatic Issue writeback. */
+  conversationContext?: 'private_discussion'
+  startNewSession?: boolean
+  expectedThreadId?: string
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
@@ -205,11 +211,18 @@ export interface RuntimeSendResponse {
   compactionItemId?: string
   compaction_item_id?: string
   error?: string | null
+  code?: string | null
+}
+
+export interface RuntimeTaskCancelRequest extends RuntimeTaskAddress {
+  /** Cancels a send that was submitted optimistically but has not reached the executor yet. */
+  clientUserMessageId?: string
 }
 
 export interface RuntimeGuidanceRequest {
   address: RuntimeTaskAddress
   message: string
+  conversationContext?: RuntimeSendRequest['conversationContext']
   attachmentIds?: number[]
   attachments?: Attachment[]
   clientGuidanceId?: string
@@ -241,19 +254,21 @@ export interface RuntimeGoalCreateInput {
   tokenBudget?: number | null
 }
 
-export type RuntimeTaskOrigin = {
-  type: 'project_chat'
-  cloudProjectId: string
-  projectStore: 'local' | 'backend'
-  loopItemId?: never
-  [key: string]: unknown
-} | {
-  type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
-  cloudProjectId: string
-  loopItemId: string
-  rootCommentId?: string
-  [key: string]: unknown
-}
+export type RuntimeTaskOrigin =
+  | {
+      type: 'project_chat'
+      cloudProjectId: string
+      projectStore: 'local' | 'backend'
+      loopItemId?: never
+      [key: string]: unknown
+    }
+  | {
+      type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
+      cloudProjectId: string
+      loopItemId: string
+      rootCommentId?: string
+      [key: string]: unknown
+    }
 
 export interface RuntimeTaskCancelResponse {
   accepted: boolean

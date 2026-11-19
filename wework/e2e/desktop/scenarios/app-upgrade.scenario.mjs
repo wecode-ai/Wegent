@@ -1,5 +1,5 @@
+import { confirmUpgradeRecovery } from '../modules/upgrade-recovery-consent.mjs'
 import assert from 'node:assert/strict'
-import { createReadStream } from 'node:fs'
 import {
   mkdir,
   readFile,
@@ -11,25 +11,48 @@ import {
   rm,
   symlink,
 } from 'node:fs/promises'
-import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
-import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
-import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
+import { createSingleRootLocalProject } from '../modules/shared.mjs'
+import { createUpgradeConversationContinuity } from '../modules/upgrade-conversation-continuity.mjs'
+import { createUpgradeGoalContinuity } from '../modules/upgrade-goal-continuity.mjs'
+import { createUpgradeAuxiliaryHistory } from '../modules/upgrade-auxiliary-history.mjs'
+import { assertUpgradeComposition } from '../modules/upgrade-selected-composition.mjs'
+import { createUpgradeWriterWait } from '../modules/upgrade-writer-wait.mjs'
+import { retainUpgradeReleaseDiagnostics } from '../modules/upgrade-stopped-diagnostics.mjs'
+import { credentialsRequireReupgrade, UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
-import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
+import { createUpgradeUpdateServer } from '../modules/upgrade-update-server.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
 import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
-import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
+import {
+  stopProcessGroup,
+  stopRecoveryProcess,
+  waitForOwnedProcessExit,
+} from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
+import { waitForInterruptedRollback } from '../modules/interrupted-rollback.mjs'
 import {
   routeUpgradeRequests,
   routeRunningUpgradeRequests,
 } from '../modules/upgrade-request-route.mjs'
-import { assertInstalledStartupWithStaleHistory } from '../modules/installed-startup-history.mjs'
+import {
+  assertInstalledStartupWithStaleHistory,
+  quitInstalledHost,
+} from '../modules/installed-startup-history.mjs'
+import {
+  armEmptyManifestUpgrade,
+  assertEmptyManifestBackups,
+  assertEmptyManifestRecovery,
+  restartUpgradedHost,
+} from '../modules/empty-capability-manifest-upgrade.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
+import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
+import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
+import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
+import { openAboutSettings } from '../modules/app-update-navigation.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -41,13 +64,11 @@ import {
   restoreInstalledSourceSnapshot,
   saveInstalledSourceSnapshot,
 } from '../modules/installed-source-snapshot.mjs'
-import { assertMacosStatusItem } from '../modules/macos-status-item.mjs'
 import {
   linkBundledRuntimeCache,
   prepareBundledRuntimeCache,
 } from '../modules/bundled-runtime-cache.mjs'
 import {
-  assertMacosUpgradeIdentity,
   macosUpgradeIdentity,
   pruneWithRolledBackSource,
   useVersionedMacosRecoveryBridge,
@@ -58,36 +79,11 @@ import {
   handleEmptyReplyPrediction,
   readRequestBody,
   responseCreated,
-  responseCompleted,
 } from '../modules/response-protocol.mjs'
 
 const PROMPT = 'WEWORK_UPGRADE_PERSISTENCE'
 const ANSWER = 'WEWORK_UPGRADE_REAL_RUNTIME_OK'
 const STORAGE_KEY = 'wework:upgrade-regression-marker'
-
-async function waitForInterruptedRollback(root) {
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    let marker
-    try {
-      marker = await readFile(join(root, 'rollback-interrupted'), 'utf8')
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-    if (marker) {
-      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-      assert.ok(pid > 0)
-      try {
-        process.kill(pid, 0)
-      } catch (error) {
-        if (error.code === 'ESRCH') return
-        throw error
-      }
-    }
-    await new Promise(accept => setTimeout(accept, 50))
-  }
-  assert.fail('The real target did not terminate after recording manual rollback')
-}
 
 /** One reusable flow for fixed A -> B pairs. Version numbers never select assertions. */
 export async function createDesktopScenario(options) {
@@ -103,6 +99,7 @@ export async function createDesktopScenario(options) {
   const pairFile = process.env.WEWORK_E2E_UPGRADE_PAIR
   assert.ok(pairFile, 'Upgrade checkpoints require an independently built source/target pair')
   const pair = JSON.parse(await readFile(pairFile, 'utf8'))
+  const writerWait = createUpgradeWriterWait(pair, checkpoint, options)
   const usesDefaultUserData = options.usesDefaultUserData === true
   assert.equal(pair.transport, 'default-update-route')
   assert.ok(usesDefaultUserData, 'Upgrade verification must use the product default layout')
@@ -135,113 +132,23 @@ export async function createDesktopScenario(options) {
   const verifiesRetry = checkpoint === 'app-update-retry'
   const verifiesFailedActivation = checkpoint === 'app-upgrade-recovery' || verifiesRetry
   let offer = verifiesRefreshedUpdate ? 'unavailable' : 'target'
-  const unavailablePolicy = () => ({
-    ...unavailableUpdatePolicy(
-      { ...pair.from, appVersion: pair.from.version },
-      { platform: pair.to.platform, arch: pair.to.arch },
-      origin
-    ),
-    channel,
-  })
   let control
-  let inspectorPort
+  const inspectorPorts = []
+  let launchedAppPid
   let passed = false
-  let origin
   let modelRequests = 0
-  const requests = []
-  // Observe asynchronous acceptance before releasing real package bytes. A fixed
-  // six-second server delay charged every checkpoint without establishing state.
-  let releaseHostDownload
-  const hostDownloadAccepted = new Promise(accept => {
-    releaseHostDownload = accept
-  })
-  const server = createServer((request, response) => {
-    const url = new URL(request.url, origin)
-    requests.push({
-      path: url.pathname,
-      method: request.method,
-      range: request.headers.range ?? null,
+  const continuity = createUpgradeConversationContinuity(() => control, workbenchReadyTimeoutMs)
+  const goalContinuity = createUpgradeGoalContinuity(pair, () => control, workbenchReadyTimeoutMs)
+  const auxiliaryHistory = createUpgradeAuxiliaryHistory(pair, () => control, options)
+  const { server, origin, requests, releaseHostDownload, unavailablePolicy, intervalProbe } =
+    await createUpgradeUpdateServer({
+      pair,
+      channel,
+      currentOffer: () => offer,
     })
-    if (url.pathname.startsWith('/components-')) {
-      if (offer === 'refresh-failed') {
-        response.writeHead(503)
-        response.end()
-        return
-      }
-      if (offer !== 'target') {
-        const policy = unavailablePolicy()
-        response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(
-          JSON.stringify({
-            schemaVersion: 1,
-            upgradePolicy:
-              offer === 'withdrawn'
-                ? { ...policy, releases: policy.releases.slice(0, 1), edges: [] }
-                : policy,
-          })
-        )
-        return
-      }
-      const releases = [pair.from, pair.to].map(asset => ({
-        ...asset,
-        url: `${origin}/${asset.name}`,
-        minSourceVersion: pair.from.version === asset.version ? '0.0.0' : pair.from.version,
-        revoked: false,
-      }))
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          schemaVersion: 1,
-          upgradePolicy: {
-            schemaVersion: 1,
-            channel,
-            platform: pair.to.platform,
-            arch: pair.to.arch,
-            releases,
-            edges: [
-              {
-                from: pair.from.version,
-                to: pair.to.version,
-                fromSha256: pair.from.sha256,
-                toSha256: pair.to.sha256,
-                fromSourceSha: pair.from.sourceSha,
-                toSourceSha: pair.to.sourceSha,
-                runId: String(process.env.GITHUB_RUN_ID || 1),
-                evidenceSha256: 'a'.repeat(64),
-                upgrade: 'passed',
-                rollback: 'passed',
-                revoked: false,
-              },
-            ],
-          },
-        })
-      )
-    } else if (url.pathname === '/unavailable-release.tar.gz') {
-      response.writeHead(503)
-      response.end()
-    } else if (url.pathname === `/${pair.to.name}`) {
-      response.writeHead(200, {
-        'content-type': 'application/gzip',
-        'content-length': pair.to.bytes,
-      })
-      if (request.headers.range) {
-        response.destroy(new Error('Whole release downloads must not use byte ranges'))
-        return
-      }
-      void hostDownloadAccepted.then(() => {
-        if (!response.destroyed) createReadStream(pair.to.path).pipe(response)
-      })
-    } else {
-      response.writeHead(404)
-      response.end()
-    }
-  })
-  await new Promise((accept, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', accept)
-  })
-  origin = `http://127.0.0.1:${server.address().port}`
   const root = join(electronUserDataDirectory, 'releases')
+  const capabilities = join(executorHome, 'capabilities')
+  const verifiesEmptyManifest = checkpoint === 'app-rollback'
   const sourceRuntimeRoot = join(electronUserDataDirectory, 'managed-runtimes/dsh')
   const appEnvironment = {}
   if (verifiesFailedActivation) appEnvironment.WEWORK_E2E_RELEASE_FAILURE_VERSION = pair.to.version
@@ -250,63 +157,55 @@ export async function createDesktopScenario(options) {
 
   const installedVersion = async () =>
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
-  const compositions = []
-  let macosIdentity
-  const assertSelectedComposition = async version => {
-    const id = (await readFile(join(root, 'active'), 'utf8')).trim()
-    const slot = join(root, 'slots', id)
-    const release = JSON.parse(await readFile(join(slot, 'release.json'), 'utf8'))
-    const { components } = JSON.parse(await readFile(join(slot, 'prepared.json'), 'utf8'))
-    const { release: actual } = JSON.parse(
-      await control.command('getDesktopRuntimeDiagnostics', 'body')
+  const runtimeDiagnostics = async () =>
+    JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
+  const assertDisabledPlugin = async message => {
+    const profileState = JSON.parse(
+      await readFile(
+        join(electronUserDataDirectory, 'dsh-core/profiles/wework-core/.wework-core-plugins.json'),
+        'utf8'
+      )
     )
-    assert.equal(release.version, version)
-    assert.equal(actual.id, id)
-    for (const [key, expected] of Object.entries({
-      hostExecutable: release.executable,
-      runtimeRoot: release.runtimeRoot,
-      coreDshPath: components.coreDsh,
-      corePluginsPath: components.weworkCorePlugins,
-      executorPath: components.executor,
-      codexPath: components.codex,
-      dwsPath: components.dws,
-    })) {
-      assert.equal(resolve(actual[key]), resolve(expected), `Selected release ${key} differs`)
-    }
-    compositions.push({ version, ...actual, coreDsh: components.coreDsh })
-    await assertMacosUpgradeIdentity(macosIdentity, root, resultDir, version)
-    if (process.platform === 'darwin') {
-      const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
-      await assertMacosStatusItem(control, pid, resultDir, version)
-    }
+    assert.ok(profileState.disabled.includes(OPTIONAL_PLUGIN), message)
   }
-  const about = async () => {
-    await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]')
-    await control.command('waitFor', '[data-testid="about-settings-page"]')
-  }
-  const send = async text => {
-    const expectedAnswer = `${ANSWER} ${modelRequests + 1}`
-    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
-    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: text })
-    await control.command('clickWhenEnabled', '[data-testid="send-message-button"]')
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: expectedAnswer,
-      timeoutMs: workbenchReadyTimeoutMs,
+  const compositions = []
+  const credentials = upgradeCredentials()
+  let rollbackProtection
+  const verifyCredentials = (stage, options) =>
+    credentials.verify(
+      control,
+      inspectorPorts,
+      stage,
+      [electronUserDataDirectory, legacyDataDirectory].filter(Boolean),
+      options
+    )
+  let macosIdentity
+  const assertSelectedComposition = version =>
+    assertUpgradeComposition({
+      control,
+      root,
+      version,
+      compositions,
+      macosIdentity,
+      resultDir,
+      inspectorPorts,
     })
-  }
+  const about = () => openAboutSettings(control)
+  const send = text => continuity.send(text, `${ANSWER} ${modelRequests + 1}`)
   return {
     usesReleasePackageRuntimeAssets: true,
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
           appProcessStarted: async child => {
-            inspectorPort = await routeUpgradeRequests(
+            const port = await routeUpgradeRequests(
               child,
               origin,
               join(resultDir, 'upgrade-transport.log'),
               { followHandoffs: true }
             )
+            inspectorPorts.push(port)
+            launchedAppPid = child.pid
           },
         }
       : {}),
@@ -433,6 +332,7 @@ export async function createDesktopScenario(options) {
       }
     },
     async prepareUserDataLaunch() {
+      await credentials.seed(electronUserDataDirectory)
       if (usesDefaultUserData) {
         // Start from the real default application-data location. The shipped
         // migration, bootstrap and updater must agree on the resulting userData.
@@ -446,11 +346,15 @@ export async function createDesktopScenario(options) {
       }
     },
     async handleHttp(request, response, url) {
+      if (credentials.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!JSON.stringify(body).includes(PROMPT)) return false
+      continuity.observeModel(body)
+      if (goalContinuity.handleModel(body, response)) return true
+      if (continuity.toolResponse(body, response)) return true
       modelRequests++
       const id = `upgrade-model-${modelRequests}`
       response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -458,7 +362,7 @@ export async function createDesktopScenario(options) {
         createSse([
           responseCreated(id),
           assistantMessage(`${ANSWER} ${modelRequests}`),
-          responseCompleted(id),
+          goalContinuity.completedModelResponse(id),
         ])
       )
       return true
@@ -478,11 +382,17 @@ export async function createDesktopScenario(options) {
         `${JSON.stringify({ version: pair.from.version, ...sourceRuntime }, null, 2)}\n`
       )
       console.log(`[upgrade-e2e] Source ${pair.from.version} is ready`)
+      await verifyCredentials('source')
       const workspace = join(workspacePath, 'upgrade-source-project')
       await mkdir(workspace, { recursive: true })
       await control.command('click', '[data-testid="new-chat-button"]')
       await createSingleRootLocalProject(control, workspace, 'upgrade-source-project')
+      if (pair.to.afterStopPreparation === 1) continuity.seedTool(workspace)
       await send(PROMPT)
+      await continuity.assertThread()
+      await auxiliaryHistory.seed(continuity.nativeThread())
+      await goalContinuity.arm({ send, prompt: PROMPT, answer: `${ANSWER} ${modelRequests + 1}` })
+      await continuity.assertThread()
       await control.command('setLocalStorageItem', 'body', {
         value: JSON.stringify({ key: STORAGE_KEY, value: 'before-update' }),
       })
@@ -620,8 +530,23 @@ export async function createDesktopScenario(options) {
         'before-update'
       )
       if (verifiesFailedActivation) await useVersionedMacosRecoveryBridge(root, pair.to.version)
+      if (verifiesEmptyManifest) {
+        const { executorPid } = await runtimeDiagnostics()
+        // Historical source packages may not expose a process snapshot action.
+        await armEmptyManifestUpgrade(inspectorPorts, launchedAppPid, {
+          root,
+          capabilities,
+          targetVersion: pair.to.version,
+          executorPid,
+        })
+      }
       const readyCount = control.readyCount
+      await writerWait.beforeRestart(workspace)
+      goalContinuity.beforeRestart()
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
+      await writerWait.afterRestart(root, () => goalContinuity.assertStopped())
+      if (verifiesFailedActivation && !pair.from.readableDataSchemas.includes(pair.to.dataSchema))
+        await confirmUpgradeRecovery(root, workbenchReadyTimeoutMs)
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -646,6 +571,8 @@ export async function createDesktopScenario(options) {
           0
         )
           await control.command('click', '[data-testid="settings-back-button"]')
+        await goalContinuity.verifyResumed('failed-activation-recovery')
+        await auxiliaryHistory.verify('failed-activation-recovery')
         await send(`${PROMPT} continue after failed activation`)
         await assertSelectedComposition(pair.from.version)
         console.log('[upgrade-e2e] Automatic recovery preserved a usable task')
@@ -668,32 +595,31 @@ export async function createDesktopScenario(options) {
             assertSelectedComposition,
             captureScreenshot: options.captureScreenshot,
             routeCurrentUpdateRequests: () =>
-              routeRunningUpgradeRequests(inspectorPort, control, origin),
+              routeRunningUpgradeRequests(inspectorPorts, control, origin),
           })
         passed = true
         return
       }
       assert.equal(await installedVersion(), pair.to.version)
       const targetReleaseId = (await readFile(join(root, 'active'), 'utf8')).trim()
+      const preparedTarget = JSON.parse(
+        await readFile(join(root, 'slots', targetReleaseId, 'release.json'), 'utf8')
+      )
+      assert.equal(preparedTarget.id, targetReleaseId)
+      assert.equal(preparedTarget.version, pair.to.version)
+      if (preparedTarget.packageSha256 !== undefined)
+        assert.equal(preparedTarget.packageSha256, pair.to.sha256)
       console.log(`[upgrade-e2e] Running target ${pair.to.version}`)
+      await verifyCredentials('upgraded')
       await control.command(
         'waitFor',
         '[data-testid="new-chat-button"], [data-testid="settings-back-button"]',
         { timeoutMs: workbenchReadyTimeoutMs }
       )
-      const profileState = JSON.parse(
-        await readFile(
-          join(
-            electronUserDataDirectory,
-            'dsh-core/profiles/wework-core/.wework-core-plugins.json'
-          ),
-          'utf8'
-        )
-      )
-      assert.ok(
-        profileState.disabled.includes(OPTIONAL_PLUGIN),
-        'Upgrade lost the disabled plugin state'
-      )
+      const manifestRecovery = verifiesEmptyManifest
+        ? await assertEmptyManifestRecovery(capabilities)
+        : null
+      await assertDisabledPlugin('Upgrade lost the disabled plugin state')
       assert.equal(
         await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
         'before-update'
@@ -707,34 +633,55 @@ export async function createDesktopScenario(options) {
         timeoutMs: workbenchReadyTimeoutMs,
       })
       const beforeRequests = modelRequests
+      await goalContinuity.verifyResumed('upgrade')
+      await auxiliaryHistory.verify('upgrade')
       await send(`${PROMPT} continue after upgrade`)
+      await continuity.assertThread()
       await assertSelectedComposition(pair.to.version)
       assert.ok(
         modelRequests > beforeRequests,
         'The restored task did not execute through the real runtime'
       )
       console.log('[upgrade-e2e] Persisted task continued through the real runtime')
-      if (process.platform === 'darwin' && checkpoint === 'app-rollback') {
-        await assertInstalledStartupWithStaleHistory({
-          root,
-          restartDesktopApp,
-          installedVersion,
-          expectedVersion: pair.to.version,
-          control,
-          timeoutMs: workbenchReadyTimeoutMs,
-        })
+      if (manifestRecovery) {
+        const beforeRestart = await runtimeDiagnostics()
+        assert.ok(beforeRestart.executorPid > 0)
+        const executorSha256 = await hashReleaseAsset(beforeRestart.release.executorPath)
+        if (process.platform === 'darwin') {
+          await assertInstalledStartupWithStaleHistory({
+            root,
+            restartDesktopApp,
+            installedVersion,
+            expectedVersion: pair.to.version,
+            control,
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+        } else {
+          await restartUpgradedHost(control, inspectorPorts, workbenchReadyTimeoutMs)
+        }
+        assert.equal(await installedVersion(), pair.to.version)
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: ANSWER,
           timeoutMs: workbenchReadyTimeoutMs,
         })
+        assert.deepEqual(await assertEmptyManifestRecovery(capabilities), manifestRecovery)
+        await assertDisabledPlugin('Restart lost the disabled plugin state')
+        assert.equal(
+          await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
+          'before-update'
+        )
         const requestsBeforeRestartedTask = modelRequests
-        await send(`${PROMPT} continue after ordinary startup with old release history`)
+        await send(`${PROMPT} continue after restarting the upgraded package`)
         assert.ok(
           modelRequests > requestsBeforeRestartedTask,
-          'The installed package did not continue the task after stale-history startup'
+          'The restarted package did not continue the persisted task'
         )
+        const restarted = await runtimeDiagnostics()
+        assert.ok(restarted.executorPid > 0)
+        assert.notEqual(restarted.executorPid, beforeRestart.executorPid)
+        assert.equal(await hashReleaseAsset(restarted.release.executorPath), executorSha256)
         console.log(
-          '[upgrade-e2e] Installed target restarted with stale history and continued its task'
+          '[upgrade-e2e] Target restart preserved the recovered manifest and continued its task'
         )
       }
       if (
@@ -743,13 +690,23 @@ export async function createDesktopScenario(options) {
         checkpoint === 'app-rollback' ||
         checkpoint === 'app-rollback-recovery'
       ) {
+        if (checkpoint === 'app-rollback-recovery')
+          await goalContinuity.restartPaused(async () => {
+            await quitInstalledHost(root, control)
+            await restartDesktopApp()
+          })
         await control.command('setLocalStorageItem', 'body', {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })
         await about()
+        if (checkpoint === 'app-rollback') {
+          await routeRunningUpgradeRequests(inspectorPorts, control, origin)
+          await intervalProbe.verify(control, resultDir)
+        }
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
         const beforeRollback = control.readyCount
+        await goalContinuity.arm()
         await control.command('click', '[data-testid="app-update-rollback-confirm"]')
         if (checkpoint === 'app-rollback-recovery') {
           await waitForInterruptedRollback(root)
@@ -765,6 +722,7 @@ export async function createDesktopScenario(options) {
         await control.awaitReadyAfter(beforeRollback, workbenchReadyTimeoutMs)
         assert.equal(await installedVersion(), pair.from.version)
         console.log(`[upgrade-e2e] Rolled back to ${pair.from.version}`)
+        await verifyCredentials('rolled-back', { write: true })
         await assert.rejects(
           readFile(join(root, 'previousHealthy')),
           { code: 'ENOENT' },
@@ -775,19 +733,7 @@ export async function createDesktopScenario(options) {
           '[data-testid="new-chat-button"], [data-testid="settings-back-button"]',
           { timeoutMs: workbenchReadyTimeoutMs }
         )
-        const restoredPlugins = JSON.parse(
-          await readFile(
-            join(
-              electronUserDataDirectory,
-              'dsh-core/profiles/wework-core/.wework-core-plugins.json'
-            ),
-            'utf8'
-          )
-        )
-        assert.ok(
-          restoredPlugins.disabled.includes(OPTIONAL_PLUGIN),
-          'Rollback lost the disabled plugin state'
-        )
+        await assertDisabledPlugin('Rollback lost the disabled plugin state')
         const restoreRequired = !pair.from.readableDataSchemas.includes(pair.to.dataSchema)
         assert.equal(
           await control.command('getLocalStorageItem', 'body', { value: STORAGE_KEY }),
@@ -802,6 +748,7 @@ export async function createDesktopScenario(options) {
         if (process.platform === 'darwin' && checkpoint === 'app-rollback-recovery') {
           await assertDelayedRecoveryHandoffs({
             root,
+            inspectorPorts,
             targetId: targetReleaseId,
             control,
             environment: launchEnvironment,
@@ -814,8 +761,18 @@ export async function createDesktopScenario(options) {
           })
         }
         await pruneWithRolledBackSource(root, resultDir, options.homePath)
+        await goalContinuity.verifyResumed('rollback')
+        await auxiliaryHistory.verify('rollback')
         await send(`${PROMPT} continue after rollback`)
+        await continuity.assertThread()
         await assertSelectedComposition(pair.from.version)
+        if (manifestRecovery) {
+          const { backup, historicalBackup } = manifestRecovery
+          assert.deepEqual(await assertEmptyManifestBackups(capabilities), {
+            backup,
+            historicalBackup,
+          })
+        }
         if (restoreRequired) {
           const { readdir } = await import('node:fs/promises')
           const preserved = await readdir(join(root, 'preserved-data'))
@@ -832,6 +789,32 @@ export async function createDesktopScenario(options) {
             'Rollback did not preserve the newer local data'
           )
         }
+        if (checkpoint === 'app-rollback') {
+          rollbackProtection = await verifyRollbackProtection({
+            control,
+            root,
+            target: pair.to,
+            preparedTarget,
+            requests,
+            about,
+            route: () => routeRunningUpgradeRequests(inspectorPorts, control, origin),
+          })
+        }
+        if (checkpoint === 'app-rollback' && credentialsRequireReupgrade(credentials.stages)) {
+          await reupgradeAfterRollback({
+            control,
+            routeCurrentUpdateRequests: () =>
+              routeRunningUpgradeRequests(inspectorPorts, control, origin),
+            about,
+            version: pair.to.version,
+            installedVersion,
+            assertSelectedComposition,
+            send,
+            verifyCredentials: () => verifyCredentials('re-upgraded'),
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+          rollbackProtection.retryConfirmed = true
+        }
       }
       const evidence = JSON.stringify({
         schemaVersion: 1,
@@ -847,6 +830,9 @@ export async function createDesktopScenario(options) {
         target: pair.to.sha256,
         fromSourceSha: pair.from.sourceSha,
         toSourceSha: pair.to.sourceSha,
+        ...(manifestRecovery && {
+          manifestRecovery: { ...manifestRecovery, restarted: true, rolledBack: true },
+        }),
         upgrade: 'passed',
         rollback:
           verifiesUnstartedActivation ||
@@ -856,6 +842,14 @@ export async function createDesktopScenario(options) {
             : 'not-run',
         requests,
         compositions,
+        credentials: credentials.stages,
+        ...(rollbackProtection ? { rollbackProtection } : {}),
+        reupgrade: credentials.stages.some(stage => stage.stage === 're-upgraded')
+          ? 'passed'
+          : 'not-run',
+        conversationContinuity: continuity.evidence(),
+        goalContinuity: goalContinuity.evidence(),
+        auxiliaryHistory: auxiliaryHistory.evidence(),
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
       if (
@@ -868,6 +862,17 @@ export async function createDesktopScenario(options) {
     },
     async cleanup() {
       const errors = []
+      goalContinuity.cleanup()
+      try {
+        await auxiliaryHistory.cleanup()
+      } catch (error) {
+        errors.push(error)
+      }
+      try {
+        await writerWait.cleanup()
+      } catch (error) {
+        errors.push(error)
+      }
       try {
         const shutdownSnapshot =
           control && process.platform === 'win32' && checkpoint === 'app-rollback-recovery'
@@ -899,39 +904,13 @@ export async function createDesktopScenario(options) {
         // Default-layout runs keep product log locations. Retain diagnostics before
         // the shared result compactor removes the isolated Home and its databases.
         if (usesDefaultUserData) {
-          for (const [name, directory] of [
-            ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
-            ['release-logs', join(electronUserDataDirectory, 'logs')],
-            ...(legacyDataDirectory
-              ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
-              : []),
-          ]) {
-            await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
-              if (error.code !== 'ENOENT') throw error
-            })
-          }
-          const state = {}
-          for (const name of [
-            'active',
-            'active-pid',
-            'bridge',
-            'macos-rollback',
-            'trial',
-            'attempted',
-            'healthy',
-            'failed',
-            'activation.json',
-            'last-activation.json',
-          ]) {
-            state[name] = await readFile(join(root, name), 'utf8').catch(error => {
-              if (error.code !== 'ENOENT') throw error
-              return null
-            })
-          }
-          await writeFile(
-            join(resultDir, 'release-state-result.json'),
-            JSON.stringify(state, null, 2)
-          )
+          await retainUpgradeReleaseDiagnostics({
+            root,
+            version: pair.to.version,
+            resultDir,
+            electronUserDataDirectory,
+            legacyDataDirectory,
+          })
         }
         // A failed activation can leave the native recovery shell waiting for
         // confirmation before it connects to the renderer control channel.
@@ -939,11 +918,7 @@ export async function createDesktopScenario(options) {
           await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
         )
         if (recoveryPid && !passed) {
-          try {
-            process.kill(recoveryPid)
-          } catch (error) {
-            if (error.code !== 'ESRCH') throw error
-          }
+          await stopRecoveryProcess(recoveryPid)
         }
         const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
         if (pid) {

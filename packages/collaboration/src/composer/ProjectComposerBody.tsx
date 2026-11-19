@@ -1,7 +1,6 @@
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -148,9 +147,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       insertReference: reference => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))
-    useEffect(() => {
+    const [renderedValue, setRenderedValue] = useState(value)
+    if (renderedValue !== value) {
+      setRenderedValue(value)
       setHasText(Boolean(value.trim()))
-    }, [value])
+    }
     const handleChange = useCallback(
       (nextValue: string) => {
         setHasText(Boolean(nextValue.trim()))
@@ -248,8 +249,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
                 if (text) appendText(text)
                 return
               }
-              void transferServices
-                .resolveTransfer(event.dataTransfer, 'drop')
+              void Promise.resolve(transferServices.resolveTransfer(event.dataTransfer, 'drop'))
                 .then(async ({ referenceEntries, attachmentFiles }) => {
                   const references = workspacePathReferenceText(referenceEntries)
                   if (references) appendText(references)

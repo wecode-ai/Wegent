@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { verifyArchivedStandInNotification } from '../modules/stand-in-archived-notification.mjs'
+import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -14,8 +15,6 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
-// Cover one complete five-second scheduler interval, including timer jitter.
-const OBSERVATION_MS = 5_500
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   let cloud
@@ -104,7 +103,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     },
     async verify(control) {
       const device = await environment.waitForConnectedAppDevice()
-      deviceId = device.app_device_id ?? device.device_id
+      deviceId = device.execution_target_id
+      assert.ok(deviceId, 'The real App must expose its unique Backend execution route')
       const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
       const initial = await requestExecutor(control, 'runtime.stand_in.get', params, uiTimeoutMs)
       settings = await requestExecutor(
@@ -128,8 +128,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const notice = inbox.items.find(row => row.payload.itemId === unmatched.id)
       assert.ok(notice, 'The real assignment notification must be stored')
       await control.command('waitFor', `[data-testid="wework-notification-${notice.id}"]`)
-      // Observe beyond one old five-second polling period on an unhandled assignment.
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      // Observe a complete configured scheduler cycle, including timer jitter.
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(unmatched), 0, 'Unmatched work must not poll assignments')
       assert.deepEqual(await request(`/v1/loop-items/${unmatched.id}/tasks`), [])
       assert.equal(modelRequests, 0)
@@ -156,6 +156,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         },
         'The notification-triggered task did not complete'
       )
+      const expectedRows = rows.map(row => ({ ...row, stand_in_pending: false }))
+      await until(
+        () => request(`/v1/loop-items/${matching.id}/tasks`),
+        actual => actual.length === 1 && actual[0].stand_in_pending === false,
+        'The completed task must no longer be a reservation'
+      )
       await until(
         () => countAssignments(matching),
         count => count > 0,
@@ -163,11 +169,11 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       )
       assert.equal(await countAssignments(matching), 1, 'Dispatch must validate assignments once')
       for (let index = 0; index < 3; index += 1) await refreshInbox(control)
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(matching), 1, 'Inbox refresh repeated assignment queries')
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1, 'Inbox refresh duplicated stand-in execution')
-      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), rows)
+      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), expectedRows)
 
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await reloadMainWindow(control, 'Notification replay did not recover after reload')
@@ -175,11 +181,11 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await refreshInbox(control)
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(matching), 1, 'Reload must reuse the existing task')
       assert.equal(await countAssignments(unmatched), 0)
       assert.equal(modelRequests, 1)
-      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), rows)
+      assert.deepEqual(await request(`/v1/loop-items/${matching.id}/tasks`), expectedRows)
       await verifyArchivedStandInNotification({
         control,
         request,
@@ -199,7 +205,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         uiTimeoutMs
       )
 
-      // Each connected identity owns one execution for the same real assignment.
+      // Several matching roles must still produce one automatic task per assignment.
       let personal = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -240,12 +246,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const fanoutBindings = await until(
         () => request(`/v1/loop-items/${fanout.id}/tasks`),
         rows => {
-          assert.ok(rows.length <= roleIds.length, 'One identity created duplicate executions')
-          return rows.length === roleIds.length
+          assert.ok(rows.length <= 1, 'One automatic assignment created duplicate executions')
+          return rows.length === 1
         },
-        'Every matching stand-in must bind its own task'
+        'One matching assistant must bind the assignment task'
       )
-      assert.equal(new Set(fanoutBindings.map(row => row.task_id)).size, roleIds.length)
+      assert.equal(new Set(fanoutBindings.map(row => row.task_id)).size, 1)
       assert.equal(new Set(fanoutBindings.map(row => row.human_assignment_id)).size, 1)
       const owners = []
       for (const binding of fanoutBindings) {
@@ -267,7 +273,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         )
         owners.push(transcript.origin.standInId)
       }
-      assert.deepEqual(owners.sort(), [...roleIds].sort())
+      assert.deepEqual(owners, [roleIds[0]])
+      const completedBindings = await until(
+        () => request(`/v1/loop-items/${fanout.id}/tasks`),
+        rows => rows.length === 1 && rows[0].stand_in_pending === false,
+        'The reservation must become a real task after successful Runtime creation'
+      )
+      assert.deepEqual(
+        completedBindings,
+        fanoutBindings.map(binding => ({ ...binding, stand_in_pending: false }))
+      )
       await until(
         () => countAssignments(fanout),
         count => count > 0,
@@ -276,14 +291,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       assert.equal(await countAssignments(fanout), 1, 'Fan-out must share assignment validation')
       assert.equal(
         modelRequests,
-        3,
-        'Each eligible identity must execute once without AI role selection'
+        2,
+        'One selected role must execute once without AI role selection'
       )
       await refreshInbox(control)
-      await new Promise(resolve => setTimeout(resolve, OBSERVATION_MS))
+      await waitForStandInSchedulerCycle()
       assert.equal(await countAssignments(fanout), 1)
-      assert.equal(modelRequests, 3, 'Inbox refresh must not replay either identity')
-      assert.deepEqual(await request(`/v1/loop-items/${fanout.id}/tasks`), fanoutBindings)
+      assert.equal(modelRequests, 2, 'Inbox refresh must not replay the selected role')
+      assert.deepEqual(await request(`/v1/loop-items/${fanout.id}/tasks`), completedBindings)
       await requestExecutor(
         control,
         'runtime.stand_in.personal.save',

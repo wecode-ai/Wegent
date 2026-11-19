@@ -337,7 +337,9 @@ class LocalTaskResponsesHandler:
         if not source or source.get("source") != "im":
             return
 
-        callback_key = runtime_local_task_callback_key(device_id, local_task_id)
+        callback_key = runtime_local_task_callback_key(
+            device_id, local_task_id, source.get("callback_id")
+        )
         service = get_callback_registry().get_service_by_name(
             source.get("channel_type", "")
         )

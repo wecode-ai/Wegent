@@ -1,3 +1,4 @@
+import { marketplaceUninstallOperationKey } from './pluginWorkspaceOperations'
 import { toInstalledPluginItem } from '../installedPluginPresentation'
 import { createHttpClient } from '@/api/http'
 import { getToken } from '@/api/auth'
@@ -398,7 +399,10 @@ export function isMarketplaceUninstallPending(
 ): boolean {
   // Only the local operation belongs here. Device receipts are interpreted by
   // the row separately, so a previous removal cannot override a new install.
-  return uninstallingIds.has(String(resolveMarketplaceUninstallId(item, plugins)))
+  return (
+    uninstallingIds.has(marketplaceUninstallOperationKey(item.id)) ||
+    uninstallingIds.has(String(resolveMarketplaceUninstallId(item, plugins)))
+  )
 }
 
 export function localMarketplaceKey(id: string): string {
@@ -473,6 +477,19 @@ export function currentDeviceInstallation(
   plugin: InstalledPlugin,
   deviceId: string
 ): NonNullable<PluginMarketplaceItem['currentDeviceInstallation']> | null {
+  if (
+    plugin.status.localExecution?.state === 'installed' &&
+    plugin.status.localExecution.releaseId === (plugin.spec.releaseId ?? null)
+  ) {
+    return {
+      deviceId,
+      desiredReleaseId: plugin.spec.releaseId ?? 0,
+      actualReleaseId: plugin.spec.releaseId ?? null,
+      state: 'installed',
+      attemptCount: 0,
+      updatedAt: '',
+    }
+  }
   return plugin.status.devices?.find(device => device.deviceId === deviceId) ?? null
 }
 

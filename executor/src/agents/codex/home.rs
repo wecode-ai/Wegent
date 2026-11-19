@@ -16,7 +16,10 @@ pub(super) const WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV: &str = "WEWORK_CODEX_SUB
 
 #[path = "home_auth.rs"]
 mod auth;
+pub(super) use auth::acquire_named_home;
 pub(super) use auth::acquire_shared_auth;
+pub(crate) use auth::prepare_provider_migration;
+pub(crate) use auth::provider_state_is_current;
 
 #[cfg(test)]
 #[path = "home_auth_tests.rs"]
@@ -26,7 +29,7 @@ mod auth_tests;
 /// preference threaded through the executor environment.
 pub(super) fn codex_subscription_enabled() -> bool {
     env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
-        .map(|value| value != "false")
+        .map(|value| value != "false" && value != "unavailable")
         .unwrap_or(true)
 }
 
@@ -62,6 +65,9 @@ pub(super) fn prepare_wework_codex_home_with_auth(
 fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
     use toml_edit::{value, DocumentMut};
 
+    let _publication = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &codex_home.join("plugins/cache/wework-personal"),
+    )?;
     let config_path = codex_home.join("config.toml");
     let content = crate::local::codex_home::read_optional_config(&config_path)?;
     let mut document = content.parse::<DocumentMut>().map_err(|error| {
@@ -94,6 +100,17 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
         .is_none()
     {
         document["personality"] = value("pragmatic");
+    }
+
+    // Keep native config precedence: explicit V2 and profile limits override this default.
+    let agents = document.get("agents");
+    if agents.map_or(true, |item| item.is_table_like())
+        && agents
+            .and_then(|item| item.get("max_concurrent_threads_per_session"))
+            .is_none()
+        && agents.and_then(|item| item.get("max_threads")).is_none()
+    {
+        document["agents"]["max_concurrent_threads_per_session"] = value(6);
     }
 
     let next_content = document.to_string();
@@ -151,6 +168,7 @@ pub(crate) fn select_wework_codex_user_instructions(
 pub(crate) use wegent_plugin_packages::codex_configuration::{log_config_state, replace_config};
 
 fn sync_user_codex_auth(codex_home: &Path, auth_enabled: bool) -> Result<(), String> {
+    require_known_auth_preference()?;
     let target = codex_home.join("auth.json");
     let native_source = user_codex_auth_path();
 
@@ -199,6 +217,15 @@ fn sync_user_codex_auth(codex_home: &Path, auth_enabled: bool) -> Result<(), Str
         })?;
     }
     write_managed_auth_marker(codex_home)
+}
+
+fn require_known_auth_preference() -> Result<(), String> {
+    if env::var_os(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV)
+        .is_some_and(|value| value == "unavailable")
+    {
+        return Err("Codex credential preference is unreadable; repair application settings and restart Wework before accessing Codex credentials".to_owned());
+    }
+    Ok(())
 }
 
 /// Removes only the auth link/copy managed by Wework. A user-managed auth file
@@ -287,3 +314,7 @@ fn remove_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
 pub(crate) fn executor_home() -> PathBuf {
     crate::config::paths::executor_home()
 }
+
+#[cfg(test)]
+#[path = "home_config_tests.rs"]
+mod config_tests;

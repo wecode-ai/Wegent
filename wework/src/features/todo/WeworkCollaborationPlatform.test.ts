@@ -1,6 +1,8 @@
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
@@ -13,7 +15,7 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import i18n from '@/i18n'
-import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationApp,
@@ -23,7 +25,8 @@ import type {
 import {
   createElement,
   useCallback,
-  useEffect,
+  useMemo,
+  useSyncExternalStore,
   useRef,
   useState,
   type ComponentProps,
@@ -45,7 +48,6 @@ import {
   publishProjectSpaceTaskContextChanged,
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 
 type BoardIssueCardRenderer = NonNullable<
   ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
@@ -101,29 +103,41 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         })
       }
       const renderCount = useRef(0)
-      const [projectIds, setProjectIds] = useState('')
       const [resourceNames, setResourceNames] = useState('')
       const [automationNames, setAutomationNames] = useState('')
-      const [snapshotStatuses, setSnapshotStatuses] = useState('')
       renderCount.current += 1
-      const loadSnapshot = useCallback(() => {
-        const projectId = host.location.projectId
-        if (!projectId || !api.issues.getBoardSnapshot) return
-        void api.issues
-          .getBoardSnapshot(projectId)
-          .then(snapshot => setSnapshotStatuses(snapshot.items.map(item => item.status).join(',')))
-          .catch(() => undefined)
-      }, [api.issues, host.location.projectId])
-      useEffect(() => {
-        loadSnapshot()
-      }, [loadSnapshot, refreshProjectRequestKey])
-      useEffect(() => {
-        if (typeof api.projects.list !== 'function') return
-        void api.projects
-          .list()
-          .then(projects => setProjectIds(projects.map(project => String(project.id)).join(',')))
-          .catch(() => setProjectIds('error'))
-      }, [api])
+      const snapshotSource = useMemo(
+        () =>
+          createAsyncResource(String(host.location.projectId), async () => {
+            const snapshot = await api.issues.getBoardSnapshot!(host.location.projectId!)
+            return snapshot.items.map(item => item.status).join(',')
+          }),
+        [api.issues, host.location.projectId]
+      )
+      const snapshotState = useSyncExternalStore(
+        useCallback(
+          notify =>
+            host.location.projectId && api.issues.getBoardSnapshot
+              ? snapshotSource.subscribe(notify, refreshProjectRequestKey)
+              : subscribeIdleResource(),
+          [snapshotSource, refreshProjectRequestKey, host.location.projectId, api.issues]
+        ),
+        snapshotSource.getSnapshot
+      )
+      const snapshotStatuses = snapshotState.data ?? ''
+      const loadSnapshot = () => void snapshotSource.reload()
+      const projectsSource = useMemo(
+        () =>
+          createAsyncResource('projects', async () =>
+            (await api.projects.list()).map(project => String(project.id)).join(',')
+          ),
+        [api]
+      )
+      const projectsState = useSyncExternalStore(
+        typeof api.projects.list === 'function' ? projectsSource.subscribe : subscribeIdleResource,
+        projectsSource.getSnapshot
+      )
+      const projectIds = projectsState.status === 'error' ? 'error' : (projectsState.data ?? '')
       const createAgent = () => {
         const projectId = host.location.projectId
         if (!projectId) return
@@ -526,30 +540,20 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
+function createHomeDraft() {
+  return {
+    inputByScope: {},
+    setInputForScope: vi.fn(),
+    getInputRevisionForScope: vi.fn(() => 0),
+    personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
+  }
+}
+
 describe('Wework collaboration workspace API', () => {
-  it('does not reject task creation when the Issue start update fails', async () => {
-    const issues = {
-      get: vi.fn().mockResolvedValue({
-        id: 'ISSUE-1',
-        status: 'pending',
-        tags: [],
-        version: 4,
-      }),
-      update: vi.fn().mockRejectedValue(new Error('没有权限更新 Issue')),
-    }
-
-    await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBe(
-      '没有权限更新 Issue'
-    )
-    expect(issues.update).toHaveBeenCalledWith('ISSUE-1', {
-      status: 'in_progress',
-      version: 4,
-    })
-  })
-
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -596,6 +600,7 @@ describe('Wework collaboration workspace API', () => {
             CloudConnectionContext.Provider,
             { value: cloudConnection },
             createElement(WeworkCollaborationPlatform, {
+              homeDraft: createHomeDraft(),
               user: { id: 7, user_name: 'local-owner', email: '' } as never,
               localProjects: [],
               services: { projectSpaceApis: { local: createLocalDeliveryApi() } } as never,
@@ -691,6 +696,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -785,6 +791,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -829,6 +836,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -893,6 +901,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -955,6 +964,7 @@ describe('Wework collaboration workspace API', () => {
     }
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
         localProjects: [],
         services: {
@@ -1029,6 +1039,7 @@ describe('Wework collaboration workspace API', () => {
         )
       const onActiveProjectChange = vi.fn()
       const props = {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -1060,6 +1071,7 @@ describe('Wework collaboration workspace API', () => {
 
       view.rerender(
         createElement(WeworkCollaborationPlatform, {
+          homeDraft: createHomeDraft(),
           ...props,
           activeProjectRef: { ...props.activeProjectRef, projectId: route.projectId },
           focusedItemId: 'notification-issue',
@@ -1091,9 +1103,11 @@ describe('Wework collaboration workspace API', () => {
 
   it.each([
     'active',
+    'activity',
     'archived',
     'foreign',
     'unlinked',
+    'ambiguous-alias',
     'local',
     'superseded',
     'superseded-error',
@@ -1119,6 +1133,9 @@ describe('Wework collaboration workspace API', () => {
         linkedAt: '2026-10-20T00:00:00Z',
       }
       const pendingRead = deferred<{ success: boolean; code?: string }>()
+      const listBindings = vi
+        .fn()
+        .mockResolvedValue(status === 'unlinked' || status === 'activity' ? [] : [binding])
       const delayed =
         status === 'superseded' || status === 'superseded-error' || status === 'dismissed'
       const laterBinding = { ...binding, id: 'later', taskId: 'later-task' }
@@ -1135,7 +1152,10 @@ describe('Wework collaboration workspace API', () => {
             projects: { list: vi.fn().mockResolvedValue([project]) },
             issues: {},
             taskBindings: {
-              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
+              list:
+                status === 'activity'
+                  ? listBindings
+                  : vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
             },
           } as unknown as SharedWorkspaceApi,
           localProjects: [],
@@ -1150,7 +1170,15 @@ describe('Wework collaboration workspace API', () => {
           },
           project: project as never,
           runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
-          services: { standInApi: { readTask } } as never,
+          services: {
+            standInApi: {
+              readTask,
+              deviceIdentity: vi.fn(async (deviceId: string) => ({
+                deviceId,
+                backendDeviceId: status === 'ambiguous-alias' ? 'app-record-42' : deviceId,
+              })),
+            },
+          } as never,
           setLocation: vi.fn(),
           userId: 1,
           workspace: { id: 'workspace', name: 'Workspace' } as never,
@@ -1175,6 +1203,25 @@ describe('Wework collaboration workspace API', () => {
           }
         }
       const editor = detail().props.children(vi.fn())
+      expect(editor.props.existingTaskSource?.port.bindTask).toBeTypeOf('function')
+      if (status === 'activity') {
+        expect(editor.props.onOpenRuntimeTask).toBeTypeOf('function')
+        await act(async () => {
+          editor.props.onOpenRuntimeTask?.({ deviceId: 'device', taskId: 'task' })
+        })
+        const conversation = detail().props.conversation as {
+          props: { initialAddress: RuntimeTaskAddress }
+        }
+        expect(conversation.props.initialAddress).toMatchObject({
+          deviceId: 'device',
+          taskId: 'task',
+          projectSession: { projectId: project.id, issueId: issue.id },
+          issueExecution: { projectId: project.id, issueId: issue.id },
+        })
+        expect(listBindings).not.toHaveBeenCalled()
+        expect(readTask).not.toHaveBeenCalled()
+        return
+      }
       await act(async () => {
         editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
       })
@@ -2732,7 +2779,7 @@ describe('Wework collaboration workspace API', () => {
     expect(workspaces).toEqual([
       expect.objectContaining({
         id: 'wework-local-workspace',
-        name: '本地空间',
+        name: '个人分组',
       }),
     ])
     expect(projects).toEqual([

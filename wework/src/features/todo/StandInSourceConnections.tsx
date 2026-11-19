@@ -1,37 +1,15 @@
 import { Button } from '@/components/ui/button'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useRef, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createSourceConnectionsModel } from './sourceConnectionsModel'
+import { MessageSquare, Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { MessageSquare } from 'lucide-react'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
-type Connection = Pick<
-  StandInSourceConnection,
-  | 'id'
-  | 'name'
-  | 'kind'
-  | 'profile'
-  | 'providerId'
-  | 'scope'
-  | 'collectionKey'
-  | 'configurationSummary'
->
-
-export function StandInSourceConnections({
-  role,
-  provider,
-  api,
-  deviceId,
-  localDeviceId,
-  disabled,
-  onChange,
-  onReady,
-}: {
+type SourceConnectionsProps = {
   role: StandInRole
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
@@ -40,30 +18,93 @@ export function StandInSourceConnections({
   disabled: boolean
   onChange(role: StandInRole): void
   onReady?(): void
-}) {
+}
+
+export function StandInSourceConnections(props: SourceConnectionsProps) {
+  const scope = JSON.stringify([
+    props.deviceId,
+    props.localDeviceId,
+    props.role.id,
+    props.role.executionDeviceId,
+    props.provider.id,
+    props.provider.authTarget?.pluginKey,
+    props.provider.authTarget?.connectorSlug,
+  ])
+  const [owner, setOwner] = useState({ api: props.api, scope, revision: 0 })
+  if (owner.api !== props.api || owner.scope !== scope)
+    setOwner({ api: props.api, scope, revision: owner.revision + 1 })
+  return <StandInSourceConnectionsContent key={owner.revision} {...props} />
+}
+
+function StandInSourceConnectionsContent({
+  role,
+  provider,
+  api,
+  deviceId,
+  localDeviceId,
+  disabled,
+  onChange,
+  onReady,
+}: SourceConnectionsProps) {
   const { t, i18n } = useTranslation('common')
-  const [adding, setAdding] = useState(false)
-  const [newPolicy, setNewPolicy] = useState({
-    automatic: true,
-    askBeforeAct: true,
-    immediate: role.id !== '@primary',
-  })
-  const [kind, setKind] = useState(provider.resourceKinds[0] ?? '')
-  const [scope, setScope] = useState<'selected' | 'all'>(
-    provider.allResourceKinds?.length ? 'all' : 'selected'
+  const input = useMemo(
+    () => ({
+      role,
+      provider,
+      api,
+      deviceId,
+      disabled,
+      onChange,
+      onReady,
+      allResourcesLabel: t('standIn.workspace.all_resources'),
+      cliUnavailableLabel: t('standIn.workspace.connection_cli_request_unavailable', {
+        provider: provider.displayName,
+      }),
+    }),
+    [role, provider, api, deviceId, disabled, onChange, onReady, t]
   )
-  const [selection, setSelection] = useState<Connection[]>([])
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Connection[]>([])
-  const [nextCursor, setNextCursor] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<{ message: string; code?: unknown } | null>(null)
-  const [searched, setSearched] = useState(false)
-  const [authOpen, setAuthOpen] = useState(false)
-  const latest = useRef({ role, onChange })
-  useEffect(() => {
-    latest.current = { role, onChange }
-  }, [role, onChange])
+  const [model] = useState(() => createSourceConnectionsModel(input))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const {
+    adding,
+    excluding,
+    newPolicy,
+    kind,
+    scope,
+    selection,
+    query,
+    results,
+    nextCursor,
+    busy,
+    error,
+    searched,
+    authOpen,
+  } = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const setAdding = (value: Parameters<typeof model.set<'adding'>>[1]) => model.set('adding', value)
+  const setExcluding = (value: Parameters<typeof model.set<'excluding'>>[1]) =>
+    model.set('excluding', value)
+  const setNewPolicy = (value: Parameters<typeof model.set<'newPolicy'>>[1]) =>
+    model.set('newPolicy', value)
+  const setKind = (value: Parameters<typeof model.set<'kind'>>[1]) => model.set('kind', value)
+  const setScope = (value: Parameters<typeof model.set<'scope'>>[1]) => model.set('scope', value)
+  const setSelection = (value: Parameters<typeof model.set<'selection'>>[1]) =>
+    model.set('selection', value)
+  const setQuery = (value: Parameters<typeof model.set<'query'>>[1]) => model.set('query', value)
+  const setResults = (value: Parameters<typeof model.set<'results'>>[1]) =>
+    model.set('results', value)
+  const setNextCursor = (value: Parameters<typeof model.set<'nextCursor'>>[1]) =>
+    model.set('nextCursor', value)
+  const setError = (value: Parameters<typeof model.set<'error'>>[1]) => model.set('error', value)
+  const setSearched = (value: Parameters<typeof model.set<'searched'>>[1]) =>
+    model.set('searched', value)
+  const setAuthOpen = (value: Parameters<typeof model.set<'authOpen'>>[1]) =>
+    model.set('authOpen', value)
+  const { search, add, addAll, closeExclusionEditor, isConnected, identity } = model
+  const authorizationRequired =
+    provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
   const allRows = role.connections ?? []
   const rows = allRows.filter(row => row.providerId === provider.id)
   const prefix =
@@ -75,139 +116,13 @@ export function StandInSourceConnections({
       ...role,
       connections: [...allRows.filter(row => row.providerId !== provider.id), ...next],
     })
-  const searchSequence = useRef(0)
-  const failSearch = (sequence: number, cause: unknown) => {
-    if (sequence === searchSequence.current)
-      setError({
-        message: getStandInErrorMessage(cause),
-        code: cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined,
-      })
-  }
-  const search = async (cursor?: string) => {
-    if (busy || !query.trim()) return
-    const sequence = ++searchSequence.current
-    setBusy(true)
-    setError(null)
-    setSearched(false)
-    try {
-      const result = await api.searchConnectionResources(
-        deviceId,
-        provider.id,
-        kind,
-        query.trim(),
-        cursor
-      )
-      if (sequence !== searchSequence.current) return
-      setResults(previous =>
-        cursor
-          ? [
-              ...previous,
-              ...result.items.filter(
-                row =>
-                  !previous.some(
-                    value =>
-                      value.id === row.id &&
-                      value.kind === row.kind &&
-                      value.profile === row.profile
-                  )
-              ),
-            ]
-          : result.items
-      )
-      setNextCursor(result.hasMore ? result.nextCursor : undefined)
-      setSearched(true)
-    } catch (cause) {
-      failSearch(sequence, cause)
-    } finally {
-      setBusy(false)
-    }
-  }
-  const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
-  const isConnected = (row: Connection) =>
-    rows.some(
-      value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
-    )
-  const add = (items: Connection[]) => {
-    const current = latest.current
-    let connections = [...(current.role.connections ?? [])]
-    if (items.length && items.every(item => item.scope !== 'all')) {
-      const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
-      connections = connections.filter(
-        row =>
-          row.providerId !== provider.id ||
-          row.scope !== 'all' ||
-          !covered.has(JSON.stringify([row.profile, row.kind]))
-      )
-    }
-    for (const item of items) {
-      const same = (row: StandInSourceConnection) =>
-        row.providerId === provider.id && row.profile === item.profile && row.kind === item.kind
-      if (item.scope === 'all') connections = connections.filter(row => !same(row))
-      if (connections.some(row => same(row) && (row.id === item.id || row.scope === 'all')))
-        continue
-      connections.push({
-        ...item,
-        providerId: provider.id,
-        policy: { ...newPolicy },
-      })
-    }
-    current.onChange({ ...current.role, connections })
-    setSelection([])
-    setAdding(false)
-  }
-  const addAll = async () => {
-    if (busy || disabled) return
-    const sequence = ++searchSequence.current
-    setBusy(true)
-    setError(null)
-    try {
-      const kinds = provider.allResourceKinds ?? []
-      const pages = await Promise.all(
-        kinds.map(resourceKind =>
-          api.searchConnectionResources(deviceId, provider.id, resourceKind, '', undefined, 'all')
-        )
-      )
-      if (sequence !== searchSequence.current) return
-      const items = pages.map((page, index) => {
-        const item = page.items[0]
-        if (
-          page.items.length !== 1 ||
-          item?.scope !== 'all' ||
-          item.id !== '*' ||
-          item.kind !== kinds[index] ||
-          !item.profile ||
-          item.providerId !== provider.id
-        )
-          throw Object.assign(new Error('Invalid all-resource selection'), {
-            code: 'connection_response_invalid',
-          })
-        return {
-          ...item,
-          name: provider.allResourceLabels?.[item.kind] ?? t('standIn.workspace.all_resources'),
-        }
-      })
-      if (!items.length || new Set(items.map(item => item.profile)).size !== 1)
-        throw Object.assign(new Error('Connection account changed'), {
-          code: 'connection_response_invalid',
-        })
-      add(items)
-    } catch (cause) {
-      failSearch(sequence, cause)
-    } finally {
-      setBusy(false)
-    }
-  }
   const authorization = authOpen && provider.authTarget && (
     <LocalConnectorAuthDialog
       open
       target={provider.authTarget}
       title={t('standIn.workspace.connect_source', { name: provider.displayName })}
       onCancel={() => setAuthOpen(false)}
-      onSuccess={() => {
-        setAuthOpen(false)
-        setError(null)
-        onReady?.()
-      }}
+      onSuccess={model.authorized}
     />
   )
   const connectedScope = (
@@ -219,35 +134,129 @@ export function StandInSourceConnections({
         >
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm">{row.name}</p>
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-secondary">
               {provider.resourceLabels?.[row.kind] ?? row.kind}
               {' · '}
               {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
             </p>
           </div>
+          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+            row.kind === 'group' &&
+            row.scope !== 'all' && (
+              <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+                {t('standIn.workspace.group_message_scope')}
+                <select
+                  data-testid={`${prefix}-message-scope-${row.id}`}
+                  aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
+                  value={row.collectionKey ?? 'mentions'}
+                  disabled={disabled}
+                  onChange={event => {
+                    const allMessages = event.target.value === 'all-messages'
+                    updateRows(
+                      rows.map(value => {
+                        if (value !== row) return value
+                        const next = { ...value }
+                        if (allMessages) next.collectionKey = 'all-messages'
+                        else delete next.collectionKey
+                        next.configurationSummary = t(
+                          allMessages
+                            ? 'standIn.workspace.group_all_messages'
+                            : 'standIn.workspace.group_mentions'
+                        )
+                        return next
+                      })
+                    )
+                  }}
+                  className="min-h-11 rounded-md border border-border bg-background px-2 text-sm text-text-primary md:min-h-8 [&>option]:bg-background [&>option]:text-text-primary"
+                >
+                  <option value="mentions">{t('standIn.workspace.group_mentions')}</option>
+                  <option value="all-messages">{t('standIn.workspace.group_all_messages')}</option>
+                </select>
+              </label>
+            )}
           <button
             type="button"
             data-testid={`${prefix}-remove-${row.id}`}
             aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
             disabled={disabled}
-            onClick={() => updateRows(rows.filter(value => value !== row))}
+            onClick={() => {
+              if (excluding && identity(excluding) === identity(row)) closeExclusionEditor()
+              updateRows(rows.filter(value => value !== row))
+            }}
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
           </button>
+          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' && row.scope === 'all' && (
+            <div className="w-full space-y-2">
+              <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
+              {row.excludedResources?.map(resource => (
+                <div key={resource.id} className="flex items-center gap-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                  <button
+                    type="button"
+                    data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
+                    aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
+                    disabled={disabled}
+                    onClick={() =>
+                      updateRows(
+                        rows.map(value =>
+                          value === row
+                            ? {
+                                ...value,
+                                excludedResources: value.excludedResources?.filter(
+                                  item => item.id !== resource.id
+                                ),
+                              }
+                            : value
+                        )
+                      )
+                    }
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
+                disabled={disabled || busy || authorizationRequired}
+                onClick={() => {
+                  model.invalidateSearch()
+                  setAdding(false)
+                  setExcluding(row)
+                  setKind(row.kind)
+                  setScope('selected')
+                  setSelection([])
+                  setQuery('')
+                  setResults([])
+                  setNextCursor(undefined)
+                  setSearched(false)
+                  setError(null)
+                }}
+                className="min-h-11 text-sm underline md:min-h-8"
+              >
+                {t('standIn.workspace.blacklist_add')}
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>
   )
-  if (provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required')
+  if (authorizationRequired)
     return (
-      <section className="space-y-4" data-testid={`${prefix}-authorization`}>
+      <section
+        className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
+        data-testid={`${prefix}-authorization`}
+      >
         <StandInConnectionHeader
           icon={MessageSquare}
           title={provider.displayName}
           description={t('standIn.workspace.message_connection_help')}
         />
-        <p role="alert" className="text-sm text-text-muted">
+        <p role="alert" className="text-sm text-text-secondary">
           {t('standIn.errors.connector_auth_required')}
         </p>
         {provider.authTarget && deviceId === localDeviceId ? (
@@ -261,15 +270,20 @@ export function StandInSourceConnections({
             {t('standIn.workspace.connect_source', { name: provider.displayName })}
           </button>
         ) : (
-          <p className="text-sm text-text-muted">{t('standIn.workspace.authorize_on_device')}</p>
+          <p className="text-sm text-text-secondary">
+            {t('standIn.workspace.authorize_on_device')}
+          </p>
         )}
         {connectedScope}
         {authorization}
       </section>
     )
-  const showAdding = adding || rows.length === 0
+  const showAdding = excluding || adding || rows.length === 0
   return (
-    <section className="space-y-4" data-testid={`${prefix}-connections`}>
+    <section
+      className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
+      data-testid={`${prefix}-connections`}
+    >
       <StandInConnectionHeader
         icon={MessageSquare}
         title={provider.displayName}
@@ -300,22 +314,37 @@ export function StandInSourceConnections({
           }}
           className="space-y-3"
         >
+          {excluding && (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm">
+                {t('standIn.workspace.blacklist_help', { name: excluding.name })}
+              </p>
+              <button
+                type="button"
+                data-testid={`${prefix}-blacklist-cancel`}
+                onClick={closeExclusionEditor}
+                className="min-h-11 text-sm underline md:min-h-8"
+              >
+                {t('standIn.workspace.blacklist_cancel')}
+              </button>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
-            {scope === 'selected' && (
+            {scope === 'selected' && !excluding && (
               <select
                 aria-label={t('standIn.workspace.message_kind')}
                 data-testid={`${prefix}-kind`}
                 value={kind}
                 disabled={busy}
                 onChange={event => {
-                  searchSequence.current += 1
+                  model.invalidateSearch()
                   setKind(event.target.value)
                   setScope('selected')
                   setResults([])
                   setNextCursor(undefined)
                   setSearched(false)
                 }}
-                className="min-h-9 rounded-md border border-border bg-background px-2 text-sm"
+                className="min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-9"
               >
                 {provider.resourceKinds.map(resourceKind => (
                   <option key={resourceKind} value={resourceKind}>
@@ -331,13 +360,13 @@ export function StandInSourceConnections({
                   data-testid={`${prefix}-query`}
                   value={query}
                   onChange={event => {
-                    searchSequence.current += 1
+                    model.invalidateSearch()
                     setQuery(event.target.value)
                     setResults([])
                     setNextCursor(undefined)
                     setSearched(false)
                   }}
-                  className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm"
+                  className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm md:min-h-9"
                   placeholder={t('standIn.workspace.search_connections')}
                 />
                 <button
@@ -352,20 +381,20 @@ export function StandInSourceConnections({
               </>
             )}
           </div>
-          {Boolean(provider.allResourceKinds?.length) && (
+          {!excluding && Boolean(provider.allResourceKinds?.length) && (
             <fieldset className="flex flex-wrap gap-4" disabled={disabled || busy}>
               <legend className="mb-2 w-full text-sm font-medium">
                 {t('standIn.workspace.connection_scope')}
               </legend>
               {(['all', 'selected'] as const).map(value => (
-                <label key={value} className="flex min-h-8 items-center gap-2 text-sm">
+                <label key={value} className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
                   <input
                     type="radio"
                     name={`${prefix}-scope`}
                     data-testid={`${prefix}-scope-${value}`}
                     checked={scope === value}
                     onChange={() => {
-                      searchSequence.current += 1
+                      model.invalidateSearch()
                       setScope(value)
                       setError(null)
                     }}
@@ -379,7 +408,7 @@ export function StandInSourceConnections({
           )}
           {scope === 'all' && (
             <div className="space-y-3">
-              <p className="text-sm text-text-muted">
+              <p className="text-sm text-text-secondary">
                 {t('standIn.workspace.all_resources_help')}{' '}
                 {new Intl.ListFormat(i18n.language, { style: 'long', type: 'conjunction' }).format(
                   (provider.allResourceKinds ?? []).map(
@@ -403,7 +432,7 @@ export function StandInSourceConnections({
             </div>
           )}
           {busy && (
-            <p role="status" className="text-sm text-text-muted">
+            <p role="status" className="text-sm text-text-secondary">
               {t('standIn.loading')}
             </p>
           )}
@@ -413,7 +442,9 @@ export function StandInSourceConnections({
             </div>
           )}
           {scope === 'selected' && searched && !results.length && (
-            <p className="text-sm text-text-muted">{t('standIn.workspace.no_connections_found')}</p>
+            <p className="text-sm text-text-secondary">
+              {t('standIn.workspace.no_connections_found')}
+            </p>
           )}
           {scope === 'selected' && (
             <>
@@ -462,7 +493,9 @@ export function StandInSourceConnections({
                       <span>
                         {t(
                           connected
-                            ? 'standIn.workspace.connected'
+                            ? excluding
+                              ? 'standIn.workspace.blacklisted'
+                              : 'standIn.workspace.connected'
                             : selected
                               ? 'standIn.workspace.resource_selected'
                               : 'standIn.workspace.select_resource'
@@ -508,7 +541,7 @@ export function StandInSourceConnections({
               )}
             </>
           )}
-          <p className="text-xs text-text-muted">{t('standIn.workspace.connection_help')}</p>
+          <p className="text-xs text-text-secondary">{t('standIn.workspace.connection_help')}</p>
         </form>
       )}
       <StandInProcessingSettings

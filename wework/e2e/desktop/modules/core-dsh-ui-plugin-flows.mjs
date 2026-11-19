@@ -1,4 +1,5 @@
 import { fetchLocalRuntime } from './runtime-request.mjs'
+import { withNativePluginDecision } from './native-plugin-approval.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -11,6 +12,7 @@ import {
   withTimeout,
 } from './shared.mjs'
 import {
+  verifySitesAccessConfiguration,
   ensureExperimentalFeaturesDisabled,
   ensureExperimentalFeaturesEnabled,
 } from './preferences-automation-flows.mjs'
@@ -227,6 +229,9 @@ export async function verifyCoreDshUiPluginComposition({
       )
     )
     await assertInstalledFeatureVisible(control, plugin)
+    if (plugin.name === '@wegent/dsh-ui-applications') {
+      await verifySitesAccessConfiguration(control)
+    }
     if (plugin.name === '@wegent/dsh-ui-automations') {
       assert.equal(
         (await readSlots(control))['wework.sidebar.navigation']?.includes('automations.navigation'),
@@ -829,12 +834,17 @@ async function waitForSlotState(control, predicate) {
 }
 
 async function invokeCoreDshPluginCapability(control, origin, capability, params = {}) {
-  const response = await fetchLocalRuntime(control, `${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ capability, params }),
-  })
+  const invoke = () =>
+    fetchLocalRuntime(control, `${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ capability, params }),
+    })
+  const response =
+    capability === 'runtime.installCoreDshPlugin'
+      ? await withNativePluginDecision(control, invoke)
+      : await invoke()
   const payload = await response.json()
   assert.equal(
     response.ok,

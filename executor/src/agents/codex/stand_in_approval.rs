@@ -73,6 +73,15 @@ pub(super) fn stand_in_mcp_approval_overrides(
         .map(|entry| {
             let (key, value) = config_override_entry(&entry)
                 .ok_or_else(|| "Invalid Codex MCP configuration override".to_owned())?;
+            // Native CLI paths permit literal segments (for example the router's
+            // `model_providers.~`) that are not bare TOML keys. Only MCP paths
+            // contribute approval policies; validate their complete path below.
+            let root = key.split('.').next().unwrap_or_default();
+            let root_value: Value = toml_edit::de::from_str(&format!("{root}=true"))
+                .map_err(|_| "Invalid Codex MCP configuration override key".to_owned())?;
+            if root_value.get("mcp_servers").is_none() {
+                return Ok(Value::Null);
+            }
             toml_edit::de::from_str::<Value>(&format!("{key}={}", toml_json_value(&value)))
                 .map_err(|_| "Invalid Codex MCP configuration override key".to_owned())
         })
@@ -152,7 +161,12 @@ pub(super) fn stand_in_mcp_approval_overrides(
         .get("origin")
         .is_some_and(|origin| origin["type"] == "stand_in_identity")
     {
-        for tool in ["schedule_task", "cancel_schedule", "configure_git_webhook"] {
+        for tool in [
+            "schedule_task",
+            "update_schedule",
+            "cancel_schedule",
+            "configure_git_webhook",
+        ] {
             result.push(format!(
                 "mcp_servers.wework_stand_in.tools.{tool}.approval_mode=\"writes\""
             ));
@@ -173,6 +187,37 @@ pub(super) fn stand_in_mcp_approval_overrides(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn schedule_updates_require_native_mutation_review_in_owner_chat() {
+        let root = tempfile::tempdir().unwrap();
+        let request =
+            serde_json::from_value(json!({"origin":{"type":"stand_in_identity"}})).unwrap();
+        let overrides =
+            stand_in_mcp_approval_overrides(&request, root.path(), &[], &Map::new()).unwrap();
+        for name in ["schedule_task", "update_schedule", "cancel_schedule"] {
+            assert!(overrides.contains(&format!(
+                "mcp_servers.wework_stand_in.tools.{name}.approval_mode=\"writes\""
+            )));
+        }
+    }
+
+    #[test]
+    fn native_provider_paths_do_not_change_mcp_approval_enforcement() {
+        let root = tempfile::tempdir().unwrap();
+        let result = stand_in_mcp_approval_overrides(
+            &ExecutionRequest::default(),
+            root.path(),
+            &[
+                "model_providers.~={name=\"OpenAI\"}".into(),
+                "mcp_servers.business.tools.send.approval_mode=approve".into(),
+            ],
+            &Map::new(),
+        )
+        .unwrap();
+        assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
+        assert!(result.iter().all(|entry| entry.starts_with("mcp_servers.")));
+    }
 
     #[test]
     fn coordinator_keeps_external_review_and_only_exempts_batch_commands() {

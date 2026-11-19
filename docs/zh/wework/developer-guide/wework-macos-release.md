@@ -27,6 +27,18 @@ E2E 断言隐藏失败。
 完成；连续中断则进入原有启动错误处理。`startup-network-change` 检查点通过
 Chromium 协议错误接口中断一次真实脚本请求，验证恢复后工作台能够打开新任务输入界面。
 
+## macOS 公证
+
+公证钩子先验证现有 stapled ticket。需要上传时，每个归档只提交一次，取得 Apple
+提交 ID 后通过 `notarytool wait` 查询同一提交；上传后的查询断网不能触发重复上传。
+若提交命令的传输错误已包含官方提交 URL 或结构化提交 ID，继续观察该 ID；没有
+有效 ID 的未知提交结果保持失败，不推断公证成功。
+
+查询共用原有 30 分钟等待预算，每次传输恢复只使用剩余时间。
+`WEWORK_NOTARY_UPLOAD_ATTEMPTS` 保留为幂等查询、staple 和 validate 的传输尝试上限
+（默认 3，范围 1–5），不用于重复上传。只有 Apple 返回 `Accepted` 后才执行 staple
+及最终验证；拒绝或预算耗尽仍阻止构建完成。日志只记录提交 ID，不记录认证参数。
+
 ## macOS 应用图标
 
 macOS 包同时包含现有 `wework/resources/icons/icon.icns` 和
@@ -91,6 +103,10 @@ WeWork_<version>_linux_x64.AppImage
 与运行不会写入旧版的组件目录或插件配置。升级、主动回滚和失败恢复复用同一套
 真实安装包 E2E，回归包额外检查原应用路径、组件目录和插件配置目录身份不变。
 数据格式兼容的主动回滚直接切换到保留版本；不兼容时仍须确认后恢复更新前快照。
+
+准备程序、停止写入后的校验和启动交接共用实际路径身份，允许 `/tmp` 与
+`/private/tmp` 等指向同一位置的路径别名。版本、数据格式和可读格式仍须完全
+匹配；相对路径、不存在的位置、其他宿主和逃出版本槽的链接不能取得激活所有权。
 
 启动失败后的回滚记录绑定实际激活尝试和目标包哈希。检查更新仍返回可验证的升级
 路径，但在原更新界面先询问是否再次更新；取消不会下载或清除失败记录，确认仅
@@ -289,7 +305,7 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `wework/electron/scripts/prepare-package-assets.mjs` 会把 sidecar、插件、图标和运行时
 描述复制到应用资源目录。不要重新建立第二份桌面资源目录或资源清单。
 
-当前固定版本为 Codex `0.163.0-alpha.5`。Codex `0.152` 开始默认关闭
+当前固定版本为 Codex `0.169.1`，支持 `gpt-6.2-sol` 和 `gpt-6.2-astra` 模型。Codex `0.152` 开始默认关闭
 `tools.update_plan.enabled`，但 Wework 会消费对应的计划事件并渲染计划块，因此
 Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证锁文件中的二进制；
 只有专用的 `WEWORK_E2E_CODEX_BIN` 可以覆盖它，不能继承通用 `CODEX_BIN`，否则
@@ -308,6 +324,12 @@ Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证�
 仅检查中间资源目录不能证明最终发行物合规。
 
 ## 开发模式热更新
+
+macOS 开发监听每秒检查一次源文件和目录的元数据，避免 FSEvents 或原生目录通知
+未送达时，原子保存、连续编辑和新增目录不再触发构建。只有输入版本发生变化才构建；
+输出目录、`node_modules`、`.git` 和 `dist` 仍排除在监听之外。轮询不读取文件内容。
+Chokidar 3 必须同时设置 `useFsEvents: false` 和 `usePolling: true`；仅设置
+`CHOKIDAR_USEPOLLING=true` 不会关闭已经选中的 FSEvents 后端。其他平台保留原生监听。
 
 文件监听必须等待 Chokidar 的 `ready`，再采集输入快照并启动首次构建。仅创建
 原生 watcher 不代表订阅已经就绪，启动后的首次编辑可能丢失通知。关闭时须等待

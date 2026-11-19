@@ -8,6 +8,13 @@ import { TextEncoder } from 'node:util'
 // JSDOM omits this browser API; use the native implementation for byte-size validation.
 global.TextEncoder = TextEncoder
 
+// Preserve browser cancellation semantics in the older JSDOM AbortSignal.
+if (!AbortSignal.prototype.throwIfAborted) {
+  AbortSignal.prototype.throwIfAborted = function () {
+    if (this.aborted) throw this.reason
+  }
+}
+
 if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false
 }

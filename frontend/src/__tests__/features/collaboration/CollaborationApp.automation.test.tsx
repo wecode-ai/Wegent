@@ -257,11 +257,21 @@ describe('CollaborationApp project collaboration groups', () => {
 
     const settings = await screen.findByTestId('project-settings-shell')
     expect(settings).toHaveTextContent('基本信息')
-    expect(settings).toHaveTextContent('AI 团队')
+    expect(settings).toHaveTextContent('AI 配置')
+    const aiConfiguration = screen.getByRole('navigation', { name: 'AI 配置' })
+    expect(
+      Array.from(
+        aiConfiguration.querySelectorAll('[data-testid^="collaboration-project-settings-"]')
+      ).map(element => element.getAttribute('data-testid'))
+    ).toEqual([
+      'collaboration-project-settings-agents',
+      'collaboration-project-settings-groups',
+      'collaboration-project-settings-environments',
+    ])
     expect(settings).toHaveTextContent('执行环境')
     expect(settings).toHaveTextContent('自动处理')
     expect(screen.getByTestId('collaboration-project-settings-groups')).toHaveTextContent(
-      '协作团队'
+      '协作小组'
     )
 
     await act(async () => {
@@ -308,7 +318,9 @@ describe('CollaborationApp project collaboration groups', () => {
 
     expect(screen.getByTestId('automatic-processing-schedule-frequency')).toHaveValue('weekdays')
     expect(screen.getByTestId('automatic-processing-schedule-time')).toHaveValue('09:00')
-    expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('工作日 09:00')
+    expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('周一至周五 09:00')
+    expect(screen.getByTestId('automatic-processing-workday-only')).not.toBeChecked()
+    fireEvent.click(screen.getByTestId('automatic-processing-workday-only'))
 
     fireEvent.change(screen.getByTestId('automatic-processing-schedule-frequency'), {
       target: { value: 'weekly' },
@@ -330,6 +342,7 @@ describe('CollaborationApp project collaboration groups', () => {
         project.id,
         expect.objectContaining({
           cronExpression: '30 14 * * 3',
+          workdayOnly: true,
           timezone: 'Asia/Shanghai',
           triggerType: 'schedule',
         })

@@ -1,6 +1,7 @@
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -32,6 +33,7 @@ import {
   mkdir,
   pathExists,
   readFile,
+  redisCliBinary,
   repoDir,
   reservePort,
   resultDir,
@@ -49,7 +51,7 @@ const BACKEND_PORT_CONFLICT_PATTERN = /Address already in use|AddrInUse/
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
-const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
+export const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
 const MYSQL_READY_TIMEOUT_MS = 60_000
 const MYSQL_HELPER = join(repoDir, 'wework', 'e2e', 'desktop', 'support', 'mysql-helper.py')
 
@@ -136,8 +138,8 @@ async function startMysqlServer(logPath) {
     detached: process.platform !== 'win32',
   })
   await Promise.all([
-    appendProcessOutput(server.stdout, logPath),
-    appendProcessOutput(server.stderr, logPath),
+    appendProcessOutput(server.stdout, logPath, server),
+    appendProcessOutput(server.stderr, logPath, server),
   ])
   const connectionOptions = {
     host: '127.0.0.1',
@@ -256,8 +258,8 @@ async function startRedisServer(
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
     await Promise.all([
-      appendProcessOutput(redis.stdout, logPath),
-      appendProcessOutput(redis.stderr, logPath),
+      appendProcessOutput(redis.stdout, logPath, redis),
+      appendProcessOutput(redis.stderr, logPath, redis),
     ])
     try {
       await waitForRedisReady(redis, logPath, fromOffset)
@@ -275,7 +277,8 @@ async function startRedisServer(
 }
 
 class LocalNevisSandboxService {
-  constructor() {
+  constructor(onRestart) {
+    this.onRestart = onRestart
     this.restartRequests = []
   }
 
@@ -305,17 +308,26 @@ class LocalNevisSandboxService {
 
   async handle(request, response) {
     const url = new URL(request.url ?? '/', this.endpoint)
-    const restartMatch = url.pathname.match(
+    const nevisRestart = url.pathname.match(
       /^\/apis\/sandboxes\/v1\/managers\/([^/]+)\/sandboxes\/([^/]+)\/restart$/
     )
-    if (request.method === 'POST' && restartMatch) {
+    const publicRestart = url.pathname.match(/^\/e2e\/sandboxes\/([^/]+)\/restart$/)
+    const match = nevisRestart ?? publicRestart
+    if (request.method === 'POST' && match) {
       request.resume()
-      const restartRequest = {
-        managerId: decodeURIComponent(restartMatch[1]),
-        sandboxId: decodeURIComponent(restartMatch[2]),
+      const sandboxId = decodeURIComponent(nevisRestart ? nevisRestart[2] : match[1])
+      if (this.onRestart) {
+        this.onRestart(sandboxId)
+      } else if (publicRestart) {
+        response.writeHead(404)
+        response.end()
+        return
       }
-      this.restartRequests.push(restartRequest)
-      this.sendJson(response, { id: restartRequest.sandboxId, status: 'restarting' })
+      this.restartRequests.push({
+        managerId: nevisRestart ? decodeURIComponent(nevisRestart[1]) : null,
+        sandboxId,
+      })
+      this.sendJson(response, { id: sandboxId, status: 'restarting' })
       return
     }
     if (request.method === 'POST' && url.pathname.endsWith('/metrics/raw_query')) {
@@ -355,6 +367,8 @@ class RealCloudEnvironment {
     initialExecutorLatestVersion,
     managedCloudIdentity = false,
     modelServerUrl,
+    modelCatalogOverrides = [],
+    remoteExecutorType = 'cloud',
     scenarioConfigToml = '',
     workspacePath,
   }) {
@@ -363,7 +377,16 @@ class RealCloudEnvironment {
     this.codexBinary = codexBinary
     this.initialExecutorLatestVersion = initialExecutorLatestVersion
     this.managedCloudIdentity = managedCloudIdentity
+    this.cloudLifecycle = SELECTED_DESKTOP_SEGMENT === 'cloud-device-lifecycle'
+    this.usePublicSandboxController =
+      this.cloudLifecycle && !remoteDeviceE2EExtension.supportsStatusRecovery
     this.modelServerUrl = modelServerUrl
+    this.modelCatalogOverrides = modelCatalogOverrides
+    assert.ok(
+      ['cloud', 'app'].includes(remoteExecutorType),
+      'Unsupported remote Executor fixture type'
+    )
+    this.remoteExecutorType = remoteExecutorType
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
@@ -386,6 +409,7 @@ class RealCloudEnvironment {
       BACKEND_INTERNAL_URL: this.backendUrl,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
+      CONNECTOR_OAUTH_REDIRECT_URI: `${this.backendUrl}/api/connector-apps/oauth/callback`,
     }
   }
 
@@ -400,7 +424,9 @@ class RealCloudEnvironment {
     this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
-    this.nevisSandboxService = new LocalNevisSandboxService()
+    this.nevisSandboxService = new LocalNevisSandboxService(
+      this.cloudLifecycle ? sandboxId => this.acceptSandboxRestart(sandboxId) : null
+    )
     await this.nevisSandboxService.start()
 
     const redisServer = await this.observePreparation('redis-start', () =>
@@ -432,6 +458,8 @@ class RealCloudEnvironment {
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       BACKEND_INTERNAL_URL: this.backendUrl,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
+      // Connector consent must redirect back to the gateway this run started.
+      CONNECTOR_OAUTH_REDIRECT_URI: `${this.backendUrl}/api/connector-apps/oauth/callback`,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
       FRONTEND_URL: this.modelServerUrl,
@@ -452,6 +480,9 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
       ATTACHMENT_S3_USE_SSL: 'false',
+      ...(this.usePublicSandboxController
+        ? { WEWORK_E2E_SANDBOX_CONTROL_URL: this.nevisSandboxService.endpoint }
+        : {}),
       NEVIS_BASE_URL: this.nevisSandboxService.endpoint,
       NEVIS_MANAGER_ID: 'wework-e2e-manager',
       NEVIS_IMAGE_ID: 'wework-e2e-image',
@@ -493,6 +524,7 @@ class RealCloudEnvironment {
 
   async launchBackend({ retryPortConflicts = false } = {}) {
     const rustLogDirectory = join(resultDir, 'backend-rs-logs')
+    this.backendApiLogPath = join(rustLogDirectory, 'api.log')
     await mkdir(rustLogDirectory, { recursive: true })
     const attempts = retryPortConflicts ? BACKEND_START_ATTEMPTS : 1
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -532,7 +564,9 @@ class RealCloudEnvironment {
         '-u',
         '-m',
         'uvicorn',
-        'app.main:app',
+        ...(this.usePublicSandboxController
+          ? ['--app-dir', join(weworkDir, 'e2e', 'desktop', 'support'), 'cloud-restart-backend:app']
+          : ['app.main:app']),
         '--host',
         '127.0.0.1',
         '--port',
@@ -549,8 +583,8 @@ class RealCloudEnvironment {
       }
     )
     await Promise.all([
-      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
+      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath, this.pythonBackend),
+      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath, this.pythonBackend),
     ])
     await this.observePreparation('python-backend-ready', () =>
       waitForProcessUrl(
@@ -578,8 +612,8 @@ class RealCloudEnvironment {
       detached: process.platform !== 'win32',
     })
     await Promise.all([
-      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
+      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath, this.rustBackend),
+      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath, this.rustBackend),
     ])
     await this.observePreparation('rust-gateway-ready', () =>
       waitForProcessUrl(
@@ -588,6 +622,19 @@ class RealCloudEnvironment {
         `Real cloud Rust gateway did not start; see ${this.backendLogPath}`
       )
     )
+  }
+
+  async configurePublicSandboxRestart() {
+    assert.ok(this.usePublicSandboxController)
+    const response = await fetch(
+      `http://127.0.0.1:${this.pythonBackendPort}/__desktop_e2e/configure-sandbox-restart`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.backendEnv.INTERNAL_SERVICE_TOKEN}` },
+        signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+      }
+    )
+    assert.equal(response.status, 204, 'Could not configure the public sandbox process controller')
   }
 
   async stopBackend() {
@@ -617,21 +664,28 @@ class RealCloudEnvironment {
     })
   }
 
+  async executeDatabaseTransaction(statements) {
+    return mysqlRequest({
+      ...this.mysqlConnectionOptions,
+      database: this.databaseName,
+      operation: 'transaction',
+      statements,
+    })
+  }
+
   async restartBackendWithTerminalProtocolV2(enabled) {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
     await this.stopBackend()
-    const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
+    const fromOffset = (await readFile(this.remoteExecutorLogPath, 'utf8')).length
     this.backendEnv = {
       ...this.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: String(enabled),
     }
     await this.launchBackend()
     await waitForLogPattern(
-      this.backendLogPath,
-      new RegExp(
-        `\\[Device WS\\] Device registered: user=\\d+, device=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`
-      ),
+      this.remoteExecutorLogPath,
+      new RegExp(`local backend registered [^\\r\\n]*device_id=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`),
       { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
     )
     await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
@@ -646,6 +700,19 @@ class RealCloudEnvironment {
       FRONTEND_URL: frontendUrl,
     }
     await this.launchBackend()
+  }
+
+  async waitForAuthorizationPolling(sessionId) {
+    assert.match(sessionId, /^[a-f0-9-]{36}$/)
+    // A cold system browser can outlive an ordinary UI step. Observe the real
+    // poll after its launch returns before the fixture acts as the approving user.
+    await this.observePreparation('authorization-browser-ready', () =>
+      waitForLogPattern(
+        this.backendApiLogPath,
+        new RegExp(`\\[API\\] GET /api/auth/wework/sessions/${sessionId}/poll\\?\\S+ 200(?:\\s|$)`),
+        { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+      )
+    )
   }
 
   async publishOfficialSmartApp(sourcePath) {
@@ -844,6 +911,7 @@ class RealCloudEnvironment {
       'WEGENT_APP_IPC_OWNER_TOKEN',
       'WEGENT_APP_IPC_TOKEN',
       'WEGENT_APP_LIFECYCLE_FD',
+      'WEGENT_RUNTIME_INSTANCE_ID',
     ]) {
       delete environment[key]
     }
@@ -858,22 +926,51 @@ class RealCloudEnvironment {
     this.remoteDockerCodexHome = join(remoteDockerHome, 'codex')
     await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     await writeCodexConfig(this.remoteDockerCodexHome, this.modelServerUrl)
+    if (this.modelCatalogOverrides.length) {
+      await Promise.all(
+        [remoteHome, remoteDockerHome].map(async home => {
+          const capabilities = join(home, 'capabilities')
+          await mkdir(capabilities, { recursive: true })
+          await writeFile(
+            join(capabilities, 'model-catalog-overrides.json'),
+            JSON.stringify(this.modelCatalogOverrides)
+          )
+        })
+      )
+    }
     this.remoteExecutorEnv = this.executorEnv({
       deviceId: CLOUD_DEVICE_ID,
-      deviceName: 'Wework E2E Cloud Device',
-      deviceType: 'cloud',
+      deviceName:
+        this.remoteExecutorType === 'app'
+          ? 'Wework E2E Peer App Device'
+          : 'Wework E2E Cloud Device',
+      deviceType: this.remoteExecutorType,
       home: remoteHome,
       codexHome: this.remoteCodexHome,
       logFile: 'cloud-executor-runtime.log',
     })
+    if (this.remoteExecutorType === 'app') {
+      this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID = `wework-e2e-peer-app-${process.pid}`
+      this.remoteExecutorEnv.WEGENT_RUNTIME_INSTANCE_ID = `wework-e2e-peer-runtime-${process.pid}`
+      // Seed consent only in this isolated peer installation, before its first registration.
+      await writeFile(
+        join(remoteHome, 'remote-task-access.json'),
+        JSON.stringify({ enabled: true })
+      )
+    }
     this.remoteDockerExecutorEnv = this.executorEnv({
       deviceId: REMOTE_DOCKER_DEVICE_ID,
-      deviceName: 'Wework E2E Remote Docker Device',
-      deviceType: 'remote',
+      deviceName: this.cloudLifecycle
+        ? 'Wework E2E Cloud Sandbox Sibling'
+        : 'Wework E2E Remote Docker Device',
+      deviceType: this.cloudLifecycle ? 'cloud' : 'remote',
       home: remoteDockerHome,
       codexHome: this.remoteDockerCodexHome,
       logFile: 'remote-docker-executor-runtime.log',
     })
+    if (this.cloudLifecycle) {
+      await this.provisionLifecycleSandbox()
+    }
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath
@@ -886,30 +983,58 @@ class RealCloudEnvironment {
       this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
       this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
     ])
-    if (this.managedCloudIdentity) {
+    if (this.managedCloudIdentity && !this.cloudLifecycle) {
       await this.configureManagedCloudIdentity()
     }
   }
 
+  async provisionLifecycleSandbox() {
+    const owner = await fetchJson(`${this.backendUrl}/api/users/me`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    // Provision both routes before connecting; legacy unconfigured cloud records are
+    // matched before the registration upsert and can bind the wrong installation.
+    for (const env of [this.remoteExecutorEnv, this.remoteDockerExecutorEnv]) {
+      const deviceId = env.DEVICE_ID
+      const record = {
+        apiVersion: 'agent.wecode.io/v1',
+        kind: 'Device',
+        metadata: { name: deviceId, namespace: 'default' },
+        spec: {
+          deviceId,
+          deviceType: 'cloud',
+          displayName: env.DEVICE_NAME,
+          isDefault: false,
+          bindShell: env.BIND_SHELL,
+          cloudConfig: { deviceId, sandboxId: MANAGED_CLOUD_SANDBOX_ID },
+        },
+      }
+      const result = await this.executeDatabase(
+        `INSERT INTO kinds (user_id, kind, namespace, name, json, is_active, created_at, updated_at)
+         VALUES (%s, 'Device', 'default', %s, %s, 1, NOW(), NOW())`,
+        [owner.id, deviceId, JSON.stringify(record)]
+      )
+      assert.equal(result.affected, 1, `Cloud sandbox did not provision ${deviceId}`)
+    }
+  }
+
   async configureManagedCloudIdentity() {
+    const owner = await fetchJson(`${this.backendUrl}/api/users/me`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
     await this.executeDatabase(
       `UPDATE kinds
        SET json = JSON_SET(
          json,
-         '$.spec.cloudConfig', JSON_OBJECT(
-           'sandboxId', %s,
-           'deviceId', %s
-         )
+         '$.spec.cloudConfig', JSON_OBJECT('sandboxId', %s, 'deviceId', name)
        )
-       WHERE kind = 'Device' AND name = %s`,
-      [MANAGED_CLOUD_SANDBOX_ID, CLOUD_DEVICE_ID, CLOUD_DEVICE_ID]
+       WHERE kind = 'Device' AND namespace = 'default' AND user_id = %s
+         AND name = %s`,
+      [MANAGED_CLOUD_SANDBOX_ID, owner.id, CLOUD_DEVICE_ID]
     )
 
     const configured = await this.device(CLOUD_DEVICE_ID)
     if (configured?.cloud_config?.sandboxId !== MANAGED_CLOUD_SANDBOX_ID) {
-      const user = await fetchJson(`${this.backendUrl}/api/users/me`, {
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      })
       const stored = await this.queryDatabase(
         `SELECT id, name, JSON_EXTRACT(json, '$.spec.cloudConfig') AS cloud_config,
                 JSON_EXTRACT(json, '$.spec.deviceType') AS device_type,
@@ -917,7 +1042,7 @@ class RealCloudEnvironment {
                 JSON_TYPE(JSON_EXTRACT(json, '$.spec.isDefault')) AS is_default_type
          FROM kinds WHERE kind = 'Device' AND namespace = 'default'
          AND user_id = %s AND name = %s`,
-        [user.id, CLOUD_DEVICE_ID]
+        [owner.id, CLOUD_DEVICE_ID]
       )
       console.error(
         '[managed-cloud-identity]',
@@ -1099,15 +1224,16 @@ class RealCloudEnvironment {
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // App mode keeps the owner IPC connection alive until fixture cleanup.
+      stdio: [env.DEVICE_TYPE === 'app' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
     executor.once('exit', (code, signal) => {
       void appendFile(logPath, `Executor exited: code=${code}, signal=${signal}\n`)
     })
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     return executor
   }
@@ -1119,7 +1245,7 @@ class RealCloudEnvironment {
 
   async setExecutorLatestVersion(version) {
     await runChecked(
-      'redis-cli',
+      redisCliBinary(),
       [
         '-h',
         '127.0.0.1',
@@ -1146,7 +1272,11 @@ class RealCloudEnvironment {
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
       const devices = await this.devices()
       const device = devices.find(
-        candidate => candidate.device_type === 'app' && candidate.status === 'online'
+        candidate =>
+          candidate.device_type === 'app' &&
+          candidate.status === 'online' &&
+          (this.remoteExecutorType !== 'app' ||
+            candidate.app_device_id !== this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID)
       )
       if (device) return device
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
@@ -1155,34 +1285,15 @@ class RealCloudEnvironment {
   }
 
   async startDuplicateAppDeviceIdentity() {
-    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
     const appDevice = await this.waitForConnectedAppDevice()
-    const home = join(resultDir, `duplicate-app-executor-home-${process.pid}`)
-    const codexHome = join(home, 'codex')
-    const logPath = join(resultDir, `duplicate-app-executor-${process.pid}.log`)
-    await writeCodexConfig(codexHome, this.modelServerUrl)
-    const env = this.executorEnv({
-      deviceId: appDevice.device_id,
-      deviceName: 'Wework E2E Duplicate App Device',
-      deviceType: 'app',
-      home,
-      codexHome,
-      logFile: `duplicate-app-executor-${process.pid}-runtime.log`,
-    })
     assert.ok(appDevice.app_device_id, 'The real App registration must expose its IPC address')
-    env.WEGENT_APP_IPC_DEVICE_ID = appDevice.app_device_id
-    const executor = spawn(this.executorBinary, [], {
-      cwd: weworkDir,
-      env,
-      // App mode owns a real IPC stdio connection and exits when its input closes.
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
-    ])
+    const { logPath } = await this.startAppDeviceContender(
+      appDevice.device_id,
+      'duplicate-app-executor',
+      {
+        appDeviceId: appDevice.app_device_id,
+      }
+    )
     const startedAt = Date.now()
     let matching = []
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
@@ -1198,7 +1309,7 @@ class RealCloudEnvironment {
     assert.equal(
       matching.length,
       2,
-      `The second real app Executor did not register; see ${logPath}`
+      `The second real App Executor did not register; see ${logPath}`
     )
     assert.equal(
       new Set(matching.map(device => device.execution_target_id)).size,
@@ -1208,6 +1319,38 @@ class RealCloudEnvironment {
     assert.equal(new Set(matching.map(device => device.runtime_instance_id)).size, 2)
     assert.ok(matching.every(device => device.app_device_id === appDevice.app_device_id))
     return appDevice
+  }
+
+  async startAppDeviceContender(deviceId, label, { appDeviceId, runtimeInstanceId }) {
+    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
+    const name = `${label}-${process.pid}`
+    const home = join(resultDir, `${name}-home`)
+    const codexHome = join(home, 'codex')
+    const logPath = join(resultDir, `${name}.log`)
+    await writeCodexConfig(codexHome, this.modelServerUrl)
+    const env = this.executorEnv({
+      deviceId,
+      deviceName: 'Wework E2E Duplicate App Device',
+      deviceType: 'app',
+      home,
+      codexHome,
+      logFile: `${name}-runtime.log`,
+    })
+    env.WEGENT_APP_IPC_DEVICE_ID = appDeviceId
+    if (runtimeInstanceId) env.WEGENT_RUNTIME_INSTANCE_ID = runtimeInstanceId
+    const executor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env,
+      // App mode owns a real IPC stdio connection and exits when its input closes.
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    this.generatedRemoteExecutors.push(executor)
+    await Promise.all([
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
+    ])
+    return { executor, logPath }
   }
 
   async waitForDeviceType(deviceId, expectedType) {
@@ -1300,7 +1443,7 @@ class RealCloudEnvironment {
   }
 
   terminalSessionRecords() {
-    const keys = commandOutput('redis-cli', [
+    const keys = commandOutput(redisCliBinary(), [
       '-p',
       String(this.redisPort),
       '--raw',
@@ -1312,7 +1455,7 @@ class RealCloudEnvironment {
       .map(value => value.trim())
       .filter(Boolean)
     return keys.map(key => {
-      const serialized = commandOutput('redis-cli', [
+      const serialized = commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
@@ -1330,7 +1473,7 @@ class RealCloudEnvironment {
       'The terminal session ID is not safe for the Redis fixture'
     )
     const subscriberCount = Number(
-      commandOutput('redis-cli', [
+      commandOutput(redisCliBinary(), [
         '-p',
         String(this.redisPort),
         '--raw',
@@ -1350,13 +1493,14 @@ class RealCloudEnvironment {
     )
   }
 
-  async restartCloudExecutor() {
+  async restartCloudExecutor({ beforeSpawn } = {}) {
     assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
     const previousDevice = await this.device(CLOUD_DEVICE_ID)
     const previousInstanceId = previousDevice?.runtime_instance_id
     const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
     await stopProcessGroup(this.remoteExecutor)
     await this.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', this.remoteExecutorLogPath)
+    await beforeSpawn?.()
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath
@@ -1378,13 +1522,56 @@ class RealCloudEnvironment {
     }
   }
 
-  nevisRestartRequestCount() {
-    return this.nevisSandboxService?.restartRequests.length ?? 0
+  armSandboxRestart() {
+    const start = Promise.withResolvers()
+    const proceed = Promise.withResolvers()
+    const pending = {
+      start,
+      proceed,
+      complete: null,
+    }
+    this.pendingSandboxRestart = pending
+    return {
+      allowShutdown: start.resolve,
+      allowStartup: proceed.resolve,
+      async finish() {
+        start.resolve()
+        proceed.resolve()
+        return pending.complete
+      },
+    }
   }
 
-  async waitForNevisRestartRequest(afterCount) {
-    assert.ok(this.nevisSandboxService, 'The local Nevis service is not running')
-    return this.nevisSandboxService.waitForRestartRequest(afterCount)
+  acceptSandboxRestart(sandboxId) {
+    assert.equal(sandboxId, MANAGED_CLOUD_SANDBOX_ID, 'The request did not target the sandbox')
+    const pending = this.pendingSandboxRestart
+    assert.ok(pending && !pending.complete, 'Unexpected or duplicate sandbox restart request')
+    pending.complete = this.cycleSandboxExecutors(pending)
+    // The flow awaits the process transition after observing the UI.
+    void pending.complete.catch(() => {})
+  }
+
+  async cycleSandboxExecutors({ start, proceed }) {
+    await start.promise
+    const [primary, sibling] = await Promise.all([
+      this.restartCloudExecutor({
+        beforeSpawn: () => proceed.promise,
+      }),
+      (async () => {
+        await this.stopRemoteDockerExecutorAndWaitOffline()
+        await proceed.promise
+        return this.resumeRemoteDockerExecutor()
+      })(),
+    ])
+    return { primary, sibling }
+  }
+
+  sandboxRestartRequestCount() {
+    return this.nevisSandboxService.restartRequests.length
+  }
+
+  async waitForSandboxRestartRequest() {
+    return this.nevisSandboxService.waitForRestartRequest(0)
   }
 
   async startGeneratedRemoteDevice({
@@ -1421,8 +1608,8 @@ class RealCloudEnvironment {
     })
     this.generatedRemoteExecutors.push(executor)
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     await this.waitForDevice(deviceId, logPath)
     return { home, logPath, executor }
@@ -1471,6 +1658,26 @@ class RealCloudEnvironment {
     await waitForAliasStatus('offline', historical.runtime_instance_id)
     await assertOriginalAppRegistration()
     return historical
+  }
+
+  async waitForRunnerCatalog(deviceRecordId) {
+    // Registration precedes model discovery; preserve a real catalog before disconnecting.
+    await waitForBoardValue(
+      async () => {
+        const environments = await fetchJson(
+          `${this.backendUrl}/api/v1/resources/execution-environments`,
+          {
+            headers: { Authorization: `Bearer ${this.authToken}` },
+            signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+          }
+        )
+        const catalog = environments.find(device => device.id === String(deviceRecordId))
+        return catalog?.models.some(model => model.runtime === 'codex' && model.is_default) === true
+      },
+      true,
+      `Executor ${deviceRecordId} must publish its default Codex model before disconnecting`,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
   }
 
   async seedCloudProtocolModels() {
@@ -1696,6 +1903,24 @@ class RealCloudEnvironment {
     )
   }
 
+  async resumeRemoteDockerExecutor() {
+    assert.equal(this.remoteDockerExecutor, null, 'The remote executor must be offline')
+    const previous = await this.device(REMOTE_DOCKER_DEVICE_ID)
+    assert.ok(previous?.runtime_instance_id, 'The remote executor must retain its installation')
+    this.remoteDockerExecutor = await this.spawnExecutor(
+      this.remoteDockerExecutorEnv,
+      this.remoteDockerExecutorLogPath
+    )
+    const current = await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'online',
+      this.remoteDockerExecutorLogPath
+    )
+    assert.equal(current.runtime_instance_id, previous.runtime_instance_id)
+    assert.equal(current.id, previous.id)
+    return current
+  }
+
   async waitForWorkspaceRemoved(workspacePath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -1801,5 +2026,6 @@ export {
   LocalNevisSandboxService,
   RealCloudEnvironment,
   startRedisServer,
+  startMysqlServer,
   verifyLocalExecutorUsesCloudSocketUrl,
 }

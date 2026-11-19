@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
-  expandCollaborationWorkspace,
+  revealCollaborationSidebarElement,
   inCollaborationSidebar,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
@@ -139,9 +139,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await selectCollaborationDomain(control, CONTENT, 'cloud')
-    await expandCollaborationWorkspace(
+    await revealCollaborationSidebarElement(
       control,
-      inCollaborationSidebar(`[data-testid="collaboration-workspace-toggle-${workspace.id}"]`)
+      inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${project.id}"]`)
     )
     const projectSelector = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${project.id}"]`
@@ -275,7 +275,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function assertViewerDenials() {
     const issuePath = `/api/v1/loop-items/${issue.id}`
+    const assigned = await ownerRequest(issuePath)
+    await ownerRequest(issuePath, patch({ version: assigned.version, assignee_user_id: null }))
     const current = await request(member, issuePath)
+    assert.equal(current.invited_only, false)
+    assert.equal(current.can_edit, false)
     const commentsBefore = await ownerRequest(`${issuePath}/comments`)
     const assignmentsBefore = await ownerRequest(`${issuePath}/assignments`)
     await request(
@@ -323,6 +327,43 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     assert.deepEqual(await ownerRequest(`${issuePath}/assignments`), assignmentsBefore)
     await assertCannotManage(member)
     verifiedCases.push('viewer-cannot-edit-comment-assign-create-or-execute-even-as-issue-creator')
+
+    const invited = await ownerRequest(
+      issuePath,
+      patch({
+        version: current.version,
+        assignee_user_id: member.id,
+      })
+    )
+    assert.equal(invited.assignee_user_id, member.id)
+    const scopedIssue = await request(member, issuePath)
+    assert.equal(scopedIssue.invited_only, true)
+    assert.deepEqual(scopedIssue.permissions, {
+      edit_content: true,
+      comment: true,
+      assign: true,
+      execute: false,
+    })
+    issue = await request(
+      member,
+      issuePath,
+      patch({
+        version: scopedIssue.version,
+        title: 'Viewer 负责人可管理当前 Issue',
+      })
+    )
+    const comment = await request(
+      member,
+      `${issuePath}/comments`,
+      post({ body: 'Issue 授权可评论' }),
+      201
+    )
+    assert.equal(comment.body, 'Issue 授权可评论')
+    await assertRole(member, 'Viewer', 'Viewer')
+    await assertCannotManage(member)
+    issue = await ownerRequest(issuePath, patch({ version: issue.version, assignee_user_id: null }))
+    assert.equal((await request(member, issuePath)).can_edit, false)
+    verifiedCases.push('assigned-viewer-manages-only-current-issue-unassignment-restores-readonly')
   }
 
   async function cleanup() {
