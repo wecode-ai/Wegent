@@ -99,13 +99,26 @@ pub(super) fn same_merge_wait(record: &Value, intent: &Value, session: &Value) -
     {
         return false;
     }
-    // Older merge waits stored the head as a common predicate.
-    let mut filter = record["match"].clone();
+    merge_filter_without_head(&record["match"]) == intent["match"]
+}
+
+pub(super) fn legacy_merge_retry(stored: &Value, intent: &Value, previous: &Value) -> bool {
+    let mut normalized = stored.clone();
+    let filter = merge_filter_without_head(&stored["match"]);
+    if filter == stored["match"] {
+        return false;
+    }
+    normalized["match"] = filter;
+    normalized == *intent || normalized == *previous
+}
+
+fn merge_filter_without_head(filter: &Value) -> Value {
+    let mut filter = filter.clone();
     if let Some(fields) = filter.as_object_mut() {
         fields.remove("/external/payload/headRefOid");
         fields.remove("/external/payload/sha");
     }
-    filter == intent["match"]
+    filter
 }
 
 fn outcomes(pointer: &str, values: &[&str]) -> Value {

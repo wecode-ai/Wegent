@@ -353,15 +353,37 @@ impl RuntimeWorkRpcHandler {
         } else if intent["source"].get("observeCurrentStatus").is_some() {
             return Err(invalid("Current Git status observation requires git_wait"));
         }
+        let mut migrated_key = None;
+        let merge = args["git_wait"] == "merge";
         if let Some(record) = records.get(&id) {
-            if record["intent"] != intent && record["intent"] != previous_intent {
+            if record["intent"] == intent || record["intent"] == previous_intent {
+                session::validate(record, &link)?;
+                return Ok(json!({"subscription":public_subscription(record)}));
+            }
+            if !merge
+                || !conditions::legacy_merge_retry(&record["intent"], &intent, &previous_intent)
+            {
                 return Err(invalid(
                     "subscription_key already belongs to different subscription arguments",
                 ));
             }
             session::validate(record, &link)?;
-            return Ok(json!({"subscription":public_subscription(record)}));
+            // Cloud registrations are immutable and keyed by the subscription key.
+            let replacement = format!("merge-wait-v2:{id}");
+            if let Some(migrated) = records.get(&self.subscription_id(task, &replacement)) {
+                if migrated["intent"] != intent {
+                    return Err(invalid("Merge wait replacement key already exists"));
+                }
+                session::validate(migrated, &link)?;
+                return Ok(json!({"subscription":public_subscription(migrated)}));
+            }
+            if !conditions::same_merge_wait(record, &intent, &record["session"]) {
+                return Ok(json!({"subscription":public_subscription(record)}));
+            }
+            migrated_key = Some(replacement);
         }
+        let key = migrated_key.as_deref().unwrap_or(key);
+        let id = self.subscription_id(task, key);
         if args["continuation"].as_str().unwrap().len() > 16_384 {
             return Err(invalid("Continuation exceeds 16384 bytes"));
         }
@@ -374,7 +396,16 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        let goal = if intent["wait_for_event"] == true {
+        let merge_waits: Vec<_> = records
+            .iter()
+            .filter(|(_, record)| merge && conditions::same_merge_wait(record, &intent, &session))
+            .collect();
+        let wants_goal_wait = intent["wait_for_event"] == true;
+        let goal = if wants_goal_wait
+            || merge_waits
+                .iter()
+                .any(|(_, record)| !record["waiting_goal"].is_null())
+        {
             let response = self.get_task_goal(json!({"taskId":task})).await?;
             if response["accepted"] != true {
                 return Err(invalid("Cannot read the current Goal"));
@@ -393,22 +424,24 @@ impl RuntimeWorkRpcHandler {
                         Some("preparing" | "armed" | "pending")
                     )
             });
-        let waiting_goal = (goal["status"] == "active" || already_waiting).then_some(identity);
+        let inherits_goal_wait = already_waiting
+            && merge_waits
+                .iter()
+                .any(|(_, record)| record["waiting_goal"] == identity);
+        let waiting_goal = (inherits_goal_wait
+            || (wants_goal_wait && (goal["status"] == "active" || already_waiting)))
+            .then_some(identity);
         let mut superseded = Vec::new();
-        if args["git_wait"] == "merge" {
-            for (old_id, record) in &records {
-                if !conditions::same_merge_wait(record, &intent, &session) {
-                    continue;
-                }
-                if record["match"] == intent["match"]
-                    && (intent["wait_for_event"] == false
-                        || (record["wait_for_event"] == true
-                            && record["waiting_goal"] == json!(waiting_goal)))
-                {
-                    return Ok(json!({"subscription":public_subscription(record)}));
-                }
-                superseded.push(old_id.as_str());
+        for (old_id, record) in merge_waits {
+            if migrated_key.is_none()
+                && record["match"] == intent["match"]
+                && record["continuation"] == intent["continuation"]
+                && record["waiting_goal"] == json!(waiting_goal)
+                && (!wants_goal_wait || record["wait_for_event"] == true)
+            {
+                return Ok(json!({"subscription":public_subscription(record)}));
             }
+            superseded.push(old_id.as_str());
         }
         source["enabledAfter"] = json!(chrono::Utc::now().to_rfc3339());
         source["policy"] = json!({"automatic":false,"askBeforeAct":true});

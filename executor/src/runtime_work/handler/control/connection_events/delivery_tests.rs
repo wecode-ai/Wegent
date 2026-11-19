@@ -260,7 +260,7 @@ fn merge_subscription_replaces_legacy_heads_and_reuses_the_pr_wait() {
                 .unwrap();
 
             let mut request = json!({
-                "subscription_key":"pr-merge", "git_wait":"merge",
+                "subscription_key":"legacy-a", "git_wait":"merge",
                 "source":{"providerId":"@wegent/dsh-connection-git/github",
                     "profile":"[\"https://github.com\",\"7\"]", "kind":"repository","id":"42",
                     "name":"org/repo","monitoredObjects":[{"entityKind":"change_request","number":1}]},
@@ -275,6 +275,7 @@ fn merge_subscription_replaces_legacy_heads_and_reuses_the_pr_wait() {
                 handler.save_event_subscription(&handler.subscription_id("caller", key), &json!({
                     "subscription_key":key, "task_id":"caller", "session":session, "source":source,
                     "match":filter, "status":"armed",
+                    "intent":{"source":source,"match":filter,"continuation":request["continuation"],"wait_for_event":false},
                     "cloud_registration":{"subscription_id":key}
                 })).unwrap();
             }
@@ -289,18 +290,32 @@ fn merge_subscription_replaces_legacy_heads_and_reuses_the_pr_wait() {
                 &context("caller"), "subscribe_connection_events", request.clone()
             ).await.unwrap();
             assert_eq!(first["subscription"]["status"], "armed");
+            assert_ne!(first["subscription"]["subscription_key"], "legacy-a");
+            let retry = handler.control_operation(
+                &context("caller"), "subscribe_connection_events", request.clone()
+            ).await.unwrap();
+            assert_eq!(retry, first);
             request["subscription_key"] = json!("another-key");
             request["head_sha"] = json!("c".repeat(40));
             let reused = handler.control_operation(
-                &context("caller"), "subscribe_connection_events", request
+                &context("caller"), "subscribe_connection_events", request.clone()
             ).await.unwrap();
             assert_eq!(reused, first);
+
+            request["continuation"] = json!("Report results without merging");
+            let updated = handler.control_operation(
+                &context("caller"), "subscribe_connection_events", request
+            ).await.unwrap();
+            assert_eq!(updated["subscription"]["continuation"], "Report results without merging");
+            assert_eq!(updated["subscription"]["status"], "armed");
 
             let states = event_store::read(
                 &handler.event_subscription_path(), event_store::Scope::Task("caller"),
                 |state| Ok(state["operations"].clone()),
             ).unwrap();
-            assert_eq!(states.as_object().unwrap().len(), 4);
+            assert_eq!(states.as_object().unwrap().len(), 5);
+            let first_key = first["subscription"]["subscription_key"].as_str().unwrap();
+            assert_eq!(states[&handler.subscription_id("caller", first_key)]["status"], "cancelled");
             for key in ["legacy-a", "legacy-b"] {
                 let retired = &states[&handler.subscription_id("caller", key)];
                 assert_eq!(retired["status"], "cancelled");
