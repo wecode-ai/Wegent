@@ -608,10 +608,12 @@ export function createWebSharedWorkspaceApi(
       async getBoardSnapshot(projectId) {
         const response = await client.get<
           CollaborationBoardSnapshot & {
+            project_version?: number
             task_bindings: Array<Record<string, unknown>>
           }
         >(`/v1/cloud-projects/${encoded(projectId)}/board-snapshot`, { cache: 'no-store' })
         return {
+          projectVersion: response.project_version,
           items: response.items,
           members: response.members,
           agents: response.agents,

@@ -44,10 +44,17 @@ describe('createWebSharedWorkspaceApi', () => {
   })
   it('bypasses browser caching so newer board snapshots can overtake pending reads', async () => {
     const client = createClient()
-    client.get.mockResolvedValue({ items: [], members: [], agents: [], task_bindings: [] })
+    client.get.mockResolvedValue({
+      project_version: 7,
+      items: [],
+      members: [],
+      agents: [],
+      task_bindings: [],
+    })
     const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
 
     await expect(api.issues.getBoardSnapshot('project/1')).resolves.toEqual({
+      projectVersion: 7,
       items: [],
       members: [],
       agents: [],
