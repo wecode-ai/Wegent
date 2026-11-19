@@ -178,6 +178,9 @@ class IssueAssignmentService:
                 existing.metadata.get("trigger") == "default" and trigger != "default"
             )
         ):
+            from app.services.human_assistant_dispatch import ensure_dispatch
+
+            ensure_dispatch(db, existing)
             return existing, False
         if (
             normalized_type == "human" or replace_root_assignments
@@ -185,6 +188,11 @@ class IssueAssignmentService:
             for previous in current.values():
                 if previous.workflow_step:
                     continue
+                from app.services.human_assistant_dispatch import (
+                    cancel_assignment_dispatch,
+                )
+
+                cancel_assignment_dispatch(db, previous)
                 self._cancel_dispatch(previous, "superseded")
                 db.add(
                     LoopItemComment(
@@ -216,6 +224,7 @@ class IssueAssignmentService:
             "workflow_step": self._workflow_step(workflow_step),
             "notify": bool(notify),
             "trigger": trigger,
+            "assignment_version": int((db.get(LoopItem, issue_id).version or 0) + 1),
             "receipt_tracking": True,
             **automation_history_actor(automation_context),
         }
@@ -264,6 +273,9 @@ class IssueAssignmentService:
             # Index refresh reloads comments with populate_existing.
             db.flush()
         event = AssignmentEvent(comment=comment, metadata=metadata)
+        from app.services.human_assistant_dispatch import ensure_dispatch
+
+        ensure_dispatch(db, event)
         if initial_assignment:
             self._insert_active_index(db, issue_id, [event])
         else:
@@ -300,6 +312,9 @@ class IssueAssignmentService:
         )
         if assignment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        from app.services.human_assistant_dispatch import cancel_assignment_dispatch
+
+        cancel_assignment_dispatch(db, assignment)
         self._cancel_dispatch(assignment, "assignment_cancelled")
         metadata = {
             "event_type": ASSIGNMENT_EVENT_TYPE,

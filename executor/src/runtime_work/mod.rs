@@ -63,6 +63,14 @@ pub(crate) use handler::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;
 
+mod assistant_dispatch;
+
+pub(crate) fn runtime_features_for_device(device: &str) -> serde_json::Value {
+    let mut features = runtime_features();
+    features["personalAssistantDispatch"] = assistant_dispatch::declaration(device);
+    features
+}
+
 pub(crate) fn runtime_features() -> serde_json::Value {
     let gateway_enabled = env_enabled("DEVICE_SESSION_GATEWAY_ENABLED", true);
     serde_json::json!({

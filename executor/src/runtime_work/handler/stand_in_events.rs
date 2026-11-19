@@ -26,6 +26,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<(), AppIpcError> {
+        if payload["assistantRequestId"].is_string() {
+            return Box::pin(self.process_assistant_request_wakeup(&payload)).await;
+        }
         if payload["commentId"].is_string() {
             return self.process_stand_in_issue_mention(payload).await;
         }
@@ -40,10 +43,32 @@ impl RuntimeWorkRpcHandler {
         let context = json!({"projectId":project,"userId":payload["recipientUserId"]});
         let event_issue = json!({"id":issue_id,"human_task_binding":{"assignmentId":assignment}});
         self.log_stand_in_decision(&context, &event_issue, "notification_received", json!({}));
+        let issue = self
+            .runtime_http(
+                reqwest::Method::GET,
+                &format!("/v1/loop-items/{issue_id}"),
+                None,
+            )
+            .await?;
+        if issue["cloud_project_id"] != project
+            || issue["human_task_binding"]["assignmentId"] != assignment
+        {
+            return Ok(());
+        }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let personal = store
-            .all_personal_stand_ins(&self.device_id)
-            .map_err(settings_error)?;
+        let personal = if issue["direct_human_assignment_receipt"].is_object() {
+            store
+                .declared_personal_stand_ins(&self.device_id)
+                .map(|settings| {
+                    settings
+                        .into_iter()
+                        .filter(|settings| settings["lifecycle"]["status"].is_null())
+                        .collect()
+                })
+        } else {
+            store.all_personal_stand_ins(&self.device_id)
+        }
+        .map_err(settings_error)?;
         let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
         let configs: Vec<Value> = project_configs
             .iter()
@@ -71,13 +96,6 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         self.verify_runtime_user(&configs[0]).await?;
-        let issue = self
-            .runtime_http(
-                reqwest::Method::GET,
-                &format!("/v1/loop-items/{issue_id}"),
-                None,
-            )
-            .await?;
         // An event is a hint, never authority to run a stale or reassigned Issue.
         if issue["cloud_project_id"] != project
             || issue["human_task_binding"]["assignmentId"] != assignment

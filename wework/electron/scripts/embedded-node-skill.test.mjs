@@ -67,7 +67,7 @@ test('rejects a missing launcher before a system Node can be selected from PATH'
 test.each([undefined, '43.4.1'])(
   'rejects a launcher reporting an incompatible Electron version: %s',
   async version => {
-    if (version) await setElectronVersion(version)
+    await setElectronVersion(version)
 
     await expect(verifyEmbeddedNodeSkillRuntime(directory, directory)).rejects.toMatchObject({
       code: 'ERR_ASSERTION',

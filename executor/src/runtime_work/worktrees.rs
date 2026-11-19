@@ -29,13 +29,17 @@ use super::{
 };
 
 mod diagnostics;
+mod requests;
 use diagnostics::measure_stage;
+pub(crate) use requests::{RequestMergeEvidence, RequestWorktreeOwner};
 
 #[cfg(test)]
 #[path = "worktrees/git_lifetime_tests.rs"]
 mod git_lifetime_tests;
 #[cfg(test)]
 mod persistence_tests;
+#[cfg(test)]
+mod request_tests;
 
 const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
@@ -104,6 +108,15 @@ pub(crate) struct WorktreePlan {
     pub source_path: PathBuf,
     pub path: PathBuf,
     pub repo_root_fingerprint: String,
+    pub base_revision: String,
+}
+
+struct WorktreePreparation<'a> {
+    git_ref: Option<&'a str>,
+    permanent: bool,
+    path: &'a Path,
+    repo_root_fingerprint: Option<&'a str>,
+    request: Option<&'a RequestWorktreeOwner>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +181,11 @@ pub(crate) struct ManagedWorktree {
     pub path: String,
     pub repository_name: String,
     pub source_path: Option<String>,
+    pub base_revision: Option<String>,
+    pub branch: Option<String>,
+    pub request: Option<RequestWorktreeOwner>,
+    pub cleanup_policy: Option<String>,
+    pub merge: Option<RequestMergeEvidence>,
     pub permanent: bool,
     pub preparation_owned_path: bool,
     pub created_at: i64,
@@ -189,6 +207,11 @@ impl Default for ManagedWorktree {
             path: String::new(),
             repository_name: String::new(),
             source_path: None,
+            base_revision: None,
+            branch: None,
+            request: None,
+            cleanup_policy: None,
+            merge: None,
             permanent: false,
             preparation_owned_path: false,
             created_at: now,
@@ -401,10 +424,12 @@ impl WorktreeManager {
         ensure_safe_root(&root)?;
         let path = root.join(worktree_id).join(repository_name);
         ensure_managed_path(&path, &state.known_roots)?;
+        let base_revision = requests::resolve_revision(&repository.repo_root, git_ref)?;
         Ok(WorktreePlan {
             source_path: repository.repo_root,
             path,
             repo_root_fingerprint: repository.repo_root_fingerprint,
+            base_revision,
         })
     }
 
@@ -457,10 +482,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source_path,
             worktree_id,
-            git_ref,
-            permanent,
-            Some(&plan.path),
-            Some(&plan.repo_root_fingerprint),
+            WorktreePreparation {
+                git_ref: Some(&plan.base_revision),
+                permanent,
+                path: &plan.path,
+                repo_root_fingerprint: Some(&plan.repo_root_fingerprint),
+                request: None,
+            },
         )
     }
 
@@ -475,10 +503,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source_path,
             worktree_id,
-            git_ref,
-            permanent,
-            Some(planned_path),
-            None,
+            WorktreePreparation {
+                git_ref,
+                permanent,
+                path: planned_path,
+                repo_root_fingerprint: None,
+                request: None,
+            },
         )
     }
 
@@ -494,10 +525,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source_path,
             worktree_id,
-            git_ref,
-            permanent,
-            Some(planned_path),
-            Some(repo_root_fingerprint),
+            WorktreePreparation {
+                git_ref,
+                permanent,
+                path: planned_path,
+                repo_root_fingerprint: Some(repo_root_fingerprint),
+                request: None,
+            },
         )
     }
 
@@ -505,15 +539,16 @@ impl WorktreeManager {
         &self,
         source_path: &Path,
         worktree_id: &str,
-        git_ref: Option<&str>,
-        permanent: bool,
-        planned_path: Option<&Path>,
-        expected_repo_root_fingerprint: Option<&str>,
+        preparation: WorktreePreparation<'_>,
     ) -> Result<ManagedWorktree, String> {
         self.ensure_persistent_storage_verified()?;
-        let planned_path = planned_path.ok_or_else(|| {
-            "worktree_target_conflict: Planned worktree path is required".to_owned()
-        })?;
+        let WorktreePreparation {
+            git_ref,
+            permanent,
+            path: planned_path,
+            repo_root_fingerprint: expected_repo_root_fingerprint,
+            request,
+        } = preparation;
         let worktree_lock = self.worktree_lock(planned_path)?;
         let _worktree_guard = measure_stage(worktree_id, "prepare_worktree_lock", || {
             worktree_lock
@@ -565,6 +600,32 @@ impl WorktreeManager {
         let now = now_ms();
         let mut record = state.records.remove(&key).unwrap_or_default();
         validate_existing_record_identity(&record, path, worktree_id, &repository.git_common_dir)?;
+        requests::validate_owner(
+            &record,
+            request,
+            worktree_id,
+            &self.device_id,
+            path_preexisted,
+        )?;
+        let base_revision = match record.base_revision.clone() {
+            Some(revision) => revision,
+            None if path_preexisted && !record.worktree_id.is_empty() => {
+                validate_existing_worktree_identity(
+                    &source_path,
+                    path,
+                    worktree_id,
+                    &repository.git_common_dir,
+                )?;
+                requests::resolve_revision(path, None)?
+            }
+            None => requests::resolve_revision(&source_path, git_ref)?,
+        };
+        record.base_revision = Some(base_revision.clone());
+        if let Some(request) = request {
+            record.request = Some(request.clone());
+            record.branch = Some(request.branch());
+            record.cleanup_policy = Some("preserve".to_owned());
+        }
         record.worktree_id = worktree_id.to_owned();
         record.device_id = self.device_id.clone();
         record.path = path.display().to_string();
@@ -597,7 +658,11 @@ impl WorktreeManager {
                     })?;
                 }
                 measure_stage(worktree_id, "git_worktree_add", || {
-                    add_git_worktree(&source_path, path, git_ref)
+                    if let Some(request) = request {
+                        requests::add_request_worktree(&source_path, path, &base_revision, request)
+                    } else {
+                        add_git_worktree(&source_path, path, Some(&base_revision))
+                    }
                 })?;
                 validate_existing_worktree_identity(
                     &source_path,
@@ -605,6 +670,9 @@ impl WorktreeManager {
                     worktree_id,
                     &repository.git_common_dir,
                 )?;
+            }
+            if let Some(request) = request {
+                requests::validate_branch(path, request)?;
             }
             Ok::<(), String>(())
         })();
@@ -1278,10 +1346,22 @@ fn git_command() -> Command {
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+    git_output_raw(path, args, envs).map(|output| output.trim().to_owned())
+}
+
+fn git_output_raw(
+    path: &Path,
+    args: &[&str],
+    envs: Option<&[(&str, &str)]>,
+) -> Result<String, String> {
     let output = git_workspace_command(path, args, envs)
         .output()
         .map_err(|error| error.to_string())?;
-    command_result(output)
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        command_result(output)
+    }
 }
 
 fn git_workspace_command(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Command {
@@ -2101,6 +2181,7 @@ pub(super) fn same_path(left: &str, right: &str) -> bool {
 
 fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTaskLink]) -> bool {
     record.state == "active"
+        && record.cleanup_policy.as_deref() != Some("preserve")
         && !record.permanent
         && !linked_tasks.is_empty()
         && linked_tasks.iter().all(|task| task.status == "archived")

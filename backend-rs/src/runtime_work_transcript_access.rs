@@ -53,6 +53,21 @@ pub(crate) struct ResolvedTranscript {
     pub task_id: String,
 }
 
+/// Personal assistant transcripts remain in their owner's private workroom.
+pub(crate) fn require_execution_reader(
+    user_id: i64,
+    owner_user_id: i64,
+    executor_type: &str,
+) -> Result<(), FastApiError> {
+    if executor_type == "human_assistant" && user_id != owner_user_id {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::NOT_FOUND,
+            "Project session binding not found",
+        ));
+    }
+    Ok(())
+}
+
 /// `resolve_project_transcript`.
 pub(crate) async fn resolve_project_transcript<M: Mysql>(
     mysql: &M,
@@ -64,15 +79,9 @@ pub(crate) async fn resolve_project_transcript<M: Mysql>(
     let project_id = require_project_scope(mysql, user_id, scope).await?;
     // `_session_executions` — the addressed executions for the project Issue.
     let candidate_task_ids = candidate_task_ids(local_task_id);
-    let mut executions = session_executions(
-        mysql,
-        project_id,
-        scope.issue_id,
-        device_id,
-        &candidate_task_ids,
-    )
-    .await
-    .map_err(mysql_failure)?;
+    let mut executions = session_executions(mysql, project_id, scope.issue_id, &candidate_task_ids)
+        .await
+        .map_err(mysql_failure)?;
     if !executions.is_empty() {
         let owners: HashSet<i64> = executions
             .iter()
@@ -97,6 +106,13 @@ pub(crate) async fn resolve_project_transcript<M: Mysql>(
                         .is_some_and(|ids| ids.iter().any(|alias| alias == value))
                 })
         });
+    }
+    for execution in &executions {
+        require_execution_reader(
+            user_id,
+            i64::from(execution.executor_owner_user_id),
+            execution.executor_type(),
+        )?;
     }
 
     // `active_task_binding_query(...).all()` — the active `execution` binding
@@ -390,7 +406,6 @@ async fn session_executions<M: Mysql>(
     mysql: &M,
     project_id: i64,
     issue_id: &str,
-    device_id: &str,
     task_ids: &[String],
 ) -> MysqlResult<Vec<ExecutionRow>> {
     if task_ids.is_empty() {
@@ -401,14 +416,9 @@ async fn session_executions<M: Mysql>(
         "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
          WHERE loop_item_executions.cloud_project_id = ? \
          AND loop_item_executions.loop_item_id = ? \
-         AND loop_item_executions.runtime_device_id = ? \
          AND loop_item_executions.runtime_task_id IN ({placeholders})"
     );
-    let mut values = vec![
-        project_id.to_string(),
-        issue_id.to_string(),
-        device_id.to_string(),
-    ];
+    let mut values = vec![project_id.to_string(), issue_id.to_string()];
     values.extend(task_ids.iter().cloned());
     mysql.fetch_all(sql, values).await
 }
@@ -883,12 +893,15 @@ impl ExecutionRow {
     fn executor_type(&self) -> &'static str {
         let selection = self.runtime_selection();
         if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
-            && matches!(configured, "generic_robot" | "collaboration_group_dispatch")
+            && matches!(
+                configured,
+                "generic_robot" | "collaboration_group_dispatch" | "human_assistant"
+            )
         {
-            return if configured == "collaboration_group_dispatch" {
-                "collaboration_group_dispatch"
-            } else {
-                "generic_robot"
+            return match configured {
+                "collaboration_group_dispatch" => "collaboration_group_dispatch",
+                "human_assistant" => "human_assistant",
+                _ => "generic_robot",
             };
         }
         if !self.agent_id.is_empty() {
@@ -942,88 +955,4 @@ impl ExecutionRow {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn execution(runtime_task_id: Option<&str>, payload: &str) -> ExecutionRow {
-        ExecutionRow {
-            id: 41,
-            executor_owner_user_id: 86,
-            agent_id: String::new(),
-            team_id: 0,
-            runtime_device_id: Some("device-1".to_string()),
-            runtime_task_id: runtime_task_id.map(str::to_string),
-            execution_payload: payload.to_string(),
-        }
-    }
-
-    #[test]
-    fn candidate_task_ids_include_the_manager_base_identity() {
-        assert_eq!(
-            candidate_task_ids("runtime-1"),
-            vec!["runtime-1".to_string()]
-        );
-        assert_eq!(
-            candidate_task_ids("runtime-1-manager-initial"),
-            vec![
-                "runtime-1-manager-initial".to_string(),
-                "runtime-1".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn conversation_task_id_prefers_the_recorded_runtime_task() {
-        let row = execution(Some("runtime-9"), "");
-        assert_eq!(row.conversation_task_id(), "runtime-9");
-        assert!(row.matches_local_task("runtime-9"));
-        assert!(!row.matches_local_task("runtime-8"));
-    }
-
-    #[test]
-    fn conversation_task_id_falls_back_to_the_queue_identity() {
-        let row = execution(
-            None,
-            "{\"origin_context\": {\"comment_continue_task_id\": \"task-7\"}}",
-        );
-        assert_eq!(row.conversation_task_id(), "task-7");
-        let row = execution(None, "");
-        assert_eq!(row.conversation_task_id(), "codex-queue-41");
-    }
-
-    #[test]
-    fn group_dispatch_sessions_expose_the_manager_identity() {
-        let payload =
-            "{\"runtime_selection\": {\"executor_kind\": \"collaboration_group_dispatch\"}}";
-        let row = execution(Some("runtime-9"), payload);
-        assert_eq!(row.executor_type(), "collaboration_group_dispatch");
-        assert_eq!(row.conversation_task_id(), "runtime-9-manager-initial");
-    }
-
-    #[test]
-    fn executor_type_matches_the_source_selection_rules() {
-        assert_eq!(execution(None, "").executor_type(), "generic_robot");
-        let mut row = execution(None, "");
-        row.agent_id = "agent-1".to_string();
-        assert_eq!(row.executor_type(), "project_robot");
-        let mut row = execution(None, "");
-        row.team_id = 3;
-        assert_eq!(row.executor_type(), "wegent_team");
-        let row = execution(
-            None,
-            "{\"runtime_selection\": {\"executor_kind\": \"generic_robot\"}, \"agent_id\": \"a\"}",
-        );
-        assert_eq!(row.executor_type(), "generic_robot");
-    }
-
-    #[test]
-    fn related_item_filter_renders_the_source_subqueries() {
-        let sql = related_item_filter_sql(86);
-        assert!(sql.contains("loop_items.created_by_user_id = 86"));
-        assert!(sql.contains("loop_items.assignee_user_id = 86"));
-        assert!(sql.contains("loop_items.resource_type IN ('execution')"));
-        assert!(sql.contains("loop_items.resource_type IN ('collaborator')"));
-        assert!(sql.contains("loop_items.resource_type IN ('chat_agent')"));
-        assert!(sql.contains("'1970-01-01 00:00:01'"));
-    }
-}
+mod tests;

@@ -510,13 +510,13 @@ pub(crate) async fn insert_message_on(
         .map(|execution| execution.last_insert_id as i64)
 }
 
-pub(super) const INSERT_MESSAGE_SQL: &str = "INSERT INTO project_chat_messages (message_id, client_message_id, project_id, \
+pub(crate) const INSERT_MESSAGE_SQL: &str = "INSERT INTO project_chat_messages (message_id, client_message_id, project_id, \
                task_id, sender_type, sender_id, sender_name, message_type, content, metadata, \
                trigger_message_id, reply_to_message_id, thread_root_message_id, agent_id, \
                runtime_device_id, runtime_task_id, runtime_activity_key, status) \
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-pub(super) fn insert_message_args(message: &InsertMessage<'_>) -> Vec<StatementArg> {
+pub(crate) fn insert_message_args(message: &InsertMessage<'_>) -> Vec<StatementArg> {
     vec![
         StatementArg::Str(message.message_id.to_string()),
         StatementArg::Str(message.client_message_id.to_string()),

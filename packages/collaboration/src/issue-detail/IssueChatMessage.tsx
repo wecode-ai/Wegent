@@ -33,6 +33,7 @@ import {
 import { IssueActivityContent } from "./IssueActivityContent";
 import { formatIssueTimestamp, issueActivityTimestamp } from "./issueTimestamp";
 import { managerActivityPresentation } from "./managerActivity";
+import { HumanAssistantResultProvenance } from "./HumanAssistantResultProvenance";
 
 export interface ExecutionTaskSummary {
   title: string;
@@ -462,6 +463,11 @@ export function IssueChatMessage({
     );
   const body = (
     <>
+      <HumanAssistantResultProvenance
+        message={message}
+        translate={t}
+        onOpenExecution={openExecution}
+      />
       {text ? (
         <div
           className={cn(

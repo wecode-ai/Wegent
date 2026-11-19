@@ -362,6 +362,11 @@ class RuntimeProfileService:
         )
         if execution is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+        if execution.executor_type == "human_assistant":
+            raise HTTPException(
+                422,
+                "Configure this execution in the owner's personal assistant settings",
+            )
         if execution.uses_runner_routing:
             raise HTTPException(
                 422,

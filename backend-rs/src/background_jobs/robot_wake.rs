@@ -156,7 +156,7 @@ async fn routed_candidates(app: &AppState, row: &Execution) -> Result<BTreeSet<i
     Ok(result)
 }
 
-pub(super) async fn cancels(app: &AppState, rows: &[Execution]) {
+pub(crate) async fn cancels(app: &AppState, rows: &[Execution]) {
     for row in rows {
         let target = if row.execution_device_id.is_empty() {
             &row.runtime_device_id
@@ -166,12 +166,16 @@ pub(super) async fn cancels(app: &AppState, rows: &[Execution]) {
         if row.runtime_task_id.is_empty() || target.is_empty() || row.executor_owner_user_id == 0 {
             continue;
         }
+        let mut payload = json!({"taskId":row.runtime_task_id,"deviceId":row.runtime_device_id});
+        if row.selection()["executor_kind"] == "human_assistant" {
+            payload["executionId"] = json!(row.id.to_string());
+        }
         let result = runtime_rpc::call(
             app,
             row.executor_owner_user_id,
             target,
             "runtime.tasks.cancel",
-            json!({"taskId":row.runtime_task_id,"deviceId":row.runtime_device_id}),
+            payload,
             Duration::from_secs(15),
         )
         .await;

@@ -29,6 +29,9 @@ pub(in crate::socketio) async fn open_accepted_activity<T: MysqlTransaction>(
     let Some(execution) = reload_execution(transaction, execution_id).await? else {
         return Ok(None);
     };
+    if crate::socketio::human_assistant_execution::is_personal(&execution) {
+        return Ok(None);
+    }
     if observed_start && execution.is_terminal() {
         return Ok(None);
     }

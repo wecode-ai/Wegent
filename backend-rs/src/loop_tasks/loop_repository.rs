@@ -38,6 +38,7 @@ pub struct BindingMetadata {
     pub dispatch_id: Option<String>,
     pub dispatch_round_id: Option<String>,
     pub assignment_id: Option<String>,
+    pub execution_id: Option<serde_json::Value>,
     pub issue_assignment_id: Option<String>,
     pub change_requests: Option<serde_json::Value>,
 }
@@ -90,6 +91,8 @@ pub struct AssignmentMetadata {
     pub receipt_tracking: Option<bool>,
     pub human_read_at: Option<String>,
     pub stand_in_received_at: Option<String>,
+    pub human_assistant_dispatch: Option<serde_json::Value>,
+    pub assignment_version: Option<i64>,
     pub dispatch_receipt: Option<serde_json::Value>,
 }
 
@@ -465,6 +468,15 @@ impl BindingRow {
     pub fn assignment_id(&self) -> Option<String> {
         self.metadata()
             .and_then(|metadata| metadata.assignment_id.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
+    /// `LoopItemTaskBinding.execution_id`: the exact assistant execution reference.
+    pub fn execution_id(&self) -> Option<String> {
+        self.metadata()
+            .and_then(|metadata| metadata.execution_id.as_ref())
+            .and_then(serde_json::Value::as_str)
             .filter(|text| !text.is_empty())
             .map(str::to_string)
     }

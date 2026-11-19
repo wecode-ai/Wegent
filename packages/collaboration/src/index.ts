@@ -27,6 +27,11 @@ export * from "./i18n";
 export * from "./issue-card";
 export * from "./issue-archive";
 export * from "./issue-detail";
+export {
+  assistantMessageProvenance,
+  type AssistantMessageProvenance,
+} from "./issue-detail/assistantMessageProvenance";
+export { HumanAssistantResultProvenance } from "./issue-detail/HumanAssistantResultProvenance";
 export * from "./issueDraft";
 export { IssueCreate, IssueDetail } from "./IssueDetail";
 export * from "./my-work";
@@ -72,3 +77,4 @@ export type {
   MilestoneFilterValue,
 } from "./milestones/useMilestoneFilter";
 export * from "./issueParticipation";
+export type * from "./assistant-requests/types";

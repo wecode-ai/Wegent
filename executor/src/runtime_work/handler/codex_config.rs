@@ -137,13 +137,13 @@ impl RuntimeWorkRpcHandler {
                 &query_id,
                 "config/read",
                 json!({
-                    "includeLayers": false,
+                    "includeLayers": true,
                     "cwd": Value::Null,
                 }),
             )
             .await
             .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
-        let provider = current_codex_model_provider_from_config(&config);
+        let provider = current_codex_model_provider_from_config(&config)?;
         let (available, error, mut models, native_default) = match self
             .request_model_discovery(&query_id, "model/list", model_list_params)
             .await
@@ -759,7 +759,7 @@ mod configured_default_tests {
     #[test]
     fn filtering_a_non_default_model_does_not_replace_an_unavailable_configured_model() {
         let config = json!({"config": {"model": "unavailable-explicit-default"}});
-        let provider = current_codex_model_provider_from_config(&config);
+        let provider = current_codex_model_provider_from_config(&config).unwrap();
         let mut models = codex_models_with_configured_default(
             &json!({"data": [
                 {"model": "gpt-5.5", "isDefault": true},
@@ -794,7 +794,7 @@ mod configured_default_tests {
     #[test]
     fn unavailable_configured_model_does_not_choose_a_replacement() {
         let config = json!({"config": {"model": "removed"}});
-        let provider = current_codex_model_provider_from_config(&config);
+        let provider = current_codex_model_provider_from_config(&config).unwrap();
         let models = codex_models_with_configured_default(
             &json!({"data": [{"model": "recommended", "isDefault": true}]}),
             &provider,

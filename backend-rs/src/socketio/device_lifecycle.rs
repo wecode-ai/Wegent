@@ -311,6 +311,22 @@ async fn register_session(
     // repaired by the next heartbeat.
     device::set_online(state, user_id, &route_id, &online).await;
 
+    super::personal_assistant_dispatch::synchronize(
+        state,
+        runtime,
+        user_id,
+        &route_id,
+        payload.runtime_features.as_ref(),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, user_id, "personal assistant declaration synchronization failed");
+        ClientError::new(
+            "ASSISTANT_DECLARATION_FAILED",
+            "Personal assistant authorization is temporarily unavailable",
+        )
+    })?;
+
     broadcast_online(
         runtime.emitters(),
         state,

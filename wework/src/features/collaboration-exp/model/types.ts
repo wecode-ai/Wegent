@@ -2,6 +2,7 @@ import type { ProjectChatMessage } from '@wegent/chat-core'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type {
   CollaborationIssue,
+  AssistantMessageProvenance,
   CollaborationAssignment,
   CollaborationProject,
   IssueParticipationViewer,
@@ -128,6 +129,8 @@ export interface ExperienceTimelineNode {
   attachments: ExperienceAttachmentReference[]
   conversation: ExperienceConversationSelection
   executionAddress: RuntimeTaskAddress | null
+  assistantRequestId?: string
+  assistantProvenance?: AssistantMessageProvenance
   transition?: { from: string; to: string }
   handoff?: {
     action: 'assign' | 'reassign' | 'unassign'

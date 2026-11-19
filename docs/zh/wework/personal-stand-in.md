@@ -17,6 +17,8 @@ sidebar_position: 12
 
 Issue 中的助理回复以“所属用户 (角色)”署名，例如“张三 (助理)”，便于区分不同用户的助理。成员姓名暂不可用时显示用户编号；成员信息加载后显示姓名。
 
+项目中分配给真实用户的 Issue，其默认助理接单回执、未自动接单原因及 **配置我的助理** 入口见[人工负责人和默认助理](./projects.md#human-assignment-receipts)。
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 

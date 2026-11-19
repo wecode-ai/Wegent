@@ -1035,6 +1035,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'myWork',
         'metrics',
         'milestones',
+        'assistantRequests',
         'issues',
         'comments',
         'assignments',

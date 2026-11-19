@@ -49,6 +49,40 @@ function render(execution_state?: string | null): string {
 }
 
 describe("issue board card execution configuration", () => {
+  it("shows the assistant receipt while retaining the human assignee", () => {
+    const markup = renderToStaticMarkup(
+      <IssueBoardCardContent
+        item={{
+          id: "issue-1",
+          title: "Assigned to Ada",
+          priority: "none",
+          assignee_name: "Ada",
+          directHumanAssignmentReceipt: {
+            projectId: "project-1",
+            issueId: "issue-1",
+            humanAssignmentId: "human-1",
+            dispatchId: "dispatch-1",
+            ownerUserId: 7,
+            state: "queued",
+            runtimeTaskId: null,
+            deliveryId: null,
+            reasonCode: null,
+            updatedAt: "2026-11-16T00:00:00Z",
+          },
+        }}
+        reference="PRJ-1"
+        display={display}
+        labels={labels}
+        translate={translate}
+      />,
+    );
+    expect(markup).toContain("cloud-todo-card-assignee-issue-1");
+    expect(markup).toContain("Ada");
+    expect(markup).toContain("默认助理");
+    expect(markup).toContain("等待接单");
+    expect(markup).not.toContain("已完成");
+  });
+
   it("shows the reason a robot-owned Issue is not running", () => {
     const markup = render("waiting_runtime");
     expect(markup).toContain(badgeTestId);

@@ -97,7 +97,7 @@ fn round_task_binding<'a>(
     binding.as_object()?.values().all(truthy).then_some(binding)
 }
 
-fn direct_task_binding(issue_id: &str, assignment_id: &str) -> Value {
+pub(crate) fn direct_task_binding(issue_id: &str, assignment_id: &str) -> Value {
     json!({
         "humanAssignmentId": direct_human_assignment_id(issue_id, assignment_id),
         "dispatchId": format!("direct-human:{assignment_id}"),

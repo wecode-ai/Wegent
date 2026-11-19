@@ -5,7 +5,11 @@ import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { findNestedString, requestContainsSkillLocator } from '../modules/desktop-server.mjs'
+import { findNestedString } from '../modules/desktop-server.mjs'
+import {
+  requestContainsSkillLocator,
+  requestSkillCatalogDiagnostics,
+} from '../modules/skill-catalog-locators.mjs'
 import {
   refreshPluginInventory,
   verifyPluginEnabledState,
@@ -515,6 +519,11 @@ export async function createDesktopScenario({
         assert.ok(requestAdvertisesShellCommand(body))
         const discovered = requestContainsSkillLocator(body, active.skillPath, active.skillName)
         if (!discovered) {
+          evidence.push({
+            sourceVersion: current.release.version,
+            expectedSkillPath: active.skillPath,
+            ...requestSkillCatalogDiagnostics(body),
+          })
           const catalog =
             findNestedString(body, text => text.includes('### Available skills')) ?? ''
           await writeFile(

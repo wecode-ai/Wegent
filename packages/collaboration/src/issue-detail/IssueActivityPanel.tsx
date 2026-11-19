@@ -283,6 +283,9 @@ export function IssueActivityPanel({
                     send={chat.send}
                     members={members}
                     agents={agents}
+                    currentUserId={project?.current_user_id}
+                    taskBindings={taskBindings}
+                    onOpenTaskConversation={onOpenTaskConversation}
                     upload={
                       canAttach && api.attachments
                         ? file => api.attachments!.upload(issue.id, file)

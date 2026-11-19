@@ -4,6 +4,8 @@
 
 use super::*;
 
+#[path = "tests/assistant_dispatch.rs"]
+mod assistant_dispatch;
 #[path = "tests/runtime_event_replay.rs"]
 mod runtime_event_replay;
 use crate::config::device::UpdateConfig;

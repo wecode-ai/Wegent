@@ -1,4 +1,4 @@
-//! Retry a failed native startup within its original logical conversation.
+//! Retry an interrupted native startup within its original logical conversation.
 use super::*;
 
 #[cfg(test)]
@@ -6,16 +6,45 @@ use super::*;
 mod tests;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn recover_failed_session_start(
+    fn has_recoverable_session_start(&self, link: &RuntimeTaskLink) -> bool {
+        if runtime_session_id_from_link(link).is_some() {
+            return false;
+        }
+        if link.status == "failed" {
+            return true;
+        }
+        if !matches!(link.status.as_str(), "active" | "queued" | "cancelled") {
+            return false;
+        }
+        let origin = &link.runtime_handle["origin"];
+        crate::runtime_work::worktrees::RequestWorktreeOwner::from_origin(
+            Some(origin),
+            &link.local_task_id,
+            &self.device_id,
+        )
+        .is_ok_and(|owner| {
+            owner.is_some_and(|owner| {
+                origin["type"] == "issue_dispatch"
+                    && origin["initiatedBy"] == "stand_in"
+                    && origin["assistantRequestId"] == owner.request_id
+                    && origin["userId"] == owner.owner_user_id
+                    && origin["deviceId"] == self.device_id
+                    && origin["runtimeTaskId"] == link.local_task_id
+                    && link.local_task_id == format!("assistant-request-{}", owner.request_id)
+            })
+        })
+    }
+
+    pub(super) async fn recover_session_start(
         &self,
         link: Option<&RuntimeTaskLink>,
         payload: Value,
+        request: ExecutionRequest,
         activity: bool,
     ) -> Result<Option<Value>, AppIpcError> {
         let Some(link) = link.filter(|link| {
             crate::runtime_work::conversation_sessions::is_identity_conversation(link)
-                && link.status == "failed"
-                && runtime_session_id_from_link(link).is_none()
+                && self.has_recoverable_session_start(link)
                 && !self.is_busy_local_task(&link.local_task_id)
                 && link.interaction_status.is_none()
         }) else {
@@ -28,21 +57,20 @@ impl RuntimeWorkRpcHandler {
             self.store.update_task(&link.local_task_id, |link| {
                 link.thread_id = Some(thread.clone());
             });
-            return Box::pin(self.send_message_with_activity_checks(payload, activity))
+            return Box::pin(self.send_message_with_activity_checks(payload, activity, false))
                 .await
                 .map(Some);
         }
-        Box::pin(self.create_task_after_local_checks(payload, activity))
+        // Preserve the prepared identity and original command input across recreation.
+        Box::pin(self.create_task_after_local_checks(payload, activity, Some(request)))
             .await
             .map(Some)
     }
 
-    pub(super) fn preserve_failed_start_context(&self, link: &mut RuntimeTaskLink) {
+    pub(super) fn preserve_session_start_context(&self, link: &mut RuntimeTaskLink) {
         let Some(previous) = self
             .local_task_link(&link.local_task_id)
-            .filter(|previous| {
-                previous.status == "failed" && runtime_session_id_from_link(previous).is_none()
-            })
+            .filter(|previous| self.has_recoverable_session_start(previous))
         else {
             return;
         };

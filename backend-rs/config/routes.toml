@@ -698,6 +698,23 @@ path = "/api/v1/dsh-plugin-storage/units/:unit/load"
 #methods = ["GET"]
 #path = "/api/v1/loop-item-attachments/:attachment_id/content"
 
+# Explicit owner-scoped assistant request actions and device evidence.
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/loop-items/:item_id/assistant-requests"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/loop-items/:item_id/assistant-requests"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/loop-items/:item_id/assistant-requests/:request_id/events"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/loop-items/:item_id/assistant-requests/:request_id/merge"
+
 # `GET /api/v1/loop-items/{item_id}/assignments` is served by the
 # `loop_tasks::assignments` handler.
 [[routes]]

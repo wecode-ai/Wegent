@@ -1,5 +1,10 @@
 import type { ProjectChatMessage } from '@wegent/chat-core'
-import { canStartWorkOnCollaborationIssue, markdownAttachmentRows } from '@wegent/collaboration'
+import {
+  canStartWorkOnCollaborationIssue,
+  assistantMessageProvenance,
+  getCollaborationIssueActionPermissions,
+  markdownAttachmentRows,
+} from '@wegent/collaboration'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { selectPrivateConversations } from './conversationSelectors'
 import { mergeHistoryNodes, selectHistoryNodes } from './historySelectors'
@@ -99,6 +104,26 @@ function timelineNode(
 ): ExperienceTimelineNode {
   const kind = timelineMessageKind(message)
   const owner = humanSource(message, index)
+  const requestId = message.metadata.request_id
+  const provenance = message.metadata.provenance
+  const receiptOwner =
+    provenance && typeof provenance === 'object' && 'owner_user_id' in provenance
+      ? provenance.owner_user_id
+      : null
+  const ownRequestReceipt =
+    input.issue != null &&
+    (message.metadata.activity_type === 'assistant_request_receipt' ||
+      message.metadata.activity_type === 'assistant_request_evidence') &&
+    typeof requestId === 'string' &&
+    /^[a-f0-9]{32}$/i.test(requestId) &&
+    typeof receiptOwner === 'number' &&
+    receiptOwner === input.project.current_user_id &&
+    receiptOwner === input.issue?.assignee_user_id &&
+    message.sender.type === 'user' &&
+    Number(message.sender.id) === receiptOwner &&
+    input.project.project_store === 'backend' &&
+    getCollaborationIssueActionPermissions(input.project, input.issue).canStartWork
+  const generated = assistantMessageProvenance(message.metadata)
   const attachments = new Map(
     (kind === 'execution' ? [] : markdownAttachmentRows(message.content)).map(attachment => [
       attachment.id,
@@ -136,6 +161,8 @@ function timelineNode(
             taskId: message.runtimeAddress.taskId,
           }
         : null,
+    ...(ownRequestReceipt ? { assistantRequestId: requestId } : {}),
+    ...(generated ? { assistantProvenance: generated } : {}),
   }
 }
 

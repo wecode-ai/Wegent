@@ -4,10 +4,51 @@
 
 use brz_mysql::{MysqlResult, MysqlTransaction};
 
-use super::ExecutionRow;
+use super::{ExecutionRow, Message, RuntimeIdentity, error_text, event_data, final_text};
 use crate::background_jobs::project::{notifications, store};
 use crate::socketio::{project_chat_snapshot, runtime::SocketRuntime};
 use crate::state::AppState;
+
+pub(super) async fn effects(
+    tx: &mut impl MysqlTransaction,
+    matched: Option<ExecutionRow>,
+    previous_version: Option<i64>,
+    previous_status: Option<&str>,
+    identity: &RuntimeIdentity<'_>,
+    messages: Vec<Message>,
+) -> MysqlResult<Effects> {
+    let changed = (previous_version.is_some()
+        && item_version(tx, matched.as_ref())
+            .await?
+            .zip(previous_version)
+            .is_some_and(|(current, previous)| current != previous))
+        || matched.as_ref().is_some_and(|row| {
+            crate::socketio::human_assistant_execution::is_personal(row)
+                && (row.status.as_deref() != previous_status
+                    || identity.event_name == "runtime.interaction.updated"
+                    || identity.event_name == "response.created"
+                    || crate::socketio::human_assistant_execution::waiting_exit(
+                        identity.event_name,
+                        identity.payload,
+                    ))
+        });
+    let detail = final_text(identity.payload)
+        .or_else(|| {
+            identity
+                .payload
+                .get("error")
+                .or_else(|| event_data(identity.payload)?.get("error"))
+                .map(error_text)
+        })
+        .unwrap_or_default();
+    Ok(Effects {
+        matched,
+        changed,
+        detail,
+        messages,
+        settled_reply: None,
+    })
+}
 
 pub(in crate::socketio) async fn item_version(
     tx: &mut impl MysqlTransaction,
@@ -84,6 +125,13 @@ impl Effects {
         let result = state
             .mysql
             .with_transaction(async |tx| {
+                if crate::socketio::human_assistant_execution::is_personal(&execution)
+                    && crate::socketio::human_assistant_execution::current(tx, &execution)
+                        .await?
+                        .is_none()
+                {
+                    return Ok(None);
+                }
                 let issue: Option<store::Node> = tx
                     .fetch_optional(
                         format!(

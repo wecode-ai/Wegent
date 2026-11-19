@@ -11,6 +11,7 @@ import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
 } from '../modules/template-deletion-flow.mjs'
+import { confirmProjectDraftDiscard } from '../modules/project-create-dialog-regression.mjs'
 import {
   confirmProjectTemplateConfiguration,
   openProjectTemplateConfiguration,
@@ -19,6 +20,14 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
+
+export async function discardTemplateProjectDraft(control) {
+  await control.command('clickWhenEnabled', testId('collaboration-project-create-cancel'))
+  await confirmProjectDraftDiscard(control)
+  await control.command('waitFor', testId('collaboration-project-create-dialog'), {
+    visible: false,
+  })
+}
 
 export async function fillTemplateRoleBindings(control, count) {
   await control.command('waitFor', testId('template-customize-main'))
@@ -337,7 +346,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
-      await click(control, 'collaboration-project-create-cancel')
+      await discardTemplateProjectDraft(control)
       await wait(
         control,
         `template-card-${accountTemplate.document.metadata.name}`,
@@ -393,8 +402,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
         timeoutMs: uiTimeoutMs,
       })
-      // Creation configures template resources before onCreated closes the form.
-      await control.command('waitFor', testId('collaboration-project-create-confirm'), {
+      // Creation configures template resources before onCreated closes the dialog.
+      await control.command('waitFor', testId('collaboration-project-create-dialog'), {
         visible: false,
         timeoutMs: workbenchReadyTimeoutMs,
       })

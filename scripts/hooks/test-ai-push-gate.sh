@@ -58,6 +58,16 @@ if [ "${PUSH_GATE_TEST_VERIFY_GIT_ISOLATION:-0}" = "1" ]; then
     done < <(git rev-parse --local-env-vars; printf '%s\n' WEGENT_APP_LIFECYCLE_FD WEGENT_APP_IPC_ENDPOINT WEGENT_APP_IPC_OWNER_TOKEN WEGENT_APP_IPC_TOKEN WEGENT_PLUGIN_RUNTIME_TARGET WEGENT_CAPABILITIES_HOME)
 fi
 if [ "$(basename "$0")" = "pnpm" ]; then
+    if [ "${PUSH_GATE_TEST_REQUIRE_ELECTRON_PREPARATION:-0}" = "1" ]; then
+        case "$*" in
+            '--filter wework typecheck'|'--filter wework lint'|'--dir wework/electron typecheck')
+                if [ ! -f "$CALL_LOG.electron-prepare-complete" ]; then
+                    echo 'Static check started before Electron dependency preparation completed' >&2
+                    exit 12
+                fi
+                ;;
+        esac
+    fi
     case "$*" in
         '--filter @wegent/chat-core test'*)
             if [ "${PUSH_GATE_TEST_FAIL_CHAT_CORE:-0}" = "1" ]; then
@@ -106,6 +116,12 @@ if [ "$(basename "$0")" = "pnpm" ]; then
             ;;
         '--filter wework run prepare:electron')
             rm -f "$CALL_LOG.electron-typecheck-complete"
+            if [ "${PUSH_GATE_TEST_REQUIRE_ELECTRON_PREPARATION:-0}" = "1" ]; then
+                # Model the root dependency graph being replaced during preparation.
+                sleep 0.2
+                touch "$CALL_LOG.electron-prepare-complete"
+                printf 'completed pnpm %s\n' "$*" >> "$CALL_LOG"
+            fi
             ;;
         '--dir wework/electron typecheck')
             # Keep the shared staging directory busy until typechecking finishes.
@@ -584,11 +600,19 @@ MIXED_TREE=$(GIT_INDEX_FILE="$MIXED_INDEX" git write-tree)
 MIXED_LOCAL_SHA=$(printf 'mixed pre-push fixture\n' |
     git commit-tree "$MIXED_TREE" -p "$MIXED_BASE_SHA")
 
-AI_VERIFIED=1 \
+rm -f "$CALL_LOG.electron-prepare-complete"
+if ! AI_VERIFIED=1 \
+PUSH_GATE_TEST_REQUIRE_ELECTRON_PREPARATION=1 \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_MIXED_TEST_OUT" 2>&1
 refs/heads/topic $MIXED_LOCAL_SHA refs/heads/topic $MIXED_BASE_SHA
 EOF
+then
+    echo "Expected mixed checks to wait for dependency preparation."
+    cat "$WEWORK_MIXED_TEST_OUT"
+    cat "$CALL_LOG"
+    exit 1
+fi
 
 if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads --maxWorkers 2 --testTimeout 15000 src/api/tasks.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."

@@ -119,6 +119,7 @@ import {
   IssueDeliveries,
 } from "./issue-detail/IssueExecutionLists";
 import { taskDeviceLabel } from "./issue-detail/taskBindingPresentation";
+import { DirectHumanAssignmentReceiptStatus } from "./issue-detail/DirectHumanAssignmentReceiptStatus";
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -676,6 +677,7 @@ export type TodoEditorProps = {
    */
   canStartWork?: boolean;
   defaultAssistant?: CollaborationDefaultAssistant;
+  onConfigureAssistant?: () => void;
   taskRefreshKey?: string | number;
   initialTaskBindings?: SharedIssueDetailTaskBinding[];
   /** Live execution states keyed by the stable task-binding id. */
@@ -1226,6 +1228,21 @@ export function TodoEditor(props: TodoEditorProps) {
       ...tasks.filter((task) => !initialTaskIds.has(String(task.id))),
     ];
   }, [props.initialTaskBindings, tasks]);
+  const assistantReceipt = item?.directHumanAssignmentReceipt;
+  const assistantDeliveryId = assistantReceipt?.deliveryId;
+  const ownsAssignmentReceipt =
+    assistantReceipt != null &&
+    String(props.currentUserId) === String(assistantReceipt.ownerUserId);
+  const assistantTask = ownsAssignmentReceipt
+    ? effectiveTasks.find(
+        (task) =>
+          task.task_user_id === assistantReceipt.ownerUserId &&
+          task.task_id === assistantReceipt.runtimeTaskId &&
+          (task.human_assignment_id === assistantReceipt.humanAssignmentId ||
+            (assistantReceipt.executionId != null &&
+              task.execution_id === assistantReceipt.executionId)),
+      )
+    : undefined;
   const refreshTaskBindings = useCallback(async () => {
     if (editItemId == null) return;
     const requestId = ++taskBindingsRequestIdRef.current;
@@ -3958,6 +3975,27 @@ export function TodoEditor(props: TodoEditorProps) {
                       </button>
                     </section>
                   ) : null}
+
+                  <DirectHumanAssignmentReceiptStatus
+                    itemId={item.id}
+                    receipt={item.directHumanAssignmentReceipt}
+                    translate={t}
+                    onOpenTask={
+                      assistantTask && props.onOpenTaskConversation
+                        ? () => props.onOpenTaskConversation?.(assistantTask)
+                        : undefined
+                    }
+                    onOpenDelivery={
+                      assistantDeliveryId
+                        ? () => void openDelivery(assistantDeliveryId)
+                        : undefined
+                    }
+                    onConfigure={
+                      ownsAssignmentReceipt
+                        ? props.onConfigureAssistant
+                        : undefined
+                    }
+                  />
 
                   <ExecutionConfigurationNotice
                     key={item.id}

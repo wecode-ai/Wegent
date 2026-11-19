@@ -103,6 +103,8 @@ From **Projects → New project → Cloud project** in the sidebar, you can add 
 
 Edit Agent definitions from **Project settings → AI configuration**. Project Maintainers can edit non-private project definitions; shared source definitions retain their original permissions. Imported and manually created Agents share the same entry. See [Agent configuration](./projects.md#agent-capabilities) for device-conflict recovery.
 
+Open **Collaboration exp → Tasks → a cloud task assigned to you → Your assistant requests** to start independent assistant work with **New request**, or continue, cancel and retry an existing request. Keep typing after sending; if a local submission has no confirmed receipt, select its **Retry this submission** action. The entry appears only when the server enables the capability or existing requests are available, and only for the current owner. See [Independent assistant requests](./collaboration-experience.md#assistant-requests).
+
 ## Sidebar feature entries
 
 Project settings in narrow windows collapse the sidebar into **Collaboration navigation** above the page. Expand it for Home, projects and other collaboration entries; choosing a location collapses it again. See [Project settings](./projects.md).
@@ -139,6 +141,8 @@ Internal routes below support version maintenance and automated checks; they are
 Enable the preview, open **top tab strip → + → Collaboration exp**, or roll back: [Collaboration experience preview](./collaboration-experience.md).
 
 Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
+
+Default-assistant acceptance receipts, reasons automatic acceptance is blocked, device waiting states and the assignee's configuration entry: [Human assignees and default assistants](./projects.md#human-assignment-receipts).
 
 | Search terms                                                                      | Detailed steps                                                                       |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |

@@ -28,7 +28,10 @@ from app.services.device_service import device_service
 from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.cancellation import execution_cancellation_target
 from app.services.loop_item_executions.service import loop_item_execution_service
-from app.services.runtime_cancellation import emit_runtime_cancellations
+from app.services.runtime_cancellation import (
+    CancellationIdentity,
+    emit_runtime_cancellations,
+)
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -334,7 +337,7 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     trusted transcript snapshot proves that the task actually stopped.
     """
 
-    execution_ids_by_target: dict[tuple[int, str, str], set[int]] = {}
+    execution_ids_by_target: dict[CancellationIdentity, set[int]] = {}
     targets = []
     for execution in executions:
         target = execution_cancellation_target(execution)

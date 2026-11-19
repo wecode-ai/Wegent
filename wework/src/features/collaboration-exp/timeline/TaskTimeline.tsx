@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
 import {
   IssueActivityMarkdown,
@@ -21,6 +21,7 @@ import type {
 import { TimelineFilters, type TimelineFilter } from './TimelineFilters'
 import { TimelineNode } from './TimelineNode'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
+import { AssistantRequestPanel } from '../requests/AssistantRequestPanel'
 import { isPublishedTimelineConclusion } from '../model/messageLayer'
 import './TimelineExperience.css'
 
@@ -55,6 +56,19 @@ export function TaskTimeline(props: Props) {
   const { timeline, conversations, loading, error } = props.stream
   const contentRef = useRef<HTMLDivElement>(null)
   const selectedNodeId = props.selectedNodeId
+  const requestScope = useMemo(
+    () => ({
+      projectId: props.data.project.id,
+      issueId: issue.id,
+      userId: props.data.project.current_user_id,
+    }),
+    [issue.id, props.data.project.id, props.data.project.current_user_id]
+  )
+  const [openRequest, setOpenRequest] = useState<{
+    scope: typeof requestScope
+    id: string
+    key: number
+  }>()
   const focusRequest = props.focusRequest
   const filterRequest = JSON.stringify([selectedNodeId, focusRequest])
   const hasSelectedNode = timeline.nodes.some(node => node.id === selectedNodeId)
@@ -268,6 +282,16 @@ export function TaskTimeline(props: Props) {
                 onDiscuss={props.onDiscuss}
                 onAttachment={openAttachment}
                 onExecution={props.onExecution}
+                onRequest={
+                  props.api.assistantRequests && props.active
+                    ? id =>
+                        setOpenRequest(previous => ({
+                          scope: requestScope,
+                          id,
+                          key: (previous?.key ?? 0) + 1,
+                        }))
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -361,6 +385,17 @@ export function TaskTimeline(props: Props) {
                 {t('retry')}
               </Button>
             </div>
+          ) : null}
+          {props.api.assistantRequests && props.data.project.project_store === 'backend' ? (
+            <AssistantRequestPanel
+              api={props.api.assistantRequests}
+              project={props.data.project}
+              issue={issue}
+              active={props.active}
+              revision={props.revision}
+              onExecution={props.onExecution}
+              openRequest={openRequest?.scope === requestScope ? openRequest : undefined}
+            />
           ) : null}
           {needsUser || conversations.items.length ? (
             <section

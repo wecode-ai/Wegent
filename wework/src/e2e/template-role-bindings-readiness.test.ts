@@ -1,12 +1,69 @@
+// @vitest-environment node
+
 import { expect, test, vi } from 'vitest'
 
-import { fillTemplateRoleBindings } from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
+import {
+  discardTemplateProjectDraft,
+  fillTemplateRoleBindings,
+} from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
+import { createBarrier } from '../test/async-barrier'
 
 const role = (index: number) =>
   `[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-role-main-role-${index}"]`
 const humanOption = role(0) + ' option[value^="human:"]'
 const agentOption = (index: number) =>
   `${role(index)} option[value="agent:template-agent:main-role-${index}"]`
+
+test('finishes explicit draft discard before continuing to another template', async () => {
+  const dialog =
+    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-project-create-dialog"]'
+  const discard =
+    '[data-testid="collaboration-project-create-dialog"] [data-testid="collaboration-project-create-discard"]'
+  const confirmation = `${discard} [data-testid="collaboration-project-create-discard-confirm"]`
+  const waitingForDiscard = createBarrier()
+  const discardShown = createBarrier()
+  const waitingForClose = createBarrier()
+  const dialogClosed = createBarrier()
+  const command = vi.fn(
+    async (action: string, selector: string, options?: { visible?: boolean }) => {
+      if (action === 'waitFor' && selector === discard) {
+        waitingForDiscard.release()
+        await discardShown.promise
+      }
+      if (action === 'waitFor' && selector === dialog && options?.visible === false) {
+        waitingForClose.release()
+        await dialogClosed.promise
+      }
+    }
+  )
+  const result = discardTemplateProjectDraft({ command }).then(() => 'finished')
+
+  expect(await Promise.race([waitingForDiscard.promise.then(() => 'discard'), result])).toBe(
+    'discard'
+  )
+  expect(command).toHaveBeenCalledWith(
+    'clickWhenEnabled',
+    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-project-create-cancel"]'
+  )
+  expect(command).not.toHaveBeenCalledWith('clickWhenEnabled', confirmation)
+  discardShown.release()
+  expect(await Promise.race([waitingForClose.promise.then(() => 'closing'), result])).toBe(
+    'closing'
+  )
+  expect(command).toHaveBeenCalledWith('clickWhenEnabled', confirmation)
+  dialogClosed.release()
+  expect(await result).toBe('finished')
+})
+
+test('propagates failed draft confirmation without continuing or clicking hidden controls', async () => {
+  const unavailable = new Error('The draft confirmation did not become visible')
+  const command = vi.fn(async (action: string) => {
+    if (action === 'waitFor') throw unavailable
+  })
+
+  await expect(discardTemplateProjectDraft({ command })).rejects.toBe(unavailable)
+  expect(command.mock.calls.filter(([action]) => action === 'clickWhenEnabled')).toHaveLength(1)
+})
 
 test('waits for the first role catalog before reading or selecting its human coordinator', async () => {
   let ready = false

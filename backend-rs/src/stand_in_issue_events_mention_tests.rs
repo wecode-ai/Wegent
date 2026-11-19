@@ -66,6 +66,67 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
         json!({"projectId":"mention-project","itemId":"provider-owned-issue","commentId":"third"})
     );
     verify_missing_provider_scope_does_not_lock_other_indexes(mysql).await?;
+    verify_assistant_request_wakeups(mysql).await?;
+    Ok(())
+}
+
+async fn verify_assistant_request_wakeups(mysql: &impl Mysql) -> anyhow::Result<()> {
+    for (request, action) in [
+        ("request-a", "new-a"),
+        ("request-b", "new-b"),
+        ("request-b", "new-b"),
+        ("request-b", "cancel-b"),
+    ] {
+        mysql
+            .with_transaction(async |tx| {
+                super::enqueue_assistant_request_on(
+                    tx,
+                    7001,
+                    "mention-project",
+                    "mention-issue-a",
+                    request,
+                    action,
+                )
+                .await
+            })
+            .await?;
+    }
+    let rollback: brz_mysql::MysqlResult<()> = mysql
+        .with_transaction(async |tx| {
+            super::enqueue_assistant_request_on(
+                tx,
+                7001,
+                "mention-project",
+                "mention-issue-a",
+                "request-private",
+                "private-action",
+            )
+            .await?;
+            Err(MysqlError::InvalidQuery {
+                reason: "deliberate rollback".into(),
+            })
+        })
+        .await;
+    assert!(rollback.is_err());
+    let events: Vec<Event> = mysql.fetch_all("SELECT user_id,sort_order,metadata FROM loop_items WHERE resource_type='stand_in_issue_event' AND user_id=7001 AND sort_order>3 ORDER BY sort_order", ()).await?;
+    assert_eq!(
+        events.len(),
+        3,
+        "replayed actions never allocate another wakeup"
+    );
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(event.sort_order, index as i64 + 4);
+        let payload = &event.metadata.0;
+        assert_eq!(payload.as_object().unwrap().len(), 4);
+        assert_eq!(payload["projectId"], "mention-project");
+        assert_eq!(payload["itemId"], "mention-issue-a");
+        assert_eq!(
+            payload["assistantRequestId"],
+            if index == 0 { "request-a" } else { "request-b" }
+        );
+        assert_eq!(payload["actionId"].as_str().unwrap().len(), 64);
+        assert!(!payload.to_string().contains("private"));
+    }
     Ok(())
 }
 

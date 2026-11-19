@@ -7,8 +7,6 @@ import {
   mkdir,
   readFile,
   readlink,
-  rm,
-  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
@@ -19,6 +17,8 @@ import { promisify } from 'node:util'
 import { expect, test } from 'vitest'
 
 const require = createRequire(import.meta.url)
+// Inspect and clean up archive bytes even when Vitest itself runs in Electron.
+const physicalFs = require(process.versions.electron ? 'original-fs' : 'node:fs').promises
 const packagerRequire = createRequire(require.resolve('@electron/packager'))
 const { createPackage } = await import(
   pathToFileURL(packagerRequire.resolve('@electron/asar')).href
@@ -119,8 +119,8 @@ test('copies a release tree with independent bytes, private modes and relative l
     const payload = join(target, 'private', 'payload')
     expect(await readFile(payload, 'utf8')).toBe('immutable source bytes')
     if (process.platform !== 'win32') {
-      expect((await stat(join(target, 'private'))).mode & 0o777).toBe(0o700)
-      expect((await stat(payload)).mode & 0o777).toBe(0o600)
+      expect((await physicalFs.stat(join(target, 'private'))).mode & 0o777).toBe(0o700)
+      expect((await physicalFs.stat(payload)).mode & 0o777).toBe(0o600)
       expect((await lstat(join(target, 'linked'))).isSymbolicLink()).toBe(true)
       expect(await readlink(join(target, 'linked'))).toBe('private/payload')
     }
@@ -129,6 +129,6 @@ test('copies a release tree with independent bytes, private modes and relative l
       'immutable source bytes'
     )
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await physicalFs.rm(root, { recursive: true, force: true })
   }
 }, 35_000)

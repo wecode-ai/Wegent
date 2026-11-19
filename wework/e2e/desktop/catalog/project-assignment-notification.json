@@ -1,7 +1,11 @@
 {
   "order": 92000,
-  "scenario": "./scenarios/project-assignment-notification.scenario.mjs",
+  "scenario": "./scenarios/project-assistant-requests-suite.scenario.mjs",
   "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/scenarios/project-assignment-notification.scenario.mjs",
+    "wework/e2e/desktop/modules/direct-human-assignment-receipt.mjs"
+  ],
   "resources": ["macos-inspector-foreground"],
   "ci": {
     "core": {

@@ -6,6 +6,7 @@ import {
   createSharedWorkspaceHttpApi,
   createAutomationExecutionCatalogApi,
   mapCollaborationExecutionDto,
+  mapCollaborationIssueDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
   mapWorkspaceIssueCollaboratorDto,
@@ -181,11 +182,7 @@ function toProject(project: CloudProject): CollaborationProject {
 }
 
 function toIssue(issue: CloudLoopItem): CollaborationIssue {
-  return {
-    ...issue,
-    id: String(issue.id),
-    cloud_project_id: String(issue.cloud_project_id),
-  }
+  return mapCollaborationIssueDto(issue)
 }
 
 export function toRuntimeTaskAddress(task: WorkspaceRuntimeTaskAddress): RuntimeTaskAddress {
@@ -208,8 +205,10 @@ function toMyWorkItem(
   item: Awaited<ReturnType<DeliveryApi['listMyWork']>>['items'][number]
 ): WorkspaceMyWorkItem {
   return {
-    ...item,
     ...toIssue(item),
+    project_key: item.project_key,
+    project_name: item.project_name,
+    has_active_task: item.has_active_task,
     task_bindings: (item.task_bindings ?? []).map(binding =>
       mapWorkspaceTaskBindingDto(binding, String(item.cloud_project_id))
     ),
@@ -894,6 +893,7 @@ export function createWeworkSharedWorkspaceApi<
 
   return {
     ...delivery,
+    assistantRequests: sharedHttpApi.assistantRequests,
     workspaces: sharedHttpApi.workspaces,
     metrics: sharedHttpApi.metrics,
     resources: sharedHttpApi.resources,

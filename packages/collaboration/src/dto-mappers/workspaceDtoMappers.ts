@@ -13,6 +13,7 @@ import type {
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAssignment,
+  CollaborationIssue,
   DirectHumanAssignmentReceipt,
   CollaborationExecution,
   CollaborationExecutionEnvironment,
@@ -49,6 +50,25 @@ function camelOrSnake(
   return row[camel] ?? row[snake];
 }
 
+export function mapCollaborationIssueDto(
+  input: WorkspaceDto,
+): CollaborationIssue {
+  const { direct_human_assignment_receipt, ...issue } =
+    input as CollaborationIssue & {
+      direct_human_assignment_receipt?: DirectHumanAssignmentReceipt | null;
+    };
+  return {
+    ...issue,
+    id: String(issue.id),
+    ...(issue.cloud_project_id == null
+      ? {}
+      : { cloud_project_id: String(issue.cloud_project_id) }),
+    ...(direct_human_assignment_receipt === undefined
+      ? {}
+      : { directHumanAssignmentReceipt: direct_human_assignment_receipt }),
+  };
+}
+
 export function mapWorkspaceTaskBindingDto(
   input: WorkspaceDto,
   contextProjectId?: string,
@@ -83,6 +103,9 @@ export function mapWorkspaceTaskBindingDto(
       row.dispatch_round_id ?? row.dispatchRoundId,
     ),
     assignmentId: nullableString(row.assignment_id ?? row.assignmentId),
+    ...(row.execution_id == null && row.executionId == null
+      ? {}
+      : { executionId: nullableString(row.execution_id ?? row.executionId) }),
     modelSelection:
       (row.modelSelection as ModelSelectionConfig | null | undefined) ??
       (row.model_selection as ModelSelectionConfig | null | undefined) ??
@@ -490,7 +513,9 @@ function dispatchReceipt(input: unknown): DirectHumanAssignmentReceipt | null {
     "waiting_user",
     "completed",
     "failed",
+    "cancelling",
     "cancelled",
+    "superseded",
   ];
   const state = states.find((state) => state === row.state);
   if (
@@ -506,11 +531,16 @@ function dispatchReceipt(input: unknown): DirectHumanAssignmentReceipt | null {
     projectId: row.projectId,
     issueId: row.issueId,
     humanAssignmentId: row.humanAssignmentId,
+    dispatchId: nullableString(row.dispatchId),
     ownerUserId: row.ownerUserId,
     state,
     reasonCode: nullableString(row.reasonCode),
     runtimeTaskId: nullableString(row.runtimeTaskId),
     deliveryId: nullableString(row.deliveryId),
+    executionId: nullableString(row.executionId),
+    assignmentId: row.assignmentId == null ? undefined : String(row.assignmentId),
+    assignmentVersion: nullableNumber(row.assignmentVersion) ?? undefined,
+    createdAt: row.createdAt == null ? undefined : String(row.createdAt),
     publicMessageId: nullableString(row.publicMessageId),
     updatedAt: row.updatedAt,
   };

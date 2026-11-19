@@ -20,10 +20,32 @@ pub(crate) async fn enqueue_mention_on(
     issue: &str,
     comment: &str,
 ) -> MysqlResult<()> {
-    use crate::background_jobs::project::store;
-
     // Keep sorted keys and Python's default JSON spacing for cross-writer dedupe.
     let payload = json!({"commentId":comment,"itemId":issue,"projectId":project});
+    enqueue_on(tx, user, payload).await
+}
+
+/// A wakeup contains identifiers only; current request authority is checked by Runtime.
+pub(crate) async fn enqueue_assistant_request_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    project: &str,
+    issue: &str,
+    request: &str,
+    action: &str,
+) -> MysqlResult<()> {
+    enqueue_on(
+        tx,
+        user,
+        json!({"projectId":project,"itemId":issue,
+        "assistantRequestId":request,"actionId":crate::hex_sha256(action.as_bytes())}),
+    )
+    .await
+}
+
+async fn enqueue_on(tx: &mut impl MysqlTransaction, user: i64, payload: Value) -> MysqlResult<()> {
+    use crate::background_jobs::project::store;
+
     let id = crate::hex_sha256(
         format!(
             "stand-in:{user}:{}",

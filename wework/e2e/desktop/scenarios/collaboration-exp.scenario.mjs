@@ -817,6 +817,7 @@ export function createDesktopScenario({
         })
         await control.command('waitFor', `${ACTIVE} [data-testid="collaboration-issue-detail"]`, {
           text: PUBLIC,
+          timeoutMs: modelResponseTimeoutMs,
         })
         assert.equal((await comments()).filter(row => row.content === PUBLIC).length, 1)
         assert.equal((await rpc('todos.bindings', { task_id: localIssue.id })).length, 1)

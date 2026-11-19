@@ -661,8 +661,25 @@ mod stand_in_request_snapshot_tests {
 fn redact_execution_profile_secrets(value: &mut Value) {
     match value {
         Value::Object(object) => {
-            object.retain(|key, _| {
+            object.retain(|key, value| {
                 let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+                if matches!(
+                    normalized.as_str(),
+                    "maxtokens" | "maxoutputtokens" | "weworkcloudmodelmaxoutputtokens"
+                ) && value
+                    .as_u64()
+                    .or_else(|| value.as_str()?.parse().ok())
+                    .is_some_and(|value| value > 0)
+                {
+                    return true;
+                }
+                // Header and environment maps may carry credentials under arbitrary names.
+                if matches!(
+                    normalized.as_str(),
+                    "headers" | "env" | "environmentvariables"
+                ) {
+                    return false;
+                }
                 ![
                     "apikey",
                     "authorization",

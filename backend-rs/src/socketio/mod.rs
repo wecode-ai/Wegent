@@ -38,6 +38,7 @@ mod device_pull_payload;
 pub mod device_reconcile;
 #[cfg(test)]
 pub(crate) mod issue_timestamp_tests;
+pub(crate) mod personal_assistant_dispatch;
 #[cfg(test)]
 pub(crate) use device_reconcile::verify_reconnect_projection;
 #[cfg(test)]
@@ -54,6 +55,7 @@ mod engineio_wire_tests;
 pub mod execution_aggregate;
 pub mod execution_intent;
 pub mod handlers;
+mod human_assistant_execution;
 mod mcp_app_ownership;
 mod project_chat_comment;
 pub mod project_chat_events;

@@ -533,6 +533,8 @@ async fn native_timeline_keeps_inflight_items_separate_from_historical_page_orde
     handler.active_codex_transcript_items.lock().unwrap().insert("task-1".into(), ActiveCodexTranscriptItems {
         private_discussion: false,
         user_input_requests: HashMap::new(),
+        frozen_interaction_request: None,
+        published_waiting_for_user_input: false,
         thread_id: "thread-1".into(), turn_id: "current".into(), items: vec![
             json!({"id":"old-cached","type":"agentMessage","text":"Old cache","lifecycleCompleted":true}),
             json!({"id":"current-text","type":"agentMessage","text":"Stale cache","lifecycleCompleted":true}),

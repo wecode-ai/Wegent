@@ -127,6 +127,9 @@ mod message_presentation_tests;
 #[path = "project_preparation_tests.rs"]
 mod project_preparation_tests;
 
+#[path = "worktree_base_tests.rs"]
+mod worktree_base_tests;
+
 #[test]
 fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
     assert!(!should_resume_persisted_turns_before_rpc(
@@ -5601,9 +5604,12 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {
+    static NEXT_ROOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::env::temp_dir().join(format!(
-        "wegent-runtime-work-{label}-{}-{}.json",
+        "wegent-runtime-work-{label}-{}-{}-{}-{}.json",
         std::process::id(),
+        now_ms(),
+        NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         uuid::Uuid::new_v4()
     ))
 }

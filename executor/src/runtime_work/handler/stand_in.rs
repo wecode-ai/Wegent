@@ -439,9 +439,19 @@ impl RuntimeWorkRpcHandler {
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut ticks = 0u64;
             loop {
                 interval.tick().await;
                 // Cloud outages must not delay local assignment polling or receipts.
+                if ticks % 6 == 0 {
+                    if let Err(error) = handler.recover_cloud_assistant_dispatches().await {
+                        log_executor_event(
+                            "assistant dispatch recovery failed",
+                            &[("code", error.code)],
+                        );
+                    }
+                }
+                ticks = ticks.wrapping_add(1);
                 if let Err(error) = handler.collect_stand_in_issue_events().await {
                     log_executor_event(
                         "Stand-in Issue event collection failed",
@@ -571,6 +581,36 @@ impl RuntimeWorkRpcHandler {
         configs: &[Value],
         issue: &Value,
     ) -> Result<(), AppIpcError> {
+        let dispatch = &issue["direct_human_assignment_receipt"];
+        let automatic = configs.first().is_some_and(|config| {
+            config["manual"] != true && !config["triggerCommentId"].is_string()
+        });
+        let configs = if automatic && dispatch.is_object() {
+            if !matches!(
+                dispatch["state"].as_str(),
+                Some("queued" | "waiting_device")
+            ) {
+                return Ok(());
+            }
+            configs
+                .iter()
+                .filter(|config| {
+                    super::human_assistant_dispatch::dispatch(
+                        config,
+                        issue,
+                        &issue["human_task_binding"],
+                    )
+                    .is_some()
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            configs.to_vec()
+        };
+        if configs.is_empty() {
+            return Ok(());
+        }
+        let configs = configs.as_slice();
         let intents = self.queue_stand_in_dispatches(configs, issue)?;
         let result = if configs
             .first()
@@ -673,7 +713,10 @@ impl RuntimeWorkRpcHandler {
         };
         let eligible_configs: Vec<Value> = matching
             .into_iter()
-            .filter(|config| assignment_after_enable(assignment, config))
+            .filter(|config| {
+                issue["direct_human_assignment_receipt"].is_object()
+                    || assignment_after_enable(assignment, config)
+            })
             .cloned()
             .collect();
         let eligible =

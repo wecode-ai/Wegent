@@ -168,6 +168,7 @@ export interface WorkspaceTaskBinding {
   dispatchId?: string | null;
   dispatchRoundId?: string | null;
   assignmentId?: string | null;
+  executionId?: string | null;
   linkedAt: string;
 }
 
@@ -1150,6 +1151,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  assistantRequests?: import("../assistant-requests/types").AssistantRequestsApi;
   metrics?: import("../metrics/types").CollaborationMetricsApi;
   milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {

@@ -18,6 +18,7 @@ mod projection;
 mod state;
 #[path = "robot_wake.rs"]
 mod wake;
+pub(crate) use wake::cancels as request_runtime_cancellations;
 
 #[cfg(test)]
 pub(crate) use activity::tests::verify_issue_activity_projection;

@@ -225,6 +225,36 @@ impl RuntimeWorkRpcHandler {
         true
     }
 
+    pub(super) fn request_human_assistant_execution_stop(
+        &self,
+        task_id: &str,
+        expected_execution: &str,
+    ) -> bool {
+        let mut active = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned");
+        let Some(control) = active.get_mut(task_id) else {
+            return false;
+        };
+        let Some(origin) = control
+            .request
+            .as_ref()
+            .and_then(|request| request.extra.get("origin"))
+        else {
+            return false;
+        };
+        if !origin["humanAssistantDispatchId"].is_string()
+            || origin["executionId"].as_str() != Some(expected_execution)
+            || expected_execution.is_empty()
+        {
+            return false;
+        }
+        // Match and signal under one lock; a later turn cannot inherit this cancellation.
+        request_execution_stop(control);
+        true
+    }
+
     pub(super) fn force_settle_local_task_execution(
         &self,
         local_task_id: &str,

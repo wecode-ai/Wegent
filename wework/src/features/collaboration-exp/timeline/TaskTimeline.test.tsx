@@ -115,6 +115,42 @@ it('never presents another reader request as the current decision or exposes the
   ).toHaveAttribute('dateTime', '2026-11-02T00:00:00Z')
 })
 
+it('retains AI generation and publication attribution for request receipts on the shared timeline', () => {
+  const props = fixture()
+  const receipt = experienceMessageFixture({
+    messageId: 'request-receipt',
+    content: 'Request accepted',
+    metadata: {
+      activity_type: 'assistant_request_receipt',
+      request_id: 'a'.repeat(32),
+      provenance: {
+        origin: 'ai_generated',
+        owner_user_id: 7,
+        publisher_user_id: 7,
+        confirmation_status: 'unconfirmed',
+        private_context: 'SECRET',
+      },
+    },
+  })
+  props.stream.timeline = selectTaskTimeline({ ...props.data, viewer: 7, messages: [receipt] })
+  const view = render(
+    <TaskTimeline
+      {...props}
+      active={false}
+      revision={0}
+      onDiscuss={vi.fn()}
+      onAttachment={vi.fn()}
+      onExecution={vi.fn()}
+      onRetry={vi.fn()}
+    />
+  )
+  const provenance = view.getByTestId('human-assistant-provenance-request-receipt')
+  expect(provenance).toHaveTextContent('AI 生成')
+  expect(provenance).toHaveTextContent('Member')
+  expect(provenance).toHaveTextContent('待确认')
+  expect(view.container.textContent).not.toContain('SECRET')
+})
+
 it('keeps pane focus for source selection and focuses only an explicit external request', () => {
   const props = fixture()
   const callbacks = {

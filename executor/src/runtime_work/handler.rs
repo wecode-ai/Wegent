@@ -21,6 +21,8 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
 use tokio::time::sleep;
 
+use codex_model_provider::{current_codex_model_provider_from_config, CodexModelProviderInfo};
+
 use crate::{
     agents::{
         codex_notification_requires_user_input, codex_runtime_approval_policy,
@@ -125,6 +127,8 @@ mod active_transcript;
 mod archives;
 mod assignment_receipts;
 mod assignment_runtime_states;
+mod assistant_request_inputs;
+mod async_assistant_requests;
 mod async_questions;
 mod automatic_turns;
 mod automation_rpc;
@@ -133,6 +137,7 @@ mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
 mod codex_config;
+mod codex_model_provider;
 mod collection;
 mod command_items;
 mod command_journal;
@@ -153,6 +158,7 @@ mod git_webhook_setup;
 mod goal_model_route;
 mod goal_status;
 mod hooks;
+mod human_assistant_dispatch;
 pub(super) mod lifecycle;
 mod mcp_app_source;
 mod mcp_approval_context;
@@ -426,67 +432,6 @@ fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(env::temp_dir)
 }
 
-#[derive(Clone)]
-struct CodexModelProviderInfo {
-    id: String,
-    display_name: String,
-    kind: &'static str,
-    current: bool,
-}
-
-fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
-    let configured_provider = crate::agents::configured_inference_model_provider();
-    current_codex_model_provider(config_response, &configured_provider)
-}
-
-fn current_codex_model_provider(
-    config_response: &Value,
-    configured_provider: &str,
-) -> CodexModelProviderInfo {
-    let config = config_response
-        .get("config")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let runtime_provider = string_from_map(&config, "modelProvider")
-        .or_else(|| string_from_map(&config, "model_provider"))
-        .filter(|provider| {
-            provider != crate::server::codex_model_catalog::PROVIDER_ID
-                && provider != crate::server::codex_model_catalog::LEGACY_PROVIDER_ID
-                && provider != "wework-catalog"
-        });
-    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
-        configured_provider.to_owned()
-    } else {
-        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
-    };
-    let display_name = config
-        .get("model_providers")
-        .or_else(|| config.get("modelProviders"))
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(&current_provider))
-        .and_then(Value::as_object)
-        .and_then(|provider| string_from_map(provider, "name"))
-        .unwrap_or_else(|| {
-            if current_provider == CODEX_OFFICIAL_PROVIDER_ID {
-                CODEX_OFFICIAL_PROVIDER_NAME.to_owned()
-            } else {
-                current_provider.clone()
-            }
-        });
-    let kind = if current_provider == CODEX_OFFICIAL_PROVIDER_ID {
-        "official"
-    } else {
-        "provider"
-    };
-    CodexModelProviderInfo {
-        id: current_provider,
-        display_name,
-        kind,
-        current: true,
-    }
-}
-
 fn codex_models_with_provider(response: &Value, provider: &CodexModelProviderInfo) -> Vec<Value> {
     response
         .get("data")
@@ -581,6 +526,7 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    assistant_request_inputs: Arc<Mutex<HashMap<String, Value>>>,
     creation_model_profiles: Arc<Mutex<Vec<Value>>>,
     submitted_model_bindings:
         Arc<Mutex<HashMap<String, submitted_model::SubmittedInterfaceBinding>>>,
@@ -668,6 +614,8 @@ struct ActiveCodexTranscriptItems {
     items: Vec<Value>,
     // Keep settled request IDs until the turn ends so replay cannot reopen them.
     user_input_requests: HashMap<String, bool>,
+    frozen_interaction_request: Option<ExecutionRequest>,
+    published_waiting_for_user_input: bool,
 }
 
 #[derive(Clone)]
@@ -979,6 +927,7 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            assistant_request_inputs: Arc::new(Mutex::new(HashMap::new())),
             creation_model_profiles: Arc::new(Mutex::new(Vec::new())),
             submitted_model_bindings: Arc::new(Mutex::new(HashMap::new())),
             local_runner_models: Arc::new(Mutex::new(Vec::new())),
@@ -1249,6 +1198,9 @@ impl RuntimeWorkRpcHandler {
 
     fn forget_runtime_model_config(&self, local_task_id: &str) {
         self.forget_submitted_interfaces(local_task_id);
+        if let Ok(mut inputs) = self.assistant_request_inputs.lock() {
+            inputs.retain(|_, input| runtime_task_id(input).as_deref() != Some(local_task_id));
+        }
         self.runtime_model_configs
             .lock()
             .expect("runtime model config map lock should not be poisoned")

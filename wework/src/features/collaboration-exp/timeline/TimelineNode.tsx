@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import {
   ArrowRight,
   Check,
@@ -8,7 +9,11 @@ import {
   Lock,
   Play,
 } from 'lucide-react'
-import { IssueActivityMarkdown } from '@wegent/collaboration'
+import {
+  createCollaborationTranslator,
+  HumanAssistantResultProvenance,
+  IssueActivityMarkdown,
+} from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -26,6 +31,7 @@ export interface TimelineNodeProps {
   onDiscuss(node: ExperienceTimelineNode, conversation: ExperiencePrivateConversation): void
   onAttachment(attachment: ExperienceAttachmentReference): void
   onExecution(address: RuntimeTaskAddress): void
+  onRequest?(requestId: string): void
 }
 
 export function TimelineNode({
@@ -35,8 +41,13 @@ export function TimelineNode({
   onDiscuss,
   onAttachment,
   onExecution,
+  onRequest,
 }: TimelineNodeProps) {
   const { t, i18n } = useTranslation('collaborationExp')
+  const sharedTranslate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('en') ? 'en' : 'zh-CN'),
+    [i18n.language]
+  )
   const time = node.at
     ? new Intl.DateTimeFormat(i18n.language, {
         month: '2-digit',
@@ -90,6 +101,25 @@ export function TimelineNode({
         </span>
         <time dateTime={node.at ?? undefined}>{time}</time>
       </header>
+      {node.assistantProvenance ? (
+        <HumanAssistantResultProvenance
+          message={{
+            messageId: node.id,
+            sender: { type: 'user', id: node.author?.id ?? '', name: node.author?.name ?? '' },
+            metadata: {
+              activity_type: node.assistantProvenance.activityType,
+              provenance: {
+                origin: 'ai_generated',
+                publisher_user_id: node.assistantProvenance.publisherUserId,
+                confirmation_status: node.assistantProvenance.confirmed
+                  ? 'confirmed'
+                  : 'unconfirmed',
+              },
+            },
+          }}
+          translate={sharedTranslate}
+        />
+      ) : null}
       {node.kind === 'status' && node.transition ? (
         <p className="experience-timeline-summary">
           {t('timeline.statusChanged', node.transition)}
@@ -147,6 +177,17 @@ export function TimelineNode({
             </>
           )}
         </div>
+      ) : null}
+      {node.assistantRequestId && onRequest ? (
+        <Button
+          variant="ghost"
+          data-testid={`assistant-request-receipt-open-${node.assistantRequestId}`}
+          className="max-md:min-h-11 max-md:min-w-11"
+          onClick={() => onRequest(node.assistantRequestId!)}
+        >
+          <Play size={16} aria-hidden="true" />
+          {t('requests.open')}
+        </Button>
       ) : null}
       {node.attachments.length ? (
         <div className="experience-timeline-attachments">

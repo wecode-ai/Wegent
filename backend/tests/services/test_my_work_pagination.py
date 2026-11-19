@@ -451,16 +451,21 @@ def test_my_work_query_count_does_not_grow_with_projects(test_db, test_user):
 
 
 @pytest.mark.parametrize("attention", [False, True])
+@pytest.mark.parametrize("assistant_dispatch", [False, True])
 def test_my_work_batches_personal_bindings_and_assignment_comments(
-    test_db, test_user, attention
+    test_db, test_user, attention, assistant_dispatch, monkeypatch
 ):
     from uuid import uuid4
 
     from sqlalchemy import event
 
+    from app.core.config import settings
     from app.models.delivery import LoopItemTaskBinding
     from app.services.issue_assignments import issue_assignment_service
 
+    monkeypatch.setattr(
+        settings, "HUMAN_ASSIGNMENT_RECEIPTS_ENABLED", assistant_dispatch
+    )
     project = _make_project(test_db, test_user)
     items = add_items(test_db, project, test_user.id, 5, prefix="BATCH")
     other = User(user_name="batch-other", password_hash="unused", is_active=True)
@@ -519,6 +524,11 @@ def test_my_work_batches_personal_bindings_and_assignment_comments(
             )
             assert len(row["task_bindings"]) == 1
             assert row["task_bindings"][0].task_user_id == user_id
+            if assistant_dispatch:
+                assert (
+                    row["direct_human_assignment_receipt"]["reasonCode"]
+                    == "no_authorized_assistant"
+                )
     assert counts[0] == counts[1], counts
 
 

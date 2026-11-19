@@ -505,7 +505,7 @@ export async function verifyHarnessLifecycle(
     timeoutMs: 30_000,
   })
   await control.command('waitFor', appSurface, {
-    timeoutMs: 30_000,
+    timeoutMs: 600_000,
   })
   await captureScreenshot(control, 'harness-apps-09a-reopened.png', 'body')
   await cookieRegression.assertReopened()

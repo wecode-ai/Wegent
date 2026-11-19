@@ -1,0 +1,14 @@
+{
+  "order": 48001,
+  "scenario": "./scenarios/multi-request-assistant-worktrees.scenario.mjs",
+  "scenarioOnly": true,
+  "ciHost": "project-assignment-notification",
+  "paths": [
+    "wework/e2e/desktop/modules/async-request-model.mjs",
+    "wework/src/features/collaboration-exp/requests/*",
+    "backend-rs/src/async_assistant_requests/*",
+    "executor/src/runtime_work/handler/async_assistant_requests.rs",
+    "executor/src/runtime_work/worktrees/requests.rs",
+    "executor/src/runtime_work/worktrees/requests/*"
+  ]
+}

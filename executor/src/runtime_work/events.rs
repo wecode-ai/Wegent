@@ -79,6 +79,25 @@ pub(super) fn apply_runtime_event_conversation_context(
 ) {
     if let Some(payload) = payload.as_object_mut() {
         payload.remove("conversationContext");
+        payload.remove("executionId");
+        payload.remove("assistantRequestCommandId");
+    }
+    if let Some(origin) = request.extra.get("origin") {
+        if origin["humanAssistantDispatchId"].is_string()
+            || origin["assistantRequestId"].is_string()
+        {
+            if let Some(execution) = origin["executionId"].as_str().filter(|id| !id.is_empty()) {
+                payload["executionId"] = json!(execution);
+            }
+        }
+        if origin["assistantRequestId"].is_string() {
+            if let Some(command) = origin["assistantRequestCommandId"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+            {
+                payload["assistantRequestCommandId"] = json!(command);
+            }
+        }
     }
     if super::util::is_private_discussion(request) {
         payload["conversationContext"] = json!("private_discussion");
@@ -2749,6 +2768,66 @@ mod tests {
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn human_assistant_events_keep_the_execution_from_each_frozen_turn_request() {
+        let (event_tx, mut events) = broadcast::channel(16);
+        let mut first = ExecutionRequest::default();
+        first.extra.insert(
+            "origin".into(),
+            json!({"humanAssistantDispatchId":"old","executionId":"41"}),
+        );
+        let mut second = first.clone();
+        second.extra.insert(
+            "origin".into(),
+            json!({"humanAssistantDispatchId":"new","executionId":"42"}),
+        );
+        let mut child = first.clone();
+        child.extra.insert(
+            "origin".into(),
+            json!({"assistantRequestId":"child","executionId":"43","assistantRequestCommandId":"followup-43"}),
+        );
+        for request in [&second, &first, &child] {
+            for event in [
+                "response.created",
+                "response.output_text.delta",
+                "response.completed",
+            ] {
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "same-task",
+                    request,
+                    json!({}),
+                );
+                let payload = events.try_recv().unwrap()["payload"].clone();
+                assert_eq!(
+                    payload["executionId"],
+                    request.extra["origin"]["executionId"]
+                );
+                assert_eq!(
+                    payload["assistantRequestCommandId"],
+                    request.extra["origin"]["assistantRequestCommandId"]
+                );
+            }
+        }
+        let mut unrelated = ExecutionRequest::default();
+        unrelated
+            .extra
+            .insert("origin".into(), json!({"executionId":"42"}));
+        emit_response_event(
+            &Some(event_tx),
+            "device",
+            "response.completed",
+            "same-task",
+            &unrelated,
+            json!({}),
+        );
+        assert!(events.try_recv().unwrap()["payload"]
+            .get("executionId")
+            .is_none());
+    }
 
     #[test]
     fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {

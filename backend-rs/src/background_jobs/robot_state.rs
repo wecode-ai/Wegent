@@ -1,7 +1,7 @@
 //! Conditional lifecycle writes preserve process liveness and the winning outcome.
 
 use anyhow::Result;
-use brz_mysql::{FromMysqlRow, MysqlTransaction};
+use brz_mysql::{FromMysqlRow, Mysql, MysqlTransaction};
 use chrono::Utc;
 use serde_json::json;
 
@@ -11,6 +11,7 @@ use super::{
     projection,
 };
 use crate::AppState;
+use crate::sql_support::StatementArg;
 
 pub(crate) async fn cancel(
     state: &AppState,
@@ -102,10 +103,10 @@ pub(super) async fn stalled(state: &AppState) -> Result<Vec<Execution>> {
     let rows:Vec<Execution>=state.mysql.fetch_all(format!("SELECT {COLUMNS} FROM loop_item_executions WHERE status='running' AND started_at>'1970-01-01 00:00:01' AND started_at<?"),(threshold,)).await?;
     let mut stalled = Vec::new();
     for row in rows {
-        let Some(produced) = has_text(state, &row).await? else {
+        let Some(query) = public_progress_query(&row) else {
             continue;
         };
-        if produced {
+        if has_text(&state.mysql, query).await? {
             continue;
         }
         if let Some(cancelled) = cancel(
@@ -121,11 +122,10 @@ pub(super) async fn stalled(state: &AppState) -> Result<Vec<Execution>> {
     Ok(stalled)
 }
 
-async fn has_text(state: &AppState, row: &Execution) -> Result<Option<bool>> {
-    use crate::sql_support::StatementArg;
-    #[derive(FromMysqlRow)]
-    struct Found {
-        id: i64,
+fn public_progress_query(row: &Execution) -> Option<(String, Vec<StatementArg>)> {
+    // Personal workrooms report liveness through Runtime, without shared agent text.
+    if row.selection()["executor_kind"] == "human_assistant" {
+        return None;
     }
     let (identity, mut args) =
         if !row.runtime_device_id.is_empty() && !row.runtime_task_id.is_empty() {
@@ -145,7 +145,7 @@ async fn has_text(state: &AppState, row: &Execution) -> Result<Option<bool>> {
                 ],
             )
         } else {
-            return Ok(None);
+            return None;
         };
     let trigger = row.context()["comment_trigger_message_id"]
         .as_str()
@@ -157,8 +157,21 @@ async fn has_text(state: &AppState, row: &Execution) -> Result<Option<bool>> {
         args.push(StatementArg::Str(trigger));
         " AND trigger_message_id=?"
     };
-    let found:Option<Found>=state.mysql.fetch_optional(format!("SELECT id FROM project_chat_messages WHERE {identity}{extra} AND sender_type='agent' AND (deleted_at IS NULL OR deleted_at<='1970-01-02') AND LENGTH(TRIM(content))>0 LIMIT 1"),args).await?;
-    Ok(Some(found.is_some_and(|row| row.id != 0)))
+    Some((
+        format!(
+            "SELECT id FROM project_chat_messages WHERE {identity}{extra} AND sender_type='agent' AND (deleted_at IS NULL OR deleted_at<='1970-01-02') AND LENGTH(TRIM(content))>0 LIMIT 1"
+        ),
+        args,
+    ))
+}
+
+async fn has_text(database: &impl Mysql, (sql, args): (String, Vec<StatementArg>)) -> Result<bool> {
+    #[derive(FromMysqlRow)]
+    struct Found {
+        id: i64,
+    }
+    let found: Option<Found> = database.fetch_optional(sql, args).await?;
+    Ok(found.is_some_and(|row| row.id != 0))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -208,4 +221,123 @@ pub(super) async fn prepared_on(
         effects.notices.push(notice);
     }
     Ok(effects)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as Col};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[test]
+    fn private_human_assistant_has_no_shared_output_probe() {
+        let mut row = execution();
+        row.agent_id.clear();
+        row.team_id = 0;
+        for selection in [
+            json!({"executor_kind":"human_assistant"}),
+            json!({
+                "schema_version":2,
+                "runtime_selection":{"executor_kind":"human_assistant"},
+                "origin_context":{"publish_policy":"summary_and_evidence_only"}
+            }),
+        ] {
+            row.execution_payload = selection.to_string();
+            assert!(
+                public_progress_query(&row).is_none(),
+                "A private workroom has no shared agent text while its Runtime is running"
+            );
+        }
+        assert_eq!(row.status, "running");
+        assert!(!row.can_cancel_without_runtime());
+    }
+
+    #[tokio::test]
+    async fn generic_agent_and_team_keep_the_existing_public_output_test() {
+        let produced = Arc::new(AtomicBool::new(false));
+        let current = produced.clone();
+        let database = MysqlRows::start_results(move |sql| {
+            assert!(
+                sql.contains(
+                    "FROM project_chat_messages WHERE runtime_device_id=? AND runtime_task_id=?"
+                ),
+                "{sql}"
+            );
+            assert!(sql.contains("sender_type='agent'"), "{sql}");
+            assert!(sql.contains("LENGTH(TRIM(content))>0"), "{sql}");
+            let row = vec![("id", Col::I64(42))];
+            let rows = if current.load(Ordering::SeqCst) {
+                vec![row.clone()]
+            } else {
+                vec![]
+            };
+            (row, rows)
+        })
+        .await;
+        let mut row = execution();
+        for team in [0, 13] {
+            row.team_id = team;
+            for expected in [false, true] {
+                produced.store(expected, Ordering::SeqCst);
+                let query = public_progress_query(&row).unwrap();
+                assert_eq!(has_text(&database.mysql, query).await.unwrap(), expected);
+            }
+        }
+        assert_eq!(database.queries().len(), 4);
+    }
+
+    #[test]
+    fn manager_and_comment_scopes_keep_their_existing_query_identity() {
+        let mut row = execution();
+        row.execution_payload = json!({
+            "runtime_selection":{"executor_kind":"collaboration_group_dispatch"},
+            "origin_context":{"comment_trigger_message_id":"trigger-1"}
+        })
+        .to_string();
+        let (sql, args) = public_progress_query(&row).unwrap();
+        assert!(sql.contains("AND trigger_message_id=?"));
+        assert!(
+            matches!(args.as_slice(), [StatementArg::Str(device), StatementArg::Str(task), StatementArg::Str(trigger)]
+            if device == "device-7" && task == "private-task-manager-initial" && trigger == "trigger-1")
+        );
+        row.runtime_device_id.clear();
+        row.runtime_task_id.clear();
+        let (sql, args) = public_progress_query(&row).unwrap();
+        assert!(sql.contains("WHERE task_id=? AND agent_id=?"));
+        assert!(
+            matches!(args.as_slice(), [StatementArg::Str(issue), StatementArg::Str(agent), StatementArg::Str(trigger)]
+            if issue == "issue-1" && agent == "agent-1" && trigger == "trigger-1")
+        );
+        row.agent_id.clear();
+        assert!(public_progress_query(&row).is_none());
+    }
+
+    fn execution() -> Execution {
+        Execution {
+            id: 1,
+            loop_item_id: "issue-1".into(),
+            cloud_project_id: "project-1".into(),
+            executor_owner_user_id: 7,
+            assigner_user_id: 8,
+            agent_id: "agent-1".into(),
+            team_id: 0,
+            automation_run_id: String::new(),
+            execution_environment: "local".into(),
+            execution_device_id: "device-7".into(),
+            runtime_device_id: "device-7".into(),
+            runtime_task_id: "private-task".into(),
+            status: "running".into(),
+            approval_status: String::new(),
+            execution_payload: json!({"runtime_selection":{"executor_kind":"generic_robot"}})
+                .to_string(),
+            error_message: String::new(),
+            execution_note: String::new(),
+            version: 1,
+            start_requested_at: Some(Utc::now().naive_utc()),
+            completed_at: None,
+        }
+    }
 }

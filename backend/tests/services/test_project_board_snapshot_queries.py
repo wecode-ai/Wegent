@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -156,12 +157,42 @@ def _snapshot(db: Session, project_id: str, user_id: int):
     return snapshot, statements
 
 
+@pytest.mark.parametrize("assistant_dispatch", [False, True])
 def test_board_query_count_does_not_grow_with_issues_or_members(
-    test_db: Session, test_user: User, record_property
+    test_db: Session,
+    test_user: User,
+    record_property,
+    assistant_dispatch: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        settings, "HUMAN_ASSIGNMENT_RECEIPTS_ENABLED", assistant_dispatch
+    )
     owner_id = test_user.id
     small_id, _ = _project(test_db, owner_id, 2)
     large_id, large_items = _project(test_db, owner_id, 30)
+
+    if assistant_dispatch:
+        for comment in test_db.query(LoopItemComment).filter(
+            LoopItemComment.cloud_project_id.in_([small_id, large_id])
+        ):
+            comment.metadata_json = {
+                **comment.metadata_json,
+                "human_assistant_dispatch": {
+                    "dispatchId": f"dispatch-{comment.id}",
+                    "projectId": str(comment.cloud_project_id),
+                    "issueId": comment.loop_item_id,
+                    "assignmentId": comment.id,
+                    "assignmentVersion": 1,
+                    "ownerUserId": int(comment.metadata_json["target_id"]),
+                    "executionId": None,
+                    "dispatchState": "no_authorized_assistant",
+                    "reasonCode": "no_authorized_assistant",
+                    "createdAt": "2026-11-01T00:00:00Z",
+                    "updatedAt": "2026-11-01T00:00:00Z",
+                },
+            }
+        test_db.commit()
 
     small, small_queries = _snapshot(test_db, small_id, owner_id)
     large, large_queries = _snapshot(test_db, large_id, owner_id)
@@ -182,6 +213,13 @@ def test_board_query_count_does_not_grow_with_issues_or_members(
         assert item.ai_state["status"] == "failed"
         assert item.ai_state["runtime_device_id"] == "device"
         assert item.assignee_name
+        if assistant_dispatch:
+            assert item.direct_human_assignment_receipt["assignmentId"] == (
+                f"assignment-{item.id}"
+            )
+            assert item.direct_human_assignment_receipt["reasonCode"] == (
+                "no_authorized_assistant"
+            )
         if item.assignee_user_id == owner_id:
             assert item.human_task_binding["assignmentId"] == f"assignment-{item.id}"
         else:

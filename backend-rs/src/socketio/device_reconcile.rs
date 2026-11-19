@@ -425,6 +425,16 @@ pub(super) async fn apply_snapshot<T: MysqlTransaction>(
     if !is_capacity_status(row.status.as_deref()) {
         return Ok(None);
     }
+    // An Issue conversation can be reused by another assignment. Its mutable
+    // task snapshot cannot prove which assignment produced a terminal result.
+    // Frozen execution IDs on Runtime events remain authoritative; an absent
+    // task can still confirm a requested cancellation.
+    if super::human_assistant_execution::is_personal(row)
+        && !(runtime_status.trim().eq_ignore_ascii_case("missing")
+            && row.status_or_empty() == "cancel_requested")
+    {
+        return Ok(None);
+    }
     let now = Utc::now().naive_utc();
     let normalized = runtime_status.to_lowercase().trim().to_owned();
     let normalized_turn = turn_status.unwrap_or("").to_lowercase().trim().to_owned();
@@ -907,7 +917,8 @@ async fn project_terminal(
         (status == "completed").then_some(now),
     )
     .await?;
-    let changed = runtime_projection::lifecycle::item_version(tx, Some(row)).await? != before;
+    let changed = runtime_projection::lifecycle::item_version(tx, Some(row)).await? != before
+        || super::human_assistant_execution::is_personal(row);
     Ok(Effects {
         matched: runtime_projection::reload_execution(tx, row.id).await?,
         changed,

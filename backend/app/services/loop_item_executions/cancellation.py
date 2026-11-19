@@ -21,6 +21,9 @@ def execution_cancellation_target(
         device_id=device_id,
         task_id=execution.runtime_task_id,
         runtime_device_id=execution.runtime_device_id or "",
+        execution_id=(
+            str(execution.id) if execution.executor_type == "human_assistant" else None
+        ),
     )
 
 

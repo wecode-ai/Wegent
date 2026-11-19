@@ -234,12 +234,15 @@ fn execution_runtime_selection(row: &ExecutionRow) -> Value {
 pub(super) fn execution_executor_type(row: &ExecutionRow) -> &'static str {
     let selection = execution_runtime_selection(row);
     if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
-        && matches!(configured, "generic_robot" | "collaboration_group_dispatch")
+        && matches!(
+            configured,
+            "generic_robot" | "collaboration_group_dispatch" | "human_assistant"
+        )
     {
-        return if configured == "collaboration_group_dispatch" {
-            "collaboration_group_dispatch"
-        } else {
-            "generic_robot"
+        return match configured {
+            "collaboration_group_dispatch" => "collaboration_group_dispatch",
+            "human_assistant" => "human_assistant",
+            _ => "generic_robot",
         };
     }
     let has_agent = row
@@ -397,7 +400,37 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
     if non_binding_runtime_event(identity.event_name) {
         return Ok(None);
     }
-    let terminal = terminal_status(identity.event_name, identity.payload);
+    if !super::human_assistant_execution::event_matches(&row, identity.payload) {
+        return Ok(None);
+    }
+    if super::human_assistant_execution::is_personal(&row)
+        && super::human_assistant_execution::current(transaction, &row)
+            .await?
+            .is_none()
+        && row.status_or_empty() != "cancel_requested"
+    {
+        return Ok(None);
+    }
+    // The Issue lock may have waited behind an accepted followup transaction.
+    let row = if activity::execution_origin_context(&row)
+        .get("assistant_request_id")
+        .is_some()
+    {
+        let Some(current) = reload_execution(transaction, row.id).await? else {
+            return Ok(None);
+        };
+        current
+    } else {
+        row
+    };
+    let terminal = terminal_status(identity.event_name, identity.payload).filter(|_| {
+        !super::human_assistant_execution::is_personal(&row)
+            || (!super::human_assistant_execution::waiting_exit(
+                identity.event_name,
+                identity.payload,
+            ) && (row.status_or_empty() == "cancel_requested"
+                || !super::human_assistant_execution::deferred_terminal(&row, identity.payload)))
+    });
     let seq = event_seq(identity.payload);
     // The socket projection calls `handle_runtime_event` with
     // `allow_unsequenced_terminal=False`, so any event without an event
@@ -481,7 +514,14 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
             } else {
                 None
             };
-            let updated = accept_observation(transaction, &row, seq.unwrap_or(0), now).await?;
+            let observed_state = super::human_assistant_execution::observation_state(
+                &row,
+                identity.event_name,
+                identity.payload,
+            );
+            let updated =
+                accept_observation(transaction, &row, seq.unwrap_or(0), now, observed_state)
+                    .await?;
             if updated != 1 {
                 return Ok(None);
             }
@@ -515,6 +555,7 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
                 version: row.version.map(|version| version + 1),
                 last_event_seq: seq,
                 started_at: Some(row.observed_start(now)),
+                observed_state: Some(observed_state.to_owned()),
                 ..row
             }));
         }
@@ -873,8 +914,12 @@ async fn project_in_transaction<T: MysqlTransaction>(
     // `_project_chat_runtime_event_sync` resolves the execution itself before
     // handing the event to `handle_runtime_event`.
     let ids = owned_identity_ids(transaction, user_id, device_id).await?;
-    let execution =
-        execution_for_runtime(transaction, &ids, &task_id, Some(user_id), false).await?;
+    let execution = execution_for_event(transaction, &ids, identity, user_id).await?;
+    let previous_status = execution.as_ref().and_then(|row| row.status.clone());
+    let personal_event = identity.payload.get("executionId").is_some()
+        || execution
+            .as_ref()
+            .is_some_and(super::human_assistant_execution::is_personal);
     let previous_version = lifecycle::item_version(transaction, execution.as_ref()).await?;
     // Source `handle_runtime_event` dismisses thread metadata, Goal and
     // lifecycle notifications before it re-resolves the device and re-reads
@@ -887,14 +932,15 @@ async fn project_in_transaction<T: MysqlTransaction>(
         // `handle_runtime_event` re-resolves the device and re-reads the same
         // execution; both reads are observable Source dependencies.
         let handle_ids = owned_identity_ids(transaction, user_id, device_id).await?;
-        execution_for_runtime(transaction, &handle_ids, &task_id, Some(user_id), false).await?
+        execution_for_event(transaction, &handle_ids, identity, user_id).await?
     };
     let mut messages = Vec::new();
     let matched = match handle_row {
         Some(row) => handle_runtime_event(transaction, row, identity, &mut messages).await?,
         None => None,
     };
-    if matched.is_none()
+    if !personal_event
+        && matched.is_none()
         && let Some(settled) = human_reply::settle(transaction, user_id, &ids, identity).await?
     {
         return Ok((
@@ -908,7 +954,9 @@ async fn project_in_transaction<T: MysqlTransaction>(
             },
         ));
     }
-    let projected =
+    let projected = if personal_event {
+        None
+    } else {
         if !non_binding && let (Some(execution), None) = (execution.as_ref(), matched.as_ref()) {
             if event_name == "response.completed" {
                 activity::restore_reconciled_completion(transaction, execution, identity).await?
@@ -935,47 +983,26 @@ async fn project_in_transaction<T: MysqlTransaction>(
                 &mut messages,
             )
             .await?
-        };
+        }
+    };
     if let Some(projected) = projected.as_ref().filter(|projected| !projected.delta) {
         messages.retain(|message| projected.message["messageId"] != message.message_id);
     }
-    let effects =
-        lifecycle_effects(transaction, matched, previous_version, identity, messages).await?;
-    Ok((projected, effects))
-}
-
-async fn lifecycle_effects(
-    tx: &mut impl MysqlTransaction,
-    matched: Option<ExecutionRow>,
-    previous_version: Option<i64>,
-    identity: &RuntimeIdentity<'_>,
-    messages: Vec<Message>,
-) -> MysqlResult<lifecycle::Effects> {
-    let changed = previous_version.is_some()
-        && lifecycle::item_version(tx, matched.as_ref())
-            .await?
-            .zip(previous_version)
-            .is_some_and(|(current, previous)| current != previous);
-    let detail = final_text(identity.payload)
-        .or_else(|| {
-            identity
-                .payload
-                .get("error")
-                .or_else(|| event_data(identity.payload)?.get("error"))
-                .map(error_text)
-        })
-        .unwrap_or_default();
-    Ok(lifecycle::Effects {
+    let effects = lifecycle::effects(
+        transaction,
         matched,
-        changed,
-        detail,
+        previous_version,
+        previous_status.as_deref(),
+        identity,
         messages,
-        settled_reply: None,
-    })
+    )
+    .await?;
+    Ok((projected, effects))
 }
 
 mod activity;
 mod execution_lookup;
+pub(super) use execution_lookup::execution_for_event;
 pub(super) use execution_lookup::execution_for_runtime;
 #[cfg(test)]
 use execution_lookup::{

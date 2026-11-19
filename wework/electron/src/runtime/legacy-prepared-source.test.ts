@@ -1,14 +1,5 @@
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rename, symlink, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -21,6 +12,10 @@ vi.mock('./release-parent-process.js', () => ({
 }))
 import { recoverReleaseLayout } from './release-layout-recovery.js'
 
+// Fixture copies must not reinterpret the synthetic app.asar directory as an archive.
+const { cp, rm }: typeof import('node:fs/promises') = createRequire(import.meta.url)(
+  process.versions.electron ? 'original-fs' : 'node:fs'
+).promises
 const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })

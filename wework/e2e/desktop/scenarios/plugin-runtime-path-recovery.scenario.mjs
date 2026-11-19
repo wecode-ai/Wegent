@@ -32,6 +32,7 @@ import {
   relocateInstalledHome,
   relocatedPath,
   replaceOwnedRuntimeWithForeignDirectory,
+  runtimeRootMetadata,
   rewriteRuntimeManifests,
 } from '../modules/plugin-runtime-path-fixture.mjs'
 import {
@@ -443,8 +444,23 @@ export async function createDesktopScenario({
       await readFile(join(relocatedPath(personal, homePath, nextHome), 'README.md')),
       personalBytes
     )
-    await assert.rejects(lstat(homePath), { code: 'ENOENT' })
-    await assert.rejects(lstat(executorHome), { code: 'ENOENT' })
+    try {
+      await assert.rejects(lstat(homePath), { code: 'ENOENT' })
+      await assert.rejects(lstat(executorHome), { code: 'ENOENT' })
+    } catch (error) {
+      try {
+        evidence.push({
+          phase: 'retired-runtime-root-present',
+          observedAt: new Date().toISOString(),
+          roots: await Promise.all(
+            [homePath, executorHome].map(path => runtimeRootMetadata(resultDir, path))
+          ),
+        })
+      } catch {
+        evidence.push({ phase: 'retired-runtime-root-metadata-unavailable' })
+      }
+      throw error
+    }
     assert.equal(await entry(removed), undefined, 'Home recovery resurrected an uninstalled plugin')
     const offlineInventory = await requestExecutor(control, 'executor.plugins.store.list')
     for (const fixture of [primary, disabled, blocked, missing]) {

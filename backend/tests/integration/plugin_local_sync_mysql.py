@@ -6,14 +6,15 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.engine import make_url
+from sqlalchemy import MetaData, Text, create_engine, inspect
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
 from alembic import command
 from alembic.config import Config
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
@@ -23,6 +24,17 @@ from app.services.plugin_local_sync import _guard_intent_order
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 from app.services.plugin_write_coordination import configure_plugin_session
 from tests.integration.secure_share_tokens_mysql import create_legacy_share_links
+
+
+def prepare_upgrade_schema(engine: Engine, config: Config) -> None:
+    """Create the predecessor tables consumed by the real migration chain."""
+    metadata = MetaData()
+    for table in (User.__table__, Kind.__table__, LoopItemExecution.__table__):
+        table.to_metadata(metadata)
+    metadata.tables["loop_item_executions"].c.execution_payload.type = Text()
+    metadata.create_all(engine)
+    create_legacy_share_links(engine)
+    command.stamp(config, "f3a7c9e1b2d4")
 
 
 def verify_ordering(engine):
@@ -80,12 +92,9 @@ def verify(engine, url):
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Include the historical table consumed by later share-token migrations;
-        # a two-table fixture stamped at an old head is not a valid upgrade input.
-        User.__table__.create(engine)
-        Kind.__table__.create(engine)
-        create_legacy_share_links(engine)
-        command.stamp(config, "f3a7c9e1b2d4")
+        # Fresh initialization stamps model-created indexes, which are not the
+        # named historical indexes required by the share-token downgrade.
+        prepare_upgrade_schema(engine, config)
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names()) == tables

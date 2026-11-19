@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationPriority } from '../types'
+import type { CollaborationPriority, DirectHumanAssignmentReceipt } from '../types'
 
 export interface CollaborationIssueCardItem {
   assignee_user_id?: number | null
@@ -26,6 +26,7 @@ export interface CollaborationIssueCardItem {
   assignee_team_id?: number | null
   assignee_team_name?: string | null
   execution_state?: string | null
+  directHumanAssignmentReceipt?: DirectHumanAssignmentReceipt | null
   ai_state?: { status?: string | null; agent_name?: string | null } | null
   processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null
 }
