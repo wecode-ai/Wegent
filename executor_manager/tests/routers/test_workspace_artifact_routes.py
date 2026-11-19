@@ -30,6 +30,10 @@ class _FakeStreamResponse:
             self.consumed_chunks += 1
             yield chunk
 
+    @property
+    def is_success(self):
+        return 200 <= self.status_code < 300
+
 
 def _mock_stream_client(mocker, response=None, exc=None):
     recorded = {}
@@ -52,7 +56,10 @@ def _mock_stream_client(mocker, response=None, exc=None):
 
 
 @pytest.mark.asyncio
-async def test_workspace_artifact_declare_and_download_forward_params(mocker):
+@pytest.mark.parametrize("file_chunks", [[b"# Report\n", b"body\n"], [b""]])
+async def test_workspace_artifact_declare_and_download_forward_params(
+    mocker: MockerFixture, file_chunks: list[bytes]
+) -> None:
     sandbox_manager = mocker.MagicMock()
     sandbox_manager.get_sandbox = mocker.AsyncMock(return_value=None)
     mocker.patch(
@@ -100,7 +107,7 @@ async def test_workspace_artifact_declare_and_download_forward_params(mocker):
         response=_FakeStreamResponse(
             status_code=200,
             headers={"content-type": "text/markdown"},
-            chunks=[b"# Report\n", b"body\n"],
+            chunks=file_chunks,
         ),
     )
     file_resp = await routers.get_executor_workspace_artifact(
@@ -115,7 +122,7 @@ async def test_workspace_artifact_declare_and_download_forward_params(mocker):
         http_request=http_request,
     )
     assert file_resp.status_code == 200
-    assert file_resp.body == b"# Report\nbody\n"
+    assert file_resp.body == b"".join(file_chunks)
     assert file_resp.media_type == "text/markdown"
     assert recorded_file["params"] == {
         "binding_id": "b" * 64,
@@ -151,15 +158,27 @@ async def test_workspace_artifact_prefers_sandbox_only_when_container_name_match
     )
 
     mismatched = await routers._resolve_workspace_runtime_base_url(
-        42, "executor-declared", executor_namespace="default"
+        42,
+        "executor-declared",
+        executor_namespace="default",
+        require_executor_match=True,
     )
     assert mismatched == "http://executor-declared.local:8080"
 
     sandbox.container_name = "executor-declared"
     matched = await routers._resolve_workspace_runtime_base_url(
-        42, "executor-declared", executor_namespace="default"
+        42,
+        "executor-declared",
+        executor_namespace="default",
+        require_executor_match=True,
     )
     assert matched == "http://sandbox.local:9000"
+
+    sandbox.container_name = "sandbox-other"
+    reused = await routers._resolve_workspace_runtime_base_url(
+        42, "executor-declared", executor_namespace="default"
+    )
+    assert reused == "http://sandbox.local:9000"
 
 
 @pytest.mark.parametrize(
@@ -168,8 +187,18 @@ async def test_workspace_artifact_prefers_sandbox_only_when_container_name_match
         (400, 400, b'{"detail":"Invalid artifact path"}', "Invalid artifact path"),
         (403, 403, b'{"detail":"Binding mismatch"}', "Binding mismatch"),
         (404, 404, b'{"detail":"Artifact missing"}', "Artifact missing"),
+        (404, 404, rb'{"detail":"\u4e2d\u6587\ud83d\ude00"}', "中文😀"),
         (413, 413, b'{"detail":"Artifact too large"}', "Artifact too large"),
         (500, 502, b"internal failure", "Remote artifact request failed"),
+        (307, 502, b"", "Remote artifact request failed"),
+        pytest.param(403, 403, b"[" * 20000 + b"]" * 20000, "[" * 200, id="deep-json"),
+        pytest.param(
+            404,
+            404,
+            rb'{"detail":"\ud800"}',
+            r'{"detail":"\ud800"}',
+            id="unpaired-surrogate",
+        ),
         (
             404,
             404,

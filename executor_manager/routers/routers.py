@@ -89,7 +89,11 @@ task_processor = TaskProcessor()
 
 # Health check paths that should skip logging to reduce overhead
 HEALTH_CHECK_PATHS = {"/", "/health"}
-SENSITIVE_BODY_CAPTURE_PATHS = {f"{ROUTE_PREFIX}/callback", "/callback"}
+SENSITIVE_BODY_CAPTURE_PATHS = {
+    f"{ROUTE_PREFIX}/callback",
+    "/callback",
+    f"{ROUTE_PREFIX}/executor/workspace/artifact",
+}
 
 
 @app.middleware("http")
@@ -555,6 +559,8 @@ async def _resolve_workspace_runtime_base_url(
     task_id: int,
     executor_name: Optional[str],
     executor_namespace: Optional[str] = None,
+    *,
+    require_executor_match: bool = False,
 ) -> str:
     from executor_manager.services.sandbox import get_sandbox_manager
 
@@ -564,7 +570,7 @@ async def _resolve_workspace_runtime_base_url(
         sandbox
         and sandbox.base_url
         and (
-            not executor_name
+            not require_executor_match
             or getattr(sandbox, "container_name", None) == executor_name
         )
     ):
@@ -609,8 +615,10 @@ def _extract_error_detail(raw_bytes: bytes, limit: int = 200) -> str:
         if isinstance(payload, dict):
             detail = payload.get("detail")
             if isinstance(detail, str) and detail.strip():
-                return detail[:limit]
-    except ValueError:
+                detail = detail[:limit]
+                detail.encode("utf-8")
+                return detail
+    except (ValueError, RecursionError):
         pass
     return _to_log_preview(raw_text, limit=limit)
 
@@ -812,7 +820,10 @@ async def get_executor_workspace_artifact(
         http_request.client.host if http_request and http_request.client else "unknown"
     )
     base_url = await _resolve_workspace_runtime_base_url(
-        task_id, executor_name, executor_namespace=executor_namespace
+        task_id,
+        executor_name,
+        executor_namespace=executor_namespace,
+        require_executor_match=True,
     )
     logger.info(
         "[workspace_proxy] artifact request task_id=%s executor_name=%s namespace=%s path=%s base_url=%s from %s",
@@ -842,7 +853,7 @@ async def get_executor_workspace_artifact(
     try:
         async with httpx.AsyncClient(timeout=WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
             async with client.stream("GET", artifact_url, params=params) as response:
-                if response.status_code < 400:
+                if response.is_success:
                     body = await _read_bounded_artifact_response(response, max_bytes)
                     return Response(
                         content=body,

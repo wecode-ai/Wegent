@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
+from typing import AsyncIterator
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 from executor_manager.routers import routers
 
@@ -182,11 +184,23 @@ async def test_validation_error_uses_executor_error_message(mocker):
 
 
 @pytest.mark.asyncio
-async def test_callback_route_skips_otel_body_capture(mocker):
+@pytest.mark.parametrize(
+    ("route", "method"),
+    [("/callback", "POST"), ("/executor/workspace/artifact", "GET")],
+)
+async def test_sensitive_route_skips_otel_body_capture(
+    mocker: MockerFixture, route: str, method: str
+) -> None:
+    chunks_read = []
+
+    async def body_chunks() -> AsyncIterator[bytes]:
+        chunks_read.append(True)
+        yield b"private contents"
+
     request = SimpleNamespace(
-        url=SimpleNamespace(path=f"{routers.ROUTE_PREFIX}/callback"),
+        url=SimpleNamespace(path=f"{routers.ROUTE_PREFIX}{route}"),
         headers={},
-        method="POST",
+        method=method,
         client=SimpleNamespace(host="127.0.0.1"),
         query_params="",
         state=SimpleNamespace(),
@@ -195,6 +209,8 @@ async def test_callback_route_skips_otel_body_capture(mocker):
     response = SimpleNamespace(
         status_code=200,
         headers={},
+        body_iterator=body_chunks(),
+        media_type="application/octet-stream",
     )
     call_next = mocker.AsyncMock(return_value=response)
     otel_config = SimpleNamespace(
@@ -205,16 +221,22 @@ async def test_callback_route_skips_otel_body_capture(mocker):
     )
 
     mocker.patch.object(routers, "get_otel_config", return_value=otel_config)
-    mocker.patch(
-        "opentelemetry.trace.get_current_span", return_value=_FakeRecordingSpan()
-    )
+    span = mocker.MagicMock()
+    span.is_recording.return_value = True
+    mocker.patch("opentelemetry.trace.get_current_span", return_value=span)
+    mocker.patch("shared.telemetry.core.is_telemetry_enabled", return_value=True)
     log_body = mocker.patch.object(routers, "log_json_body")
 
     result = await routers.log_requests(request, call_next)
 
     assert result is response
+    assert chunks_read == []
     request.body.assert_not_awaited()
     log_body.assert_not_called()
+    assert all(
+        call.args[0] != "http.response.body"
+        for call in span.set_attribute.call_args_list
+    )
 
 
 @pytest.mark.asyncio
