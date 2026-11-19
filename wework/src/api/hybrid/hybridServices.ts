@@ -31,6 +31,7 @@ import {
 import { mergeRuntimeWorkLists as mergeRuntimeWorkPair } from '@/features/workbench/runtimeWorkMerge'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { runtimeExecutionSnapshot } from '@wegent/chat-core/runtime-execution-snapshot'
+import { logRuntimeExecutionProjection } from './runtimeExecutionProjectionDiagnostics'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import {
@@ -1184,6 +1185,7 @@ export function createHybridWorkbenchServices(
           ? api.getRuntimeTranscript(data, options)
           : api.getRuntimeTranscript(data))
         const snapshot = runtimeExecutionSnapshot(data, response)
+        logRuntimeExecutionProjection('read', data, response, snapshot)
         if (
           snapshot &&
           response.origin?.projectStore !== 'local' &&
@@ -1193,12 +1195,17 @@ export function createHybridWorkbenchServices(
         ) {
           // Cloud write-back must not prevent an offline local history read.
           // A failed report is retried on the next read, never cached as saved.
-          void cloudServices.projectChatClient.reconcileExecutionSnapshot(snapshot).catch(error => {
-            console.error('[Wework] Failed to persist runtime execution status', {
-              address: runtimeAddressDebug(data),
-              error,
+          void cloudServices.projectChatClient
+            .reconcileExecutionSnapshot(snapshot)
+            .then(messages => {
+              logRuntimeExecutionProjection('acknowledged', data, response, snapshot, messages)
             })
-          })
+            .catch(error => {
+              console.error('[Wework] Failed to persist runtime execution status', {
+                address: runtimeAddressDebug(data),
+                error,
+              })
+            })
         }
         return response
       } catch (error) {

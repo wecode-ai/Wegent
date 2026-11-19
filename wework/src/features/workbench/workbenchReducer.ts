@@ -23,7 +23,7 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
-import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
   getDefaultProjectDeviceWorkspaceId,
@@ -758,33 +758,33 @@ function findRuntimeTaskAddressByTaskId(
 
 function reconcileCurrentRuntimeTaskAddress(
   currentRuntimeTask: RuntimeTaskAddress | null,
+  devices: DeviceInfo[],
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
-  const hydratedCurrentDeviceTask = findRuntimeTaskAddressByTaskId(
+  const deviceId =
+    findWorkbenchDevice(devices, currentRuntimeTask.deviceId)?.device_id ??
+    currentRuntimeTask.deviceId
+  const hydratedTask = findRuntimeTaskAddressByTaskId(
     runtimeWork,
     currentRuntimeTask.taskId,
-    currentRuntimeTask.deviceId
+    deviceId
   )
-  if (hydratedCurrentDeviceTask) {
-    const runtimeHandle = mergeRuntimeTaskHandles(
-      currentRuntimeTask.runtimeHandle,
-      hydratedCurrentDeviceTask.runtimeHandle
-    )
-    return {
-      ...currentRuntimeTask,
-      workspacePath: hydratedCurrentDeviceTask.workspacePath,
-      ...(hydratedCurrentDeviceTask.threadId
-        ? { threadId: hydratedCurrentDeviceTask.threadId }
-        : {}),
-      ...(hydratedCurrentDeviceTask.workspacePath
-        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
-        : {}),
-      ...(runtimeHandle ? { runtimeHandle } : {}),
-    }
+  if (!hydratedTask) return currentRuntimeTask
+  const runtimeHandle = mergeRuntimeTaskHandles(
+    currentRuntimeTask.runtimeHandle,
+    hydratedTask.runtimeHandle
+  )
+  return {
+    ...currentRuntimeTask,
+    ...(!currentRuntimeTask.runtime && hydratedTask.runtime
+      ? { runtime: hydratedTask.runtime }
+      : {}),
+    deviceId,
+    workspacePath: hydratedTask.workspacePath,
+    ...(hydratedTask.threadId ? { threadId: hydratedTask.threadId } : {}),
+    ...(runtimeHandle ? { runtimeHandle } : {}),
   }
-  // Inventory cannot transfer ownership; accepted addresses are reconciled explicitly.
-  return currentRuntimeTask
 }
 
 function resolveCurrentProjectAfterRefresh(
@@ -1097,6 +1097,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
+        devices,
         runtimeWork
       )
       const currentProject =
@@ -1137,6 +1138,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const runtimeWork = mergedRuntimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
+        devices,
         runtimeWork
       )
       const refreshedState = {
@@ -1180,6 +1182,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         devices,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
+          devices,
           state.runtimeWork
         ),
         standaloneDeviceId:
@@ -1200,6 +1203,7 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       const runtimeWork = mergedRuntimeWork
       const currentRuntimeTask = reconcileCurrentRuntimeTaskAddress(
         state.currentRuntimeTask,
+        state.devices,
         runtimeWork
       )
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {

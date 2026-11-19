@@ -763,9 +763,15 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        let active_turn_count = state.protected_turn_count();
-        if active_turn_count > 0 || pending_request_count > 0 {
-            return Err((active_turn_count, pending_request_count));
+        // A retained app owns its MCP connection between individual RPCs.
+        let mut active_threads = state.active_threads_snapshot();
+        for (thread_id, _, _) in &state.mcp_app_sessions {
+            active_threads.entry(thread_id.clone()).or_insert(1);
+        }
+        let active_task_count =
+            active_threads.values().sum::<usize>() + state.preparing_turns.count();
+        if active_task_count > 0 || pending_request_count > 0 {
+            return Err((active_task_count, pending_request_count));
         }
         stop_codex_app_server_process(&mut state, None).await;
         Ok(())

@@ -104,7 +104,10 @@ function recordResponseBodyFailure(error: unknown, method: string, status: numbe
 async function readDshExecutorDescription(): Promise<DshExecutorDescription> {
   let response: Response
   try {
-    response = await fetch(EXECUTOR_BASE_PATH, { headers: { accept: 'application/json' } })
+    response = await fetch(EXECUTOR_BASE_PATH, {
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+    })
   } catch (error) {
     recordExecutorActivity({ kind: 'transportFailures' })
     throw error

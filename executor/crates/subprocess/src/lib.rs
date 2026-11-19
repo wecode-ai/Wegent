@@ -74,16 +74,25 @@ impl ProcessTreeGuard {
     /// Read native job membership without inferring it from a parent process.
     #[cfg(windows)]
     pub fn active_processes(&self) -> std::io::Result<u32> {
-        self.job.as_ref().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Process tree has no owned job")
-        })?.active_processes()
+        self.job
+            .as_ref()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Process tree has no owned job",
+                )
+            })?
+            .active_processes()
     }
 
     /// Terminate the owned Windows job and certify that no member remains active.
     #[cfg(windows)]
     pub fn terminate_and_wait(&mut self, timeout: std::time::Duration) -> std::io::Result<()> {
         let job = self.job.as_ref().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Process tree has no owned job")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Process tree has no owned job",
+            )
         })?;
         job.terminate_and_wait(timeout)?;
         self.pid = None;

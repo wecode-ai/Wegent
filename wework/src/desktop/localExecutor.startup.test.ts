@@ -190,6 +190,7 @@ describe('local Codex startup admission', () => {
 
   test.each(['codex', 'claude_code'] as const)(
     'the local service %s history configures the proxy without preparing a model',
+
     async runtime => {
       saveLocalProxyUrl('http://127.0.0.1:7890')
       const services = createLocalAppServices({ subscribe: () => () => undefined })
