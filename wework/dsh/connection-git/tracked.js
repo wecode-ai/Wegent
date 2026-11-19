@@ -224,7 +224,8 @@ export function createTrackedCollector(helpers) {
       const sourceAt = row.updated_at ?? row.completed_at ?? row.submitted_at ?? row.created_at
       const credibleTime = Number.isFinite(Date.parse(sourceAt))
       const at = credibleTime ? sourceAt : new Date().toISOString()
-      if (step === 2 && row.sha && target.sha && row.sha !== target.sha) continue
+      const checkSha = row.head_sha ?? row.sha
+      if (step === 2 && checkSha && target.sha && checkSha !== target.sha) continue
       const key = `tracked:${target.url}:${step}:${row.id ?? 'state'}`
       const digest = fingerprint(row)
       if (next.seen[key]?.digest === digest) continue
