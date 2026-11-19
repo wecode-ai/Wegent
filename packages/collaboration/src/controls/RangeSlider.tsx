@@ -34,7 +34,7 @@ function SliderThumb({
   const thumbProps = {
     'data-testid': testId,
     className:
-      'z-20 h-7 w-7 rounded-full border border-border bg-background shadow-sm outline-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-focus/40',
+      'z-20 h-7 w-7 rounded-full border border-border bg-background shadow-sm has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus',
     children: input,
   }
   return usePart(slider, 'thumb', { index: 0 }, thumbProps, 'span')

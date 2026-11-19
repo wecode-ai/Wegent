@@ -57,11 +57,12 @@ export async function verifyReasoningSliderAccessibility(control, trigger) {
     await control.command('waitFor', `${TRACK}[aria-valuenow="${expected}"]`, { visible: true })
     assert.ok((await control.command('getAttribute', TRACK, { value: 'aria-valuetext' })).trim())
   }
-  await assertProjectKeyboardFocus(TRACK)
-  await control.command('nativePress', TRACK, { key: 'Tab' })
-  const firstStep = `${TRACK} > button:first-of-type`
-  await assertProjectKeyboardFocus(firstStep)
-  await control.command('nativePress', firstStep, { key: 'Escape' })
+  const thumb = `${MENU} [data-testid="model-control-reasoning-thumb"]`
+  await assertProjectKeyboardFocus(thumb, { focusSelector: TRACK })
+  await control.command('nativePress', TRACK, { key: 'Shift+Tab' })
+  const lastStep = `${MENU} button[data-testid^="model-control-reasoning-"]:last-of-type`
+  await assertProjectKeyboardFocus(lastStep)
+  await control.command('nativePress', lastStep, { key: 'Escape' })
   await control.command('waitFor', MENU, { visible: false })
   assert.equal(await control.command('getActiveElementTestId', 'body'), 'model-selector-button')
 }
