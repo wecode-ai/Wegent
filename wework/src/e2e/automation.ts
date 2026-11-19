@@ -4204,7 +4204,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   }
 }
 
-function installDesktopControlClient() {
+export function installDesktopControlClient() {
   if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
   const windowLabel = getDesktopE2ERuntimeConfig().windowLabel ?? getDesktopWindowLabel()
@@ -4213,9 +4213,9 @@ function installDesktopControlClient() {
     (windowLabel !== 'main' &&
       windowLabel !== 'popout-window' &&
       windowLabel !== 'process-explorer' &&
+      windowLabel !== 'system-drag-panel' &&
       !windowLabel.startsWith('workspace-') &&
-      !windowLabel.startsWith('plugin-development-')) ||
-    window.location.pathname.startsWith('/system-drag')
+      !windowLabel.startsWith('plugin-development-'))
   ) {
     return
   }
