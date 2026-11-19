@@ -24,7 +24,7 @@ Linux `browser-toolbar-actions` 所在 CI 分片会显式启用只读文件缓�
 
 Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口，用于在 CI 中稳定操作 Wework 的 Vite/React 前端。默认入口运行在浏览器模式，适合覆盖大多数前端交互；原生窗口与任务执行链路由下文的桌面端全链路 E2E 覆盖。
 
-插件 Python 运行时的 `python-runtime,plugin-development` 检查点复用已有的 Core 10 分片，不新增 runner。Linux 和 Windows 各保持十个 Core 分片，所有检查点及断言保留；实际分组以 `.github/scripts/classify-wework-desktop-e2e.sh --all` 的输出为准。
+插件 Python 运行时的 `python-runtime,plugin-development` 检查点复用已有的 Core 10 分片，不新增 runner。Core 逻辑分组中的检查点及断言保留，实际 runner 数由容量扩展步骤决定；逻辑分组以 `.github/scripts/classify-wework-desktop-e2e.sh --all` 的输出为准。
 
 Python 下载描述的 200ms 期限只覆盖 HTTP 响应头和正文。获取凭据及请求完成后的本地
 Backend 身份校验在 HTTP 计时范围外完成，避免把串行存储等待算成网络超时；返回地址前
@@ -223,17 +223,15 @@ macOS 中需要争用原生桌面前台的 checkpoint 仍通过资源锁保持�
 `split-workbench` 含固定 3 秒的拖拽交互性能断言，使用独立 Linux 分片，
 避免其他全栈实例争抢 CPU 改变性能基准。它仍保留完整功能断言，并记录拖拽移动、
 松开事件分发和分屏就绪的分阶段耗时；其他功能分片仍可运行最多 4 个实例。
-各 Core/Cloud matrix job 还提供跨 runner 的套件级并行。分类器提供 10 个 Core 逻辑分片，
-Windows 保持 10 台 runner；Linux 设置 `CORE_RUNNER_SCALE=1.5`，完整选择时按历史耗时
-重排到 15 台 runner。部分选择按所选矩阵扩容，且不超过可分配的 checkpoint 数；
-不含历史检查点的部分选择保留原矩阵。两个 Core 性能基准分片仍独占 runner。
-Cloud 使用 8 个分片。合并短分片可复用容器初始化、代码检出、
-构建产物下载和运行时准备，不增加每台 runner 内的 checkpoint 并发数。性能基准的
-2 个 Core 分片以及账号认证和长插件列表的 3 个 Cloud 分片仍独立运行。
-并发上限必须不低于完整矩阵的分片数，避免配置强制分批；分类器回归测试同时检查
-分片预算和此约束。共享 runner 池仍可能引入外部排队。
+Core/Cloud matrix job 提供跨 runner 的套件级并行。Linux Core、Windows Core
+和 Linux Cloud 的均衡步骤均设置 `CORE_RUNNER_SCALE=1.5`，完整选择时分别由
+10、10、8 台扩展到 15、15、12 台 runner。部分选择按所选矩阵扩容，且不超过
+可分配的 checkpoint 数，不为少量改动分配完整套件的 runner。单台 runner 内的
+checkpoint 并发限制保持不变。两个 Core 性能基准分片以及 Cloud 的独占分片保持隔离，
+共享准备组继续共同调度。扩容会增加环境准备成本；历史耗时回放只预测测试阶段，
+不能当作新 CI 的实测提速。共享 runner 池仍可能引入外部排队。
 
-Windows 只使用成功检查点的实测时长均衡调度。未知时长的检查点留在原 runner，不向其增加新的已测工作；仅在不提高已知检查点或含准备成本的峰值时迁出原有已测工作，不能安全迁出的工作仍保留在原分片。没有其他已测目标 runner 的部分选择保留原矩阵。若未知检查点属于共享准备组，则保留其整个原分片，避免重复昂贵准备。runner 数量、性能基准隔离和 40 分钟测试步骤预算不变；失败场景耗时不能记为成功样本。
+Windows 只使用成功检查点的实测时长均衡调度。未知时长的检查点留在原 runner，不向其增加新的已测工作；仅在不提高已知检查点或含准备成本的峰值时迁出原有已测工作，不能安全迁出的工作仍保留在原分片。没有其他已测目标 runner 的部分选择保留原矩阵。若未知检查点属于共享准备组，则保留其整个原分片，避免重复昂贵准备。扩容保留性能基准隔离和 40 分钟测试步骤预算；失败场景耗时不能记为成功样本。
 时长表需随场景变化刷新，不能仅补未知项：运行 42411289396 的 Core 2、6 在所有已完成检查点通过后触及整步预算，profile-settings、plugin-bridge 等旧权重已连续三轮低估。普通分片使用最近三轮成功检查点的调度 start/end 时长（向上取整）的中位数；未观测项保留原值，独占基准分片不变。预算检查还计入成功作业测得的最大运行器开销 125 秒（标准用户启动、检查点间隙和收尾）。固定回放 fixture 保存当时的 10 片矩阵、原有 168 项的成功时长、被截断项的当时权重及来源，不包含原始日志。每项历史案例必须有时长并恰好回放一次；后来新增的目录项单独报告无历史预测，不以零成本计入完整预算。原权重无法通过该历史回放，当前完整场景仍须真实 Windows CI 验证。
 运行 `42400229326` 中 Core 4、8 在仍正常执行检查点时耗尽整步预算，而 Core 3
 只执行此前未知时长的 Dots 后即结束。补录该轮成功的 `dots-closed-loops`（178 秒）
@@ -887,6 +885,9 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 凭据等场景差异由 Electron 启动时注入的 desktop E2E runtime config 控制，不再
 编译进应用二进制；因此 plugins、core 和 cloud 可共享应用构建，同时仍保持各自
 独立的运行目录与进程状态。
+
+隔离显示的 Xvfb 进程若在 5 秒内未报告显示编号，启动脚本会在清理前记录 Xvfb 及其直接子进程的状态、内核等待点和进程名，以定位启动阻塞。
+Linux x64 正式打包作业固定使用 Ubuntu 24.04，避免 `ubuntu-latest` 切换系统版本时直接改变发布构建环境。
 
 Linux 桌面场景会把 Electron 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存

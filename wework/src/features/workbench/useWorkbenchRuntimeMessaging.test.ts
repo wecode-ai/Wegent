@@ -865,6 +865,50 @@ describe('friendlyTitleForTask', () => {
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
+  test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {
+    await expect(
+      prepareRuntimeAttachmentsForDevice(
+        'local-device',
+        [],
+        [],
+        [
+          attachment({
+            id: -42,
+            status: 'uploading',
+            filename: 'unfinished.png',
+            local_path: undefined,
+          }),
+        ]
+      )
+    ).rejects.toThrow(
+      i18n.t('workbench.attachment_preparation_unavailable', { filename: 'unfinished.png' })
+    )
+  })
+
+  test('resolves a pending cloud upload into its remote ID before local-device transport', async () => {
+    const { createPreparingAttachment, localRuntimeAttachments } =
+      await import('@/lib/runtime-attachments')
+    let finish!: (value: Attachment) => void
+    const ready = new Promise<Attachment>(resolve => {
+      finish = resolve
+    })
+    const pending = createPreparingAttachment(new File(['image'], 'pending.png'), ready)
+    let delivered = false
+    const preparing = prepareRuntimeAttachmentsForDevice(
+      'local-device',
+      [],
+      [],
+      localRuntimeAttachments([pending])
+    ).then(result => {
+      delivered = true
+      return result
+    })
+    await Promise.resolve()
+    expect(delivered).toBe(false)
+    finish(attachment({ id: 42, local_path: undefined }))
+    await expect(preparing).resolves.toEqual({ attachmentIds: [42], attachments: [] })
+  })
+
   test.each(['cloud', 'remote'] as const)(
     'uploads a source file before sending to a %s device',
     async deviceType => {

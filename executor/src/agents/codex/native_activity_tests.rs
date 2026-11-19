@@ -27,6 +27,186 @@ fn loaded_activity() -> CodexNativeActivity {
     activity
 }
 
+#[test]
+fn native_thread_notifications_supply_models_for_direct_turns() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"native-model", "modelProvider":"openai"
+    }}}));
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("native-model".into()), Some("openai".into()))
+    );
+    let load = request(&activity, "thread/resume");
+    activity.observe_response(&load, &json!({"thread":{"id":"thread"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("native-model")
+    );
+}
+
+#[test]
+fn accepted_turn_model_overrides_survive_direct_reuse() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"thread-model", "modelProvider":"openai"
+    }}}));
+    let turn = activity
+        .request_context(
+            1,
+            "turn/start",
+            &json!({"threadId":"thread","model":" turn-model "}),
+        )
+        .unwrap();
+    assert!(activity.observe_response(&turn, &json!({"turn":{"id":"turn-1"}})));
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("turn-model".into()), Some("openai".into()))
+    );
+
+    // Direct reuse without an override still runs on the overridden model, and
+    // an older thread/read payload must not resurrect the superseded identity.
+    let read = request(&activity, "thread/read");
+    activity.observe_response(&read, &json!({"thread":{"id":"thread"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("turn-model")
+    );
+}
+
+#[test]
+fn turn_model_overrides_apply_when_the_started_notification_arrives_first() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"thread-model", "modelProvider":"openai"
+    }}}));
+    // The native notification can precede the response carrying the override.
+    activity.observe(&json!({"method":"turn/started","params":{
+        "threadId":"thread","turn":{"id":"turn-1","status":"inProgress"}
+    }}));
+    let turn = activity
+        .request_context(
+            1,
+            "turn/start",
+            &json!({"threadId":"thread","model":"turn-model"}),
+        )
+        .unwrap();
+    activity.observe_response(&turn, &json!({"turn":{"id":"turn-1"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("turn-model")
+    );
+}
+
+#[test]
+fn reading_thread_models_does_not_load_or_activate_native_work() {
+    let mut activity = CodexNativeActivity::default();
+    let read = request(&activity, "thread/read");
+    activity.observe_response(
+        &read,
+        &json!({"thread":{
+            "id":"thread", "model":"read-model", "modelProvider":"openai"
+        }}),
+    );
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("read-model".into()), Some("openai".into()))
+    );
+    assert!(!activity.loaded_threads.contains("thread"));
+    assert!(activity.active_threads().is_empty());
+    let load = request(&activity, "thread/resume");
+    activity.observe_response(
+        &load,
+        &json!({"thread":{
+        "id":"thread", "model":"nested-model", "modelProvider":"openai"
+    }, "model":"resolved-override", "modelProvider":"selected-provider"}),
+    );
+    assert_eq!(
+        activity.model_identity("thread"),
+        (
+            Some("resolved-override".into()),
+            Some("selected-provider".into())
+        )
+    );
+    // A delayed metadata read must not replace a newer native load response.
+    activity.observe_response(
+        &read,
+        &json!({"thread":{
+            "id":"thread", "model":"stale-model", "modelProvider":"stale-provider"
+        }}),
+    );
+    assert_eq!(
+        activity.model_identity("thread"),
+        (
+            Some("resolved-override".into()),
+            Some("selected-provider".into())
+        )
+    );
+}
+
+#[test]
+fn resolved_thread_models_follow_native_loads_and_are_removed_on_close() {
+    let mut activity = CodexNativeActivity::default();
+    for method in ["thread/start", "thread/resume", "thread/fork"] {
+        let load = activity.request_context(1, method, &json!({})).unwrap();
+        activity.observe_response(
+            &load,
+            &json!({"thread":{"id":"thread"},"model":method,"modelProvider":"native-provider"}),
+        );
+        assert_eq!(
+            activity.model_identity("thread"),
+            (Some(method.into()), Some("native-provider".into()))
+        );
+    }
+    for message in [
+        json!({"method":"thread/closed","params":{"threadId":"thread"}}),
+        json!({"method":"thread/status/changed","params":{"threadId":"thread","status":{"type":"notLoaded"}}}),
+        json!({"method":"codex/app-server/exited"}),
+    ] {
+        let load = activity
+            .request_context(1, "thread/resume", &json!({}))
+            .unwrap();
+        activity.observe_response(
+            &load,
+            &json!({"thread":{"id":"thread"},"model":"model","modelProvider":"provider"}),
+        );
+        activity.observe(&message);
+        assert_eq!(activity.model_identity("thread"), (None, None));
+    }
+}
+
+#[test]
+fn hook_metadata_uses_the_inference_provider_instead_of_the_internal_router() {
+    let identity = native_activity::reporting_model_identity(
+        (
+            Some("real-model".into()),
+            Some(codex_model_catalog::PROVIDER_ID.into()),
+        ),
+        None,
+        Some("real-provider"),
+    );
+    assert_eq!(
+        identity,
+        (Some("real-model".into()), Some("real-provider".into()))
+    );
+}
+
+#[test]
+fn hook_model_follows_the_current_turn_override_instead_of_the_loaded_thread() {
+    let identity = native_activity::reporting_model_identity(
+        (Some("previous-model".into()), Some("openai".into())),
+        Some("current-turn-model".into()),
+        Some("openai"),
+    );
+    assert_eq!(identity.0.as_deref(), Some("current-turn-model"));
+    let unspecified = native_activity::reporting_model_identity(
+        (Some("thread-default".into()), Some("openai".into())),
+        None,
+        Some("openai"),
+    );
+    assert_eq!(unspecified.0.as_deref(), Some("thread-default"));
+}
+
 fn clear_goal() -> Value {
     json!({"method":"thread/goal/cleared","params":{"threadId":"thread"}})
 }

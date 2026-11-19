@@ -14,6 +14,10 @@ export interface RuntimeConfig {
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
   cloudDeviceScalingWikiUrl: string
+  featureFlags?: {
+    'collab.projectSurfaces.v1'?: boolean
+    'collab.humanAssignmentReceipts.v1'?: boolean
+  }
 }
 
 type RuntimeConfigOverrides = Partial<RuntimeConfig>
@@ -156,6 +160,13 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   return {
     appBasePath,
+    featureFlags: {
+      'collab.humanAssignmentReceipts.v1':
+        overrides.featureFlags?.['collab.humanAssignmentReceipts.v1'] ?? true,
+      'collab.projectSurfaces.v1':
+        overrides.featureFlags?.['collab.projectSurfaces.v1'] ??
+        import.meta.env.VITE_COLLAB_PROJECT_SURFACES_V1 === 'true',
+    },
     desktopWindowLabel: runtimeString(overrides, 'desktopWindowLabel') || 'main',
     desktopHost: runtimeString(overrides, 'desktopHost') === 'electron' ? 'electron' : 'browser',
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),

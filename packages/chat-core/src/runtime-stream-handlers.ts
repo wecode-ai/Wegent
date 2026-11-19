@@ -736,6 +736,9 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.contentDelta !== undefined && {
             contentDelta: payload.contentDelta,
           }),
+          ...(payload.contentOffset !== undefined && {
+            contentOffset: payload.contentOffset,
+          }),
           ...(payload.toolInput !== undefined && {
             toolInput: payload.toolInput,
           }),

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { ConnectionEventStatus } from './ConnectionEventStatus'
 
@@ -13,7 +13,7 @@ const subscription = {
   last_collected_at: Date.parse('2026-11-15T00:00:00Z'),
 }
 
-test('shows one subscription with both terminal outcomes and its commit scope', () => {
+test('reveals both terminal outcomes and the commit scope on demand', () => {
   render(
     <ConnectionEventStatus
       subscriptions={[
@@ -30,9 +30,15 @@ test('shows one subscription with both terminal outcomes and its commit scope', 
       ]}
     />
   )
-  expect(screen.getAllByTestId('connection-event-condition')).toHaveLength(1)
-  expect(screen.getByTestId('connection-event-condition')).toHaveTextContent(
-    '检查结果: 通过 或 检查结果: 失败'
-  )
-  expect(screen.getByTestId('connection-event-condition')).toHaveTextContent('提交: commit-123')
+  const toggle = screen.getByTestId('connection-event-condition-toggle')
+  const condition = screen.getByTestId('connection-event-condition')
+  expect(condition).not.toBeVisible()
+
+  fireEvent.click(toggle)
+  expect(condition).toBeVisible()
+  expect(condition).toHaveTextContent('检查结果: 通过 或 检查结果: 失败')
+  expect(condition).toHaveTextContent('提交: commit-123')
+
+  fireEvent.click(toggle)
+  expect(condition).not.toBeVisible()
 })
