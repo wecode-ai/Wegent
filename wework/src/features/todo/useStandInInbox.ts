@@ -51,17 +51,19 @@ export function useStandInInbox(
   api: StandInExecutorApi | undefined,
   userId: number,
   deviceId?: string,
-  enabled = true
+  enabled = true,
+  connectionScope = ''
 ) {
   const scope = `${userId}:${deviceId}`
+  const resourceScope = JSON.stringify([connectionScope, userId, deviceId])
   const resource = useMemo(
     () =>
-      createAsyncResource(scope, () => api!.inbox(userId, deviceId!), {
+      createAsyncResource(resourceScope, () => api!.inbox(userId, deviceId!), {
         refreshIntervalMs: 3000,
         refreshIntervalMode: 'after-settle',
         refreshOnSubscribe: true,
       }),
-    [api, userId, deviceId, scope]
+    [api, userId, deviceId, resourceScope]
   )
   const query = useSyncExternalStore(
     enabled && api && deviceId ? resource.subscribe : subscribeIdleResource,

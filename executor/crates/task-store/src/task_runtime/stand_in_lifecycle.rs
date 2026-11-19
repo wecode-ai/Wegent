@@ -247,6 +247,29 @@ mod tests {
     }
 
     #[test]
+    fn binding_reads_preserve_legacy_metadata_without_migrating() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let target = json!({
+            "userId":7,"deviceId":"mac",
+            "backendUrl":"https://original.example/api","username":"previous-name"
+        });
+        let binding = store.stand_in_binding("bind", 0, target).unwrap();
+        assert_eq!(
+            store.stand_in_binding("get", 0, Value::Null).unwrap(),
+            binding
+        );
+        assert!(store
+            .stand_in_binding("unsupported", 1, Value::Null)
+            .is_err());
+        let reopened = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        assert_eq!(
+            reopened.stand_in_binding("get", 0, Value::Null).unwrap(),
+            binding
+        );
+    }
+
+    #[test]
     fn whole_profile_stop_preserves_configuration_and_blocks_early_restart() {
         let root = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
