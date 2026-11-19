@@ -59,7 +59,7 @@ async function settleWithin(promise, timeoutMs) {
 }
 
 /** Linux-only, temporary native diagnostics for the isolated startup children. */
-export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
+export function spawnStartupGdbProbe(appBinary, args, spawnOptions, { allThreads = true } = {}) {
   assert.equal(process.platform, 'linux', 'The startup GDB probe requires Linux')
   assert.equal(spawnOptions.detached, true, 'GDB must own its process group')
   // Let the fixed POSIX shell interpret GDB's --args escaping and exec the
@@ -101,7 +101,7 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
       '-ex',
       'run',
       '-ex',
-      'thread apply all bt',
+      allThreads ? 'thread apply all bt' : 'bt',
       '-x',
       GDB_COMMAND_FILE,
       '--args',
