@@ -169,7 +169,7 @@ export interface ArchiveConversationsConfirmDialogProps {
   description: string
   confirmLabel: string
   cancelLabel: string
-  submitting: boolean
+  submitting?: boolean
   testId: string
   onClose: () => void
   onConfirm: () => Promise<void> | void

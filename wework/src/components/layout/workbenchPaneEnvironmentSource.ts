@@ -20,7 +20,6 @@ interface EnvironmentSourceInput {
   apiOwner: WorkbenchPaneContextValue['services']
   devices: DeviceInfo[]
   workspaceRoots: string[]
-  fallbackPolicy(info: EnvironmentInfo): boolean
   autoLoad: boolean
 }
 interface EnvironmentSnapshot {
@@ -88,7 +87,6 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
     const currentRuntimeTaskDeviceId = requestInput.currentRuntimeTask?.deviceId
     const workspaceRoots = requestInput.workspaceRoots
     const loadEnvironmentInfo = requestInput.loadEnvironmentInfo
-    const changeRequestStatusFallbackEnabled = requestInput.fallbackPolicy(snapshot.environmentInfo)
     const requestId = requestSequence + 1
     requestSequence = requestId
     const startedAt = performance.now()
@@ -170,8 +168,6 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
         const executionDevice = findWorkbenchDevice(requestInput.devices, executionDeviceId)
         logLoad(loading ? 'partial_published' : 'completed', {
           branchName: info.branchName,
-          changeRequestState: info.changeRequest?.state,
-          changeRequestNumber: info.changeRequest?.changeRequest?.number,
           executionDeviceId,
           workspaceDeviceId: actualDevice?.device_id,
         })
@@ -205,17 +201,9 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
       const info = await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget, {
         ...(force ? { force: true } : {}),
         ...(shareInflight === false ? { shareInflight: false } : {}),
-        changeRequestStatusEnabled: changeRequestStatusFallbackEnabled,
         onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
       })
       applyEnvironmentInfo(info, false)
-      if (
-        requestIsCurrent() &&
-        requestSequence === requestId &&
-        requestInput.fallbackPolicy(snapshot.environmentInfo) !== changeRequestStatusFallbackEnabled
-      ) {
-        void load({ force: false, showLoading: true })
-      }
     } catch (error) {
       if (requestIsCurrent() && requestSequence === requestId) {
         logLoad('failed', {

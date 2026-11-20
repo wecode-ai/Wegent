@@ -409,6 +409,10 @@ export const conversationMessages: Record<
     "conversation.tool_activity.summary_other": "调用 {{count}} 个工具",
     "conversation.tool_activity.tool_input": "输入",
     "conversation.tool_activity.tool_no_output": "工具未返回内容",
+    "conversation.tool_activity.event_provider_summary":
+      "连接事件来源 {{total}} 个，{{ready}} 个已就绪",
+    "conversation.tool_activity.show_full_result": "查看完整结果",
+    "conversation.tool_activity.hide_full_result": "收起完整结果",
     "conversation.tool_activity.tool_output": "输出",
     "conversation.tool_activity.wait_done": "等待工具结果",
     "conversation.tool_activity.wait_error": "等待工具结果失败",
@@ -885,6 +889,10 @@ export const conversationMessages: Record<
     "conversation.tool_activity.summary_other": "Called {{count}} tools",
     "conversation.tool_activity.tool_input": "Input",
     "conversation.tool_activity.tool_no_output": "Tool returned no content",
+    "conversation.tool_activity.event_provider_summary":
+      "Connection event providers: {{total}} total, {{ready}} ready",
+    "conversation.tool_activity.show_full_result": "Show full result",
+    "conversation.tool_activity.hide_full_result": "Hide full result",
     "conversation.tool_activity.tool_output": "Output",
     "conversation.tool_activity.wait_done": "Waited for tool result",
     "conversation.tool_activity.wait_error": "Failed waiting for tool result",

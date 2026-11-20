@@ -509,8 +509,8 @@ fn native_default_manager_resumes_after_human_delivery_without_model_credentials
         .prepare_fresh_cloud_manager(&source, &command, &outcomes)
         .unwrap();
 
-    assert_eq!(payload["taskId"], fresh_cloud_manager_task_id(&command));
-    assert_eq!(payload["executionRequest"]["new_session"], true);
+    assert_eq!(payload["taskId"], command.manager_runtime_task_id);
+    assert_eq!(payload["executionRequest"]["new_session"], false);
     assert_eq!(payload["executionRequest"]["model_config"], json!({}));
     assert!(payload["message"]
         .as_str()
@@ -680,7 +680,7 @@ fn fresh_manager_preserves_direct_runtime_home_classification() {
 }
 
 #[test]
-fn fresh_cloud_manager_payload_starts_new_session() {
+fn cloud_manager_payload_reuses_the_existing_session_with_a_separate_turn() {
     let command = command();
     let mut source = source_link();
     source.runtime_handle["executionRequest"]["extra"]["origin"]["executionId"] = json!(91);
@@ -692,12 +692,10 @@ fn fresh_cloud_manager_payload_starts_new_session() {
 
     let (request, payload) = fresh_cloud_manager_payload(&source, &command, &outcomes).unwrap();
 
-    assert_eq!(request.task_id, "manager-task-1-manager-after-round-1");
-    assert_eq!(
-        request.subtask_id,
-        "manager-task-1-manager-after-round-1-initial"
-    );
-    assert!(request.new_session);
+    assert_eq!(request.task_id, command.manager_runtime_task_id);
+    assert_eq!(payload["clientUserMessageId"], request.subtask_id);
+    assert_eq!(payload["queueIfBusy"], true);
+    assert!(!request.new_session);
     assert!(request.history.is_empty());
     assert_eq!(request.message_id, None);
     assert!(request.extra["origin"].get("executionId").is_none());
@@ -794,9 +792,12 @@ fn executor_materializes_member_task_from_root_profile() {
         .expect("member system prompt");
     assert!(system_prompt.starts_with("member system instructions"));
     assert!(!system_prompt.contains("manager system instructions"));
-    assert!(system_prompt.contains("Executor 自动记录到当前 Issue 动态"));
-    assert!(system_prompt.contains("不要调用 add_board_item_comment"));
-    assert!(system_prompt.contains("必须调用 upload_item_attachment"));
+    assert!(system_prompt.contains("The Executor records this run in the current Issue"));
+    assert!(system_prompt.contains("Do not call add_board_item_comment"));
+    assert!(system_prompt.contains("Use upload_item_attachment"));
+    assert!(system_prompt.contains("Use native subagents"));
+    assert!(system_prompt.contains("Delegate a single nontrivial task to one subagent"));
+    assert!(system_prompt.contains("finalize_delivery"));
 }
 
 #[test]
@@ -842,6 +843,7 @@ fn coordination_manager_round_retains_enabling_identity_instead_of_device_accoun
         backend_url: "https://backend.example.com".into(),
         socket_url: "wss://backend.example.com".into(),
         auth_token: "device-owner-session".into(),
+        authenticated_user_id: None,
         runtime_auth_token: "device-owner-runtime".into(),
     })));
     let handler =

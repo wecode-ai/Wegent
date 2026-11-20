@@ -27,18 +27,27 @@ describe("managerActivityPresentation", () => {
     ).toEqual({ label, planning: false });
   });
 
-  it("labels a completed manager decision as a review instead of task planning", () => {
-    expect(
-      managerActivityPresentation(
-        createCollaborationTranslator("zh-CN"),
-        {},
-        "completed",
-      ),
-    ).toEqual({
-      label: "已完成本轮评估",
-      planning: false,
-    });
-  });
+  it.each([
+    [{ dispatch_role: "manager" }, "已完成任务规划"],
+    [
+      { dispatch_role: "manager", activity_type: "manager_execution" },
+      "已完成本轮评估",
+    ],
+  ])(
+    "distinguishes the initial manager plan from a round review",
+    (metadata, label) => {
+      expect(
+        managerActivityPresentation(
+          createCollaborationTranslator("zh-CN"),
+          metadata,
+          "completed",
+        ),
+      ).toEqual({
+        label,
+        planning: false,
+      });
+    },
+  );
 
   it("projects a cancelled manager run as a terminal stopped event", () => {
     expect(

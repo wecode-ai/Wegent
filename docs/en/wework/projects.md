@@ -30,6 +30,8 @@ In the collaboration workspace, click **Magnifying glass beside Collaboration at
 
 Open **top + → Collaboration**. The sidebar title is **Collaboration**. One **Projects** area retains both local and cloud projects without separate storage-location sections. Projects appear under their group, with the personal group first. Local and cloud projects outside business groups appear together under Personal group; each project appears once.
 
+Open **… → Pin project** on a project row to move it to **Pinned** near the top of the sidebar. Choose **Unpin project** in the same menu to return it to its original group. You can pin local and cloud projects. Pins are saved for the current account on this device.
+
 Personal group is the current account’s personal group. Choose **Personal group → … → New project** to create a local project when disconnected or a cloud project when connected. **Personal group → … → Group settings** opens the actual personal group owned by the account: the cloud personal group when connected, or the local personal group when disconnected. The Projects heading and individual project rows have no plus buttons. Project storage and execution devices are separate.
 
 Groups collapse and expand independently. Only the project region scrolls; personal Issue entries above it and Collaboration management pinned below remain visible. **Collaboration management** starts collapsed; expand it to access devices, templates, Agents and Teams. The home project picker fits the available window height and scrolls internally. Membership inheritance, project roles and administration permissions continue to apply. Seeing a parent group name does not grant group access.
@@ -201,7 +203,7 @@ Hover **left sidebar → Projects → project** and select …, or right-click t
 | Change project appearance | Use the appearance action to cycle project styling      | Not the global theme setting                                                                           |
 | Reveal in file manager    | Choose Finder/system file manager                       | Requires an accessible local path                                                                      |
 | Create permanent worktree | Select the action and complete its dialog               | Requires a supported Git source; differs from a temporary task worktree eligible for automatic cleanup |
-| Archive all chats         | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
+| Archive all chats         | Confirm the scope to archive in the background        | Archives project conversations and preserves the repository                                          |
 | Remove project            | Select Remove and review confirmation                   | Handle uncommitted work and linked worktrees first; removing a record is not a backup                  |
 
 For project-space Issues, open **top + → Collaboration → project**, then use the board view menu, Issue details or project settings. Role and visibility rules govern available actions. The following sections explain individual fields and workflows.

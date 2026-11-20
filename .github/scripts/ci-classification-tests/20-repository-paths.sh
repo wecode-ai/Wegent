@@ -205,8 +205,7 @@ assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
 
-for path in .github/actions/setup-wework-native-test-dependencies/action.yml \
-  .github/ci/wework-native-test-ubuntu.sources; do
+for path in .github/actions/setup-wework-native-test-dependencies/action.yml; do
   assert_case "Native desktop preparation selects its CI consumers: $path" \
     "$wework_e2e_expected" "$path"
 done

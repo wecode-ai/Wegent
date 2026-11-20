@@ -169,6 +169,8 @@ test "$reference_after_template_data" != "$(resolve_reference)"
 ruby -ryaml - "$script_dir/../actions/build-wework-macos-e2e/action.yml" >"$temp_dir/build.sh" <<'RUBY'
 steps = YAML.load_file(ARGV.fetch(0)).fetch('runs').fetch('steps')
 build = steps.find { |step| step['name'] == 'Build Wework Electron E2E application' }.fetch('run')
+prepare = steps.find { |step| step['name'] == 'Build native runtimes and install dependencies' }.fetch('run')
+puts "(set -e\n#{prepare}\n) || exit $?".sub('$HOME/.cache/wegent/wework-macos-e2e-runtimes', '$TEST_RUNTIME_ROOT')
 puts build.sub('$HOME/.cache/wegent/wework-macos-e2e-runtimes', '$TEST_RUNTIME_ROOT')
 RUBY
 
@@ -177,7 +179,7 @@ cat >"$repo/.github/scripts/build-macos-e2e-runtimes.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo runtimes >> "$BUILD_EVENTS"
-if [[ "$FAIL_RUNTIME_BUILD" == true ]]; then exit 42; fi
+if ((FAIL_RUNTIME_BUILD)); then exit "$FAIL_RUNTIME_BUILD"; fi
 mkdir -p "$(dirname "$1")"
 for destination in "$@"; do
   printf '#!/bin/sh\nexit 0\n' > "$destination"
@@ -187,70 +189,43 @@ EOF
 cat >"$repo/bin/pnpm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == *install* ]]; then exit "${FAIL_DEPENDENCIES:-0}"; fi
 echo package >> "$BUILD_EVENTS"
-test -x "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH"
-test -x "$TEST_RUNTIME_ROOT/wegent-backend-rs"
+if [[ "$INCLUDE_BACKEND" == true ]]; then
+  test -x "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH"
+  test -x "$TEST_RUNTIME_ROOT/wegent-backend-rs"
+else
+  test -z "${WEWORK_E2E_PREBUILT_EXECUTOR_PATH:-}"
+  test ! -e "$TEST_RUNTIME_ROOT/wegent-backend-rs"
+fi
 app="wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents"
 mkdir -p "$app/MacOS" "$app/Resources/bin"
-cp "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH" "$app/MacOS/WeWork"
-cp "$WEWORK_E2E_PREBUILT_EXECUTOR_PATH" "$app/Resources/bin/wegent-executor"
+for binary in "$app/MacOS/WeWork" "$app/Resources/bin/wegent-executor"; do
+  printf '#!/bin/sh\nexit 0\n' > "$binary"
+  chmod +x "$binary"
+done
 EOF
 chmod +x "$repo/.github/scripts/build-macos-e2e-runtimes.sh" "$repo/bin/pnpm"
 
-for failure in false true; do
-  events="$temp_dir/build-$failure.events"
-  status=0
+verify_build() {
+  local include_backend="$1" fail_runtime="$2" fail_install="$3" expected="$4"
+  local case_id="$include_backend-$fail_runtime-$fail_install"
+  local events="$temp_dir/build-$case_id.events" status=0
+  touch "$events"
   (
     cd "$repo"
-    PATH="$repo/bin:$PATH" TEST_RUNTIME_ROOT="$temp_dir/runtime-$failure" \
-      BUILD_EVENTS="$events" FAIL_RUNTIME_BUILD="$failure" \
+    PATH="$repo/bin:$PATH" TEST_RUNTIME_ROOT="$temp_dir/runtime-$case_id" \
+      BUILD_EVENTS="$events" INCLUDE_BACKEND="$include_backend" \
+      FAIL_RUNTIME_BUILD="$fail_runtime" FAIL_DEPENDENCIES="$fail_install" \
       bash -e -o pipefail "$temp_dir/build.sh"
   ) || status=$?
-  if [[ "$failure" == false ]]; then
-    test "$status" -eq 0
-    test "$(cat "$events")" = $'runtimes\npackage'
-  else
-    test "$status" -eq 42
-    test "$(cat "$events")" = runtimes
-  fi
-done
+  test "$status" -eq "$((fail_install || fail_runtime))"
+  test "$(cat "$events")" = "$expected"
+}
 
-ruby -ryaml - "$script_dir/../actions/build-wework-macos-e2e/action.yml" >"$temp_dir/dependencies.sh" <<'RUBY'
-steps = YAML.load_file(ARGV.fetch(0)).fetch('runs').fetch('steps')
-puts steps.find { |step| step['name'] == 'Install build and caller dependencies' }.fetch('run')
-RUBY
-cat >"$repo/bin/pnpm" <<'EOF'
-#!/usr/bin/env bash
-echo pnpm >> "$BUILD_EVENTS"
-exit "${FAIL_DEPENDENCIES:-0}"
-EOF
-cat >"$repo/.github/scripts/caller.sh" <<'EOF'
-#!/usr/bin/env bash
-echo caller >> "$BUILD_EVENTS"
-exit "${FAIL_PREPARATION:-0}"
-EOF
-for cache_hit in true false; do
-  events="$temp_dir/dependencies-$cache_hit.events"
-  (
-    cd "$repo"
-    PATH="$repo/bin:$PATH" BUILD_EVENTS="$events" \
-      MACOS_BUILD_CACHE_HIT="$cache_hit" PREPARE_SCRIPT=.github/scripts/caller.sh \
-      bash -e -o pipefail "$temp_dir/dependencies.sh"
-  )
-  test "$(grep -c caller "$events")" -eq 1
-  count="$(grep -c pnpm "$events" || true)"
-  if [[ "$cache_hit" == true ]]; then test "$count" -eq 0; else test "$count" -eq 2; fi
-done
-for failure in FAIL_DEPENDENCIES FAIL_PREPARATION; do
-  if (
-    cd "$repo"
-    env "$failure=1" PATH="$repo/bin:$PATH" BUILD_EVENTS="$temp_dir/failure.events" \
-      MACOS_BUILD_CACHE_HIT=false PREPARE_SCRIPT=.github/scripts/caller.sh \
-      bash -e -o pipefail "$temp_dir/dependencies.sh"
-  ); then
-    echo 'Dependency failure did not stop the shared build' >&2
-    exit 1
-  fi
-done
+verify_build true 0 0 $'runtimes\npackage'
+verify_build true 1 0 runtimes
+verify_build false 0 0 package
+verify_build false 0 1 ''
 
 echo "Wework macOS E2E build tests passed"

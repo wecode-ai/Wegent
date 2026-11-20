@@ -16,6 +16,8 @@ export async function handleConnectionRpc(req, res, token, request) {
   let status = 200
   let response
   let collection = false
+  const controller = new AbortController()
+  const disconnect = () => controller.abort()
   try {
     if (!loopback || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
       status = 403
@@ -34,8 +36,12 @@ export async function handleConnectionRpc(req, res, token, request) {
       chunks.push(Buffer.from(chunk))
     }
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    collection = body.method === 'collect'
-    response = { ok: true, result: await request(body) }
+    collection = body.method === 'collectObservation'
+    if (collection) res.once?.('close', disconnect)
+    response = {
+      ok: true,
+      result: await request(body, collection ? controller.signal : undefined),
+    }
   } catch (error) {
     if (status === 200) status = 400
     response = {
@@ -56,7 +62,10 @@ export async function handleConnectionRpc(req, res, token, request) {
           : {}),
       },
     }
+  } finally {
+    res.removeListener?.('close', disconnect)
   }
+  if (res.destroyed) return
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
   res.end(JSON.stringify(response))
 }

@@ -57,12 +57,18 @@ export function createConversationEventModel({
       return [assistantMessage(`${marker}_DONE`)]
     }
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
-      const inputs = body.input.filter(
+      const eventInputs = body.input.filter(
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
       )
-      assert.equal(inputs.length, 1, 'The event must be delivered as exactly one user message')
-      const [input] = inputs
+      const input = eventInputs.at(-1)
+      assert.ok(input, 'The event must be delivered as a user message')
+      const goalCompleted = requestContainsToolOutput(body, `${marker}_complete`)
+      if (phase === 'human') {
+        assert.equal(eventInputs.length, 1, 'The input must contain exactly one event message')
+        // The request after update_goal retains the same event in its conversation history.
+        if (!goalCompleted) onEvent()
+      }
       if (input.id !== undefined) {
         assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')
       }
@@ -105,11 +111,7 @@ export function createConversationEventModel({
         assert.equal(external.payload.head_sha, 'a'.repeat(40))
         assert.equal(external.url, 'https://github.com/org/repo/pull/17')
       }
-      if (
-        ['goal', 'human'].includes(phase) &&
-        !requestContainsToolOutput(body, `${marker}_complete`)
-      ) {
-        if (phase === 'human') onEvent()
+      if (['goal', 'human'].includes(phase) && !goalCompleted) {
         return selectedToolCall(
           `${marker}_complete`,
           selectTool(body, 'update_goal', { status: 'complete' })
@@ -181,6 +183,13 @@ export function createConversationEventModel({
         },
       ],
     ]
+    if (preexistingChecks) {
+      steps.splice(1, 0, [
+        'provider-detail',
+        'list_connection_event_providers',
+        { provider_id: PROVIDER },
+      ])
+    }
     for (const [step, name, args] of steps) {
       const callId = `${marker}_${step}`
       if (!requestContainsToolOutput(body, callId)) {
@@ -204,6 +213,32 @@ export function createConversationEventModel({
           findEventFact(output, value => value.items?.some(item => item.id === PROVIDER)),
           output
         )
+      if (preexistingChecks && step === 'providers') {
+        const catalog = findEventFact(output, value =>
+          value.items?.some(item => item.id === PROVIDER)
+        )
+        const provider = catalog.items.find(item => item.id === PROVIDER)
+        assert.deepEqual(
+          Object.keys(provider).sort(),
+          ['availability', 'displayName', 'id', 'resourceKinds'],
+          'Default discovery must expose only provider summaries to the model'
+        )
+        assert.ok(
+          !output.includes('connectionEventProviderCatalog'),
+          'Full catalog metadata must stay out of model context'
+        )
+      }
+      if (step === 'provider-detail') {
+        const catalog = findEventFact(output, value =>
+          value.items?.some(item => item.id === PROVIDER)
+        )
+        assert.deepEqual(
+          catalog?.items.map(item => item.id),
+          [PROVIDER],
+          output
+        )
+        assert.ok(catalog.items[0].eventTypes.includes('message.received'), output)
+      }
       if (step === 'resources') {
         const resources = findEventFact(output, value =>
           value.items?.some(item => item.providerId === PROVIDER)

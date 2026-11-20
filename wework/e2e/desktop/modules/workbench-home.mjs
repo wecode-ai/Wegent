@@ -183,7 +183,7 @@ async function requestExecutor(control, method, timeoutMs) {
   return payload.result
 }
 
-export function createWorkbenchHomeMigrationScenario({
+export function createWorkbenchHomeScenario({
   homePath,
   resultDir,
   uiTimeoutMs,
@@ -216,22 +216,19 @@ export function createWorkbenchHomeMigrationScenario({
     assert.equal(await readFile(join(home, SESSION_PATH), 'utf8'), fixture.session)
   }
 
-  async function assertMigrated(control) {
-    const source = await lstat(fixture.sourceHome)
-    const target = await stat(fixture.targetHome, { bigint: true })
-    assert.equal(source.isSymbolicLink(), true, 'Legacy entry must point to the relocated Home')
-    assert.equal((await lstat(fixture.targetHome)).isDirectory(), true)
-    assert.equal(await readlink(fixture.sourceHome), fixture.targetHome)
-    assert.equal(await realpath(fixture.sourceHome), fixture.targetHome)
+  async function assertCurrentHome(control) {
+    const target = await lstat(fixture.targetHome, { bigint: true })
     assert.equal(target.isDirectory(), true)
-    assert.equal(target.dev, fixture.sourceDevice, 'Migration must stay on the same filesystem')
-    assert.equal(target.ino, fixture.sourceInode, 'Migration must preserve the original directory')
+    assert.equal(target.dev, fixture.sourceDevice)
+    assert.equal(target.ino, fixture.sourceInode, 'Startup must use the existing Workbench Home')
+    assert.equal(await readlink(fixture.oldExecutorHome), fixture.disconnectedVolume)
+    await assertAbsent(fixture.disconnectedVolume)
+    await assertAbsent(join(fixture.desktopRoot, 'migrations', 'codex-home-v1'))
     const auth = join(fixture.targetHome, 'auth.json')
     assert.equal((await lstat(auth)).isSymbolicLink(), true)
     assert.equal(await realpath(auth), fixture.authPath)
     assert.equal((await stat(auth, { bigint: true })).ino, fixture.authInode)
     await assertSeed(fixture.targetHome)
-    await assertSeed(fixture.sourceHome)
     const session = JSON.parse(await readFile(join(fixture.targetHome, SESSION_PATH), 'utf8'))
     assert.equal(session.attachmentPath, fixture.attachmentPath)
     assert.equal(await realpath(session.attachmentPath), fixture.attachmentPath)
@@ -248,23 +245,12 @@ export function createWorkbenchHomeMigrationScenario({
       await readFile(join(fixture.targetHome, 'skills', 'migration-fixture', 'SKILL.md'), 'utf8'),
       fixture.skill
     )
-    assert.equal(await realpath(fixture.capabilitiesSource), fixture.capabilitiesTarget)
-    await assertAbsent(join(fixture.targetHome, ATTACHMENT_PATH))
-    const journal = JSON.parse(await readFile(fixture.journalPath, 'utf8'))
-    assert.equal(journal.version, 1)
-    assert.equal(journal.strategy, undefined)
-    assert.equal(journal.sourceHome, fixture.sourceHome)
-    assert.equal(journal.targetHome, fixture.targetHome)
-    assert.equal(journal.device, (fixture.journalDevice ?? fixture.sourceDevice).toString())
-    assert.equal(journal.inode, fixture.sourceInode.toString())
-    assert.match(journal.token, /^[0-9a-f-]{36}$/)
     const database = join(fixture.desktopRoot, 'data', 'tasks.sqlite')
-    assert.equal(await realpath(fixture.legacyDatabase), database)
     const db = new DatabaseSync(database, { readOnly: true })
     try {
       // The executor still writes this live database while migration is inspected.
       db.exec('PRAGMA busy_timeout = 10000')
-      assert.equal(db.prepare('SELECT value FROM migration_probe').get().value, 'before-upgrade')
+      assert.equal(db.prepare('SELECT value FROM migration_probe').get().value, 'before-startup')
       assert.equal(db.prepare('PRAGMA quick_check').get().quick_check, 'ok')
     } finally {
       db.close()
@@ -274,7 +260,6 @@ export function createWorkbenchHomeMigrationScenario({
       'synthetic-key-marker'
     )
     await assertActiveHome(control, fixture.targetHome)
-    return journal
   }
 
   return {
@@ -300,23 +285,26 @@ export function createWorkbenchHomeMigrationScenario({
         CODEX_SQLITE_HOME: undefined,
       })
       const namespace = await readPackagedNamespace(appBinary, appEnvironment)
-      const defaultExecutorHome = namespace
+      const oldExecutorHome = namespace
         ? join(home, '.wework', 'apps', namespace)
         : join(home, '.wework')
-      const sourceHome = join(defaultExecutorHome, 'codex')
-      const attachmentPath = join(defaultExecutorHome, ATTACHMENT_PATH)
       const workbenchRoot = join(home, '.wegent', 'workbench')
       const desktopRoot = join(workbenchRoot, 'wework', namespace || 'default')
-      for (const path of [sourceHome, workbenchRoot]) {
+      const targetHome = join(desktopRoot, 'codex')
+      const attachmentPath = join(desktopRoot, ATTACHMENT_PATH)
+      const disconnectedVolume = join(home, 'unmounted-executor-volume')
+      await mkdir(dirname(oldExecutorHome), { recursive: true })
+      await symlink(disconnectedVolume, oldExecutorHome, 'junction')
+      for (const path of [targetHome, workbenchRoot]) {
         assertWithin(home, path)
         await assertAbsent(path)
       }
-      await mkdir(join(sourceHome, dirname(SESSION_PATH)), { recursive: true })
+      await mkdir(join(targetHome, dirname(SESSION_PATH)), { recursive: true })
       await mkdir(dirname(attachmentPath), { recursive: true })
       // Only use the runner's synthetic config and authentication, never a personal Home.
       assert.equal((await lstat(join(seedCodexHome, 'config.toml'))).isFile(), true)
-      await copyFile(join(seedCodexHome, 'config.toml'), join(sourceHome, 'config.toml'))
-      const configPath = join(sourceHome, 'config.toml')
+      await copyFile(join(seedCodexHome, 'config.toml'), join(targetHome, 'config.toml'))
+      const configPath = join(targetHome, 'config.toml')
       const seedConfig = await readFile(configPath, 'utf8')
       assert.ok(!seedConfig.includes('mcp_oauth_credentials_store'))
       await writeFile(
@@ -326,57 +314,48 @@ export function createWorkbenchHomeMigrationScenario({
       const authPath = join(seedCodexHome, 'auth.json')
       const auth = await lstat(authPath, { bigint: true })
       assert.equal(auth.isFile(), true)
-      await symlink(relative(sourceHome, authPath), join(sourceHome, 'auth.json'))
+      await symlink(relative(targetHome, authPath), join(targetHome, 'auth.json'))
       // This marker verifies file preservation, not native Codex session resumption.
       const session = `${JSON.stringify({
         marker: 'WEWORK_E2E_WORKBENCH_HOME_SESSION',
         attachmentPath,
       })}\n`
-      await writeFile(join(sourceHome, SESSION_PATH), session)
+      await writeFile(join(targetHome, SESSION_PATH), session)
       await writeFile(attachmentPath, ATTACHMENT)
-      const capabilitiesSource = join(defaultExecutorHome, 'capabilities')
+      const capabilitiesSource = join(desktopRoot, 'capabilities')
       await mkdir(join(capabilitiesSource, 'store', 'migration-fixture'), { recursive: true })
       const skill =
         '---\nname: migration-fixture\ndescription: Synthetic migration fixture.\n---\nNo actions.\n'
       await writeFile(join(capabilitiesSource, 'store', 'migration-fixture', 'SKILL.md'), skill)
-      await mkdir(join(sourceHome, 'skills'), { recursive: true })
+      await mkdir(join(targetHome, 'skills'), { recursive: true })
       await symlink(
         '../../capabilities/store/migration-fixture',
-        join(sourceHome, 'skills', 'migration-fixture'),
+        join(targetHome, 'skills', 'migration-fixture'),
         'dir'
       )
-      const legacyDatabase = join(defaultExecutorHome, 'data', 'tasks.sqlite')
-      await mkdir(dirname(legacyDatabase), { recursive: true })
-      const database = new DatabaseSync(legacyDatabase)
+      const databasePath = join(desktopRoot, 'data', 'tasks.sqlite')
+      await mkdir(dirname(databasePath), { recursive: true })
+      const database = new DatabaseSync(databasePath)
       try {
         database.exec(
-          "CREATE TABLE migration_probe(value TEXT); INSERT INTO migration_probe VALUES ('before-upgrade')"
+          "CREATE TABLE migration_probe(value TEXT); INSERT INTO migration_probe VALUES ('before-startup')"
         )
       } finally {
         database.close()
       }
-      await mkdir(join(defaultExecutorHome, 'credentials'), { recursive: true })
-      await writeFile(
-        join(defaultExecutorHome, 'credentials', 'migration-marker'),
-        'synthetic-key-marker'
-      )
+      await mkdir(join(desktopRoot, 'credentials'), { recursive: true })
+      await writeFile(join(desktopRoot, 'credentials', 'migration-marker'), 'synthetic-key-marker')
       const workspace = join(home, 'native-migration-workspace')
       await mkdir(workspace)
       const attachment = await lstat(attachmentPath, { bigint: true })
-      const source = await lstat(sourceHome, { bigint: true })
+      const source = await lstat(targetHome, { bigint: true })
       fixture = {
         resultDir,
         namespace: namespace || 'default',
         desktopRoot,
-        legacyDatabase,
-        sourceHome,
-        targetHome: join(desktopRoot, 'codex'),
-        journalPath: join(
-          desktopRoot,
-          'migrations',
-          'codex-home-v1',
-          'workbench-home-migration.json'
-        ),
+        oldExecutorHome,
+        disconnectedVolume,
+        targetHome,
         sourceDevice: source.dev,
         sourceInode: source.ino,
         authPath,
@@ -386,8 +365,6 @@ export function createWorkbenchHomeMigrationScenario({
         attachmentInode: attachment.ino,
         session,
         skill,
-        capabilitiesSource,
-        capabilitiesTarget: join(desktopRoot, 'capabilities'),
         codexBinary: appEnvironment.CODEX_BINARY_PATH,
         environment: { ...appEnvironment },
         workspace,
@@ -410,9 +387,9 @@ export function createWorkbenchHomeMigrationScenario({
       })
       completed.push('native-agent-workbench-override-and-single-agent-config')
       control.setScenario('checkpoint_task')
-      fixture.nativeThread = await runNativeTurn(fixture, sourceHome)
-      completed.push('native-session-before-upgrade')
-      appEnvironment.WEGENT_EXECUTOR_HOME = defaultExecutorHome
+      fixture.nativeThread = await runNativeTurn(fixture, targetHome)
+      completed.push('native-session-before-startup')
+      delete appEnvironment.WEGENT_EXECUTOR_HOME
     },
 
     setRestartDesktopApp(value) {
@@ -422,48 +399,45 @@ export function createWorkbenchHomeMigrationScenario({
     async verify(control) {
       assert.ok(fixture, 'Workbench Home fixture was not prepared before Electron startup')
       assert.equal(typeof restartDesktopApp, 'function')
-      const journal = await assertMigrated(control)
-      completed.push('migrated')
+      await assertCurrentHome(control)
+      completed.push('opened-current-home')
       await runNativeTurn(fixture, fixture.targetHome, fixture.nativeThread)
       const resumedRequest = control.scenarioRequests.get('checkpoint_task')?.at(-1)
       assert.ok(
         JSON.stringify(resumedRequest?.body).includes(NATIVE_SESSION_MARKER),
-        'Native resume lost pre-upgrade conversation history'
+        'Native resume lost pre-startup conversation history'
       )
-      completed.push('native-session-resumed-after-upgrade')
-      // Simulate the persisted device number becoming stale after a volume remount.
-      fixture.journalDevice = fixture.sourceDevice + 1n
-      journal.device = fixture.journalDevice.toString()
-      await writeFile(fixture.journalPath, JSON.stringify(journal))
-      const bridge = await lstat(fixture.sourceHome, { bigint: true })
-      const journalContents = await readFile(fixture.journalPath, 'utf8')
-      const journalMetadata = await lstat(fixture.journalPath, { bigint: true })
+      completed.push('native-session-resumed-after-startup')
 
-      await restartDesktopApp()
-      assert.deepEqual(await assertMigrated(control), journal)
-      assert.equal((await lstat(fixture.sourceHome, { bigint: true })).ino, bridge.ino)
-      assert.equal(await readFile(fixture.journalPath, 'utf8'), journalContents)
-      const restartedJournal = await lstat(fixture.journalPath, { bigint: true })
-      assert.equal(restartedJournal.ino, journalMetadata.ino)
-      assert.equal(restartedJournal.mtimeNs, journalMetadata.mtimeNs)
+      // Use the real Codex executable as an incompatible Executor, as in the
+      // packaged schema checks. The model service remains the only test double.
+      await restartDesktopApp({
+        appEnvironmentOverrides: { WEWORK_EXECUTOR_PATH: fixture.codexBinary },
+      })
+      await control.command('navigate', 'body', { value: '/settings' })
+      await control.command('waitFor', '[data-testid="general-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const degradedOrigin = await control.command('getLocationOrigin', 'body')
+      const degraded = await fetchLocalRuntime(control, `${degradedOrigin}/wework/executor/v1`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(degraded.status, 503, 'The unavailable Executor must fail at its own API')
+      assert.equal((await degraded.json()).error.code, 'runtime_not_ready')
+      completed.push('workbench-settings-open-with-incompatible-executor')
+
+      await restartDesktopApp({
+        appEnvironmentOverrides: { WEWORK_EXECUTOR_PATH: fixture.environment.WEWORK_EXECUTOR_PATH },
+      })
+      await assertCurrentHome(control)
       completed.push('idempotent-restart')
-      completed.push('completed-migration-survives-device-number-change')
-      // Same native binary through the legacy entry: session continuity, not old-binary downgrade.
-      await runNativeTurn(fixture, fixture.sourceHome, fixture.nativeThread)
-      const legacyEntryRequest = control.scenarioRequests.get('checkpoint_task')?.at(-1)
-      assert.ok(
-        JSON.stringify(legacyEntryRequest?.body).includes(NATIVE_SESSION_MARKER),
-        'Legacy Home lost native conversation history'
-      )
-      completed.push('legacy-entry-session-continuity')
       control.setScenario('initial')
       await writeFile(
-        join(resultDir, 'workbench-home-migration.json'),
+        join(resultDir, 'workbench-home.json'),
         `${JSON.stringify(
           {
             namespace: fixture.namespace,
             completed,
-            journal,
             nativeThread: fixture.nativeThread,
             nativeMcpEnvironment: fixture.nativeMcpEnvironment,
             nativeAgentMcp: fixture.nativeAgentMcp,

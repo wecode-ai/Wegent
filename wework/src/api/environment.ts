@@ -6,15 +6,11 @@ import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } fr
 import type {
   ChangeRequest,
   ChangeRequestChecksState,
-  ChangeRequestLookup,
-  ChangeRequestLookupState,
   ChangeRequestMergeability,
-  ChangeRequestMergeQueueState,
   ChangeRequestProvider,
   ChangeRequestState,
   EnvironmentInfo,
 } from '@/types/environment'
-import { getAppPreferences } from '@/desktop/appPreferences'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
@@ -57,7 +53,6 @@ export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 export type GitPatchAction = 'stage' | 'unstage' | 'revert'
 
 export interface EnvironmentInfoLoadOptions {
-  changeRequestStatusEnabled?: boolean
   force?: boolean
   onPartialInfo?: (info: EnvironmentInfo) => void
   shareInflight?: boolean
@@ -150,18 +145,6 @@ export function outputAsRecord(output: unknown): Record<string, unknown> | null 
   return output && typeof output === 'object' && !Array.isArray(output)
     ? (output as Record<string, unknown>)
     : null
-}
-
-export function outputAsArray(output: DeviceCommandResponse['stdout']): unknown[] | null {
-  if (typeof output === 'string') {
-    try {
-      const parsed = JSON.parse(output)
-      return Array.isArray(parsed) ? parsed : null
-    } catch {
-      return null
-    }
-  }
-  return Array.isArray(output) ? output : null
 }
 
 function stringValue(record: Record<string, unknown>, ...keys: string[]): string {
@@ -323,23 +306,6 @@ function gitlabCheckStatuses(record: Record<string, unknown>): string[] {
   return [stringValue(pipeline as Record<string, unknown>, 'status')].filter(Boolean)
 }
 
-function githubMergeQueueState(value: unknown): ChangeRequestMergeQueueState {
-  const response =
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null
-  const data =
-    response?.data && typeof response.data === 'object' && !Array.isArray(response.data)
-      ? (response.data as Record<string, unknown>)
-      : null
-  const resource =
-    data?.resource && typeof data.resource === 'object' && !Array.isArray(data.resource)
-      ? (data.resource as Record<string, unknown>)
-      : null
-  if (!resource || !Object.hasOwn(resource, 'mergeQueueEntry')) return 'unknown'
-  return resource.mergeQueueEntry ? 'queued' : 'not_queued'
-}
-
 export function parseChangeRequest(
   provider: ChangeRequestProvider,
   value: unknown
@@ -381,108 +347,6 @@ export function parseChangeRequest(
     ...(headSha ? { headSha } : {}),
     ...(updatedAt ? { updatedAt } : {}),
   }
-}
-
-export function classifyChangeRequestCommandError(
-  response: DeviceCommandResponse
-): ChangeRequestLookupState {
-  const message = [response.error, response.stderr].filter(Boolean).join('\n').toLowerCase()
-  if (
-    message.includes('not found') ||
-    message.includes('no such file') ||
-    message.includes('executable file')
-  ) {
-    return 'unavailable'
-  }
-  if (
-    message.includes('auth') ||
-    message.includes('login') ||
-    message.includes('token') ||
-    message.includes('unauthorized')
-  ) {
-    return 'unauthenticated'
-  }
-  return 'error'
-}
-
-async function loadChangeRequest(
-  api: DeviceCommandApi,
-  deviceId: string,
-  path: string,
-  remoteUrl: string,
-  branchName: string,
-  diagnostics: EnvironmentLoadDiagnostics,
-  onInitialLookup?: (lookup: ChangeRequestLookup) => void
-): Promise<ChangeRequestLookup | undefined> {
-  const remote = parseGitRemote(remoteUrl)
-  const branch = branchName.trim()
-  if (!remote || !branch) return undefined
-
-  const provider: ChangeRequestProvider | undefined = remote.host.includes('github')
-    ? 'github'
-    : remote.host.includes('gitlab')
-      ? 'gitlab'
-      : undefined
-  if (!provider) return undefined
-
-  let response: DeviceCommandResponse
-  try {
-    response = await traceEnvironmentOperation(diagnostics, 'change_request', () =>
-      api.executeCommand(deviceId, {
-        command_key:
-          provider === 'github' ? 'git_github_pull_requests' : 'git_gitlab_merge_requests',
-        path,
-        args: [branch],
-        timeout_seconds: 20,
-        max_output_bytes: 256 * 1024,
-      })
-    )
-  } catch {
-    return { provider, state: 'error' }
-  }
-  if (!response.success) {
-    return { provider, state: classifyChangeRequestCommandError(response) }
-  }
-
-  const changeRequests = outputAsArray(response.stdout)
-    ?.map(value => parseChangeRequest(provider, value))
-    .filter((value): value is ChangeRequest => Boolean(value))
-    .sort((left, right) => {
-      if (left.state === 'open' && right.state !== 'open') return -1
-      if (right.state === 'open' && left.state !== 'open') return 1
-      return right.number - left.number
-    })
-  const changeRequest = changeRequests?.[0]
-  if (!changeRequest) {
-    return { provider, state: 'not_found' }
-  }
-
-  onInitialLookup?.({
-    provider,
-    state: 'found',
-    changeRequest: { ...changeRequest },
-  })
-
-  if (provider === 'github' && changeRequest.state === 'open') {
-    try {
-      const queueResponse = await traceEnvironmentOperation(diagnostics, 'merge_queue', () =>
-        api.executeCommand(deviceId, {
-          command_key: 'git_github_pull_request_merge_queue',
-          path,
-          args: ['-F', `url=${changeRequest.url}`],
-          timeout_seconds: 20,
-          max_output_bytes: 64 * 1024,
-        })
-      )
-      if (queueResponse.success) {
-        changeRequest.mergeQueue = githubMergeQueueState(outputAsRecord(queueResponse.stdout))
-      }
-    } catch {
-      changeRequest.mergeQueue = 'unknown'
-    }
-  }
-
-  return { provider, state: 'found', changeRequest }
 }
 
 function environmentInfoCacheKey(
@@ -771,7 +635,6 @@ async function loadProjectEnvironmentUncached(
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null,
   onPartialInfo?: (info: EnvironmentInfo) => void,
-  changeRequestStatusEnabled?: boolean,
   diagnostics: EnvironmentLoadDiagnostics = {
     loadId: ++environmentLoadSequence,
     startedAt: environmentNow(),
@@ -828,61 +691,27 @@ async function loadProjectEnvironmentUncached(
     const remoteUrlPromise = traceEnvironmentOperation(diagnostics, 'git_remote', () =>
       runGitCommand(api, deviceId, 'git_remote_url', path)
     ).catch(() => '')
-    const changeRequestEnabledPromise =
-      changeRequestStatusEnabled === undefined
-        ? traceEnvironmentOperation(diagnostics, 'change_request_preference', () =>
-            getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
-          )
-        : Promise.resolve(changeRequestStatusEnabled)
     const branchInfoPromise = Promise.all([branchNamePromise, remoteUrlPromise]).then(
       ([branchName, remoteUrl]) => {
+        const remote = parseGitRemote(remoteUrl)
         const branchInfo: EnvironmentInfo = {
           ...environmentWorkspaceInfo,
           additions: '',
           deletions: '',
           isGitRepository: true,
           branchName,
+          remoteUrl: remote ? `https://${remote.host}/${remote.repoPath}` : undefined,
           createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
         }
         logEnvironmentLoad(diagnostics, 'branch_published', { branchName })
         onPartialInfo?.(branchInfo)
-        return { branchInfo, branchName, remoteUrl }
+        return branchInfo
       }
     )
-    const changeRequestPromise = Promise.all([branchInfoPromise, changeRequestEnabledPromise]).then(
-      async ([{ branchInfo, branchName, remoteUrl }, changeRequestStatusEnabled]) => {
-        const changeRequest = changeRequestStatusEnabled
-          ? await loadChangeRequest(
-              api,
-              deviceId,
-              path,
-              remoteUrl,
-              branchName,
-              diagnostics,
-              initialLookup => {
-                logEnvironmentLoad(diagnostics, 'change_request_published', {
-                  state: initialLookup.state,
-                  number: initialLookup.changeRequest?.number,
-                })
-                onPartialInfo?.({ ...branchInfo, changeRequest: initialLookup })
-              }
-            )
-          : undefined
-        if (changeRequest) {
-          logEnvironmentLoad(diagnostics, 'change_request_final_published', {
-            state: changeRequest.state,
-            number: changeRequest.changeRequest?.number,
-          })
-          onPartialInfo?.({ ...branchInfo, changeRequest })
-        }
-        return changeRequest
-      }
-    )
-    const [{ branchName, remoteUrl }, shortStat, porcelain, changeRequest] = await Promise.all([
+    const [branchInfo, shortStat, porcelain] = await Promise.all([
       branchInfoPromise,
       shortStatPromise,
       porcelainPromise,
-      changeRequestPromise,
     ])
     const diff = parseGitShortStat(shortStat ?? '')
     const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
@@ -899,20 +728,8 @@ async function loadProjectEnvironmentUncached(
       diff.additions = `+${porcelainLines.length}`
     }
 
-    const result = {
-      ...environmentWorkspaceInfo,
-      ...diff,
-      isGitRepository: true,
-      branchName,
-      createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
-      ...(changeRequest ? { changeRequest } : {}),
-    }
-    logEnvironmentLoad(diagnostics, 'completed', {
-      branchName,
-      changeRequestState: changeRequest?.state,
-      changeRequestNumber: changeRequest?.changeRequest?.number,
-    })
-    return result
+    logEnvironmentLoad(diagnostics, 'completed', { branchName: branchInfo.branchName })
+    return { ...branchInfo, ...diff }
   } catch (error) {
     const isGitRepository = await probeGitRepository(api, deviceId, path).catch(() => undefined)
     if (isGitRepository === false) {
@@ -943,21 +760,11 @@ export async function loadProjectEnvironment(
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
   }
 
-  const workspaceCacheKey = environmentInfoCacheKey(project, target)
-  if (!workspaceCacheKey) {
+  const cacheKey = environmentInfoCacheKey(project, target)
+  if (!cacheKey) {
     logEnvironmentLoad(diagnostics, 'cache_bypassed')
-    return loadProjectEnvironmentUncached(
-      api,
-      project,
-      target,
-      options.onPartialInfo,
-      options.changeRequestStatusEnabled,
-      diagnostics
-    )
+    return loadProjectEnvironmentUncached(api, project, target, options.onPartialInfo, diagnostics)
   }
-  const cacheKey = `${workspaceCacheKey}\0change-request:${String(
-    options.changeRequestStatusEnabled ?? 'preference'
-  )}`
 
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
@@ -997,7 +804,6 @@ export async function loadProjectEnvironment(
   if (staleInfo && options.onPartialInfo) {
     logEnvironmentLoad(diagnostics, 'stale_cache_published', {
       branchName: staleInfo.branchName,
-      changeRequestNumber: staleInfo.changeRequest?.changeRequest?.number,
     })
     options.onPartialInfo(cloneEnvironmentInfo(staleInfo))
   }
@@ -1011,22 +817,11 @@ export async function loadProjectEnvironment(
     project,
     target,
     partialInfo => {
-      const previousInfo = partialState.info
-      partialState.info =
-        previousInfo &&
-        previousInfo.workspacePath === partialInfo.workspacePath &&
-        previousInfo.deviceId === partialInfo.deviceId &&
-        !partialInfo.changeRequest
-          ? {
-              ...partialInfo,
-              ...(previousInfo.changeRequest ? { changeRequest: previousInfo.changeRequest } : {}),
-            }
-          : cloneEnvironmentInfo(partialInfo)
+      partialState.info = cloneEnvironmentInfo(partialInfo)
       partialState.listeners.forEach(listener =>
         listener(cloneEnvironmentInfo(partialState.info ?? partialInfo))
       )
     },
-    options.changeRequestStatusEnabled,
     diagnostics
   )
   logEnvironmentLoad(diagnostics, 'cache_miss', {

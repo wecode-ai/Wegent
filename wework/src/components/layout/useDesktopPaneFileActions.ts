@@ -317,13 +317,22 @@ export function useDesktopPaneFileActions({
         if (localTarget && isDirectory === undefined) {
           const statStartedAt = performance.now()
           logFilePreviewDiagnostic(traceId, 'filesystem_stat_start', pathMetadata)
-          isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
-          if (!scope.isCurrent()) return
-
+          const kind = await getLocalPathKind(trimmedPath)
+          // The exact local file is already resolved. Project and workspace
+          // hydration can finish while the same conversation is still open.
+          const workspaceScopeCurrent = scope.isCurrent()
+          if (
+            !workspaceScopeCurrent &&
+            !(kind === 'file' && scope.isConversationCurrentOnDevice(localTarget.deviceId))
+          ) {
+            return
+          }
+          isDirectory = kind === 'directory'
           logFilePreviewDiagnostic(traceId, 'filesystem_stat_end', {
             ...pathMetadata,
             durationMs: filePreviewElapsedMs(statStartedAt),
             isDirectory,
+            workspaceScopeCurrent,
           })
           scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
         }

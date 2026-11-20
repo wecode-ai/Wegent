@@ -953,6 +953,7 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
             backend_url: "http://localhost:8000".to_owned(),
             socket_url: "wss://socket.example.com".to_owned(),
             auth_token: "bEaReR\twg-token".to_owned(),
+            authenticated_user_id: None,
             runtime_auth_token: "bEaReR\truntime-wg-token".to_owned(),
         },
         ..DeviceConfig::default()

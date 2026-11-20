@@ -264,14 +264,23 @@ def test_long_rounds_keep_exact_manager_transcripts_readable(resumed_manager):
     assert s.db.query(LoopItemTaskBinding).count() == 6
 
 
-def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(resumed_manager):
+@pytest.mark.parametrize("reuse_session", [True, False])
+def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(
+    resumed_manager, reuse_session
+):
     s, values = resumed_manager
+    if reuse_session:
+        values.runtime_task_id = f"{s.execution.runtime_task_id}-manager-initial"
     assert s.issue.assignee_agent_id == s.member_agent.id
 
     message, created = report(s, values)
 
     assert created
     assert s.issue.assignee_agent_id == s.agent.id
+    handoff = s.issue.metadata_json["assignment_history"][-1]
+    assert handoff["by_agent_id"] == s.agent.id
+    assert handoff["by_agent_name"] == (s.agent.title or s.agent.name)
+    assert handoff["by_user_id"] == s.execution.assigner_user_id
     assert s.issue.status == "in_progress"
     assert message.agent_id == s.agent.id
     assert message.runtime_task_id == values.runtime_task_id

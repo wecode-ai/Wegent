@@ -11,11 +11,18 @@ fn conversation_transport_dispatches_the_current_turn_context() {
         fn call<'a>(
             &'a self,
             context: &'a ControlContext,
-            _: &'a str,
+            operation: &'a str,
             _: Value,
         ) -> futures_util::future::BoxFuture<'a, Result<Value, crate::local::app_ipc::AppIpcError>>
         {
-            Box::pin(async move { Ok(json!({"turn":context.request.subtask_id})) })
+            Box::pin(async move {
+                let mut result = json!({"turn":context.request.subtask_id});
+                if operation == "list_connection_event_providers" {
+                    result["items"] = json!([]);
+                    result["_meta"] = json!({"connectionEventProviderCatalog":{"items":[]}});
+                }
+                Ok(result)
+            })
         }
     }
     let _guard = crate::test_env::lock();
@@ -80,8 +87,15 @@ fn conversation_transport_dispatches_the_current_turn_context() {
             };
             let active = list_providers().await.unwrap();
             assert_eq!(active.status(), StatusCode::OK);
+            let active = active.json::<Value>().await.unwrap();
+            assert_eq!(active["result"]["content"], json!([]));
             assert_eq!(
-                active.json::<Value>().await.unwrap()["result"]["structuredContent"]["turn"],
+                active["result"]["_meta"]["connectionEventProviderCatalog"],
+                json!({"items":[]})
+            );
+            assert!(active["result"]["structuredContent"].get("_meta").is_none());
+            assert_eq!(
+                active["result"]["structuredContent"]["turn"],
                 "second-turn"
             );
 
