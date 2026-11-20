@@ -93,11 +93,6 @@ function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
   return <CheckSquare2 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
 }
 
-function menuPosition(trigger: HTMLElement, width: number): MenuPosition {
-  const rect = trigger.getBoundingClientRect()
-  return clampMenuPosition({ left: rect.left, top: rect.bottom + 4 }, width, 152)
-}
-
 function clampMenuPosition(position: MenuPosition, width: number, height: number): MenuPosition {
   return {
     left: Math.max(8, Math.min(position.left, window.innerWidth - width - 8)),
@@ -294,11 +289,10 @@ export function WorkspaceTabStrip({
     restoreClosedTab,
     moveTab,
   } = useWorkspaceTabs()
-  const [addButton, setAddButton] = useState<HTMLButtonElement | null>(null)
   const tabStripRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [focusedTabId, setFocusedTabId] = useState<string | null>(null)
-  const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
@@ -312,7 +306,7 @@ export function WorkspaceTabStrip({
     []
   )
   const installedApps = useSyncExternalStore(
-    addMenuPosition && experimentalFeaturesEnabled
+    addMenuOpen && experimentalFeaturesEnabled
       ? installedAppsResource.subscribe
       : subscribeIdleResource,
     installedAppsResource.getSnapshot,
@@ -384,14 +378,14 @@ export function WorkspaceTabStrip({
   const openNewTab = (kind: WorkspaceTabKind) => {
     if (!availableKindSet.has(kind)) return
     openTab(kind)
-    setAddMenuPosition(null)
+    setAddMenuOpen(false)
   }
   const openSmartApps = () => {
     openTab('auxiliary', {
       title: t('workbench.workspace_tab_sites', '应用'),
       contentRoute: '/sites?app_type=smart_app',
     })
-    setAddMenuPosition(null)
+    setAddMenuOpen(false)
   }
   const openInstalledSmartApp = (installation: HarnessAppInstallation) => {
     const route = harnessAppRoute(installation.id)
@@ -404,14 +398,14 @@ export function WorkspaceTabStrip({
         contentRoute: route,
       })
     }
-    setAddMenuPosition(null)
+    setAddMenuOpen(false)
   }
   const openDshWorkspaceTab = (id: string, title: string) => {
     const route = dshWorkspaceTabRoute(id)
     const existing = tabs.find(tab => tab.contentRoute === route)
     if (existing) selectTab(existing.id)
     else openTab('auxiliary', { title, contentRoute: route })
-    setAddMenuPosition(null)
+    setAddMenuOpen(false)
   }
   const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
   const detachedWindow = getDesktopWindowLabel().startsWith('workspace-')
@@ -565,7 +559,7 @@ export function WorkspaceTabStrip({
                     if (draggedTabId) moveTab(draggedTabId, targetId)
                   }}
                   onContextMenu={(position, tabId) => {
-                    setAddMenuPosition(null)
+                    setAddMenuOpen(false)
                     setContextMenu({ tabId, ...position })
                   }}
                   agentAvailable={agentAvailable}
@@ -575,32 +569,15 @@ export function WorkspaceTabStrip({
             ))}
           </TabsList>
         </TabsRoot>
-        <ControlButton
-          variant="unstyled"
-          ref={setAddButton}
-          type="button"
-          data-testid="workspace-tab-add"
-          onClick={() => {
-            const trigger = addButton
-            if (!trigger) return
-            setContextMenu(null)
-            setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
-          }}
-          className="ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7 wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
-          aria-label={t('workbench.workspace_tab_new', '新建标签页')}
-          title={t('workbench.workspace_tab_new', '新建标签页')}
-        >
-          <Plus aria-hidden="true" className="h-4 w-4" />
-        </ControlButton>
-        <div className="electron-titlebar-drag-region min-w-0 flex-1 self-stretch" />
-      </div>
-      {
         <ActionMenu
-          hideTrigger
-          anchor={addButton}
-          open={Boolean(addMenuPosition)}
+          testId="workspace-tab-add"
+          icon={Plus}
+          density="dense"
+          triggerClassName="ml-1 shrink-0 transition-colors hover:text-text-primary wework:hover:bg-black/[0.04] wework:keyboard:focus-visible:ring-blue-500"
+          open={addMenuOpen}
           onOpenChange={next => {
-            if (!next) setAddMenuPosition(null)
+            if (next) setContextMenu(null)
+            setAddMenuOpen(next)
           }}
           ariaLabel={t('workbench.workspace_tab_new', '新建标签页')}
           menuTestId="workspace-tab-add-menu"
@@ -613,7 +590,7 @@ export function WorkspaceTabStrip({
               icon: kind === 'agent' && !agentAvailable ? CloudOff : Icon,
               onSelect: () => {
                 if (kind === 'agent' && !agentAvailable) {
-                  setAddMenuPosition(null)
+                  setAddMenuOpen(false)
                   setCloudConnectionOpen(true)
                   return
                 }
@@ -631,7 +608,7 @@ export function WorkspaceTabStrip({
                         { tabs, selectTab, openTab },
                         t('interactions.title', '待你处理')
                       )
-                      setAddMenuPosition(null)
+                      setAddMenuOpen(false)
                     },
                   },
                 ]
@@ -647,7 +624,7 @@ export function WorkspaceTabStrip({
                         contentRoute: COLLABORATION_EXP_PATH,
                         title: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
                       })
-                      setAddMenuPosition(null)
+                      setAddMenuOpen(false)
                     },
                   },
                 ]
@@ -688,7 +665,8 @@ export function WorkspaceTabStrip({
               : []),
           ]}
         />
-      }
+        <div className="electron-titlebar-drag-region min-w-0 flex-1 self-stretch" />
+      </div>
       {
         <ActionMenu
           hideTrigger
