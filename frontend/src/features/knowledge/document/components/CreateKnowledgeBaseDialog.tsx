@@ -32,7 +32,8 @@ import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   CodeWikiSourceFields,
-  type CodeWikiSource,
+  useCodeWikiRepository,
+  type CodeWikiSourceDraft,
 } from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
 import type {
   DirectAccessRequirement,
@@ -101,12 +102,14 @@ interface RetrievalDraft {
   edited?: boolean
 }
 
-function createEmptySource(): CodeWikiSource {
+function createEmptySource(): CodeWikiSourceDraft {
   return {
-    source_type: 'github',
-    source_url: '',
+    mode: 'select',
+    repo: null,
+    urlInput: '',
+    urlSourceType: 'github',
     language: 'zh',
-    resolution: null,
+    probe: null,
   }
 }
 
@@ -152,7 +155,8 @@ export function CreateKnowledgeBaseDialog({
         : []),
     ] as const
   ).filter(Boolean) as ReadonlyArray<readonly [KnowledgeBaseKind, typeof FileText, string]>
-  const [source, setSource] = useState<CodeWikiSource>(createEmptySource)
+  const [source, setSource] = useState(createEmptySource)
+  const repository = useCodeWikiRepository(source)
   const [generationStrategy, setGenerationStrategy] = useState('')
   const [showGenerationTask, setShowGenerationTask] = useState(false)
   const [dingtalkAutoSyncEnabled, setDingtalkAutoSyncEnabled] = useState(false)
@@ -319,7 +323,7 @@ export function CreateKnowledgeBaseDialog({
       return
     }
 
-    if (kind === 'code' && !source.source_url) {
+    if (kind === 'code' && !repository.url) {
       setError(t('knowledge:codeWiki.create.repositoryRequired'))
       selectSection(
         'basic',
@@ -411,8 +415,8 @@ export function CreateKnowledgeBaseDialog({
         kb_type: kind === 'code' ? 'code_wiki' : selectedKbType,
         ...(kind === 'code'
           ? {
-              source_type: source.source_type,
-              source_url: source.source_url,
+              source_type: repository.type,
+              source_url: repository.url,
               language: source.language,
               ...(generationStrategy ? { generation_strategy: generationStrategy } : {}),
               show_generation_task: showGenerationTask,
@@ -420,8 +424,8 @@ export function CreateKnowledgeBaseDialog({
               // form already resolved rather than pre-filled into the box, which
               // would read as the caller's own input — and rather than resolved
               // again on the server, which has asked the provider once already.
-              resolved_name: source.resolution?.name,
-              resolved_description: source.resolution?.description,
+              resolved_name: repository.resolution?.name,
+              resolved_description: repository.resolution?.description,
               execution_model_ref: executionModelRef,
               scheduled_update: scheduledUpdateEnabled
                 ? {
@@ -727,7 +731,11 @@ export function CreateKnowledgeBaseDialog({
             <>
               {kind === 'code' ? (
                 <>
-                  <CodeWikiSourceFields value={source} onChange={setSource} />
+                  <CodeWikiSourceFields
+                    value={source}
+                    repository={repository}
+                    onChange={setSource}
+                  />
                   <SimpleConfigRow
                     label={t('knowledge:codeWiki.create.modelLabel')}
                     description={t('knowledge:codeWiki.create.modelDescription')}

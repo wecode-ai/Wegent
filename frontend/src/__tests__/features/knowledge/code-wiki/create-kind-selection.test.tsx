@@ -387,6 +387,26 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     }
   })
 
+  it('shows and submits the same repository after switching knowledge base kinds', () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const url = 'https://github.com/wecode-ai/wegent'
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Wiki model' }))
+    fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
+    fireEvent.change(screen.getByTestId('code-wiki-source-url'), { target: { value: url } })
+    fireEvent.click(screen.getByTestId('create-kb-kind-document'))
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+
+    expect(screen.getByTestId('code-wiki-source-mode-url')).toBeChecked()
+    expect(screen.getByTestId('code-wiki-source-url')).toHaveValue(url)
+    fireEvent.click(screen.getByTestId('knowledge-summary-section-trigger'))
+    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ source_url: url }))
+  })
+
   it('tells the creator that generating exposes the repository to the model', () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 

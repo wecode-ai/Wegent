@@ -22,17 +22,19 @@ import { useUser } from '@/features/common/UserContext'
 import type { GitInfo, GitRepoInfo } from '@/types/api'
 import type { CodeWikiResolution, CodeWikiSourceType } from '@/types/code-wiki'
 
-export interface CodeWikiSource {
-  source_type: CodeWikiSourceType
-  source_url: string
+export interface CodeWikiSourceDraft {
+  mode: 'select' | 'url'
+  repo: GitRepoInfo | null
+  urlInput: string
+  urlSourceType: CodeWikiSourceType
   language: string
-  /** Set once resolved; the creation can reuse its metadata. */
-  resolution: CodeWikiResolution | null
+  probe: { url: string; type: CodeWikiSourceType; result: CodeWikiResolution } | null
 }
 
 interface CodeWikiSourceFieldsProps {
-  value: CodeWikiSource
-  onChange: Dispatch<SetStateAction<CodeWikiSource>>
+  value: CodeWikiSourceDraft
+  repository: ReturnType<typeof useCodeWikiRepository>
+  onChange: Dispatch<SetStateAction<CodeWikiSourceDraft>>
 }
 
 const SOURCE_TYPES: CodeWikiSourceType[] = ['github', 'gitlab', 'gitea']
@@ -68,6 +70,19 @@ function inferSourceType(url: string, configured: GitInfo[] = []): CodeWikiSourc
   return null
 }
 
+export function useCodeWikiRepository(draft: CodeWikiSourceDraft) {
+  const { user } = useUser()
+  const url = (draft.mode === 'url' ? draft.urlInput : (draft.repo?.git_url ?? '')).trim()
+  const inferredType = draft.mode === 'url' ? inferSourceType(url, user?.git_info) : null
+  const type =
+    draft.mode === 'url'
+      ? (inferredType ?? draft.urlSourceType)
+      : ((draft.repo?.type as CodeWikiSourceType | undefined) ?? 'github')
+  const probe = draft.probe
+  const resolution = probe?.url === url && probe.type === type ? probe.result : null
+  return { url, type, inferredType, resolution }
+}
+
 /**
  * Where the repository comes from, by picking one or by naming one.
  *
@@ -79,42 +94,16 @@ function inferSourceType(url: string, configured: GitInfo[] = []): CodeWikiSourc
  * creation too, and its list is membership-scoped on the server, which is not
  * something a component can change.
  */
-export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsProps) {
+export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSourceFieldsProps) {
   const { t } = useTranslation('knowledge')
-  const { user } = useUser()
-  const configuredGitInfo = user?.git_info
-  const [mode, setMode] = useState<'select' | 'url'>('select')
-  const [repo, setRepo] = useState<GitRepoInfo | null>(null)
-  const [urlDraft, setUrlDraft] = useState('')
-  const [urlSourceType, setUrlSourceType] = useState<CodeWikiSourceType>('github')
   const [resolving, setResolving] = useState(false)
+  const { mode, repo, urlInput, urlSourceType } = value
+  const { url, type, inferredType, resolution } = repository
 
-  const inferred = inferSourceType(urlDraft, configuredGitInfo)
-  const { source_url: url, source_type: sourceType, resolution } = value
-
-  const selectSource = (sourceUrl: string, type: CodeWikiSourceType) => {
-    const trimmedUrl = sourceUrl.trim()
-    onChange(current =>
-      current.source_url === trimmedUrl && current.source_type === type
-        ? current
-        : { ...current, source_type: type, source_url: trimmedUrl, resolution: null }
-    )
-  }
-
-  const selectRepository = (next: GitRepoInfo | null) => {
-    setRepo(next)
-    selectSource(next?.git_url ?? '', (next?.type as CodeWikiSourceType) ?? 'github')
-  }
-
-  // A newly loaded Git integration can identify a provider for a typed URL.
+  // Repository identity is derived from the same draft used to render the inputs.
+  // A probe only supplies metadata for that identity.
   useEffect(() => {
-    if (mode !== 'url' || !inferred || inferred === sourceType) return
-    onChange(current => ({ ...current, source_type: inferred, resolution: null }))
-  }, [inferred, mode, onChange, sourceType])
-
-  // The selected repository is written synchronously. This lookup only supplies metadata.
-  useEffect(() => {
-    if (!url || (mode === 'url' && inferred && inferred !== sourceType)) {
+    if (!url || resolution) {
       setResolving(false)
       return
     }
@@ -122,19 +111,16 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
     setResolving(true)
 
     const resolve = async () => {
-      let result: CodeWikiResolution | null = null
       try {
-        result = await codeWikiApi.resolve(sourceType, url)
+        const result = await codeWikiApi.resolve(type, url)
+        if (current && result) {
+          onChange(draft => ({ ...draft, probe: { url, type, result } }))
+        }
       } catch {
         // Creation checks repository access independently.
+      } finally {
+        if (current) setResolving(false)
       }
-      if (!current) return
-      onChange(source =>
-        source.source_url === url && source.source_type === sourceType
-          ? { ...source, resolution: result }
-          : source
-      )
-      setResolving(false)
     }
 
     // Debounce typed input to limit requests to unauthenticated providers.
@@ -144,7 +130,7 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
       current = false
       if (timer !== null) clearTimeout(timer)
     }
-  }, [inferred, mode, onChange, sourceType, url])
+  }, [mode, onChange, resolution, type, url])
 
   return (
     <>
@@ -163,15 +149,7 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
                 <input
                   type="radio"
                   checked={mode === option}
-                  onChange={() => {
-                    setMode(option)
-                    if (option === 'url') selectSource(urlDraft, inferred ?? urlSourceType)
-                    else
-                      selectSource(
-                        repo?.git_url ?? '',
-                        (repo?.type as CodeWikiSourceType) ?? 'github'
-                      )
-                  }}
+                  onChange={() => onChange(draft => ({ ...draft, mode: option }))}
                   data-testid={`code-wiki-source-mode-${option}`}
                 />
                 <span className={mode === option ? 'text-text-primary' : 'text-text-muted'}>
@@ -186,18 +164,20 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
           {mode === 'select' ? (
             <RepositorySelector
               selectedRepo={repo}
-              handleRepoChange={selectRepository}
+              handleRepoChange={repo => onChange(draft => ({ ...draft, repo }))}
               disabled={false}
             />
           ) : (
             <div className="space-y-2">
-              {inferred === null && urlDraft.trim() !== '' && (
+              {inferredType === null && url !== '' && (
                 <Select
-                  value={value.source_type}
-                  onValueChange={next => {
-                    setUrlSourceType(next as CodeWikiSourceType)
-                    selectSource(urlDraft, next as CodeWikiSourceType)
-                  }}
+                  value={urlSourceType}
+                  onValueChange={next =>
+                    onChange(draft => ({
+                      ...draft,
+                      urlSourceType: next as CodeWikiSourceType,
+                    }))
+                  }
                 >
                   <SelectTrigger className="bg-base" data-testid="code-wiki-source-type">
                     <SelectValue />
@@ -212,11 +192,10 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
                 </Select>
               )}
               <Input
-                value={urlDraft}
-                onChange={e => {
-                  const next = e.target.value
-                  setUrlDraft(next)
-                  selectSource(next, inferSourceType(next, configuredGitInfo) ?? urlSourceType)
+                value={urlInput}
+                onChange={event => {
+                  const urlInput = event.target.value
+                  onChange(draft => ({ ...draft, urlInput }))
                 }}
                 placeholder="https://github.com/owner/repo"
                 data-testid="code-wiki-source-url"

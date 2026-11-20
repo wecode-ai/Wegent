@@ -13,7 +13,12 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
-import { CodeWikiSourceFields } from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
+import { useState } from 'react'
+import {
+  CodeWikiSourceFields,
+  useCodeWikiRepository,
+  type CodeWikiSourceDraft,
+} from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -36,18 +41,24 @@ jest.mock('@/features/common/UserContext', () => ({
   useUser: () => mockUser(),
 }))
 
-const EMPTY = {
-  source_type: 'github' as const,
-  source_url: '',
+const EMPTY: CodeWikiSourceDraft = {
+  mode: 'select',
+  repo: null,
+  urlInput: '',
+  urlSourceType: 'github',
   language: 'zh',
-  generation_strategy: '',
-  show_generation_task: false,
-  resolution: null,
+  probe: null,
+}
+
+function SourceForm({ initial = EMPTY }: { initial?: CodeWikiSourceDraft }) {
+  const [draft, setDraft] = useState(initial)
+  const repository = useCodeWikiRepository(draft)
+  return <CodeWikiSourceFields value={draft} repository={repository} onChange={setDraft} />
 }
 
 function renderWith(gitInfo: Array<{ git_domain: string; type: string }>) {
   mockUser.mockReturnValue({ user: { git_info: gitInfo } })
-  render(<CodeWikiSourceFields value={EMPTY} onChange={jest.fn()} />)
+  render(<SourceForm />)
   fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
   fireEvent.change(screen.getByTestId('code-wiki-source-url'), {
     target: { value: 'https://git.intra.example.com/team/app' },
@@ -71,19 +82,27 @@ describe('code wiki source type inference', () => {
 
 it('opens an existing wiki by ID without assuming its namespace', () => {
   mockUser.mockReturnValue({ user: { git_info: [] } })
+  const url = 'https://github.com/team/repo'
   render(
-    <CodeWikiSourceFields
-      onChange={jest.fn()}
-      value={{
+    <SourceForm
+      initial={{
         ...EMPTY,
-        resolution: {
-          exists: true,
-          visibility: 'public',
-          default_branch: 'main',
-          name: 'repo',
-          description: '',
-          access: 'public',
-          existing_wikis: [{ id: 42, name: 'Shared wiki', owner_name: 'Owner', accessible: true }],
+        mode: 'url',
+        urlInput: url,
+        probe: {
+          url,
+          type: 'github',
+          result: {
+            exists: true,
+            visibility: 'public',
+            default_branch: 'main',
+            name: 'repo',
+            description: '',
+            access: 'public',
+            existing_wikis: [
+              { id: 42, name: 'Shared wiki', owner_name: 'Owner', accessible: true },
+            ],
+          },
         },
       }}
     />
