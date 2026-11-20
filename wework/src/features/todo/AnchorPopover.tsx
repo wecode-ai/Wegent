@@ -55,10 +55,17 @@ export function AnchorPopover({
       open
       dismissible={!suspended}
       onOpenChange={(next, details) => {
-        if (!next) {
-          details.cancel()
-          if (!suspended) onClose()
-        }
+        if (next) return
+        details.cancel()
+        // Focus can move during a child dialog's teardown. The anchor owns its own toggle.
+        if (
+          suspended ||
+          details.reason === 'focus-out' ||
+          details.reason === 'window-blur' ||
+          (details.reason === 'outside-press' && details.event?.composedPath().includes(anchor))
+        )
+          return
+        onClose()
       }}
     >
       <PopoverContent

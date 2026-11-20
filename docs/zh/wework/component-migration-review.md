@@ -823,6 +823,13 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 
 机械扫描另报告1项border-accent-on-rounded警告；对应WeworkIssueHomeComposer.tsx的TabsTab选中下划线（border-b-2），不是卡片装饰边框，已按实际源码归为误报并保留。检测没有进行原生渲染。
 
+## 打包 Electron 复核（93154da584）
+
+- 云端连接的会话同步设置通过 `transcript-sync`，覆盖默认关闭、显式开启和云同步。[Core 5 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269750)
+- 插件管理的创建入口与工作区调试侧栏通过 `plugin-development`。[Core 8 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269414)
+- 协作分栏通过 `collaboration-exp`，覆盖键盘调整、真实拖拽和 Escape 恢复布局。[Core 4 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269385)
+- 看板重新加载后保留顺序及跨列变更。通知进入看板的专项在关闭详情后开始拖拽时失败，已根据命中日志补上关闭完成的等待，待同场景复测。[Core 10 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269383) [Core 5 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269750)
+
 ## 仍需真实验收的边界
 
 - 未逐一打开全部 234 个 source owner 或 45 个真实 Page。DSH 动态入口、委托表单、弹出工作台、进程视图、设备/插件/应用工作区仍需登录与原生 host 前提。

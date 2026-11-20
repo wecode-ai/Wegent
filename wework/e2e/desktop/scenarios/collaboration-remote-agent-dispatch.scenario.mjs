@@ -387,11 +387,13 @@ async function verifyConfiguredExecutionEnvironment(
       timeoutMs,
     }
   )
-  const initialize = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`)
   const actions = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}"]`)
+  const menu = `[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}-menu"]`
+  const initialize = `${menu} [role="menuitem"][data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`
   const initializeEnvironment = async () => {
+    await control.command('scrollIntoView', actions)
     await control.command('setExpanded', actions, { value: 'true', visible: true, timeoutMs })
-    await control.command('clickWhenEnabled', initialize, { timeoutMs })
+    await control.command('clickWhenEnabled', initialize, { visible: true, timeoutMs })
   }
   await initializeEnvironment()
   await waitForValue(

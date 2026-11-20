@@ -823,6 +823,13 @@ In the production build, one representative Story per54 groups was opened, prefe
 
 The mechanical detector reported one border-accent-on-rounded warning. The actual source is the selected TabsTab underline in WeworkIssueHomeComposer.tsx (border-b-2), not a decorative card border; it is classified as a false positive and preserved. The detector did not inspect native rendering.
 
+## Packaged Electron verification (93154da584)
+
+- The cloud connection transcript settings passed `transcript-sync`, covering the disabled default, explicit activation and cloud synchronization. [Core 5 log](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269750)
+- The plugin creation action and workspace debug sidebar passed `plugin-development`. [Core 8 log](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269414)
+- The collaboration split panes passed `collaboration-exp`, covering keyboard resizing, real pointer dragging and restoring the layout with Escape. [Core 4 log](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269385)
+- Board ordering and cross-column changes survived reload. The notification-to-board scenario started dragging while the detail drawer was still closing. The scenario now waits for the drawer to close and awaits verification. [Core 10 log](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269383) [Core 5 log](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269750)
+
 ## Remaining native acceptance boundaries
 
 - All 234 source owners and 45 real Pages have not been opened individually. Unresolved entries, delegated forms, popout workbench, process views and device/plugin/application workspaces require authentication and native-host prerequisites.
