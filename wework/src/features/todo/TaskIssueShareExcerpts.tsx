@@ -6,30 +6,35 @@ import type { TaskIssueShareDraft } from './TaskIssueShare'
 
 export function TaskIssueShareExcerpts({
   excerpts,
+  firstAvailable,
   selected,
   onSelect,
-  loadAll,
+  loadEarlier,
 }: {
   excerpts: TaskIssueShareDraft['excerpts']
+  firstAvailable: boolean
   selected: string[]
   onSelect(ids: string[]): void
-  loadAll?(): Promise<TaskIssueShareDraft['excerpts']>
+  loadEarlier?(): Promise<void>
 }) {
   const { t } = useTranslation('common')
   const [showAll, setShowAll] = useState(false)
-  const [previewEnd, setPreviewEnd] = useState(false)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
-  if (!excerpts.length) return null
-  const displayed = showAll ? excerpts : previewEnd ? excerpts.slice(-2) : excerpts.slice(0, 2)
+  const displayed = showAll
+    ? excerpts
+    : firstAvailable && excerpts.length > 1
+      ? [excerpts[0], excerpts[excerpts.length - 1]]
+      : excerpts.slice(-1)
   const toggle = (id: string) =>
     onSelect(selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id])
-  const allSelected = selected.length === excerpts.length
-  async function withAll(action: (items: TaskIssueShareDraft['excerpts']) => void) {
+  const allSelected = displayed.every(excerpt => selected.includes(excerpt.id))
+  async function fetchEarlier() {
     setLoading(true)
     setFailed(false)
     try {
-      action((await loadAll?.()) ?? excerpts)
+      await loadEarlier?.()
+      setShowAll(true)
     } catch {
       setFailed(true)
     } finally {
@@ -50,18 +55,21 @@ export function TaskIssueShareExcerpts({
           type="button"
           data-testid="task-issue-share-select-all"
           aria-pressed={allSelected}
-          disabled={loading}
-          onClick={() =>
-            void withAll(items =>
-              onSelect(selected.length === items.length ? [] : items.map(excerpt => excerpt.id))
+          disabled={loading || displayed.length === 0}
+          onClick={() => {
+            const visible = new Set(displayed.map(excerpt => excerpt.id))
+            onSelect(
+              allSelected
+                ? selected.filter(id => !visible.has(id))
+                : [...new Set([...selected, ...visible])]
             )
-          }
+          }}
           className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
         >
           {t('taskIssueShare.selectAll')}
         </Button>
         {excerpts.length > 1 &&
-          (['first', 'last'] as const).map(position => {
+          (firstAvailable ? (['first', 'last'] as const) : (['last'] as const)).map(position => {
             const excerpt = excerpts[position === 'first' ? 0 : excerpts.length - 1]
             return (
               <Button
@@ -72,8 +80,6 @@ export function TaskIssueShareExcerpts({
                 data-testid={`task-issue-share-select-${position}`}
                 aria-pressed={selected.includes(excerpt.id)}
                 onClick={() => {
-                  setShowAll(false)
-                  setPreviewEnd(position === 'last')
                   toggle(excerpt.id)
                 }}
                 className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
@@ -125,26 +131,23 @@ export function TaskIssueShareExcerpts({
         data-testid="task-issue-share-all-excerpts"
         aria-expanded={showAll}
         disabled={loading}
-        onClick={() => (showAll ? setShowAll(false) : void withAll(() => setShowAll(true)))}
+        onClick={() => (loadEarlier ? void fetchEarlier() : setShowAll(!showAll))}
         className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border hover:text-text-primary md:min-h-8"
       >
         {t(
           loading
             ? 'independentIssues.loading'
-            : showAll
-              ? 'taskIssueShare.recentExcerpts'
-              : loadAll
-                ? 'taskIssueShare.allHistory'
-                : 'taskIssueShare.allExcerpts',
-          {
-            count: excerpts.length,
-          }
+            : loadEarlier
+              ? 'taskIssueShare.loadEarlier'
+              : showAll
+                ? 'taskIssueShare.recentExcerpts'
+                : 'taskIssueShare.expandPreview'
         )}
         <ChevronDown className={`size-3.5 ${showAll ? 'rotate-180' : ''}`} aria-hidden="true" />
       </Button>
       {failed && (
         <p role="alert" className="px-2 py-1 text-xs text-destructive">
-          {t('taskIssueShare.historyUnavailable')}
+          {t('taskIssueShare.earlierUnavailable')}
         </p>
       )}
     </section>

@@ -565,10 +565,25 @@ export function createDesktopScenario({
       })
       await click(control, share)
       await wait(control, selector('task-issue-share-excerpt-content-0'), { text: prompt })
+      await wait(control, selector('task-issue-share-excerpt-content-1'), {
+        text: `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 1}`,
+      })
+      const historyExcerpt = selector('task-issue-share-excerpt')
+      assert.equal(Number(await control.command('getElementCount', historyExcerpt)), 2)
+      await click(control, selector('task-issue-share-select-last'))
       await captureScreenshot(control, '10a-task-share-real-history-start.png')
       await click(control, selector('task-issue-share-all-excerpts'))
       await wait(control, '[data-testid="task-issue-share-all-excerpts"][aria-expanded="true"]')
       await wait(control, selector('task-issue-share-excerpts'), { text: 'Native search prompt' })
+      const firstPageSize = Number(await control.command('getElementCount', historyExcerpt))
+      assert.ok(firstPageSize > 2 && firstPageSize < TERMINAL_HISTORY_TURN_COUNT)
+      await click(control, selector('task-issue-share-all-excerpts'))
+      await wait(control, selector(`task-issue-share-excerpt-content-${firstPageSize}`))
+      assert.equal(
+        Number(await control.command('getElementCount', `${historyExcerpt}[aria-pressed="true"]`)),
+        1
+      )
+      await captureScreenshot(control, '10b-task-share-earlier-pages.png')
       await click(control, selector('independent-issue-close'))
 
       await switchPersonalPluginAccount(control, { ...cloud, authToken: colleagueToken })

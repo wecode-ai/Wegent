@@ -70,8 +70,31 @@ export function IndependentIssueEditor({
   const { t } = useTranslation('common')
   const formId = useId()
   const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([])
-  const [allExcerpts, setAllExcerpts] = useState<TaskIssueShareDraft['excerpts'] | null>(null)
-  const availableExcerpts = allExcerpts ?? shareDraft?.excerpts ?? []
+  const [olderExcerpts, setOlderExcerpts] = useState<TaskIssueShareDraft['excerpts']>([])
+  const [beforeCursor, setBeforeCursor] = useState<string | null>()
+  const [localPageSize, setLocalPageSize] = useState(1)
+  const preview = shareDraft?.excerpts ?? []
+  const history = shareDraft?.history
+  const firstExcerpt = history && preview.length < 2 ? undefined : preview[0]
+  const loadedTail = history ? olderExcerpts : preview.slice(-localPageSize)
+  const availableExcerpts = [
+    ...new Map(
+      [firstExcerpt, ...loadedTail, preview.at(-1)].flatMap(excerpt =>
+        excerpt ? [[excerpt.id, excerpt] as const] : []
+      )
+    ).values(),
+  ]
+  const hasEarlier = history ? beforeCursor !== null : preview.length > localPageSize + 1
+  const loadEarlier = async () => {
+    if (!history) {
+      setLocalPageSize(size => size + 16)
+      return
+    }
+    if (beforeCursor === null) return
+    const page = await history.earlier(beforeCursor)
+    setOlderExcerpts(excerpts => [...page.excerpts, ...excerpts])
+    setBeforeCursor(page.beforeCursor)
+  }
   const [shareFiles, setShareFiles] = useState<File[]>([])
   const [conversationFileIds, setConversationFileIds] = useState<string[]>([])
   const canSelectProject = allowProjectSelection ?? !issue
@@ -328,21 +351,14 @@ export function IndependentIssueEditor({
               >
                 {shareDraft.historyUnavailable && (
                   <p role="alert" className="text-sm text-text-secondary">
-                    {t('taskIssueShare.historyUnavailable')}
+                    {t('taskIssueShare.firstUnavailable')}
                   </p>
                 )}
-                {availableExcerpts.length > 0 && (
+                {(availableExcerpts.length > 0 || hasEarlier) && (
                   <TaskIssueShareExcerpts
                     excerpts={availableExcerpts}
-                    loadAll={
-                      shareDraft.history
-                        ? async () => {
-                            const excerpts = await shareDraft.history!.all()
-                            setAllExcerpts(excerpts)
-                            return excerpts
-                          }
-                        : undefined
-                    }
+                    firstAvailable={Boolean(firstExcerpt)}
+                    loadEarlier={hasEarlier ? loadEarlier : undefined}
                     selected={selectedExcerpts}
                     onSelect={setSelectedExcerpts}
                   />

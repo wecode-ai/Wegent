@@ -534,13 +534,11 @@ export function DesktopWorkbenchConversationView({
                                                 readHistoryPage={
                                                   paneSession.transcriptHasMoreBefore &&
                                                   services?.runtimeWorkApi
-                                                    ? (afterCursor, limit, signal) =>
+                                                    ? (request, signal) =>
                                                         services.runtimeWorkApi!.getRuntimeTranscript(
                                                           {
                                                             ...currentRuntimeTask,
-                                                            afterCursor,
-                                                            limit,
-                                                            includeFullContent: true,
+                                                            ...request,
                                                           },
                                                           { signal }
                                                         )

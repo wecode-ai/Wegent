@@ -33,8 +33,7 @@ export type TaskIssueShareDraft = {
   excerpts: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>[]
   historyUnavailable?: boolean
   history?: {
-    first: Promise<TaskIssueShareDraft['excerpts']>
-    all(): Promise<TaskIssueShareDraft['excerpts']>
+    earlier(cursor?: string): Promise<ShareHistoryPage>
   }
 }
 
@@ -50,50 +49,42 @@ function shareExcerpts(messages: WorkbenchMessage[]): TaskIssueShareDraft['excer
   })
 }
 
-type ReadSharePage = (cursor: string, limit: number) => Promise<RuntimeTranscriptResponse>
+type ShareHistoryPage = {
+  excerpts: TaskIssueShareDraft['excerpts']
+  beforeCursor: string | null
+}
 
-function readShareHistory(read: ReadSharePage, tail: TaskIssueShareDraft['excerpts']) {
-  async function readPage(cursor: string, limit: number) {
-    const page = await read(cursor, limit)
-    if (page.historyUnavailable || (page.hasMoreAfter && !page.afterCursor))
+type ShareHistoryRequest = {
+  beforeCursor?: string
+  afterCursor?: string
+  limit: number
+}
+type ReadSharePage = (request: ShareHistoryRequest) => Promise<RuntimeTranscriptResponse>
+const SHARE_HISTORY_PAGE_SIZE = 1
+
+function readShareHistory(read: ReadSharePage) {
+  async function first() {
+    const page = await read({ afterCursor: 'start', limit: 1 })
+    const excerpt = shareExcerpts(projectRuntimePaneTranscript(page).messages)[0]
+    if (page.historyUnavailable || (!excerpt && page.hasMoreAfter))
+      throw new Error('The beginning of the conversation is unavailable')
+    return excerpt
+  }
+
+  async function earlier(cursor?: string): Promise<ShareHistoryPage> {
+    const page = await read({ beforeCursor: cursor, limit: SHARE_HISTORY_PAGE_SIZE })
+    if (
+      page.historyUnavailable ||
+      (page.hasMoreBefore && (!page.beforeCursor || page.beforeCursor === cursor))
+    )
       throw new Error('Conversation history is unavailable')
-    return page
-  }
-  const start = (async () => {
-    let page = await readPage('start', 16)
-    const excerpts = shareExcerpts(projectRuntimePaneTranscript(page).messages)
-    while (excerpts.length < 2 && page.hasMoreAfter && page.afterCursor) {
-      const cursor = page.afterCursor
-      page = await readPage(cursor, 16)
-      if (page.afterCursor === cursor) throw new Error('Transcript cursor did not advance')
-      excerpts.push(...shareExcerpts(projectRuntimePaneTranscript(page).messages))
+    return {
+      excerpts: shareExcerpts(projectRuntimePaneTranscript(page).messages),
+      beforeCursor: page.hasMoreBefore ? (page.beforeCursor ?? null) : null,
     }
-    return { page, excerpts }
-  })()
-  const combine = (head: TaskIssueShareDraft['excerpts']) => [
-    ...new Map([...head, ...tail].map(excerpt => [excerpt.id, excerpt])).values(),
-  ]
-  const first = start.then(({ excerpts }) => combine(excerpts))
-  let all: Promise<TaskIssueShareDraft['excerpts']> | undefined
-  return {
-    first,
-    all: () =>
-      (all ??= (async () => {
-        const initial = await start
-        let page = initial.page
-        const excerpts = [...initial.excerpts]
-        while (page.hasMoreAfter && page.afterCursor) {
-          const cursor = page.afterCursor
-          page = await readPage(cursor, 60)
-          if (page.afterCursor === cursor) throw new Error('Transcript cursor did not advance')
-          excerpts.push(...shareExcerpts(projectRuntimePaneTranscript(page).messages))
-        }
-        return combine(excerpts)
-      })().catch(error => {
-        all = undefined
-        throw error
-      })),
   }
+
+  return { first, earlier }
 }
 
 function openIssue(issue: SharedIssueTarget) {
@@ -116,8 +107,7 @@ export function TaskIssueShare({
   address: { deviceId: string; taskId: string; workspacePath?: string | null }
   readWorkspaceFileChunk?: ReadWorkspaceFileChunk
   readHistoryPage?(
-    cursor: string,
-    limit: number,
+    request: ShareHistoryRequest,
     signal: AbortSignal
   ): Promise<RuntimeTranscriptResponse>
 }) {
@@ -241,11 +231,9 @@ export function TaskIssueShare({
           const controller = new AbortController()
           historyRequest.current = controller
           const history = readHistoryPage
-            ? readShareHistory(
-                (cursor, limit) => readHistoryPage(cursor, limit, controller.signal),
-                excerpts
-              )
+            ? readShareHistory(request => readHistoryPage(request, controller.signal))
             : undefined
+          const last = excerpts.slice(-1)
           setDraft({
             requestId,
             source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
@@ -256,13 +244,15 @@ export function TaskIssueShare({
               readWorkspaceFileChunk,
               fetchAttachment
             ),
-            excerpts: history ? [] : excerpts,
+            excerpts: history ? last : excerpts,
             history,
           })
-          void history?.first.then(
+          void history?.first().then(
             first =>
               setDraft(current =>
-                current?.requestId === requestId ? { ...current, excerpts: first } : current
+                current?.requestId === requestId && first && first.id !== last[0]?.id
+                  ? { ...current, excerpts: [first, ...last] }
+                  : current
               ),
             () =>
               setDraft(current =>
