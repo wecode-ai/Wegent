@@ -342,7 +342,14 @@ export function createIndependentIssueDialogState(
         loadId = null
         issueReadVersion += 1
         commentReadVersion += 1
-        publish({ issue: null, comments: [], body: '', editing: false, associationPending: false })
+        publish({
+          issue: null,
+          comments: [],
+          body: '',
+          editing: false,
+          loading: false,
+          associationPending: false,
+        })
         notify(observer => observer.onSaved(null))
       })
     },
