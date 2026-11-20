@@ -679,7 +679,10 @@ fn error_payload(event: &ExecutionEvent) -> Value {
     payload.insert("error".into(), Value::String(error.to_string()));
     payload.insert("task_id".into(), json!(event.task_id));
     let info = crate::chat_errors::classify_chat_error(event.error_code.as_deref(), Some(error));
-    payload.insert("type".into(), json!(info.code));
+    payload.insert(
+        "type".into(),
+        json!(event.error_code.as_deref().unwrap_or(info.code)),
+    );
     payload.insert(
         "error_info".into(),
         json!({

@@ -399,7 +399,7 @@ mod tests {
         );
         assert_eq!(
             RunLabels::from_task(None, Some(&startup), Some("remote-executor"), None),
-            RunLabels::new("other", "Codex", "remote"),
+            RunLabels::new("wework", "Codex", "remote"),
         );
     }
 

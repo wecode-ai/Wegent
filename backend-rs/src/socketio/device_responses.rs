@@ -597,7 +597,10 @@ fn local_chat_frame(
                 event.error_code.as_deref(),
                 event.error.as_deref(),
             );
-            payload.insert("type".into(), json!(info.code));
+            payload.insert(
+                "type".into(),
+                json!(event.error_code.as_deref().unwrap_or(info.code)),
+            );
             payload.insert(
                 "error_info".into(),
                 json!({
