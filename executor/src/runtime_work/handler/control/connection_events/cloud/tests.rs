@@ -547,7 +547,7 @@ fn goal_pause_recovers_cloud_cancellation_after_a_lost_attach_response_and_resta
         handler.save_event_subscription(&id, &record).unwrap();
         assert!(handler.register_cloud_connection_subscription(&id, &mut record).await.is_err());
         assert_eq!(*remote_status.lock().unwrap(), "armed");
-        handler.cancel_connection_goal_waits("task", Some("paused"));
+        handler.cancel_connection_goal_waits("task", Some("paused"), None);
         let read = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(read()["status"], "cancelled");
         assert_eq!(read()["cloud_cancel_pending"], true);

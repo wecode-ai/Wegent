@@ -5406,56 +5406,43 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalledWith('runtime.tasks.create', expect.anything())
   })
 
-  test('preserves request user input responses in local runtime send requests', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
-
-    await services.runtimeWorkApi?.sendRuntimeMessage({
-      address: { deviceId: 'local-device', taskId: 'task-1' },
-      message: '工作目标',
-      requestUserInputResponse: {
+  test.each(['requestUserInputResponse', 'request_user_input_response'] as const)(
+    'sends %s to the live turn while model preparation is stalled',
+    async responseField => {
+      const request = vi.fn().mockResolvedValue({ accepted: true })
+      const prepareLocalModelCatalog = vi.fn(() => new Promise<void>(() => {}))
+      const api = createRuntimeWorkApiFromIpc(request, async () => 'device-uuid', {
+        prepareLocalModelCatalog,
+      })
+      const requestUserInputResponse = {
         requestId: 42,
         itemId: 'item-1',
-        answers: {
-          goal: { answers: ['工作目标'] },
-        },
-      },
-    })
+        interactionScope: 'turn-1',
+        answers: { __codex_approval: { answers: ['allow_once'] } },
+      }
 
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
-    expect(payload).toEqual(
-      expect.objectContaining({
-        taskId: 'task-1',
-        address: { deviceId: 'device-uuid', taskId: 'task-1' },
-        message: '工作目标',
-        requestUserInputResponse: {
-          requestId: 42,
-          itemId: 'item-1',
-          answers: {
-            goal: { answers: ['工作目标'] },
-          },
-        },
-        executionRequest: expect.objectContaining({
-          task_id: 'task-1',
-          subtask_id: expect.any(String),
-          prompt: '工作目标',
-          new_session: false,
-          model_config: expect.objectContaining({
-            model: 'openai',
-            model_id: 'gpt-5.6-sol',
-            api_format: 'responses',
-            protocol: 'openai-responses',
-          }),
-        }),
+      const result = api.sendRuntimeMessage({
+        address: { deviceId: 'local-device', taskId: 'task-1' },
+        message: 'allow_once',
+        [responseField]: requestUserInputResponse,
       })
-    )
-    expect(payload).not.toHaveProperty('message_id')
-    expect(payload).not.toHaveProperty('modelId')
-  })
+
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledExactlyOnceWith(
+          'runtime.tasks.send',
+          {
+            taskId: 'task-1',
+            address: { deviceId: 'device-uuid', taskId: 'task-1' },
+            message: 'allow_once',
+            requestUserInputResponse,
+          },
+          'device-uuid'
+        )
+      )
+      expect(prepareLocalModelCatalog).not.toHaveBeenCalled()
+      await expect(result).resolves.toEqual({ accepted: true })
+    }
+  )
 
   test('normalizes local runtime goal requests before IPC', async () => {
     const request = vi.fn().mockResolvedValue({
