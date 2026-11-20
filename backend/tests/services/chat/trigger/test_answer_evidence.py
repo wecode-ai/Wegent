@@ -13,7 +13,7 @@ def test_completion_uses_one_batch_savepoint_and_does_not_dirty_answer(monkeypat
     from app.services.knowledge import answer_evidence as module
 
     db = MagicMock()
-    answer = SimpleNamespace(id=12, user_id=7, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12, user_id=7)
     unit = {
         "evidence_id": "b" * 32,
         "content": "证据正文",
@@ -35,7 +35,14 @@ def test_completion_uses_one_batch_savepoint_and_does_not_dirty_answer(monkeypat
     result = bind_answer_evidence(db, answer, original)
     assert result["value"] == "结论[[citation:42]]"
     check_source.assert_called_once_with(db, 3, 7, 9)
-    assert db.add.call_args.args[0].user_id == 3
+    snapshot = db.add.call_args.args[0]
+    assert snapshot.user_id == 3
+    assert snapshot.caller_context["answer_evidence"] == {
+        "answer_id": 12,
+        "generation_id": result["answer_generation_id"],
+        "local_id": "b" * 32,
+    }
+    assert len(result["answer_generation_id"]) == 32
     assert result["answer_citations"][0]["citation_id"] == "42"
     assert "_answer_evidence" not in result
     assert original["value"].endswith(f"[[evidence:{'b' * 32}]]")
@@ -51,7 +58,7 @@ def test_recoverable_insert_failure_finishes_body_without_citation(monkeypatch):
     db.flush.side_effect = IntegrityError(
         "INSERT INTO knowledge_citations (...)", {"content": "secret"}, Exception()
     )
-    answer = SimpleNamespace(id=12, user_id=3, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12, user_id=3)
     unit = {
         "evidence_id": "b" * 32,
         "content": "证据",
@@ -73,7 +80,7 @@ def test_recoverable_insert_failure_finishes_body_without_citation(monkeypatch):
 
 
 def test_untrusted_result_cannot_issue_evidence():
-    answer = SimpleNamespace(id=12, user_id=3, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12, user_id=3)
     result = bind_answer_evidence(
         MagicMock(),
         answer,
@@ -116,7 +123,7 @@ def test_savepoint_infrastructure_failure_is_not_downgraded(monkeypatch, failure
         "knowledge_base_id": 7,
         "document_id": 9,
     }
-    answer = SimpleNamespace(id=12, user_id=3, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12, user_id=3)
     with pytest.raises((RuntimeError, IntegrityError)):
         bind_answer_evidence(
             db,
@@ -170,9 +177,12 @@ def test_read_requires_both_independent_permissions(
     db.get.return_value = row
     answer = SimpleNamespace(
         task_id=5,
-        answer_generation_id="a" * 32,
         status=SubtaskStatus.COMPLETED,
         role="ASSISTANT",
+        result={
+            "answer_generation_id": "a" * 32,
+            "answer_citations": [{"citation_id": "42"}],
+        },
     )
     monkeypatch.setattr(module.subtask_store, "get_by_id", lambda *a, **k: answer)
     monkeypatch.setattr(module.task_access_store, "get_task", lambda *a, **k: object())
@@ -236,7 +246,7 @@ def test_current_source_must_remain_native_available_and_indexed(monkeypatch, ch
 
 
 @pytest.mark.parametrize(
-    "change", ["answer", "generation", "binding", "identity", "status"]
+    "change", ["answer", "generation", "binding", "batch", "status", "unlisted"]
 )
 def test_binding_or_current_attempt_mismatch_never_reads_content(monkeypatch, change):
     from fastapi import HTTPException
@@ -248,9 +258,11 @@ def test_binding_or_current_attempt_mismatch_never_reads_content(monkeypatch, ch
     answer = SimpleNamespace(
         task_id=5,
         role="ASSISTANT",
-        answer_generation_id="a" * 32,
         status=SubtaskStatus.COMPLETED,
-        result={"answer_generation_id": "a" * 32},
+        result={
+            "answer_generation_id": "a" * 32,
+            "answer_citations": [{"citation_id": "42"}],
+        },
     )
     if change == "answer":
         binding["answer_id"] = 13
@@ -258,26 +270,32 @@ def test_binding_or_current_attempt_mismatch_never_reads_content(monkeypatch, ch
         binding["generation_id"] = "c" * 32
     if change == "binding":
         binding.pop("local_id")
-    if change == "identity":
-        answer.answer_generation_id = "c" * 32
+    if change == "batch":
+        answer.result["answer_generation_id"] = "c" * 32
+    if change == "unlisted":
+        answer.result["answer_citations"] = [{"citation_id": "43"}]
     if change == "status":
         answer.status = SubtaskStatus.RUNNING
     db = MagicMock()
-    db.get.return_value = SimpleNamespace(caller_context={"answer_evidence": binding})
+    db.get.return_value = SimpleNamespace(
+        caller_context={"answer_evidence": binding}, knowledge_base_id=7, document_id=9
+    )
     monkeypatch.setattr(module.subtask_store, "get_by_id", lambda *a, **k: answer)
     monkeypatch.setattr(module.task_access_store, "get_task", lambda *a, **k: object())
     monkeypatch.setattr(module.task_access_store, "is_member", lambda *a, **k: True)
+    source = MagicMock()
+    monkeypatch.setattr(module, "require_source", source)
     with pytest.raises(HTTPException) as error:
         module.read_citation(db, 3, 42, 12, "a" * 32)
     assert error.value.status_code == 404
+    source.assert_not_called()
 
 
 def test_rejected_conditional_answer_write_rolls_back_inserted_evidence(monkeypatch):
     from contextlib import contextmanager
 
-    from app.models.subtask import SubtaskStatus
+    from app.models.subtask import SubtaskRole, SubtaskStatus
     from app.services.chat.storage import db as storage
-    from app.services.chat.storage.answer_attempt import AnswerSaveResult
     from app.services.knowledge import answer_evidence as module
 
     db = MagicMock()
@@ -285,10 +303,10 @@ def test_rejected_conditional_answer_write_rolls_back_inserted_evidence(monkeypa
         id=12,
         user_id=3,
         task_id=7,
-        answer_generation_id="a" * 32,
         status=SubtaskStatus.RUNNING,
         result=None,
         executor_name=None,
+        role=SubtaskRole.ASSISTANT,
     )
 
     @contextmanager
@@ -302,7 +320,7 @@ def test_rejected_conditional_answer_write_rolls_back_inserted_evidence(monkeypa
     )
     monkeypatch.setattr(
         storage.task_stores.subtask_store,
-        "update_fields_if_attempt",
+        "update_fields_if_status",
         lambda *a, **k: False,
     )
     monkeypatch.setattr(
@@ -333,14 +351,13 @@ def test_rejected_conditional_answer_write_rolls_back_inserted_evidence(monkeypa
     outcome = storage.DatabaseHandler()._update_subtask_sync(
         12,
         "COMPLETED",
-        generation_id="a" * 32,
         expected_status="RUNNING",
         result={
             "value": f"结论[[evidence:{'b' * 32}]]",
             "_answer_evidence": TrustedEvidence([unit], user_id=3),
         },
     )
-    assert outcome is AnswerSaveResult.REJECTED
+    assert outcome is None
     db.rollback.assert_called_once()
 
 
@@ -409,7 +426,7 @@ def test_multiple_same_title_units_mixed_validation_and_duplicate_text_blocks(
         ],
         "_answer_evidence": TrustedEvidence(units, user_id=3),
     }
-    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12)
     result = bind_answer_evidence(db, answer, original)
     assert len(inserted) == 2
     assert result["value"] == "结论[[citation:40]]" + "[[evidence-unavailable]]" * 6
@@ -429,7 +446,7 @@ def test_multiple_same_title_units_mixed_validation_and_duplicate_text_blocks(
 
 def test_no_reference_does_not_create_a_savepoint(monkeypatch):
     db = MagicMock()
-    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12)
     result = bind_answer_evidence(
         db,
         answer,
@@ -466,7 +483,7 @@ def test_snapshot_metadata_uses_model_length_limits(
     monkeypatch.setattr(module, "require_source", lambda *args: None)
     db = MagicMock()
     db.add.side_effect = lambda row: setattr(row, "id", 42)
-    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12)
     unit = {
         "evidence_id": "local",
         "content": "完整原文",
@@ -502,7 +519,7 @@ def test_implicit_flush_savepoint_rollback_failure_is_not_recoverable(monkeypatc
         "ROLLBACK TO SAVEPOINT sa_savepoint_1", {}, Exception("private rollback error")
     )
     db.begin_nested.return_value.is_active = False
-    answer = SimpleNamespace(id=12, answer_generation_id="a" * 32)
+    answer = SimpleNamespace(id=12)
     unit = {
         "evidence_id": "local",
         "content": "私有原文",
@@ -598,3 +615,68 @@ def test_permission_endpoint_requires_current_agent_access(
         get_task.assert_not_called()
     db.get.assert_not_called()
     assert response.headers["Cache-Control"] == "private, no-store"
+
+
+def test_public_result_update_cannot_restore_an_old_citation(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.models.subtask import SubtaskRole, SubtaskStatus
+    from app.schemas.subtask import SubtaskUpdate
+    from app.services.knowledge import answer_evidence as module
+    from app.services.subtask import subtask_service
+
+    old_generation = "a" * 32
+    answer = SimpleNamespace(
+        id=12,
+        task_id=5,
+        role=SubtaskRole.ASSISTANT,
+        status=SubtaskStatus.COMPLETED,
+        result={"value": "new answer", "answer_generation_id": "b" * 32},
+    )
+    row = SimpleNamespace(
+        id=42,
+        knowledge_base_id=7,
+        document_id=9,
+        title="document",
+        content="old evidence",
+        source_chunk_id="",
+        created_at=None,
+        caller_context={
+            "answer_evidence": {
+                "answer_id": 12,
+                "generation_id": old_generation,
+                "local_id": "e1",
+            }
+        },
+    )
+    db = MagicMock()
+    db.get.return_value = row
+    monkeypatch.setattr(
+        module.subtask_store, "get_accessible_by_id", lambda *a, **k: answer
+    )
+    monkeypatch.setattr(module.subtask_store, "get_by_id", lambda *a, **k: answer)
+    monkeypatch.setattr(module.task_access_store, "get_task", lambda *a, **k: object())
+    monkeypatch.setattr(module.task_access_store, "is_member", lambda *a, **k: True)
+    monkeypatch.setattr(module, "require_source", lambda *a: None)
+
+    def write(_db, *, subtask, **fields):
+        subtask.result = fields["result"]
+
+    monkeypatch.setattr(module.subtask_store, "update_fields", write)
+    subtask_service.update_subtask(
+        db,
+        subtask_id=12,
+        user_id=3,
+        obj_in=SubtaskUpdate(
+            result={
+                "value": "edited answer",
+                "answer_generation_id": old_generation,
+                "answer_citations": [{"citation_id": "42"}],
+            }
+        ),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        module.read_citation(db, 3, 42, 12, old_generation)
+    assert error.value.status_code == 404
+    assert answer.result == {"value": "edited answer"}

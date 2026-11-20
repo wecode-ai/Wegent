@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, NoReturn
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy.exc import DBAPIError
@@ -12,11 +13,13 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
 from app.models.knowledge_citation import KnowledgeCitation
-from app.models.subtask import SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base,
 )
 from app.stores.tasks import subtask_store, task_access_store
+
+ANSWER_SAVE_UNCONFIRMED_MESSAGE = "回答保存状态未确认，请刷新历史核对。"
 
 
 @dataclass(frozen=True)
@@ -92,14 +95,21 @@ def _valid_unit(unit: dict) -> bool:
     )
 
 
-def bind_answer_evidence(db: Session, answer: Any, original: dict) -> dict:
-    """Insert one evidence batch without mutating the pending answer or caller."""
-    from shared.utils.evidence_markers import rewrite_markers
-
+def result_without_answer_evidence(original: dict[str, Any]) -> dict[str, Any]:
+    """Remove server-owned citation metadata from an unbound result."""
     result = public_result(original)
     result.pop("answer_citations", None)
     result.pop("answer_generation_id", None)
     result.pop("answer_evidence_errors", None)
+    return result
+
+
+def bind_answer_evidence(db: Session, answer: Subtask, original: dict) -> dict:
+    """Insert one evidence batch without mutating the pending answer or caller."""
+    from shared.utils.evidence_markers import rewrite_markers
+
+    result = result_without_answer_evidence(original)
+    generation_id = uuid4().hex
     trusted = original.get("_answer_evidence")
     units = trusted.units if isinstance(trusted, TrustedEvidence) else []
     actor_id = trusted.user_id if isinstance(trusted, TrustedEvidence) else None
@@ -112,7 +122,7 @@ def bind_answer_evidence(db: Session, answer: Any, original: dict) -> dict:
     for node, key in _text_slots(result):
         rewrite_markers(node[key], remember)
     rows: dict[str, KnowledgeCitation] = {}
-    if answer.answer_generation_id and actor_id is not None:
+    if actor_id is not None:
         for unit in units:
             if not isinstance(unit, dict) or not _valid_unit(unit):
                 continue
@@ -135,7 +145,7 @@ def bind_answer_evidence(db: Session, answer: Any, original: dict) -> dict:
                 caller_context={
                     "answer_evidence": {
                         "answer_id": answer.id,
-                        "generation_id": answer.answer_generation_id,
+                        "generation_id": generation_id,
                         "local_id": local_id,
                     }
                 },
@@ -167,7 +177,7 @@ def bind_answer_evidence(db: Session, answer: Any, original: dict) -> dict:
                 else "[[evidence-unavailable]]"
             ),
         )
-    result["answer_generation_id"] = answer.answer_generation_id
+    result["answer_generation_id"] = generation_id
     result["answer_citations"] = [
         {
             "citation_id": str(row.id),
@@ -194,6 +204,14 @@ def _matches_snapshot_binding(
     )
 
 
+def _includes_citation(result: dict, citation_id: int) -> bool:
+    citations = result.get("answer_citations")
+    return isinstance(citations, list) and any(
+        isinstance(citation, dict) and citation.get("citation_id") == str(citation_id)
+        for citation in citations
+    )
+
+
 def read_citation(
     db: Session, user_id: int, citation_id: int, answer_id: int, generation_id: str
 ) -> dict:
@@ -207,10 +225,13 @@ def read_citation(
         fail(404, "CITATION_NOT_FOUND")
     if not task_access_store.is_member(db, task_id=answer.task_id, user_id=user_id):
         fail(403, "CITATION_ACCESS_DENIED", denied_scope="answer")
+    result = answer.result
     if (
-        answer.answer_generation_id != generation_id
-        or answer.status != SubtaskStatus.COMPLETED
+        answer.status != SubtaskStatus.COMPLETED
         or answer.role != SubtaskRole.ASSISTANT
+        or not isinstance(result, dict)
+        or result.get("answer_generation_id") != generation_id
+        or not _includes_citation(result, citation_id)
     ):
         fail(404, "CITATION_NOT_FOUND")
     require_source(db, user_id, row.knowledge_base_id, row.document_id)

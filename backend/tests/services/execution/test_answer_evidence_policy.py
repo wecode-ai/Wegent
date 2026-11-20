@@ -20,7 +20,7 @@ from shared.models import ExecutionRequest
         (True, None, "Codex", False),
     ],
 )
-async def test_unified_trigger_defaults_to_api_behavior_despite_identity_and_payload(
+async def test_unified_trigger_defaults_to_api_behavior_despite_payload(
     monkeypatch, enabled, device, shell, expected
 ):
     from types import SimpleNamespace
@@ -31,7 +31,6 @@ async def test_unified_trigger_defaults_to_api_behavior_despite_identity_and_pay
     request = ExecutionRequest(
         task_id=1,
         subtask_id=2,
-        answer_generation_id="a" * 32,
         bot=[{"shell_type": shell}],
         enable_answer_evidence=True,
     )
@@ -53,7 +52,6 @@ async def test_unified_trigger_defaults_to_api_behavior_despite_identity_and_pay
     )
 
     assert dispatch.await_args.args[0].enable_answer_evidence is expected
-    assert request.answer_generation_id == "a" * 32
 
 
 @pytest.mark.asyncio

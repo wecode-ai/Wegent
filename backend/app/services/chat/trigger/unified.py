@@ -160,7 +160,7 @@ async def trigger_ai_response_unified(
         previous_bot_id=previous_bot_id,
     )
 
-    # Only trusted Web entry callers opt in; identity alone is not a capability.
+    # Only trusted Web entry callers opt in.
     request.enable_answer_evidence = (
         enable_answer_evidence
         and not device_id
@@ -423,9 +423,6 @@ async def build_execution_request(
                 # their first system prompt, so deliver it with the turn.
                 request.prompt = append_turn_guidance(request.prompt, connector_section)
         apply_execution_guidance(request, sections)
-        request.answer_generation_id = getattr(
-            assistant_subtask, "answer_generation_id", None
-        )
         return request
 
     finally:

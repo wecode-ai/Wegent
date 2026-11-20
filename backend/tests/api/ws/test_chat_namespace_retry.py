@@ -24,14 +24,6 @@ from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 
 
-@pytest.fixture(autouse=True)
-def chat_shell_type(monkeypatch):
-    # Keep this unit boundary independent of other modules' import order.
-    monkeypatch.setattr(
-        chat_namespace, "get_team_first_bot_shell_type", Mock(return_value="Chat")
-    )
-
-
 def test_retry_restores_image_generation_size() -> None:
     user_subtask = SimpleNamespace(
         result={"image_config": {"model": "gpt-image", "size": "1512x648"}}
@@ -175,9 +167,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
         )
 
     assert result == {"success": True}
-    mock_reset.assert_called_once_with(
-        db, failed_ai_subtask, task, protect_attempt=True
-    )
+    mock_reset.assert_called_once_with(db, failed_ai_subtask, task)
     assert task.json["metadata"]["labels"] == {}
     mock_task_store.update_json.assert_called_once_with(
         db, task=task, payload=task.json
@@ -241,9 +231,7 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
         )
 
     assert result == {"success": True}
-    mock_reset.assert_called_once_with(
-        db, failed_ai_subtask, task, protect_attempt=True
-    )
+    mock_reset.assert_called_once_with(db, failed_ai_subtask, task)
     mock_trigger.assert_awaited_once()
 
 
@@ -254,7 +242,7 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
     namespace._check_token_expiry = AsyncMock(return_value=False)
 
     db = _RetryDbMock(user=SimpleNamespace(id=1))
-    assistant_subtask = SimpleNamespace(id=42, answer_generation_id="a" * 32)
+    assistant_subtask = SimpleNamespace(id=42)
     dispatch_args = {
         "task": SimpleNamespace(id=100, client_origin="frontend"),
         "assistant_subtask": assistant_subtask,
@@ -419,9 +407,7 @@ async def test_chat_retry_restores_persisted_video_generation_params():
         )
 
     assert result == {"success": True}
-    mock_reset.assert_called_once_with(
-        db, failed_ai_subtask, task, protect_attempt=True
-    )
+    mock_reset.assert_called_once_with(db, failed_ai_subtask, task)
     generate_params = mock_trigger.await_args.kwargs["payload"].generate_params
     assert generate_params.resolution == "1080p"
     assert generate_params.ratio == "16:9"
@@ -494,9 +480,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
         )
 
     assert result == {"success": True}
-    mock_reset.assert_called_once_with(
-        db, failed_ai_subtask, task, protect_attempt=True
-    )
+    mock_reset.assert_called_once_with(db, failed_ai_subtask, task)
     assert task.json["metadata"]["labels"] == {
         "modelId": "new-model",
         "forceOverrideBotModel": "true",

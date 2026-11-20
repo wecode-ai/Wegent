@@ -1048,8 +1048,6 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
-        for_update: bool = False,
-        nowait: bool = False,
         limit: Optional[int] = None,
     ) -> list[Subtask]:
         if not statuses:
@@ -1059,15 +1057,6 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
             Subtask.status.in_(statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        if for_update:
-            # Bound InnoDB next-key locks to this task even for small tables.
-            query = (
-                query.with_hint(
-                    Subtask, "FORCE INDEX (ix_subtasks_task_id)", dialect_name="mysql"
-                )
-                .populate_existing()
-                .with_for_update(nowait=nowait)
-            )
         if limit is not None:
             query = query.limit(max(0, limit))
         return query.all()
@@ -1214,7 +1203,6 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
                 Subtask.executor_name,
                 Subtask.executor_namespace,
                 Subtask.updated_at,
-                Subtask.answer_generation_id,
             )
             .join(TaskResource, TaskResource.id == Subtask.task_id)
             .filter(
@@ -1246,7 +1234,6 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
                 executor_name=(row[3] or "").strip(),
                 executor_namespace=(row[4] or "").strip(),
                 updated_at=row[5],
-                answer_generation_id=row[6],
             )
             for row in rows
         ]
@@ -1426,34 +1413,6 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
         if "result" in fields:
             flag_modified(subtask, "result")
         return subtask
-
-    def update_fields_if_attempt(
-        self,
-        db: Session,
-        *,
-        subtask: Subtask,
-        generation_id: str | None,
-        from_statuses: tuple[SubtaskStatus, ...],
-        **fields: Any,
-    ) -> bool:
-        """Compare the captured attempt and state in the same database UPDATE."""
-        values = {getattr(Subtask, key): value for key, value in fields.items()}
-        values[Subtask.updated_at] = datetime.now()
-        changed = (
-            db.query(Subtask)
-            .filter(
-                Subtask.id == subtask.id,
-                Subtask.answer_generation_id == generation_id,
-                Subtask.status.in_(from_statuses),
-            )
-            .update(values, synchronize_session=False)
-        )
-        if changed == 1:
-            from sqlalchemy.orm.attributes import set_committed_value
-
-            for key, value in fields.items():
-                set_committed_value(subtask, key, value)
-        return changed == 1
 
     def update_fields_if_status(
         self,

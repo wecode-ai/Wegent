@@ -64,7 +64,7 @@ def test_web_answer_adapter_requires_the_existing_internal_credential(
     response = runtime.post(
         f"{PACKAGE_RUNTIME_PATH}/v1/answer-execution",
         headers=headers,
-        json={"action": "start", "task_id": 9, "answer_id": 12, "actor_id": 7},
+        json={"task_id": 9, "answer_id": 12, "actor_id": 7},
     )
     assert response.status_code == expected
     if expected == 200:

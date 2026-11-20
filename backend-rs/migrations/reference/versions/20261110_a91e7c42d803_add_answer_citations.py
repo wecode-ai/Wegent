@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Add server-owned answer attempts and evidence snapshots.
+"""Add answer evidence snapshots.
 
 Revision ID: a91e7c42d803
 Revises: f3a7c9e1b2d4
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "a91e7c42d803"
@@ -17,10 +18,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "subtasks", sa.Column("answer_generation_id", sa.String(32), nullable=True)
-    )
-    op.create_index("ix_subtasks_task_id", "subtasks", ["task_id"])
     op.create_table(
         "knowledge_citations",
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
@@ -41,7 +38,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Snapshots and attempt identities are intentionally discarded on rollback.
     op.drop_table("knowledge_citations")
-    op.drop_index("ix_subtasks_task_id", table_name="subtasks")
-    op.drop_column("subtasks", "answer_generation_id")

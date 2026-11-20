@@ -65,7 +65,6 @@ class StalledCandidate:
     executor_name: str
     executor_namespace: str
     updated_at: datetime
-    answer_generation_id: str | None = None
 
 
 def list_stalled_candidates(
@@ -93,7 +92,6 @@ def list_stalled_candidates(
             executor_name=row.executor_name,
             executor_namespace=row.executor_namespace,
             updated_at=row.updated_at,
-            answer_generation_id=row.answer_generation_id,
         )
         for row in rows
     ]
@@ -237,7 +235,6 @@ async def fail_stalled_subtask(
         executor_name=candidate.executor_name or None,
         executor_namespace=candidate.executor_namespace or None,
         expected_status=SubtaskStatus.RUNNING.value,
-        generation_id=candidate.answer_generation_id,
     )
     try:
         await emitter.emit(event)
@@ -249,7 +246,7 @@ async def fail_stalled_subtask(
             exc,
         )
         return False
-    if emitter.terminal_transition_lost or not emitter.terminal_status_committed:
+    if emitter.terminal_transition_lost:
         logger.info(
             "[StalledTasks] Subtask %s changed state before the failure was "
             "persisted; leaving it untouched",

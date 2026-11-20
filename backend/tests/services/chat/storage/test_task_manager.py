@@ -41,7 +41,6 @@ def test_database_handler_updates_subtask_status_through_store():
         status=SubtaskStatus.PENDING,
         result=None,
         executor_name="",
-        answer_generation_id=None,
     )
     handler = DatabaseHandler()
     task = _build_existing_task(task_id=1385, user_id=7)
@@ -57,8 +56,7 @@ def test_database_handler_updates_subtask_status_through_store():
             return_value=subtask,
         ) as get_subtask_mock,
         patch(
-            "app.services.chat.storage.db.task_stores.subtask_store.update_fields_if_attempt",
-            return_value=True,
+            "app.services.chat.storage.db.task_stores.subtask_store.update_fields"
         ) as update_mock,
         patch(
             "app.services.chat.storage.db.task_stores.subtask_store.get_basic_by_id_for_update",
@@ -79,8 +77,6 @@ def test_database_handler_updates_subtask_status_through_store():
     get_subtask_mock.assert_called_once_with(db, subtask_id=1861)
     update_task_mock.assert_called_once_with(db, task, 1861, terminal=True)
     update_kwargs = update_mock.call_args.kwargs
-    assert update_kwargs["generation_id"] is None
-    assert update_kwargs["from_statuses"] == (SubtaskStatus.PENDING,)
     assert update_kwargs["subtask"] is subtask
     assert update_kwargs["status"] == SubtaskStatus.COMPLETED
     assert update_kwargs["result"] == {"value": "done"}

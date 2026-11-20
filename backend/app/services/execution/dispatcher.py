@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
-from app.services.chat.storage.answer_attempt import AnswerSaveResult
 from app.services.chat.storage.db import TerminalPersistenceError
 from app.services.device.identity import lock_online_device_for_binding
 from app.services.task_status import extract_task_error
@@ -120,7 +119,6 @@ class ExecutionDispatcher:
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
         wrapped_emitter = None
-        target = None
         recoverable = on_accepted is not None
 
         def accept(executor_owns_execution: bool = False) -> None:
@@ -130,15 +128,6 @@ class ExecutionDispatcher:
                 on_accepted = None
 
         try:
-            if request.answer_generation_id and not already_running:
-                wrapped_emitter = self._status_emitter(request, emitter)
-                saved = await self._update_subtask_to_running(
-                    request.subtask_id, request.answer_generation_id
-                )
-                if not saved:
-                    if saved is AnswerSaveResult.UNCONFIRMED:
-                        await wrapped_emitter.report_unconfirmed_save()
-                    return
             if device_id:
                 user_id = request.user.get("id") if request.user else None
                 if not isinstance(user_id, int):
@@ -154,24 +143,39 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
             )
-            if wrapped_emitter is None:
-                wrapped_emitter = self._status_emitter(request, emitter)
-            if target.mode == CommunicationMode.WEBSOCKET:
-                wrapped_emitter._expected_status = (
-                    SubtaskStatus.PENDING.value,
-                    SubtaskStatus.RUNNING.value,
+            # Create default emitter if not provided
+            if emitter is None:
+                emitter = WebSocketResultEmitter(
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    user_id=request.user.get("id") if request.user else None,
+                    team_id=request.team_id,
+                    team_name=request.team_name,
+                    task_title=request.task_title,
+                    is_group_chat=request.is_group_chat,
+                    project_id=request.project_id,
                 )
+
+            # Wrap emitter with StatusUpdatingEmitter for unified status updates
+            # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
+            # when terminal events are received, regardless of execution mode
+            wrapped_emitter = StatusUpdatingEmitter(
+                wrapped=emitter,
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                expected_status=(
+                    (SubtaskStatus.PENDING.value, SubtaskStatus.RUNNING.value)
+                    if target.mode == CommunicationMode.WEBSOCKET
+                    else None
+                ),
+            )
 
             logger.info(
                 f"[ExecutionDispatcher] Dispatching: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, mode={target.mode.value}"
             )
 
-            if (
-                not request.answer_generation_id
-                and not already_running
-                and target.mode != CommunicationMode.WEBSOCKET
-            ):
+            if not already_running and target.mode != CommunicationMode.WEBSOCKET:
                 await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
@@ -205,15 +209,12 @@ class ExecutionDispatcher:
             accept()
         except asyncio.CancelledError:
             # A cancelled SSE owner has already closed its stream. Persist the
-            # terminal state before closing the emitter, including lease loss.
-            # Remote dispatch modes retain their executor-owned lifecycle.
+            # terminal state before closing the emitter. Recoverable pipeline
+            # jobs keep their handoff on worker cancellation or lease loss.
             if (
                 not recoverable
                 and wrapped_emitter is not None
-                and (
-                    (target is not None and target.mode == CommunicationMode.SSE)
-                    or (target is None and request.answer_generation_id)
-                )
+                and target.mode == CommunicationMode.SSE
             ):
                 logger.info(
                     "[ExecutionDispatcher] SSE dispatch task cancelled: "
@@ -272,33 +273,6 @@ class ExecutionDispatcher:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
                     )
-
-    def _status_emitter(
-        self, request: ExecutionRequest, emitter: Optional[ResultEmitter]
-    ) -> StatusUpdatingEmitter:
-        # Create default emitter if not provided
-        if emitter is None:
-            emitter = WebSocketResultEmitter(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                user_id=request.user.get("id") if request.user else None,
-                team_id=request.team_id,
-                team_name=request.team_name,
-                task_title=request.task_title,
-                is_group_chat=request.is_group_chat,
-                project_id=request.project_id,
-            )
-
-        # Wrap emitter with StatusUpdatingEmitter for unified status updates
-        # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
-        # when terminal events are received, regardless of execution mode
-        return StatusUpdatingEmitter(
-            wrapped=emitter,
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            generation_id=request.answer_generation_id,
-            expected_status="RUNNING" if request.answer_generation_id else None,
-        )
 
     async def _recover_executor_if_needed(
         self,
@@ -438,12 +412,8 @@ class ExecutionDispatcher:
         return isinstance(storage_key, str) and bool(storage_key.strip())
 
     async def _update_subtask_to_running(
-        self,
-        subtask_id: int,
-        generation_id: str | None = None,
-        *,
-        expected_status: str | None = None,
-    ) -> AnswerSaveResult:
+        self, subtask_id: int, *, expected_status: str | None = None
+    ) -> None:
         """Update subtask status to RUNNING in database.
 
         This is called before dispatching to any executor type to ensure
@@ -455,19 +425,16 @@ class ExecutionDispatcher:
         from app.services.chat.storage.db import db_handler
 
         try:
-            return await db_handler.update_subtask_status(
-                subtask_id,
-                "RUNNING",
-                expected_status="PENDING" if generation_id else expected_status,
-                generation_id=generation_id,
+            await db_handler.update_subtask_status(
+                subtask_id, "RUNNING", expected_status=expected_status
             )
-        except Exception as exc:
+            logger.info(
+                f"[ExecutionDispatcher] Updated subtask {subtask_id} status to RUNNING"
+            )
+        except Exception as e:
             logger.error(
-                "Dispatch claim unconfirmed: id=%s error_type=%s",
-                subtask_id,
-                type(exc).__name__,
+                f"[ExecutionDispatcher] Failed to update subtask {subtask_id} to RUNNING: {e}"
             )
-            return AnswerSaveResult.UNCONFIRMED
 
     async def _resolve_device_route_id(
         self, request: ExecutionRequest, device_id: Optional[str]
@@ -1089,8 +1056,6 @@ class ExecutionDispatcher:
                 wrapped=emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
-                generation_id=request.answer_generation_id,
-                expected_status="RUNNING" if request.answer_generation_id else None,
             )
             try:
                 await wrapped_emitter.emit_error(

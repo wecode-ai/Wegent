@@ -19,10 +19,11 @@ from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.storage import db as storage
-from app.services.chat.storage.answer_attempt import AnswerSaveResult
 from app.services.chat.trigger.lifecycle import persist_completed_result
 from app.services.knowledge.answer_evidence import TrustedEvidence
-from integration_checks.test_answer_attempt_mysql import database  # noqa: F401
+from integration_checks.test_answer_evidence_migration_mysql import (  # noqa: F401
+    database,
+)
 
 
 def seed(engine):
@@ -69,7 +70,6 @@ def seed(engine):
             bot_ids=[],
             role="ASSISTANT",
             status=SubtaskStatus.RUNNING,
-            answer_generation_id="a" * 32,
         )
         db.add_all([document, answer])
         db.flush()
@@ -113,25 +113,25 @@ def result(kb_id, doc_id):
     }
 
 
-@pytest.mark.parametrize("generation", [None, "a" * 32])
 @pytest.mark.parametrize("untrusted_payload", [False, True])
 def test_api_completion_never_creates_citations_or_evidence_metadata(
-    database, generation, untrusted_payload
+    database, untrusted_payload
 ):
     engine, _ = database
     answer_id, _, _ = seed(engine)
-    with Session(engine) as db:
-        db.get(Subtask, answer_id).answer_generation_id = generation
-        db.commit()
     payload = {"value": "API answer"}
     if untrusted_payload:
-        payload["_answer_evidence"] = []
+        payload.update(
+            _answer_evidence=[],
+            answer_generation_id="a" * 32,
+            answer_citations=[{"citation_id": "42"}],
+        )
 
     saved = storage.db_handler._update_subtask_sync(
-        answer_id, "COMPLETED", result=payload, generation_id=generation
+        answer_id, "COMPLETED", result=payload
     )
 
-    assert saved is not AnswerSaveResult.UNCONFIRMED
+    assert saved is not None
     with Session(engine) as db:
         answer = db.get(Subtask, answer_id)
         assert answer.status == SubtaskStatus.COMPLETED
@@ -154,13 +154,16 @@ async def test_committed_snapshot_http_authorization_and_refresh(database, monke
         subtask_id=answer_id,
         task_id=9,
         status="COMPLETED",
-        generation_id="a" * 32,
         result=payload,
     )
-    assert saved is AnswerSaveResult.COMMITTED
+    assert saved is True
+    generation = payload["answer_generation_id"]
     citation_id = payload["answer_citations"][0]["citation_id"]
     with Session(engine) as db:
-        assert db.get(KnowledgeCitation, int(citation_id)).user_id == 12
+        row = db.get(KnowledgeCitation, int(citation_id))
+        assert row.user_id == 12
+        assert row.caller_context["answer_evidence"]["generation_id"] == generation
+        assert db.get(Subtask, answer_id).result == payload
     assert "_answer_evidence" not in payload
     assert "回答时的原文" not in str(payload)
 
@@ -178,7 +181,7 @@ async def test_committed_snapshot_http_authorization_and_refresh(database, monke
 
     app.dependency_overrides[get_db] = session
     app.dependency_overrides[get_current_user] = user
-    path = f'/api/knowledge-bases/citations/{citation_id}?answer_id={answer_id}&generation_id={"a" * 32}'
+    path = f"/api/knowledge-bases/citations/{citation_id}?answer_id={answer_id}&generation_id={generation}"
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -193,13 +196,9 @@ async def test_committed_snapshot_http_authorization_and_refresh(database, monke
         assert (
             await client.get(f"/api/knowledge-bases/citations/{citation_id}")
         ).status_code == 422
-        assert (await client.get(path.replace("a" * 32, "c" * 32))).status_code == 404
+        assert (await client.get(path.replace(generation, "c" * 32))).status_code == 404
         with Session(engine) as db:
             db.get(KnowledgeDocument, doc_id).chunks = [{"content": "当前新原文"}]
-            db.get(Subtask, answer_id).result = {
-                "value": "forged",
-                "answer_generation_id": "c" * 32,
-            }
             db.commit()
         restored = await client.get(path)
         assert restored.json()["content"] == "回答时的原文"
@@ -222,10 +221,9 @@ async def test_committed_snapshot_http_authorization_and_refresh(database, monke
         subtask_id=answer_id,
         task_id=9,
         status="COMPLETED",
-        generation_id="a" * 32,
         result=result(kb_id, doc_id),
     )
-    assert repeated is AnswerSaveResult.REJECTED
+    assert repeated is False
     with Session(engine) as db:
         assert len(db.scalars(select(KnowledgeCitation)).all()) == 1
 
@@ -247,11 +245,11 @@ def test_actual_mysql_insert_failure_rolls_back_evidence_only(database):
     event.listen(engine, "before_cursor_execute", reject_insert, retval=True)
     try:
         outcome = storage.db_handler._update_subtask_sync(
-            answer_id, "COMPLETED", result=payload, generation_id="a" * 32
+            answer_id, "COMPLETED", result=payload
         )
     finally:
         event.remove(engine, "before_cursor_execute", reject_insert)
-    assert outcome is not AnswerSaveResult.UNCONFIRMED
+    assert outcome is not None
     with Session(engine) as db:
         answer = db.get(Subtask, answer_id)
         assert answer.status == SubtaskStatus.COMPLETED
@@ -292,11 +290,11 @@ def test_second_mysql_insert_failure_rolls_back_entire_batch(database, caplog):
     event.listen(engine, "before_cursor_execute", reject_second, retval=True)
     try:
         outcome = storage.db_handler._update_subtask_sync(
-            answer_id, "COMPLETED", result=payload, generation_id="a" * 32
+            answer_id, "COMPLETED", result=payload
         )
     finally:
         event.remove(engine, "before_cursor_execute", reject_second)
-    assert outcome is not AnswerSaveResult.UNCONFIRMED
+    assert outcome is not None
     assert inserts == 2
     assert sum(sql.startswith("SAVEPOINT ") for sql in statements) == 1
     assert sum(sql.startswith("ROLLBACK TO SAVEPOINT ") for sql in statements) == 1
@@ -407,12 +405,12 @@ def test_infrastructure_faults_never_publish_usable_ids(
     monkeypatch.setattr(storage, "_db_session", session)
     event.listen(engine, "before_cursor_execute", fail_statement, retval=True)
     try:
-        outcome = storage.db_handler._update_subtask_sync(
-            answer_id, "COMPLETED", result=payload, generation_id="a" * 32
-        )
+        with pytest.raises(storage.TerminalPersistenceError):
+            storage.db_handler._update_subtask_sync(
+                answer_id, "COMPLETED", result=payload
+            )
     finally:
         event.remove(engine, "before_cursor_execute", fail_statement)
-    assert outcome is AnswerSaveResult.UNCONFIRMED
     assert "answer_citations" not in payload
     assert "[[citation:" not in payload["value"]
     with Session(engine) as db:
@@ -461,7 +459,6 @@ def test_independent_sessions_observe_atomic_commit_and_competing_completion(
             answer_id,
             "COMPLETED",
             result=multiple_result(kb_id, doc_id),
-            generation_id="a" * 32,
         )
 
     def competing_lock(connection, cursor, statement, parameters, context, executemany):
@@ -490,8 +487,8 @@ def test_independent_sessions_observe_atomic_commit_and_competing_completion(
                 assert not second.done()
             finally:
                 release.set()
-            assert first.result(15) is not AnswerSaveResult.UNCONFIRMED
-            assert second.result(15) is AnswerSaveResult.REJECTED
+            assert first.result(15) is not None
+            assert second.result(15) is None
     finally:
         event.remove(engine, "before_cursor_execute", competing_lock)
     with Session(engine) as observer:
@@ -507,9 +504,8 @@ def test_independent_sessions_observe_atomic_commit_and_competing_completion(
             answer_id,
             "COMPLETED",
             result=multiple_result(kb_id, doc_id),
-            generation_id="stale" * 6,
         )
-        is AnswerSaveResult.REJECTED
+        is None
     )
     with Session(engine) as db:
         assert len(db.scalars(select(KnowledgeCitation)).all()) == 2
@@ -558,11 +554,11 @@ async def test_multiple_same_name_documents_mixed_prevalidation_and_read_binding
             subtask_id=answer_id,
             task_id=9,
             status="COMPLETED",
-            generation_id="a" * 32,
             result=payload,
         )
-        is AnswerSaveResult.COMMITTED
+        is True
     )
+    generation = payload["answer_generation_id"]
     citations = payload["answer_citations"]
     assert len(citations) == 2
     assert payload["value"].count(f'[[citation:{citations[0]["citation_id"]}]]') == 2
@@ -589,7 +585,7 @@ async def test_multiple_same_name_documents_mixed_prevalidation_and_read_binding
         for citation, content, document_id in zip(
             citations, ["界" * 5000, "第二条私有原文"], [doc_id, second_id]
         ):
-            path = f'/api/knowledge-bases/citations/{citation["citation_id"]}?answer_id={answer_id}&generation_id={"a" * 32}'
+            path = f'/api/knowledge-bases/citations/{citation["citation_id"]}?answer_id={answer_id}&generation_id={generation}'
             for _ in range(2):
                 response = await client.get(path)
                 assert response.status_code == 200
@@ -601,47 +597,48 @@ async def test_multiple_same_name_documents_mixed_prevalidation_and_read_binding
                 )
             ).status_code == 404
             assert (
-                await client.get(path.replace("a" * 32, "d" * 32))
+                await client.get(path.replace(generation, "d" * 32))
             ).status_code == 404
         with Session(engine) as db:
             assert len(db.scalars(select(KnowledgeCitation)).all()) == 2
 
 
-def test_old_attempt_with_evidence_cannot_insert_after_retry(database):
+def test_retry_clears_committed_result_and_invalidates_old_citation(database):
+    from fastapi import HTTPException
+
     from app.services.chat.operations.retry import reset_subtask_for_retry
+    from app.services.knowledge.answer_evidence import read_citation
 
     engine, _ = database
     answer_id, kb_id, doc_id = seed(engine)
+    old_result = result(kb_id, doc_id)
+    assert storage.db_handler._update_subtask_sync(
+        answer_id, "COMPLETED", result=old_result
+    )
+    old_generation = old_result["answer_generation_id"]
+    old_id = int(old_result["answer_citations"][0]["citation_id"])
     with Session(engine) as db:
         answer = db.get(Subtask, answer_id)
+        assert read_citation(db, 7, old_id, answer_id, old_generation)["content"]
+        # Failed/cancelled statuses are the baseline retry entry points.
         answer.status = SubtaskStatus.FAILED
         db.commit()
-        generation = reset_subtask_for_retry(db, answer)
-    assert (
-        storage.db_handler._update_subtask_sync(
-            answer_id,
-            "COMPLETED",
-            result=multiple_result(kb_id, doc_id),
-            generation_id="a" * 32,
-        )
-        is AnswerSaveResult.REJECTED
+        reset_subtask_for_retry(db, answer)
+        assert answer.result is None
+    new_result = result(kb_id, doc_id)
+    assert storage.db_handler._update_subtask_sync(
+        answer_id, "COMPLETED", result=new_result
     )
+    new_generation = new_result["answer_generation_id"]
+    new_id = int(new_result["answer_citations"][0]["citation_id"])
+    assert new_generation != old_generation
     with Session(engine) as db:
-        assert db.get(Subtask, answer_id).answer_generation_id == generation
-        assert db.scalars(select(KnowledgeCitation)).all() == []
-    assert (
-        storage.db_handler._update_subtask_sync(
-            answer_id,
-            "COMPLETED",
-            result=multiple_result(kb_id, doc_id),
-            generation_id=generation,
-        )
-        is not AnswerSaveResult.UNCONFIRMED
-    )
-    with Session(engine) as db:
-        rows = db.scalars(select(KnowledgeCitation)).all()
-        assert len(rows) == 2
-        assert all(
-            row.caller_context["answer_evidence"]["generation_id"] == generation
-            for row in rows
-        )
+        assert read_citation(db, 7, new_id, answer_id, new_generation)["content"]
+        for citation_id, generation in [
+            (old_id, old_generation),
+            (new_id, old_generation),
+            (old_id, new_generation),
+        ]:
+            with pytest.raises(HTTPException) as missing:
+                read_citation(db, 7, citation_id, answer_id, generation)
+            assert missing.value.status_code == 404

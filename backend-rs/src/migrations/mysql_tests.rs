@@ -285,7 +285,7 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated schema"]
-async fn answer_attempt_upgrade_and_destructive_rollback_preserve_old_answers() -> Result<()> {
+async fn answer_citations_upgrade_and_rollback_preserve_old_answers() -> Result<()> {
     isolated(async |mysql| {
         upgrade(mysql).await?;
         check(mysql).await?;
@@ -303,8 +303,12 @@ async fn answer_attempt_upgrade_and_destructive_rollback_preserve_old_answers() 
         assert_eq!(answer.name, "old answer");
         upgrade(mysql).await?;
         check(mysql).await?;
-        let preserved: Name = mysql.fetch_one("SELECT CAST(COALESCE(answer_generation_id,'legacy-null') AS CHAR) AS name FROM subtasks WHERE id=987", ()).await?;
-        assert_eq!(preserved.name, "legacy-null");
+        let preserved: Name = mysql.fetch_one("SELECT title AS name FROM subtasks WHERE id=987", ()).await?;
+        assert_eq!(preserved.name, "old answer");
+        let columns: Vec<Name> = mysql.fetch_all("SELECT CAST(COLUMN_NAME AS CHAR) AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='subtasks' AND COLUMN_NAME='answer_generation_id'", ()).await?;
+        assert!(columns.is_empty());
+        let indexes: Vec<Name> = mysql.fetch_all("SELECT CAST(INDEX_NAME AS CHAR) AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='subtasks' AND INDEX_NAME='ix_subtasks_task_id'", ()).await?;
+        assert!(indexes.is_empty());
         let document: Name = mysql.fetch_one("SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(chunks,'$[0].content')) AS CHAR) AS name FROM knowledge_documents WHERE id=987", ()).await?;
         assert_eq!(document.name, "original");
         let snapshots: Vec<Name> = mysql.fetch_all("SELECT title AS name FROM knowledge_citations", ()).await?;

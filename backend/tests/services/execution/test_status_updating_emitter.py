@@ -47,7 +47,7 @@ async def test_done_defers_terminal_status_to_async_card_poll() -> None:
         result = await emitter._update_status_completed({"value": ""})
 
     assert result == card_result
-    persist_result.assert_awaited_once_with(202, card_result, generation_id=None)
+    persist_result.assert_awaited_once_with(202, card_result)
     persist_completed.assert_not_awaited()
     publish.assert_not_awaited()
     assert emitter._terminal_event_deferred is True
@@ -89,7 +89,7 @@ async def test_runtime_error_does_not_override_terminal_async_card_poll() -> Non
         result = await emitter._update_status_failed("runtime failed")
 
     assert result == card_result
-    persist_result.assert_awaited_once_with(202, card_result, generation_id=None)
+    persist_result.assert_awaited_once_with(202, card_result)
     persist_completed.assert_not_awaited()
     publish.assert_not_awaited()
     assert emitter._terminal_event_deferred is True
@@ -350,7 +350,7 @@ async def test_emit_error_persists_partial_result_and_blocks():
         executor_name=None,
         executor_namespace=None,
         expected_status=None,
-        generation_id=None,
+        expected_device=None,
     )
     mock_session_manager.cleanup_streaming_state.assert_awaited_once_with(
         202, task_id=101
@@ -402,7 +402,7 @@ async def test_emit_error_merges_persisted_and_new_blocks():
         executor_name=None,
         executor_namespace=None,
         expected_status=None,
-        generation_id=None,
+        expected_device=None,
     )
 
 
@@ -757,9 +757,7 @@ async def test_video_card_saves_json_and_forwards_without_private_evidence(
     from app.services.knowledge.answer_evidence import TrustedEvidence
 
     wrapped = AsyncMock()
-    emitter = module.StatusUpdatingEmitter(
-        wrapped, task_id=101, subtask_id=202, generation_id="a" * 32
-    )
+    emitter = module.StatusUpdatingEmitter(wrapped, task_id=101, subtask_id=202)
     video_job = {
         "card_type": "video_director_generation",
         "query_url": "https://workflow.example.com/task/1",
@@ -786,11 +784,9 @@ async def test_video_card_saves_json_and_forwards_without_private_evidence(
     def write_result(*args, **kwargs):
         # Exercise the JSON serialization required by the actual storage column.
         saved.append(json.loads(json.dumps(kwargs["result"])))
-        assert kwargs["generation_id"] == "a" * 32
-        return True
 
     monkeypatch.setattr(
-        lifecycle.task_stores.subtask_store, "update_fields_if_attempt", write_result
+        lifecycle.task_stores.subtask_store, "update_result", write_result
     )
 
     if terminal == "completed":
@@ -801,16 +797,12 @@ async def test_video_card_saves_json_and_forwards_without_private_evidence(
     assert result == {"video_job": video_job, "blocks": blocks}
     assert saved == [result]
     assert emitter._terminal_event_deferred
-    assert not emitter._save_unconfirmed
     db.commit.assert_called_once()
     assert "_answer_evidence" not in result
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("save_outcome", ["rejected", "commit_failed"])
-async def test_video_card_unsaved_result_is_not_reported_as_success(
-    monkeypatch, save_outcome
-):
+async def test_video_card_unsaved_result_is_not_reported_as_success(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import MagicMock
 
@@ -819,9 +811,7 @@ async def test_video_card_unsaved_result_is_not_reported_as_success(
     from app.services.knowledge.answer_evidence import TrustedEvidence
 
     wrapped = AsyncMock()
-    emitter = module.StatusUpdatingEmitter(
-        wrapped, task_id=101, subtask_id=202, generation_id="a" * 32
-    )
+    emitter = module.StatusUpdatingEmitter(wrapped, task_id=101, subtask_id=202)
     evidence = TrustedEvidence([], user_id=7)
     runtime_result = {
         "video_job": {
@@ -835,8 +825,7 @@ async def test_video_card_unsaved_result_is_not_reported_as_success(
         module, "collect_completed_result", AsyncMock(return_value=runtime_result)
     )
     db = MagicMock()
-    if save_outcome == "commit_failed":
-        db.commit.side_effect = OSError("connection lost")
+    db.commit.side_effect = OSError("connection lost")
     monkeypatch.setattr(lifecycle, "SessionLocal", lambda: db)
     monkeypatch.setattr(
         lifecycle.task_stores.subtask_store,
@@ -845,18 +834,13 @@ async def test_video_card_unsaved_result_is_not_reported_as_success(
     )
     monkeypatch.setattr(
         lifecycle.task_stores.subtask_store,
-        "update_fields_if_attempt",
-        lambda *a, **k: save_outcome != "rejected",
+        "update_result",
+        MagicMock(),
     )
-    result = await emitter._update_status_completed(runtime_result)
-    assert result is None
-    assert not emitter._status_updated
+    with pytest.raises(OSError, match="connection lost"):
+        await emitter.emit_done(101, 202, runtime_result)
     assert runtime_result["_answer_evidence"] is evidence
-    if save_outcome == "commit_failed":
-        assert emitter._save_unconfirmed
-        db.rollback.assert_called_once()
-    else:
-        assert emitter._terminal_transition_lost
+    db.rollback.assert_called_once()
     wrapped.emit_done.assert_not_awaited()
 
 

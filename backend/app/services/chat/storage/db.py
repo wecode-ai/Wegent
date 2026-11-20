@@ -33,7 +33,6 @@ from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
 from app.services.adapters.collaboration_strategy import CollaborationStrategy
-from app.services.chat.storage.answer_attempt import AnswerSaveResult
 
 logger = logging.getLogger(__name__)
 
@@ -171,13 +170,12 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | tuple[str, ...] | None = None,
-        generation_id: str | None = None,
         expected_device: tuple[int, str] | None = None,
-    ) -> AnswerSaveResult:
+    ) -> bool:
         """Update subtask status asynchronously.
 
-        Return a confirmed commit, a rejected attempt, or an uncertain save.
-        Attempt identity and expected status are compared by one atomic update.
+        Returns False when the subtask is missing or the transition is stale.
+        Terminal database failures propagate to the caller.
         """
         update_result = await self._run_in_executor(
             self._update_subtask_sync,
@@ -188,35 +186,23 @@ class DatabaseHandler:
             executor_name,
             executor_namespace,
             expected_status,
-            generation_id,
             expected_device,
         )
-        if isinstance(update_result, AnswerSaveResult):
-            return update_result
         if update_result is None:
-            return AnswerSaveResult.REJECTED
-        if update_result and update_result.auto_advance:
+            return False
+        if update_result.auto_advance:
             from app.services.chat.pipeline_advance import (
                 advance_pipeline_stage_from_auto_completion,
             )
 
-            try:
-                if not await advance_pipeline_stage_from_auto_completion(
-                    update_result.auto_advance
-                ):
-                    return AnswerSaveResult.REJECTED
-                if result is not None and update_result.replay_result is not None:
-                    result.clear()
-                    result.update(update_result.replay_result)
-            except Exception as exc:
-                if generation_id is None:
-                    raise
-                logger.error(
-                    "Post-commit pipeline advance failed: id=%s error_type=%s",
-                    subtask_id,
-                    type(exc).__name__,
-                )
-        return AnswerSaveResult.COMMITTED
+            if not await advance_pipeline_stage_from_auto_completion(
+                update_result.auto_advance
+            ):
+                return False
+            if result is not None and update_result.replay_result is not None:
+                result.clear()
+                result.update(update_result.replay_result)
+        return True
 
     def _update_subtask_sync(
         self,
@@ -227,13 +213,22 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | tuple[str, ...] | None = None,
-        generation_id: str | None = None,
         expected_device: tuple[int, str] | None = None,
-    ) -> TaskStatusUpdateResult | AnswerSaveResult | None:
+    ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
+        from app.services.knowledge.answer_evidence import (
+            TrustedEvidence,
+            bind_answer_evidence,
+            public_result,
+            result_without_answer_evidence,
+        )
         from app.utils.thinking_sanitizer import sanitize_result_for_storage
 
+        original_result = result
+        trusted_completion = status == "COMPLETED" and isinstance(
+            (result or {}).get("_answer_evidence"), TrustedEvidence
+        )
         try:
             with _db_session() as db:
                 subtask = task_stores.subtask_store.get_basic_by_id(
@@ -282,8 +277,6 @@ class DatabaseHandler:
                         ):
                             return None
 
-                    if subtask.answer_generation_id != generation_id:
-                        return AnswerSaveResult.REJECTED
                     if subtask.status.value in _TERMINAL_STATUSES:
                         if status == subtask.status.value == "COMPLETED":
                             pending = PipelineAutoAdvanceIntent.read(task, subtask_id)
@@ -292,41 +285,17 @@ class DatabaseHandler:
                                     auto_advance=pending,
                                     replay_result=subtask.result or {},
                                 )
-                        return AnswerSaveResult.REJECTED
+                        return None
 
-                db.refresh(subtask, with_for_update=True)
-                statuses = (
-                    (expected_status,)
-                    if isinstance(expected_status, str)
-                    else expected_status
-                )
-                if statuses and subtask.status not in tuple(
-                    SubtaskStatus(value) for value in statuses
-                ):
-                    return AnswerSaveResult.REJECTED
-                if subtask.answer_generation_id != generation_id or (
-                    generation_id is not None
-                    and subtask.status
-                    not in (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
-                ):
-                    return AnswerSaveResult.REJECTED
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
-                original_result = result
-                if result is not None:
-                    from app.services.knowledge.answer_evidence import (
-                        TrustedEvidence,
-                        bind_answer_evidence,
-                        public_result,
-                    )
-
-                    result = (
-                        bind_answer_evidence(db, subtask, result)
-                        if status == "COMPLETED"
-                        and isinstance(result.get("_answer_evidence"), TrustedEvidence)
-                        else public_result(result)
-                    )
 
                 if result is not None:
+                    if trusted_completion and subtask.role == SubtaskRole.ASSISTANT:
+                        result = bind_answer_evidence(db, subtask, result)
+                    elif status == "COMPLETED":
+                        result = result_without_answer_evidence(result)
+                    else:
+                        result = public_result(result)
                     # Preserve silent_exit fields if they were set by MCP tool
                     # MCP silent_exit tool directly updates subtask.result before this
                     if subtask.result and isinstance(subtask.result, dict):
@@ -389,27 +358,36 @@ class DatabaseHandler:
                         executor_namespace,
                     )
 
-                allowed = (
-                    tuple(SubtaskStatus(value) for value in statuses)
-                    if statuses
-                    else (
-                        (subtask.status,)
-                        if generation_id is None
-                        else (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
+                if expected_status is not None:
+                    statuses = (
+                        (expected_status,)
+                        if isinstance(expected_status, str)
+                        else expected_status
                     )
-                )
-                if not task_stores.subtask_store.update_fields_if_attempt(
-                    db,
-                    subtask=subtask,
-                    generation_id=generation_id,
-                    from_statuses=allowed,
-                    **fields,
-                ):
-                    db.rollback()
-                    return AnswerSaveResult.REJECTED
+                    changed = task_stores.subtask_store.update_fields_if_status(
+                        db,
+                        subtask=subtask,
+                        from_status=tuple(SubtaskStatus(value) for value in statuses),
+                        **fields,
+                    )
+                    if not changed:
+                        logger.info(
+                            "[DB] Skipped %s transition for subtask %s: "
+                            "current status is no longer %s",
+                            status,
+                            subtask_id,
+                            expected_status,
+                        )
+                        db.rollback()
+                        return None
+                else:
+                    task_stores.subtask_store.update_fields(
+                        db, subtask=subtask, **fields
+                    )
                 if terminal:
                     db.flush()
-                    db.expire(subtask)
+                    if expected_status is not None:
+                        db.expire(subtask)
                     update = self._update_task_status_in_session(
                         db, task, subtask_id, terminal=True
                     )
@@ -420,21 +398,25 @@ class DatabaseHandler:
             if original_result is not None and result is not None:
                 original_result.clear()
                 original_result.update(result)
-            # Context manager commits here, then update task status
             if terminal:
                 return update
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception as exc:
-            logger.error(
-                "Answer save unconfirmed: id=%s error_type=%s",
-                subtask_id,
-                type(exc).__name__,
-            )
-            if generation_id is None and status in _TERMINAL_STATUSES:
+            if trusted_completion:
+                logger.error(
+                    "Answer save unconfirmed: id=%s error_type=%s",
+                    subtask_id,
+                    type(exc).__name__,
+                )
                 raise TerminalPersistenceError(
                     f"Could not save terminal status for subtask {subtask_id}"
                 ) from None
-            return AnswerSaveResult.UNCONFIRMED
+            logger.exception("Error updating subtask %s status", subtask_id)
+            if status in _TERMINAL_STATUSES:
+                raise TerminalPersistenceError(
+                    f"Could not save terminal status for subtask {subtask_id}"
+                ) from exc
+            return None
 
     def _update_task_status_sync(
         self, task_id: int, changed_subtask_id: int | None = None
@@ -584,23 +566,15 @@ class DatabaseHandler:
             status_obj.errorMessage = last_subtask.error_message
 
     async def save_partial_response(
-        self,
-        subtask_id: int,
-        content: str,
-        is_streaming: bool = True,
-        generation_id: str | None = None,
+        self, subtask_id: int, content: str, is_streaming: bool = True
     ) -> None:
         """Save partial response during streaming."""
         await self._run_in_executor(
-            self._save_partial_sync, subtask_id, content, is_streaming, generation_id
+            self._save_partial_sync, subtask_id, content, is_streaming
         )
 
     def _save_partial_sync(
-        self,
-        subtask_id: int,
-        content: str,
-        is_streaming: bool,
-        generation_id: str | None = None,
+        self, subtask_id: int, content: str, is_streaming: bool
     ) -> None:
         """Synchronous partial response save."""
         try:
@@ -608,13 +582,9 @@ class DatabaseHandler:
                 if subtask := task_stores.subtask_store.get_by_id(
                     db, subtask_id=subtask_id
                 ):
-                    from app.models.subtask import SubtaskStatus
-
-                    task_stores.subtask_store.update_fields_if_attempt(
+                    task_stores.subtask_store.update_result(
                         db,
                         subtask=subtask,
-                        generation_id=generation_id,
-                        from_statuses=(SubtaskStatus.RUNNING,),
                         result={"value": content, "streaming": is_streaming},
                     )
         except Exception:

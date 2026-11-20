@@ -89,25 +89,6 @@ pub(crate) async fn cancel(
     if let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await? {
         return Ok(Reply::payload(ack));
     }
-    if device_id.is_none()
-        && let Some(generation) =
-            super::python_answer::captured_generation(state, info.task_id, subtask_id)
-                .await
-                .map_err(|_| internal_error())?
-    {
-        let reply = super::python_answer::operation(
-            state,
-            &json!({
-                "action": "cancel", "task_id": info.task_id,
-                "answer_id": subtask_id, "actor_id": user_id,
-                "expected_generation_id": generation
-            }),
-        )
-        .await
-        .map_err(|_| internal_error())?
-        .ok_or_else(internal_error)?;
-        return Ok(Reply::payload(reply));
-    }
     if !mark_cancelling(state, info.task_id, subtask_id).await? {
         return Ok(Reply::payload(error_ack("Subtask is no longer running")));
     }

@@ -6,39 +6,8 @@ use crate::{http_compat::FastApiError, state::AppState};
 
 use super::chat_trigger::ChatTurn;
 
-/// Capture cancellation ownership from the persisted identity, not a client hint.
-/// This selects the execution owner; it does not enable evidence generation.
-pub(super) async fn captured_generation(
-    state: &AppState,
-    task_id: i64,
-    answer_id: i64,
-) -> Result<Option<String>, FastApiError> {
-    let tables = crate::internal_callback::tables(state);
-    let row: Option<brz_mysql::MysqlRow> = state
-        .mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64))
-        .fetch_optional(
-            format!(
-                "SELECT answer_generation_id FROM {} WHERE id = ? AND task_id = ?",
-                tables.subtasks
-            ),
-            (answer_id, task_id),
-        )
-        .await
-        .map_err(|_| FastApiError::internal())?;
-    match row {
-        Some(row) => row
-            .get::<String>("answer_generation_id")
-            .map_err(|_| FastApiError::internal()),
-        None => Ok(None),
-    }
-}
-
 /// Use an exact private Python URL; a failed RPC never selects the Rust writer.
-pub(super) async fn operation(
-    state: &AppState,
-    body: &Value,
-) -> Result<Option<Value>, FastApiError> {
+async fn operation(state: &AppState, body: &Value) -> Result<Option<Value>, FastApiError> {
     let origin = crate::config::env_or_dotenv("WEGENT_PYTHON_UPSTREAM_URL")
         .unwrap_or_else(|| crate::hybrid::DEFAULT_PYTHON_UPSTREAM.to_owned());
     let token = crate::config::env_or_dotenv("INTERNAL_SERVICE_TOKEN").unwrap_or_default();
@@ -92,7 +61,7 @@ pub(super) async fn start(
     let result = operation(
         state,
         &json!({
-            "action": "start", "task_id": turn.task_id, "answer_id": turn.assistant_subtask_id,
+            "task_id": turn.task_id, "answer_id": turn.assistant_subtask_id,
             "actor_id": actor_id, "user_subtask_id": turn.user_subtask_id, "message": turn.message,
             "additional_skills": turn.additional_skills,
             "interactive_form_answer": turn.interactive_form_answer,

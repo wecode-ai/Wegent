@@ -23,10 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from app.services.chat.storage.answer_attempt import (
-    ANSWER_SAVE_UNCONFIRMED_MESSAGE,
-    AnswerSaveResult,
-)
+from app.services.chat.storage.db import TerminalPersistenceError
 from app.services.chat.storage.session import StreamContentType
 from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
@@ -35,6 +32,10 @@ from app.services.chat.trigger.lifecycle import (
 )
 from app.services.execution.interactive_form_render import (
     build_interactive_form_render_payload,
+)
+from app.services.knowledge.answer_evidence import (
+    ANSWER_SAVE_UNCONFIRMED_MESSAGE,
+    TrustedEvidence,
 )
 from shared.models import EventType, ExecutionEvent
 
@@ -106,7 +107,6 @@ class StatusUpdatingEmitter(ResultEmitter):
         executor_namespace: Optional[str] = None,
         expected_status: str | tuple[str, ...] | None = None,
         expected_device: tuple[int, str] | None = None,
-        generation_id: Optional[str] = None,
     ):
         """Initialize the status updating emitter.
 
@@ -127,9 +127,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._executor_namespace = executor_namespace
         self._expected_status = expected_status
         self._expected_device = expected_device
-        self._generation_id = generation_id
-        self._save_unconfirmed = False
         self._status_updated = False
+        self._answer_save_unconfirmed = False
         self._terminal_event_deferred = False
         self._terminal_transition_lost = False
         self._stream_storage_buffer: list[_BufferedStreamContent] = []
@@ -138,16 +137,6 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._stream_storage_flush_in_progress = False
         self._last_task_activity_touch = 0.0
         self._stream_observed_at = datetime.now(timezone.utc)
-
-    @property
-    def terminal_status_committed(self) -> bool:
-        """Whether this emitter confirmed a terminal database commit."""
-        return self._status_updated and not self._terminal_event_deferred
-
-    async def report_unconfirmed_save(self) -> None:
-        """Seal an uncertain attempt before attempting delivery of its notice."""
-        self._save_unconfirmed = True
-        await self._terminal_can_publish()
 
     @property
     def terminal_transition_lost(self) -> bool:
@@ -295,13 +284,6 @@ class StatusUpdatingEmitter(ResultEmitter):
             f"content_len={len(event.content) if event.content else 0}"
         )
 
-        if event.type in STREAM_TERMINAL_EVENT_TYPES and (
-            self._status_updated
-            or self._save_unconfirmed
-            or self._terminal_transition_lost
-        ):
-            return
-
         # Handle START event - set task streaming status for page refresh recovery
         if event.type == EventType.START.value:
             self._stream_observed_at = datetime.now(timezone.utc)
@@ -428,6 +410,10 @@ class StatusUpdatingEmitter(ResultEmitter):
 
         # Handle terminal events - update status before forwarding
         if event.type in STREAM_TERMINAL_EVENT_TYPES:
+            if self._answer_save_unconfirmed or (
+                event.type == EventType.DONE.value and self._status_updated
+            ):
+                return
             await self._flush_stream_storage()
             await self._cancel_pending_storage_flush_task()
 
@@ -454,10 +440,8 @@ class StatusUpdatingEmitter(ResultEmitter):
             )
             return
 
-        if not await self._terminal_can_publish():
-            return
-        # Forward event to wrapped emitter
-        await self._wrapped.emit(event)
+        if not self._answer_save_unconfirmed:
+            await self._wrapped.emit(event)
 
     async def emit_start(
         self,
@@ -493,17 +477,12 @@ class StatusUpdatingEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Update status to COMPLETED and forward done event."""
-        if (
-            self._status_updated
-            or self._save_unconfirmed
-            or self._terminal_transition_lost
-        ):
+        if self._status_updated or self._answer_save_unconfirmed:
             return
         await self._flush_stream_storage()
         await self._cancel_pending_storage_flush_task()
-        if not self._status_updated:
-            result = await self._update_status_completed(result)
-        if await self._terminal_can_publish():
+        result = await self._update_status_completed(result)
+        if not (self._terminal_transition_lost or self._answer_save_unconfirmed):
             await self._wrapped.emit_done(task_id, subtask_id, result, **kwargs)
 
     async def emit_error(
@@ -514,18 +493,14 @@ class StatusUpdatingEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Update status to FAILED and forward error event."""
-        if (
-            self._status_updated
-            or self._save_unconfirmed
-            or self._terminal_transition_lost
-        ):
+        if self._answer_save_unconfirmed:
             return
         await self._flush_stream_storage()
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
             error_code = kwargs.get("error_code")
             await self._update_status_failed(error, error_code=error_code)
-        if self._terminal_event_deferred or not await self._terminal_can_publish():
+        if self._terminal_event_deferred or self._terminal_transition_lost:
             return
         await self._wrapped.emit_error(task_id, subtask_id, error, **kwargs)
 
@@ -536,25 +511,18 @@ class StatusUpdatingEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Update status to CANCELLED and forward cancelled event."""
-        if (
-            self._status_updated
-            or self._save_unconfirmed
-            or self._terminal_transition_lost
-        ):
+        if self._answer_save_unconfirmed:
             return
         await self._flush_stream_storage()
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
             await self._update_status_cancelled()
-        if await self._terminal_can_publish():
+        if not self._terminal_transition_lost:
             await self._wrapped.emit_cancelled(task_id, subtask_id, **kwargs)
 
     async def close(self) -> None:
         """Close the wrapped emitter."""
-        if self._terminal_transition_lost:
-            self._stream_storage_buffer.clear()
-        else:
-            await self._flush_stream_storage()
+        await self._flush_stream_storage()
         await self._cancel_pending_storage_flush_task()
         await self._wrapped.close()
 
@@ -610,6 +578,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         Args:
             result: Optional result data from the event
         """
+        final_result = None
         try:
             final_result = await collect_completed_result(
                 self._subtask_id,
@@ -617,11 +586,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 result=result,
             )
             if _async_card_job_owns_status(final_result):
-                if not await persist_result_without_status(
-                    self._subtask_id, final_result, generation_id=self._generation_id
-                ):
-                    self._terminal_transition_lost = True
-                    return None
+                await persist_result_without_status(self._subtask_id, final_result)
                 self._status_updated = True
                 self._terminal_event_deferred = True
                 logger.info(
@@ -638,10 +603,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 result=final_result,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
-                generation_id=self._generation_id,
-                expected_status=self._expected_status,
             )
-            if not self._accept_save(persisted):
+            if persisted is False:
+                self._terminal_transition_lost = True
                 return None
             self._status_updated = True
             logger.info(
@@ -654,16 +618,25 @@ class StatusUpdatingEmitter(ResultEmitter):
             await self._publish_task_completed_event("COMPLETED", final_result, None)
             return final_result
 
-        except Exception as exc:
-            self._save_unconfirmed = True
-            logger.error(
-                "Answer save unconfirmed: id=%s error_type=%s",
-                self._subtask_id,
-                type(exc).__name__,
-            )
-            if self._generation_id is None:
+        except TerminalPersistenceError:
+            if not isinstance(
+                (final_result or {}).get("_answer_evidence"), TrustedEvidence
+            ):
                 raise
+            self._answer_save_unconfirmed = True
+            await self._wrapped.emit_error(
+                self._task_id,
+                self._subtask_id,
+                ANSWER_SAVE_UNCONFIRMED_MESSAGE,
+                error_code="answer_save_unconfirmed",
+            )
             return None
+        except Exception as e:
+            logger.error(
+                f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
+                exc_info=True,
+            )
+            raise
 
     async def _update_status_failed(
         self, error_message: str, error_code: Optional[str] = None
@@ -685,11 +658,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 error_code=error_code,
             )
             if _async_card_job_owns_status(result):
-                if not await persist_result_without_status(
-                    self._subtask_id, result, generation_id=self._generation_id
-                ):
-                    self._terminal_transition_lost = True
-                    return None
+                await persist_result_without_status(self._subtask_id, result)
                 self._status_updated = True
                 self._terminal_event_deferred = True
                 logger.info(
@@ -707,7 +676,6 @@ class StatusUpdatingEmitter(ResultEmitter):
                 error=error_message,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
-                generation_id=self._generation_id,
                 expected_status=self._expected_status,
                 **(
                     {"expected_device": self._expected_device}
@@ -715,7 +683,14 @@ class StatusUpdatingEmitter(ResultEmitter):
                     else {}
                 ),
             )
-            if not self._accept_save(persisted):
+            if persisted is False:
+                self._terminal_transition_lost = True
+                logger.info(
+                    "[StatusUpdatingEmitter] Skipped failed transition for "
+                    "subtask %s: status is no longer %s",
+                    self._subtask_id,
+                    self._expected_status,
+                )
                 return None
             self._status_updated = True
             logger.info(
@@ -727,12 +702,10 @@ class StatusUpdatingEmitter(ResultEmitter):
             await self._publish_task_completed_event("FAILED", result, error_message)
             return result
 
-        except Exception as exc:
-            self._save_unconfirmed = True
+        except Exception as e:
             logger.error(
-                "Answer save unconfirmed: id=%s error_type=%s",
-                self._subtask_id,
-                type(exc).__name__,
+                f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
+                exc_info=True,
             )
             raise
 
@@ -754,10 +727,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 result=result,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
-                generation_id=self._generation_id,
-                expected_status=self._expected_status,
             )
-            if not self._accept_save(persisted):
+            if persisted is False:
+                self._terminal_transition_lost = True
                 return None
             self._status_updated = True
             logger.info(
@@ -769,32 +741,12 @@ class StatusUpdatingEmitter(ResultEmitter):
             await self._publish_task_completed_event("CANCELLED", result, None)
             return result
 
-        except Exception as exc:
-            self._save_unconfirmed = True
+        except Exception as e:
             logger.error(
-                "Answer save unconfirmed: id=%s error_type=%s",
-                self._subtask_id,
-                type(exc).__name__,
+                f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
+                exc_info=True,
             )
             raise
-
-    def _accept_save(self, saved: AnswerSaveResult) -> bool:
-        if saved:
-            return True
-        self._save_unconfirmed = saved is AnswerSaveResult.UNCONFIRMED
-        self._terminal_transition_lost = not self._save_unconfirmed
-        return False
-
-    async def _terminal_can_publish(self) -> bool:
-        if self._save_unconfirmed:
-            await self._wrapped.emit_error(
-                self._task_id,
-                self._subtask_id,
-                ANSWER_SAVE_UNCONFIRMED_MESSAGE,
-                error_code="answer_save_unconfirmed",
-            )
-            return False
-        return not self._terminal_transition_lost
 
     async def _publish_task_completed_event(
         self,

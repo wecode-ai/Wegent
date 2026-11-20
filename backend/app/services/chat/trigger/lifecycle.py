@@ -22,7 +22,6 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
-from app.services.chat.storage.answer_attempt import AnswerSaveResult
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     build_user_subtask_result,
@@ -500,8 +499,7 @@ async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
 async def persist_result_without_status(
     subtask_id: int,
     result: Dict[str, Any],
-    generation_id: Optional[str] = None,
-) -> bool:
+) -> None:
     """Persist result data while leaving the current subtask status unchanged."""
     from app.services.knowledge.answer_evidence import public_result
 
@@ -511,24 +509,12 @@ async def persist_result_without_status(
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             raise ValueError(f"Subtask {subtask_id} not found")
-        from app.models.subtask import SubtaskStatus
-
-        changed = task_stores.subtask_store.update_fields_if_attempt(
-            db,
-            subtask=subtask,
-            generation_id=generation_id,
-            from_statuses=(
-                tuple(SubtaskStatus)
-                if generation_id is None
-                else (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
-            ),
-            result=sanitized_result,
+        task_stores.subtask_store.update_result(
+            db, subtask=subtask, result=sanitized_result
         )
         db.commit()
-        if changed:
-            result.clear()
-            result.update(sanitized_result)
-        return changed
+        result.clear()
+        result.update(sanitized_result)
     except Exception:
         db.rollback()
         raise
@@ -664,35 +650,28 @@ async def persist_completed_result(
     executor_namespace: Optional[str] = None,
     expected_status: str | tuple[str, ...] | None = None,
     expected_device: tuple[int, str] | None = None,
-    generation_id: Optional[str] = None,
-) -> AnswerSaveResult:
+) -> bool:
     """Persist a terminal result and clean up streaming state.
 
-    Return the explicit commit outcome. Only a confirmed commit can trigger
-    completion side effects or streaming-state cleanup.
+    Only a confirmed commit can trigger completion side effects or cleanup.
     """
     import app.services.chat.storage as chat_storage
     import app.services.chat.storage.db as chat_db
 
     normalized_status = status.upper()
 
-    update_kwargs = {
-        "result": result,
-        "error": error,
-        "executor_name": executor_name,
-        "executor_namespace": executor_namespace,
-    }
-
     persisted = await chat_db.db_handler.update_subtask_status(
         subtask_id,
         normalized_status,
-        **update_kwargs,
+        result=result,
+        error=error,
+        executor_name=executor_name,
+        executor_namespace=executor_namespace,
         expected_status=expected_status,
-        generation_id=generation_id,
-        **({"expected_device": expected_device} if expected_device is not None else {}),
+        expected_device=expected_device,
     )
     if not persisted:
-        return persisted
+        return False
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)
     try:
@@ -707,7 +686,7 @@ async def persist_completed_result(
             exc,
             exc_info=True,
         )
-    return persisted
+    return True
 
 
 async def _persist_standalone_workspace_path(

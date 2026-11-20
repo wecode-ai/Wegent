@@ -473,7 +473,7 @@ async def test_device_dispatch_failure_persists_terminal_state(
     async def dispatch_turn(**kwargs):
         await dispatcher.dispatch(request, device_id=kwargs["device_id"])
 
-    update = subtask_store.update_fields_if_attempt
+    update = subtask_store.update_fields_if_status
     update_task = task_store.update_json
     connection = test_db.get_bind()
 
@@ -499,7 +499,7 @@ async def test_device_dispatch_failure_persists_terminal_state(
 
     notifications = AsyncMock()
     with (
-        patch.object(subtask_store, "update_fields_if_attempt", side_effect=persist),
+        patch.object(subtask_store, "update_fields_if_status", side_effect=persist),
         patch.object(task_store, "update_json", side_effect=persist_task),
         patch(
             "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",

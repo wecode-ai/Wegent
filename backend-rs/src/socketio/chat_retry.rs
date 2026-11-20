@@ -58,21 +58,6 @@ pub(crate) async fn retry(
     if let Some(ack) = access_denied(state, session, payload.task_id, "chat:retry").await? {
         return Ok(Reply::payload(ack));
     }
-    if let Some(reply) = super::python_answer::operation(
-        state,
-        &json!({
-            "action": "retry", "task_id": payload.task_id, "answer_id": payload.subtask_id,
-            "actor_id": user_id,
-            "retry": {"force_override_bot_model": payload.force_override_bot_model,
-                "force_override_bot_model_type": payload.force_override_bot_model_type,
-                "use_model_override": payload.use_model_override}
-        }),
-    )
-    .await
-    .map_err(|_| internal_error())?
-    {
-        return Ok(Reply::payload(reply));
-    }
     let prepared = match prepare_retry(state, user_id, &payload).await {
         Ok(prepared) => prepared,
         Err(RetryFailure::Ack(ack)) => return Ok(Reply::payload(ack)),

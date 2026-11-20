@@ -70,17 +70,14 @@ def _update_subtask_silent_exit(subtask_id: int, reason: str) -> None:
     db = SessionLocal()
     try:
         subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-        if subtask and subtask.answer_generation_id is None:
-            # Identity-bearing Chat attempts persist the returned marker at completion.
+        if subtask:
             # Update result to include silent_exit marker
             result = dict(subtask.result or {})
             result["silent_exit"] = True
             result["silent_exit_reason"] = reason
-            subtask_store.update_fields_if_attempt(
+            subtask_store.update_fields(
                 db,
                 subtask=subtask,
-                generation_id=None,
-                from_statuses=(SubtaskStatus.PENDING, SubtaskStatus.RUNNING),
                 result=result,
                 status=SubtaskStatus.COMPLETED,
                 progress=100,

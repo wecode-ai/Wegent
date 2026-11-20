@@ -13,6 +13,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
+from app.services.knowledge.answer_evidence import result_without_answer_evidence
 from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
@@ -46,7 +47,11 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             parent_id=obj_in.parent_id,
             status=obj_in.status,
             progress=obj_in.progress,
-            result=obj_in.result,
+            result=(
+                result_without_answer_evidence(obj_in.result)
+                if obj_in.result is not None
+                else None
+            ),
             error_message=obj_in.error_message,
         )
         db.commit()
@@ -140,6 +145,10 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             raise HTTPException(status_code=404, detail="Subtask not found")
 
         update_data = obj_in.model_dump(exclude_unset=True)
+        if update_data.get("result") is not None:
+            update_data["result"] = result_without_answer_evidence(
+                update_data["result"]
+            )
 
         subtask_store.update_fields(db, subtask=subtask, **update_data)
         db.commit()

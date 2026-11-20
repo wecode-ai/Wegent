@@ -738,8 +738,8 @@ test('multiple searches keep same-title documents distinct across grey refresh a
     const captured = await getScenarioModelBodies(request, retryPrompt)
     const previousMarkers = resolveEvidenceResponseContent('{{answer_evidence_all}}', captured)!
     const previousMarker = previousMarkers.match(/\[\[evidence:[^\]]+\]\]/g)!.at(-1)!
-    // A client shell hint must not bypass the accepted Chat execution's owner.
-    await scenario(retryPrompt, '取消类型校验中的回答{{answer_evidence_all}}', 30000)
+    // Cancel the new Chat stream before the final retry.
+    await scenario(retryPrompt, '重试中未提交的回答{{answer_evidence_all}}', 30000)
     await socket.ensureConnected()
     const intermediateRetry = await socket
       .getRawSocket()!
@@ -755,8 +755,8 @@ test('multiple searches keep same-title documents distinct across grey refresh a
     const cancelAck = await socket
       .getRawSocket()!
       .timeout(15000)
-      .emitWithAck('chat:cancel', { subtask_id: answer!.id, shell_type: 'Codex' })
-    expect(cancelAck).toEqual({ success: true })
+      .emitWithAck('chat:cancel', { subtask_id: answer!.id, shell_type: 'Chat' })
+    expect(cancelAck).toEqual({ success: true, finalized: true })
     await waitForTaskTerminal(token, taskId, /^CANCELLED/)
     await scenario(retryPrompt, `重试完成{{answer_evidence_all}}${previousMarker}`)
     await socket.ensureConnected()
