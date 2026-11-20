@@ -43,7 +43,7 @@ export function IssueCommentActionPicker({
         triggerContent={
           value ? (
             <>
-              <span className="shrink-0">{label}</span>
+              <span className="min-w-0 truncate">{label}</span>
               <span className="min-w-0 truncate">{selected?.label ?? value}</span>
             </>
           ) : (
