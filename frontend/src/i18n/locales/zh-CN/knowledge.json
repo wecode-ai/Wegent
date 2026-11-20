@@ -1353,6 +1353,7 @@
       "noBoundModel": "代码 Wiki 智能体未绑定模型，无法生成。",
       "repositoryRequired": "请选择或填写仓库地址",
       "unsupportedRepositoryProvider": "当前仓库平台不支持创建代码 Wiki。请选择 GitHub、GitLab 或 Gitea 仓库。",
+      "repositoryProbeFailed": "仓库检查失败，可重试。",
       "fromMyRepositories": "从我的仓库选择",
       "byUrl": "输入仓库地址",
       "checking": "正在检查仓库…",

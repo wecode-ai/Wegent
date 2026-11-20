@@ -106,10 +106,22 @@ it('explains unsupported repository providers without probing them', () => {
   expect(codeWikiApi.resolve).not.toHaveBeenCalled()
 })
 
-it('can retry a cached unreadable repository', async () => {
+it('keeps retry available after a failed repository check and clears the error on recovery', async () => {
   mockUser.mockReturnValue({ user: { git_info: [] } })
   jest.mocked(codeWikiApi.resolve).mockClear()
   const url = 'https://github.com/team/repo'
+  jest
+    .mocked(codeWikiApi.resolve)
+    .mockRejectedValueOnce(new Error('Network unavailable'))
+    .mockResolvedValueOnce({
+      exists: true,
+      visibility: 'public',
+      default_branch: 'main',
+      name: 'repo',
+      description: '',
+      access: 'public',
+      existing_wikis: [],
+    })
   jest.useFakeTimers()
   try {
     render(
@@ -140,6 +152,14 @@ it('can retry a cached unreadable repository', async () => {
       jest.advanceTimersByTime(600)
     })
     expect(codeWikiApi.resolve).toHaveBeenCalledWith('github', url)
+    expect(screen.getByRole('alert')).toHaveTextContent('codeWiki.create.repositoryProbeFailed')
+    fireEvent.click(screen.getByTestId('code-wiki-source-retry'))
+    await act(async () => {
+      jest.advanceTimersByTime(600)
+    })
+    expect(codeWikiApi.resolve).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-wiki-source-retry')).not.toBeInTheDocument()
   } finally {
     jest.useRealTimers()
   }

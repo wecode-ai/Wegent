@@ -1353,6 +1353,7 @@
       "noBoundModel": "The code wiki agent has no model bound, so generation cannot run.",
       "repositoryRequired": "Select or enter a repository address",
       "unsupportedRepositoryProvider": "Code Wikis support GitHub, GitLab, and Gitea repositories. Choose a repository from one of these providers.",
+      "repositoryProbeFailed": "Could not check the repository. Try again.",
       "fromMyRepositories": "From my repositories",
       "byUrl": "By repository address",
       "checking": "Checking the repository…",

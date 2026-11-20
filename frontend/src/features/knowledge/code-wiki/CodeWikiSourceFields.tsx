@@ -106,8 +106,13 @@ export function useCodeWikiRepository(draft: CodeWikiSourceDraft) {
 export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSourceFieldsProps) {
   const { t } = useTranslation('knowledge')
   const [resolving, setResolving] = useState(false)
+  const [failedProbe, setFailedProbe] = useState<{ url: string; type: CodeWikiSourceType } | null>(
+    null
+  )
+  const [probeAttempt, setProbeAttempt] = useState(0)
   const { mode, repo, urlInput, urlSourceType } = value
   const { url, type, inferredType, resolution } = repository
+  const probeFailed = failedProbe?.url === url && failedProbe.type === type
 
   // Repository identity is derived from the same draft used to render the inputs.
   // A probe only supplies metadata for that identity.
@@ -118,6 +123,7 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
     }
     let current = true
     setResolving(true)
+    setFailedProbe(null)
 
     const resolve = async () => {
       try {
@@ -126,7 +132,7 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
           onChange(draft => ({ ...draft, probe: { url, type, result } }))
         }
       } catch {
-        // Creation checks repository access independently.
+        if (current) setFailedProbe({ url, type })
       } finally {
         if (current) setResolving(false)
       }
@@ -139,7 +145,7 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
       current = false
       if (timer !== null) clearTimeout(timer)
     }
-  }, [mode, onChange, resolution, type, url])
+  }, [mode, onChange, probeAttempt, resolution, type, url])
 
   return (
     <>
@@ -219,7 +225,12 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
           ) : (
             <SourceStatus resolving={resolving} resolution={resolution} />
           )}
-          {resolution?.exists === false && (
+          {probeFailed && (
+            <p role="alert" className="text-sm text-error">
+              {t('codeWiki.create.repositoryProbeFailed')}
+            </p>
+          )}
+          {(probeFailed || resolution?.exists === false) && (
             <Button
               type="button"
               variant="outline"
@@ -227,6 +238,7 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
               data-testid="code-wiki-source-retry"
               onClick={() => {
                 onChange(draft => ({ ...draft, probe: null }))
+                setProbeAttempt(attempt => attempt + 1)
               }}
             >
               {t('common:actions.retry')}

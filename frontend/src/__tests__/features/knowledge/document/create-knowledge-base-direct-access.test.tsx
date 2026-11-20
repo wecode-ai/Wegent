@@ -85,6 +85,16 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       </button>
       <button
         type="button"
+        onClick={() => {
+          const retriever = { retriever_name: 'vector-store', retriever_namespace: 'default' }
+          onRetrievalConfigUserChange(retriever)
+          onRetrievalConfigChange({ ...retrievalConfig, ...retriever, retrieval_mode: 'vector' })
+        }}
+      >
+        select vector retriever
+      </button>
+      <button
+        type="button"
         role="radio"
         aria-checked={directAccessRequirement === 'read'}
         data-testid="knowledge-base-direct-access-read"
@@ -173,6 +183,26 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
         expect.objectContaining({ retrieval_config: { top_k: 9 } })
       )
     })
+  })
+
+  it('submits the displayed mode when changing retrievers normalizes it', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
+    await waitFor(() => expect(screen.getByTestId('retrieval-threshold')).toHaveTextContent('0.3'))
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'select vector retriever' }))
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retrieval_config: {
+          retriever_name: 'vector-store',
+          retriever_namespace: 'default',
+          retrieval_mode: 'vector',
+        },
+      })
+    )
   })
 
   it('does not reuse a previous profile after reopening with an invalid profile', async () => {

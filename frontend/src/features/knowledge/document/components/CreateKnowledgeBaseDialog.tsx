@@ -412,6 +412,14 @@ export function CreateKnowledgeBaseDialog({
       const editedFields = Object.keys(
         retrievalDraft?.overrides ?? {}
       ) as (keyof RetrievalConfigDraft)[]
+      // A retriever change can normalize its mode after the user selects it.
+      const includeMode =
+        editedFields.includes('retriever_name') ||
+        (profileLoaded.current &&
+          retrievalConfig.retrieval_mode !== retrievalProfile.retrieval_mode)
+      if (includeMode && !editedFields.includes('retrieval_mode') && editedFields.length > 0) {
+        editedFields.push('retrieval_mode')
+      }
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
