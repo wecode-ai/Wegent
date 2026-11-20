@@ -102,7 +102,6 @@ export function createDesktopScenario({ workspacePath, workbenchReadyTimeoutMs }
         visible: true,
       })
       await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
-      await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-show-context"]`)
       const allow = `${PAGE} [data-testid="request-user-input-option-__codex_approval-0"]`
       await control.command('waitFor', `${allow}:not(:disabled)`, { visible: true })
       await access(fixture)
