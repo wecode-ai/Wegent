@@ -88,6 +88,7 @@ import {
 } from './weworkCollaborationRuntime'
 import type { WeworkCollaborationPlatformProps } from './weworkCollaborationTypes'
 import { WeworkSharedProject } from './WeworkSharedProject'
+import { useCollaborationProjectPins } from './useCollaborationProjectPins'
 export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
   const loadProjectCollaborationGroupGenerationModels = useCallback(async () => {
@@ -147,6 +148,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
     [cloudConnection.isConnected, cloudConnection.token, templateBackend]
   )
   const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
+  const projectPins = useCollaborationProjectPins(templateScope)
   const independentIssueSelection =
     independentSelection.scope === templateScope ? independentSelection.selection : undefined
   const setIndependentIssueSelection = (selection: string | null | undefined) =>
@@ -618,6 +620,13 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
               />
             ),
             openProjectConversation,
+            projectPins: {
+              ...projectPins,
+              heading: t('workbench.pinned'),
+              pinLabel: t('workbench.pin_project'),
+              unpinLabel: t('workbench.unpin_project'),
+              saveError: t('workbench.collaboration_project_pin_save_failed'),
+            },
             renderProjectSidebarBadge: project => {
               const enabled = standInProjects.has(
                 `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`

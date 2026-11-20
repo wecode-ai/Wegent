@@ -212,6 +212,15 @@
   padding: 0 10px;
 }
 
+.collaboration-pinned-projects {
+  margin-bottom: 16px;
+}
+
+.collaboration-pinned-projects
+  .collaboration-workspace-project.active::before {
+  left: 3px;
+}
+
 .collaboration-workspace-section-title {
   min-width: 0;
   overflow: hidden;
