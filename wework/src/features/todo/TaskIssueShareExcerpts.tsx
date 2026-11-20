@@ -1,5 +1,5 @@
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TaskIssueShareDraft } from './TaskIssueShare'
@@ -41,6 +41,36 @@ export function TaskIssueShareExcerpts({
       setLoading(false)
     }
   }
+
+  const showHistoryGap = Boolean(loadEarlier && firstAvailable && displayed.length > 1)
+  const historyAction = (
+    <Button
+      variant="unstyled"
+      showTooltip={false}
+      type="button"
+      data-testid="task-issue-share-all-excerpts"
+      aria-expanded={showAll}
+      disabled={loading}
+      onClick={() => (loadEarlier ? void fetchEarlier() : setShowAll(!showAll))}
+      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border hover:text-text-primary md:min-h-8"
+    >
+      {t(
+        loading
+          ? 'independentIssues.loading'
+          : loadEarlier
+            ? showHistoryGap
+              ? 'taskIssueShare.loadMiddle'
+              : 'taskIssueShare.loadEarlier'
+            : showAll
+              ? 'taskIssueShare.recentExcerpts'
+              : 'taskIssueShare.expandPreview'
+      )}
+      <ChevronDown
+        className={`size-3.5 ${loadEarlier || showAll ? 'rotate-180' : ''}`}
+        aria-hidden="true"
+      />
+    </Button>
+  )
 
   return (
     <section
@@ -95,59 +125,38 @@ export function TaskIssueShareExcerpts({
           const fromUser = excerpt.role === 'user'
           const fade = !showAll && index === 1
           return (
-            <Button
-              variant="unstyled"
-              showTooltip={false}
-              key={excerpt.id}
-              type="button"
-              aria-pressed={checked}
-              data-testid="task-issue-share-excerpt"
-              onClick={() => toggle(excerpt.id)}
-              className={`group flex min-h-11 min-w-0 items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted aria-pressed:bg-muted md:min-h-8 ${fromUser ? 'max-w-[90%] justify-self-end bg-muted/60' : 'w-full'}`}
-            >
-              <span
-                aria-hidden="true"
-                className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-text-secondary group-hover:border-text-primary'}`}
+            <Fragment key={excerpt.id}>
+              <Button
+                variant="unstyled"
+                showTooltip={false}
+                type="button"
+                aria-pressed={checked}
+                data-testid="task-issue-share-excerpt"
+                onClick={() => toggle(excerpt.id)}
+                className={`group flex min-h-11 min-w-0 items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted aria-pressed:bg-muted md:min-h-8 ${fromUser ? 'max-w-[90%] justify-self-end bg-muted/60' : 'w-full'}`}
               >
-                {checked && (
-                  <Check data-testid="task-issue-share-excerpt-check" className="size-3" />
-                )}
-              </span>
-              <span className="sr-only">{t(`taskIssueShare.${excerpt.role}`)}</span>
-              <span
-                data-testid={`task-issue-share-excerpt-content-${index}`}
-                className={`min-w-0 whitespace-pre-wrap break-words text-text-primary ${showAll ? '' : 'line-clamp-2'} ${fade ? '[mask-image:linear-gradient(to_bottom,black_45%,transparent)]' : ''}`}
-              >
-                {excerpt.content}
-              </span>
-            </Button>
+                <span
+                  aria-hidden="true"
+                  className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-text-secondary group-hover:border-text-primary'}`}
+                >
+                  {checked && (
+                    <Check data-testid="task-issue-share-excerpt-check" className="size-3" />
+                  )}
+                </span>
+                <span className="sr-only">{t(`taskIssueShare.${excerpt.role}`)}</span>
+                <span
+                  data-testid={`task-issue-share-excerpt-content-${index}`}
+                  className={`min-w-0 whitespace-pre-wrap break-words text-text-primary ${showAll ? '' : 'line-clamp-2'} ${fade ? '[mask-image:linear-gradient(to_bottom,black_45%,transparent)]' : ''}`}
+                >
+                  {excerpt.content}
+                </span>
+              </Button>
+              {showHistoryGap && index === 0 && historyAction}
+            </Fragment>
           )
         })}
       </div>
-      <Button
-        variant="unstyled"
-        showTooltip={false}
-        type="button"
-        data-testid="task-issue-share-all-excerpts"
-        aria-expanded={showAll}
-        disabled={loading}
-        onClick={() => (loadEarlier ? void fetchEarlier() : setShowAll(!showAll))}
-        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border hover:text-text-primary md:min-h-8"
-      >
-        {t(
-          loading
-            ? 'independentIssues.loading'
-            : loadEarlier
-              ? 'taskIssueShare.loadEarlier'
-              : showAll
-                ? 'taskIssueShare.recentExcerpts'
-                : 'taskIssueShare.expandPreview'
-        )}
-        <ChevronDown
-          className={`size-3.5 ${loadEarlier || showAll ? 'rotate-180' : ''}`}
-          aria-hidden="true"
-        />
-      </Button>
+      {!showHistoryGap && historyAction}
       {failed && (
         <p role="alert" className="px-2 py-1 text-xs text-destructive">
           {t('taskIssueShare.earlierUnavailable')}

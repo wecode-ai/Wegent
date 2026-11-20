@@ -6696,6 +6696,7 @@
     "action": "分享为事项",
     "excerpts": "会话片段",
     "loadEarlier": "加载更早的消息",
+    "loadMiddle": "中间还有消息 · 加载更早",
     "expandPreview": "展开消息",
     "firstUnavailable": "暂时无法加载第一条消息",
     "earlierUnavailable": "无法加载更早的消息，请重试",
