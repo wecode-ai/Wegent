@@ -700,26 +700,24 @@ export async function createDesktopScenario({
         phase: 'running',
         timeoutMs: uiTimeoutMs,
       })
-      await waitForActivityText(
+      const assignmentText = `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`
+      await waitForActivityText(control, assignmentText, modelResponseTimeoutMs)
+      const assignmentEventId = await waitForTestIdByText(
         control,
-        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
-        modelResponseTimeoutMs
+        CONTENT,
+        'cloud-task-manager-event-',
+        assignmentText,
+        uiTimeoutMs
       )
-      const managerEventCard =
-        '[data-testid^="cloud-task-activity-card-"]:has(> [data-activity-sequence] > [data-testid^="cloud-task-manager-event-"])'
-      await control.command(
-        'waitFor',
-        scoped(`${managerEventCard} > [data-activity-sequence] time`),
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
+      const assignmentEvent = `[data-testid="${assignmentEventId}"]`
+      const assignmentCard = `[data-testid^="cloud-task-activity-card-"]:has(> [data-activity-sequence] > ${assignmentEvent})`
       await control.command(
         'waitFor',
         scoped(
-          `${managerEventCard}:not(:has(> .task-detail-thread-actions > time)) > [data-activity-sequence] time`
+          `${assignmentCard}:not(:has(> .task-detail-thread-actions > time)) > [data-activity-sequence] > ${assignmentEvent} time`
         ),
         {
+          visible: true,
           timeoutMs: uiTimeoutMs,
         }
       )
