@@ -2738,11 +2738,34 @@
 
 .task-detail-comment-pending-actions {
   --comment-action-size: 28px;
+  --comment-picker-min-width: 0px;
+  --comment-clear-min-width: 0px;
   display: flex;
   align-items: center;
   flex: 1 1 0;
-  min-width: min(100%, calc(4 * var(--comment-action-size) + 6px));
+  min-width: min(
+    100%,
+    calc(var(--comment-picker-min-width) + var(--comment-clear-min-width))
+  );
   gap: 6px;
+}
+
+.task-detail-comment-pending-actions:has(> .task-detail-comment-action-chip) {
+  --comment-picker-min-width: var(--comment-action-size);
+}
+
+.task-detail-comment-pending-actions:has(
+  > .task-detail-comment-action-chip + .task-detail-comment-action-chip
+) {
+  --comment-picker-min-width: calc(2 * var(--comment-action-size) + 6px);
+}
+
+.task-detail-comment-pending-actions:has(> .is-selected) {
+  --comment-clear-min-width: var(--comment-action-size);
+}
+
+.task-detail-comment-pending-actions:has(> .is-selected + .is-selected) {
+  --comment-clear-min-width: calc(2 * var(--comment-action-size));
 }
 
 .task-detail-comment-submit-group {
