@@ -73,6 +73,8 @@ export function createDesktopScenario({ workspacePath, workbenchReadyTimeoutMs }
       await createSingleRootLocalProject(control, workspacePath, 'Inbox command approval')
       await selectE2EModel(control)
       await control.command('click', '[data-testid="permission-mode-menu-button"]')
+      await control.command('click', '[data-testid="permission-mode-workspace-write"]')
+      await control.command('click', '[data-testid="permission-mode-menu-button"]')
       await control.command('click', '[data-testid="permission-mode-full-access"]')
       await control.command(
         'clickWhenEnabled',
