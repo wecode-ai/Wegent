@@ -379,6 +379,32 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
             handler.reconcile_connection_goal_waits("caller").await.unwrap();
             assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id]["status"].clone())).unwrap(), if retained {phase} else {"cancelled"}, "{phase}/{current}");
         }
+        let link = handler.store.get_task("caller").unwrap();
+        handler.set_claude_goal(&link, &initial);
+        let receipt = json!({
+            "task_id": "caller",
+            "subscription_key": "guided",
+            "status": "resuming_goal",
+            "operation_id": "event-operation",
+            "native_guidance": "accepted",
+            "waiting_goal": goal_identity(&initial),
+            "session": session::binding(&link).unwrap(),
+        });
+        handler.save_event_subscription("guided-reconcile", &receipt).unwrap();
+        let link = handler.store.get_task("caller").unwrap();
+        handler.set_claude_goal(&link, &json!({"status":"complete"}));
+        handler.reconcile_connection_goal_waits("caller").await.unwrap();
+        handler.save_event_subscription("guided-sync", &receipt).unwrap();
+        handler.cancel_connection_goal_waits("caller", Some("complete"));
+        let projection = event_store::read(
+            &handler.event_subscription_path(),
+            event_store::Scope::TaskProjection("caller"),
+            |state| Ok(state["operations"].clone()),
+        ).unwrap();
+        for id in ["guided-reconcile", "guided-sync"] {
+            assert_eq!(projection[id]["status"], "delivered", "{id}");
+            assert_eq!(projection[id]["operation_id"], "event-operation");
+        }
         let mut link = handler.store.get_task("caller").unwrap();
         handler.set_claude_goal(&link, &initial);
         let record = json!({"task_id":"caller","subscription_key":"unavailable","status":"armed","waiting_goal":goal_identity(&initial),"session":session::binding(&link).unwrap()});

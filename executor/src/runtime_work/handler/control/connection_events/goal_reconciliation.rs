@@ -155,7 +155,10 @@ impl RuntimeWorkRpcHandler {
                 Err(error) => return Err(error),
             };
             if !allowed || !same_session {
-                record["status"] = json!("cancelled");
+                record["status"] = json!(closed_goal_wait_status(
+                    &record,
+                    same_goal && same_session && current["status"] == "complete",
+                ));
                 self.save_event_subscription(&id, &record)?;
             }
         }

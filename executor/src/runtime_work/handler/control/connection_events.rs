@@ -62,6 +62,15 @@ pub(in crate::runtime_work::handler) fn goal_identity(goal: &Value) -> Value {
     json!({"objective":goal["objective"],"createdAt":goal["createdAt"],"tokenBudget":goal["tokenBudget"]})
 }
 
+fn closed_goal_wait_status(record: &Value, goal_completed: bool) -> &'static str {
+    // A fast turn can complete the Goal before the event poller updates the receipt.
+    if goal_completed && record["native_guidance"] == "accepted" {
+        "delivered"
+    } else {
+        "cancelled"
+    }
+}
+
 fn event_user_message_presentation(record: &Value) -> Value {
     json!({"content":format!("{} · {}",
         record["source"]["name"].as_str().unwrap_or_default(),
@@ -1020,7 +1029,8 @@ impl RuntimeWorkRpcHandler {
                 if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
                     continue;
                 }
-                record["status"] = json!("cancelled");
+                record["status"] =
+                    json!(closed_goal_wait_status(&record, status == Some("complete"),));
                 self.save_event_subscription(&id, &record)?;
             }
             Ok(())
