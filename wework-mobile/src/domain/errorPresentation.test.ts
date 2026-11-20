@@ -18,7 +18,7 @@ describe('mobile error copy follows PC classification', () => {
     const raw =
       '远程设备不可用：fetch failed: UnexpectedException: The request timed out. (at ExpoModulesCore/Promise.swift:56)'
     const error = describeMobileError(raw)
-    expect(error.title).toBe('连接未完成')
+    expect(error.title).toBe('请求超时')
     expect(error.message).not.toContain('Promise.swift')
     expect(error.message).not.toContain('fetch')
     expect(error.details).toContain('Promise.swift:56')
