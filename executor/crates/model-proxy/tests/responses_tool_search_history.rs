@@ -11,19 +11,101 @@ use wegent_model_proxy::local_model_proxy::{
     bind_thread, register_with_vision_sidecar, token_route, TOKEN_ROUTE,
 };
 
-async fn strict_responses_model(
-    State(received): State<mpsc::Sender<Value>>,
+#[derive(Clone, Copy)]
+enum Protocol {
+    Responses,
+    Chat,
+    Anthropic,
+    NativeResponses,
+}
+
+impl Protocol {
+    fn endpoint(self) -> &'static str {
+        match self {
+            Self::Responses | Self::NativeResponses => "openai-responses",
+            Self::Chat => "openai-chat-completions",
+            Self::Anthropic => "anthropic-messages",
+        }
+    }
+
+    fn completion(self) -> &'static str {
+        match self {
+            Self::Responses | Self::NativeResponses => {
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"output\":[]}}\n\n"
+            }
+            Self::Chat => {
+                "data: {\"id\":\"chat_test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+            }
+            Self::Anthropic => concat!(
+                "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",",
+                "\"model\":\"test\",\"usage\":{\"input_tokens\":1}}}\n\n",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,",
+                "\"delta\":{\"type\":\"text_delta\",\"text\":\"Done\"}}\n\n",
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},",
+                "\"usage\":{\"output_tokens\":1}}\n\n",
+                "data: {\"type\":\"message_stop\"}\n\n"
+            ),
+        }
+    }
+
+    fn tool_entries(self, body: &Value) -> Vec<(&'static str, &Value)> {
+        match self {
+            Self::Responses | Self::NativeResponses => body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|item| match item["type"].as_str() {
+                    Some("function_call") => Some(("call", &item["call_id"])),
+                    Some("function_call_output") => Some(("result", &item["call_id"])),
+                    _ => None,
+                })
+                .collect(),
+            Self::Chat => body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|message| {
+                    let mut entries = Vec::new();
+                    if let Some(calls) = message["tool_calls"].as_array() {
+                        entries.extend(calls.iter().map(|call| ("call", &call["id"])));
+                    }
+                    if message["role"] == "tool" {
+                        entries.push(("result", &message["tool_call_id"]));
+                    }
+                    entries
+                })
+                .collect(),
+            Self::Anthropic => body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|message| message["content"].as_array().into_iter().flatten())
+                .filter_map(|item| match item["type"].as_str() {
+                    Some("tool_use") => Some(("call", &item["id"])),
+                    Some("tool_result") => Some(("result", &item["tool_use_id"])),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    fn tool_name(self, tool: &Value) -> &Value {
+        match self {
+            Self::Chat => &tool["function"]["name"],
+            _ => &tool["name"],
+        }
+    }
+}
+
+async fn strict_model(
+    State((protocol, received)): State<(Protocol, mpsc::Sender<Value>)>,
     Json(body): Json<Value>,
 ) -> Response {
-    let Some(input) = body["input"].as_array() else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    if input.iter().any(|item| {
-        matches!(
-            item["type"].as_str(),
-            Some("function_call" | "function_call_output")
-        ) && !item["call_id"].as_str().is_some_and(|id| !id.is_empty())
-    }) {
+    if protocol
+        .tool_entries(&body)
+        .iter()
+        .any(|(_, id)| id.as_str().is_none_or(str::is_empty))
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": {"message": "Invalid request: tool_call_id  is not found"}})),
@@ -33,25 +115,29 @@ async fn strict_responses_model(
     received.send(body).await.unwrap();
     (
         [(header::CONTENT_TYPE, "text/event-stream")],
-        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"output\":[]}}\n\n",
+        protocol.completion(),
     )
         .into_response()
 }
 
-#[tokio::test]
-async fn replays_server_tool_search_history_to_a_function_only_responses_model() {
+async fn replay_server_search(protocol: Protocol) -> (Value, Value) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let upstream = format!("http://{}/responses", listener.local_addr().unwrap());
+    let upstream = format!("http://{}/model", listener.local_addr().unwrap());
     let (capture, mut received) = mpsc::channel(1);
     let model = Router::new()
-        .route("/responses", post(strict_responses_model))
-        .with_state(capture);
+        .route("/model", post(strict_model))
+        .with_state((protocol, capture));
     let model_server = tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+    let mode = if matches!(protocol, Protocol::NativeResponses) {
+        "passthrough"
+    } else {
+        "standard"
+    };
     let upstream = serde_json::from_value(json!({
         "base_url": upstream,
         "request_url": upstream,
-        "api_format": "openai-responses",
-        "codex_request_mode": "standard",
+        "api_format": protocol.endpoint(),
+        "codex_request_mode": if matches!(protocol, Protocol::Responses | Protocol::NativeResponses) { mode } else { "auto" },
         "model_id": "moonshot-kimi-k3.1-pro",
         "convert_custom_tools": true,
         "native_tool_search": false,
@@ -60,11 +146,14 @@ async fn replays_server_tool_search_history_to_a_function_only_responses_model()
         "default_headers": []
     }))
     .unwrap();
-    let token = register_with_vision_sidecar("server-tool-search-history", upstream, None);
-    bind_thread(&token, "server-tool-search-history").unwrap();
+    let thread = format!("history-{}", uuid::Uuid::new_v4());
+    let token = register_with_vision_sidecar(&thread, upstream, None);
+    bind_thread(&token, &thread).unwrap();
     let request = json!({
         "model": "wework-kimi-k3-1-pro",
-        "client_metadata": {"thread_id": "server-tool-search-history"},
+        "stream": true,
+        "tools": [],
+        "client_metadata": {"thread_id": thread},
         "input": [
             {"type": "message", "role": "user", "content": "Find and use the read-only tool."},
             {"type": "tool_search_call", "execution": "server", "call_id": null,
@@ -102,16 +191,38 @@ async fn replays_server_tool_search_history_to_a_function_only_responses_model()
     let body = reply.text().await.unwrap();
     proxy_server.abort();
     model_server.abort();
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::OK, "{}: {body}", protocol.endpoint());
     assert!(body.contains("\"type\":\"response.completed\""), "{body}");
-    let received = received
-        .try_recv()
-        .expect("proxy must reach the model service");
+    (
+        request,
+        received
+            .try_recv()
+            .expect("proxy must reach the model service"),
+    )
+}
+
+async fn assert_replayed_pair(protocol: Protocol) -> (Value, Value) {
+    let (request, received) = replay_server_search(protocol).await;
+    let id = json!("call_read");
+    assert_eq!(
+        protocol.tool_entries(&received),
+        [("call", &id), ("result", &id)]
+    );
+    assert!(received["tools"].as_array().unwrap().iter().any(|tool| {
+        protocol
+            .tool_name(tool)
+            .as_str()
+            .is_some_and(|name| name.ends_with("read"))
+    }));
+    (request, received)
+}
+
+#[tokio::test]
+async fn replays_server_tool_search_history_to_a_function_only_responses_model() {
+    let (request, received) = assert_replayed_pair(Protocol::Responses).await;
     let input = received["input"].as_array().unwrap();
     assert_eq!(input.len(), 4);
     assert_eq!(input[0], request["input"][0]);
-    assert_eq!(input[1]["type"], "function_call");
-    assert_eq!(input[1]["call_id"], "call_read");
     assert_eq!(input[2], request["input"][4]);
     assert_eq!(input[3], request["input"][5]);
     assert!(received["tools"]
@@ -119,4 +230,21 @@ async fn replays_server_tool_search_history_to_a_function_only_responses_model()
         .unwrap()
         .iter()
         .any(|tool| { tool["type"] == "function" && tool["name"] == input[1]["name"] }));
+}
+
+#[tokio::test]
+async fn replays_server_tool_search_history_to_chat_completions() {
+    assert_replayed_pair(Protocol::Chat).await;
+}
+
+#[tokio::test]
+async fn replays_server_tool_search_history_to_anthropic_messages() {
+    assert_replayed_pair(Protocol::Anthropic).await;
+}
+
+#[tokio::test]
+async fn preserves_native_server_search_history_for_a_passthrough_model() {
+    let (request, received) = replay_server_search(Protocol::NativeResponses).await;
+    assert_eq!(received["input"], request["input"]);
+    assert_eq!(received["tools"], request["tools"]);
 }

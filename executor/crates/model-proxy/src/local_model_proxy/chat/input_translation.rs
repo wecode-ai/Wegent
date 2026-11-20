@@ -16,6 +16,9 @@ pub(super) fn append_input(
     let mut last_assistant_index = None;
 
     for item in items {
+        if is_unlinked_server_tool_search(item) {
+            continue;
+        }
         let item_type = item.get("type").and_then(Value::as_str);
         if !is_tool_output_item(item_type)
             && flush_tool_image_content_to_chat(messages, &mut pending_tool_image_content)

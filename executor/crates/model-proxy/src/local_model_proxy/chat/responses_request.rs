@@ -293,16 +293,10 @@ pub(super) fn convert_responses_input_items(
     let mut converted = Vec::new();
     let mut pending_tool_image_content = Vec::new();
     for item in items {
-        let item_type = item.get("type").and_then(Value::as_str);
-        // Native server searches may omit call_id. Their discovered tools have
-        // already been included in the effective catalog.
-        if bridge_tool_search
-            && matches!(item_type, Some("tool_search_call" | "tool_search_output"))
-            && item["execution"] == "server"
-            && item["call_id"].is_null()
-        {
+        if bridge_tool_search && is_unlinked_server_tool_search(item) {
             continue;
         }
+        let item_type = item.get("type").and_then(Value::as_str);
         if !is_tool_output_item(item_type) {
             flush_tool_image_content_to_responses(&mut converted, &mut pending_tool_image_content);
         }

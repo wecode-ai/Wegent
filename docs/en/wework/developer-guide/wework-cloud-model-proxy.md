@@ -89,7 +89,7 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 #### Portable Responses Tools
 
-When the upstream requires ordinary function tools, the proxy merges server-side search results into the outbound tool catalog and omits server search calls and results without a `call_id` from the request history. Paired ordinary tool calls and results retain their IDs and order.
+When bridging to Responses with ordinary function tools, Chat Completions, or Anthropic Messages, the proxy merges server-side search results into the outbound tool catalog and omits server search calls and results without a `call_id` from the request history. Paired ordinary tool calls and results retain their IDs and order. Native Responses passthrough preserves the complete search history.
 
 All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
 
