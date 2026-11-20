@@ -161,6 +161,14 @@ export default defineConfig({
     rolldownOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
+        'wework-ui-plugin-developer-create': path.resolve(
+          __dirname,
+          'dsh/plugin-developer/src/create-action.js'
+        ),
+        'wework-ui-plugin-developer-debug': path.resolve(
+          __dirname,
+          'dsh/plugin-developer/src/debug-panel.js'
+        ),
         'wework-ui-applications': path.resolve(__dirname, 'dsh/ui-applications/src/route.tsx'),
         'wework-ui-automations': path.resolve(__dirname, 'dsh/ui-automations/src/route.tsx'),
         'wework-ui-cloud-work': path.resolve(__dirname, 'dsh/ui-cloud-work/src/route.tsx'),

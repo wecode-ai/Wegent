@@ -1,11 +1,8 @@
 import { useMemo } from 'react'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { AppIframe } from '@/components/topnav/AppIframe'
-import { Button } from '@/components/ui/button'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '@wegent/collaboration/controls/MenuParts'
 import type {
   WeworkWorkspaceScope,
   WeworkWorkspaceSidebarTab,
@@ -28,7 +25,6 @@ export function DshSidebarExtensionPanel({
   const { t } = useTranslation('common')
   const props = useMemo(
     () => ({
-      controls: { Button, ConfirmDialog, Menu, MenuContent, MenuItem, MenuTrigger },
       scope,
       tab,
       t,
@@ -54,13 +50,18 @@ export function DshSidebarExtensionPanel({
     )
   }
   return (
-    <DshSlotSurface
+    <div
       className="flex min-h-0 flex-1 flex-col"
-      enabled={visible}
-      entryId={descriptor.id}
-      props={props}
-      slot={WEWORK_DSH_SLOTS.workspaceSidebarTab}
-      testId={`dsh-sidebar-extension-surface-${descriptor.id}`}
-    />
+      data-testid={`dsh-sidebar-extension-surface-${descriptor.id}`}
+    >
+      {visible ? (
+        <DshContributionSlotSurface
+          attachedClassName="flex min-h-0 flex-1 flex-col"
+          entryId={descriptor.id}
+          props={props}
+          slot={WEWORK_DSH_SLOTS.workspaceSidebarTab}
+        />
+      ) : null}
+    </div>
   )
 }

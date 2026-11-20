@@ -3,16 +3,6 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 
-function findElement(node, predicate) {
-  if (!node || typeof node !== 'object') return null
-  if (predicate(node)) return node
-  for (const child of node.children ?? []) {
-    const found = findElement(child, predicate)
-    if (found) return found
-  }
-  return null
-}
-
 test('loads the default-disabled runtime setting and applies explicit changes', async () => {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let handoff
@@ -26,34 +16,13 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
   vm.runInNewContext(source, { URLSearchParams, window, setInterval, clearInterval })
   assert.ok(handoff)
 
-  const React = {
-    createElement(type, props, ...children) {
-      return { type, props: props ?? {}, children: children.flat() }
-    },
-    useSyncExternalStore(_subscribe, getSnapshot) {
-      return getSnapshot()
-    },
-  }
-  const plugin = handoff.factory(id => {
-    assert.equal(id, 'react')
-    return React
-  })
+  const plugin = handoff.factory()
   const backendRequests = []
   const registrations = []
   let configurationDefinition
   let configured = { enabled: true }
   let runtimeEnabled = false
   const ctx = {
-    slots: {
-      inject(slot, factory) {
-        assert.equal(slot, 'wework.settings.section')
-        for (const disposer of factory()) assert.equal(typeof disposer, 'function')
-      },
-      register(options, component) {
-        registrations.push({ component, options })
-        return () => {}
-      },
-    },
     wework: {
       backend: {
         scope(id) {
@@ -128,75 +97,44 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
   assert.equal(configurationDefinition.defaults.enabled, false)
   assert.equal(backendRequests[0].method, 'getSettings')
   assert.equal(configured.enabled, false)
-  const pageRegistration = registrations.find(entry => typeof entry.component === 'function')
-  assert.ok(pageRegistration)
-  const descriptor = registrations.find(entry => entry.descriptor)?.descriptor
+  const registration = registrations.find(
+    entry => entry.descriptor?.id === 'wework-transcript-sync'
+  )
+  assert.equal(registration?.options.name, 'wework.settings.section')
+  const descriptor = registration?.descriptor
   assert.equal(descriptor?.page, 'connections')
   assert.equal(descriptor?.experimental, true)
   assert.equal(descriptor?.module, 'plugins/wework-ui-transcript-sync-settings.js')
-  const controls = { Button() {}, Checkbox() {} }
-  const wrapper = pageRegistration.component({ controls })
-  const statusSnapshots = []
-  const unsubscribeStatus = wrapper.props.store.subscribe(snapshot => {
-    statusSnapshots.push(snapshot)
-  })
-  await wrapper.props.store.refreshStatus()
-  unsubscribeStatus()
-  assert.ok(statusSnapshots.some(snapshot => snapshot.statusRefreshing))
-  assert.ok(statusSnapshots.every(snapshot => !snapshot.statusPending))
 
-  const page = wrapper.type(wrapper.props)
-  const checkbox = findElement(
-    page,
-    node => node.props?.['data-testid'] === 'transcript-sync-enabled-checkbox'
-  )
-  assert.ok(checkbox)
-  assert.equal(checkbox.type, controls.Checkbox)
-  assert.equal(checkbox.props['aria-label'], '跨设备同步会话和配置')
-  assert.equal(checkbox.props.checked, false)
-  assert.equal(checkbox.props.disabled, false)
-  const runtimeStatus = findElement(
-    page,
-    node => node.props?.['data-testid'] === 'transcript-sync-runtime-status'
-  )
-  assert.ok(runtimeStatus)
-  assert.equal(
-    findElement(page, node => node.props?.['data-testid'] === 'transcript-sync-runtime-error'),
-    null
-  )
-  assert.equal(
-    findElement(page, node => node.props?.['data-testid'] === 'transcript-sync-retry-button'),
-    null
-  )
+  const { store } = descriptor
+  const snapshots = []
+  const unsubscribe = store.subscribe(snapshot => snapshots.push(snapshot))
+  await store.refreshStatus()
+  unsubscribe()
+  assert.ok(snapshots.some(snapshot => snapshot.statusRefreshing))
+  assert.ok(snapshots.every(snapshot => !snapshot.statusPending))
 
-  checkbox.props.onCheckedChange(true)
-  await new Promise(resolve => setImmediate(resolve))
+  const disabled = store.getSnapshot()
+  assert.equal(disabled.enabled, false)
+  assert.equal(disabled.pending, false)
+  assert.ok(disabled.status)
+  assert.equal(disabled.status.lastError, null)
 
+  await store.setEnabled(true)
   assert.equal(configured.enabled, true)
+  assert.equal(store.getSnapshot().enabled, true)
+  assert.equal(store.getSnapshot().status.lastError, 'Not Found')
   assert.equal(backendRequests.at(-2).method, 'setEnabled')
   assert.equal(backendRequests.at(-2).params.enabled, true)
   assert.equal(backendRequests.at(-1).method, 'getStatus')
 
-  const enabledPage = wrapper.type(wrapper.props)
-  const retry = findElement(
-    enabledPage,
-    node => node.props?.['data-testid'] === 'transcript-sync-retry-button'
-  )
-  assert.ok(retry)
-  assert.equal(retry.type, controls.Button)
-  retry.props.onClick()
-  await new Promise(resolve => setImmediate(resolve))
+  await store.retry()
+  assert.equal(store.getSnapshot().status.lastError, null)
   assert.equal(backendRequests.at(-1).method, 'flush')
 
-  const enabledCheckbox = findElement(
-    enabledPage,
-    node => node.props?.['data-testid'] === 'transcript-sync-enabled-checkbox'
-  )
-  assert.equal(enabledCheckbox.props.checked, true)
-  enabledCheckbox.props.onCheckedChange(false)
-  await new Promise(resolve => setImmediate(resolve))
-
+  await store.setEnabled(false)
   assert.equal(configured.enabled, false)
+  assert.equal(store.getSnapshot().enabled, false)
   assert.equal(backendRequests.at(-2).method, 'setEnabled')
   assert.equal(backendRequests.at(-2).params.enabled, false)
   assert.equal(backendRequests.at(-1).method, 'getStatus')

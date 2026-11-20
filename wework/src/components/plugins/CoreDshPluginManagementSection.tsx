@@ -8,7 +8,7 @@ import {
   uninstallCoreDshPlugin,
   updateCoreDshPlugin,
 } from '@/features/dsh-plugins/coreDshPlugins'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import {
   MODE_MANAGED_GIT_PLUGIN,
@@ -110,17 +110,13 @@ export function CoreDshPluginManagementSection({
             </p>
           </div>
           {onCreatePlugin ? (
-            <DshSlotSurface
-              className="shrink-0"
-              entryId="wework-plugin-developer.create"
-              props={{
-                controls: { Button: ControlButton },
-                onCreate: onCreatePlugin,
-                t,
-              }}
-              slot={WEWORK_DSH_SLOTS.pluginsAction}
-              testId="core-dsh-plugin-page-actions"
-            />
+            <div className="shrink-0" data-testid="core-dsh-plugin-page-actions">
+              <DshContributionSlotSurface
+                entryId="wework-plugin-developer.create"
+                props={{ onCreate: onCreatePlugin, t }}
+                slot={WEWORK_DSH_SLOTS.pluginsAction}
+              />
+            </div>
           ) : null}
         </header>
 

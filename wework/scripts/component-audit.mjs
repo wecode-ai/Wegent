@@ -44,11 +44,7 @@ function inspect(file) {
     text,
     ts.ScriptTarget.Latest,
     true,
-    file.endsWith('.js')
-      ? ts.ScriptKind.JS
-      : file.endsWith('.tsx')
-        ? ts.ScriptKind.TSX
-        : ts.ScriptKind.TS
+    ts.getScriptKindFromFileName(file)
   )
   const sdk = new Set(['DialogSurface'])
   const initializers = new Map()
@@ -216,7 +212,7 @@ function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, entry.name)
     if (entry.isDirectory()) walk(file)
-    else if (/\.tsx?$/.test(entry.name) && !/\.(?:test|stories|d)\.tsx?$/.test(entry.name))
+    else if (/\.[jt]sx?$/.test(entry.name) && !/\.(?:test|stories|d)\.[jt]sx?$/.test(entry.name))
       inspect(file)
   }
 }

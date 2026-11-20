@@ -20,6 +20,8 @@ Wework 使用 [UI SDK](https://github.com/vercel-labs/ui) 的 React 行为层，
 
 共享控件实现位于 `packages/collaboration/src/controls/`。业务组件保留在所属领域，通过统一入口导出；请求、权限、标识转换和持久化仍由业务调用方管理。
 
+内置 DSH 扩展通过 `module` 贡献入口在桌面宿主的 React 树中渲染共享控件。旧的 `attach` 插槽有自己的 React 根，跨根传入共享组件会触发渲染或 Hook 错误。跨边界只传业务数据、订阅和操作，控件在宿主模块中导入。在打包 Electron 中打开实际入口验证挂载与交互。
+
 ## 运行示例
 
 ```bash

@@ -20,6 +20,8 @@ See the [component migration review](./component-migration-review.md) for per-pa
 
 Shared implementations live in `packages/collaboration/src/controls/`. Domain adapters remain with their owners and are exported through the common entry. Callers own requests, permission checks, identifiers and persistence.
 
+Built-in DSH extensions render shared controls in the desktop host's React tree through a `module` contribution. Legacy `attach` slots use a separate React root, and passing shared components across that boundary causes rendering or Hook errors. Pass domain data, subscriptions and actions across the boundary, and import controls in the host module. Verify mounting and interaction from the actual entry point in packaged Electron.
+
 ## Run
 
 ```bash
