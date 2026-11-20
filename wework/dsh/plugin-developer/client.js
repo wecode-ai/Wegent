@@ -2,7 +2,7 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-wework-plugin-developer',
   factory: require => {
     const React = require('react')
-    const { createElement, useMemo, useState, useSyncExternalStore } = React
+    const { createElement, useMemo, useRef, useState, useSyncExternalStore } = React
     const subscribeIdle = () => () => {}
 
     async function invoke(capability, params = {}) {
@@ -111,7 +111,7 @@ window.__ModuleLoader__.load({
 
     function actionButton(
       Button,
-      { children, className = '', disabled, onClick, testId, ariaExpanded, ariaHaspopup }
+      { children, className = '', disabled, onClick, testId, ariaExpanded }
     ) {
       return createElement(
         Button,
@@ -121,7 +121,6 @@ window.__ModuleLoader__.load({
           disabled,
           'data-testid': testId,
           'aria-expanded': ariaExpanded,
-          'aria-haspopup': ariaHaspopup,
           className: `inline-flex h-8 items-center rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-40 ${className}`,
           onClick,
         },
@@ -321,10 +320,16 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function PluginDebugPanel({ controls: { Button }, scope, t, visible }) {
+    function PluginDebugPanel({
+      controls: { Button, ConfirmDialog, Menu, MenuContent, MenuItem, MenuTrigger },
+      scope,
+      t,
+      visible,
+    }) {
       const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
       const [eventFilter, setEventFilter] = useState('all')
-      const [moreOpen, setMoreOpen] = useState(false)
+      const moreTrigger = useRef(null)
+      const stopRequested = useRef(false)
       const [stopConfirmationOpen, setStopConfirmationOpen] = useState(false)
       const sourceRoot = scope?.cwd || ''
       const source = useMemo(() => createPluginDebugSession(sourceRoot), [sourceRoot])
@@ -450,82 +455,72 @@ window.__ModuleLoader__.load({
           ),
           running
             ? createElement(
-                'div',
+                Menu,
                 {
-                  className: 'relative shrink-0',
-                },
-                actionButton(Button, {
-                  children: t('workbench.plugin_development_more', 'More'),
-                  ariaExpanded: moreOpen,
-                  ariaHaspopup: 'menu',
-                  className: 'px-2 text-text-secondary hover:bg-muted hover:text-text-primary',
-                  onClick: () => {
-                    setMoreOpen(value => !value)
-                    setStopConfirmationOpen(false)
+                  onOpenChangeComplete: open => {
+                    if (open || !stopRequested.current) return
+                    stopRequested.current = false
+                    setStopConfirmationOpen(true)
                   },
-                  testId: 'wework-plugin-development-sidebar-more',
-                }),
-                moreOpen
-                  ? createElement(
-                      'div',
-                      {
-                        className:
-                          'absolute right-0 top-10 z-popover w-56 rounded-xl border border-border/70 bg-popover p-1 shadow-lg',
-                        role: 'menu',
-                        'data-testid': 'wework-plugin-development-sidebar-more-menu',
+                },
+                createElement(
+                  MenuTrigger,
+                  {
+                    ref: moreTrigger,
+                    render: actionButton(Button, {
+                      className:
+                        'shrink-0 px-2 text-text-secondary hover:bg-muted hover:text-text-primary',
+                    }),
+                    'data-testid': 'wework-plugin-development-sidebar-more',
+                  },
+                  t('workbench.plugin_development_more', 'More')
+                ),
+                createElement(
+                  MenuContent,
+                  {
+                    align: 'end',
+                    side: 'bottom',
+                    sideOffset: 8,
+                    className: 'w-56 p-1',
+                    'data-testid': 'wework-plugin-development-sidebar-more-menu',
+                  },
+                  createElement(
+                    MenuItem,
+                    {
+                      value: 'stop',
+                      destructive: true,
+                      disabled: Boolean(busy),
+                      onSelect: () => {
+                        stopRequested.current = true
                       },
-                      stopConfirmationOpen
-                        ? createElement(
-                            React.Fragment,
-                            null,
-                            createElement(
-                              'p',
-                              { className: 'px-2 py-2 text-xs text-text-secondary' },
-                              t(
-                                'workbench.plugin_development_stop_confirmation',
-                                'Stop the debug instance and disconnect Core DSH?'
-                              )
-                            ),
-                            createElement(
-                              'div',
-                              { className: 'flex gap-1' },
-                              actionButton(Button, {
-                                children: t('workbench.cancel', 'Cancel'),
-                                className:
-                                  'flex-1 justify-center text-text-secondary hover:bg-muted hover:text-text-primary',
-                                onClick: () => setStopConfirmationOpen(false),
-                                testId: 'wework-plugin-development-sidebar-stop-cancel',
-                              }),
-                              actionButton(Button, {
-                                children: t(
-                                  'workbench.plugin_development_stop_confirm',
-                                  'Stop debugging'
-                                ),
-                                className:
-                                  'flex-1 justify-center bg-destructive/10 text-destructive hover:bg-destructive/15',
-                                disabled: Boolean(busy),
-                                onClick: () => {
-                                  setMoreOpen(false)
-                                  setStopConfirmationOpen(false)
-                                  void run('stop', 'pluginDevelopment.stop')
-                                },
-                                testId: 'wework-plugin-development-sidebar-stop',
-                              })
-                            )
-                          )
-                        : actionButton(Button, {
-                            children: t('workbench.plugin_development_stop', 'Stop debugging'),
-                            className:
-                              'w-full justify-start text-destructive hover:bg-destructive/10',
-                            disabled: !running || Boolean(busy),
-                            onClick: () => setStopConfirmationOpen(true),
-                            testId: 'wework-plugin-development-sidebar-stop-request',
-                          })
-                    )
-                  : null
+                      'data-testid': 'wework-plugin-development-sidebar-stop-request',
+                    },
+                    t('workbench.plugin_development_stop', 'Stop debugging')
+                  )
+                )
               )
             : null
         ),
+        createElement(ConfirmDialog, {
+          open: Boolean(running && stopConfirmationOpen),
+          title: t('workbench.plugin_development_stop', 'Stop debugging'),
+          description: t(
+            'workbench.plugin_development_stop_confirmation',
+            'Stop the debug instance and disconnect Core DSH?'
+          ),
+          cancelLabel: t('workbench.cancel', 'Cancel'),
+          confirmLabel: t('workbench.plugin_development_stop_confirm', 'Stop debugging'),
+          cancelTestId: 'wework-plugin-development-sidebar-stop-cancel',
+          confirmTestId: 'wework-plugin-development-sidebar-stop',
+          destructive: true,
+          confirmDisabled: Boolean(busy),
+          finalFocus: () => moreTrigger.current,
+          onClose: () => setStopConfirmationOpen(false),
+          onConfirm: () => {
+            setStopConfirmationOpen(false)
+            void run('stop', 'pluginDevelopment.stop')
+          },
+        }),
         createElement(
           'section',
           {

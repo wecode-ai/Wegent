@@ -80,6 +80,21 @@ function inspect(file) {
       kind,
     })
   }
+  function reportRoles(node, role) {
+    if (!role) return
+    const roleValues = new Set()
+    const examined = new Set()
+    function collectRoles(value) {
+      if (examined.has(value)) return
+      examined.add(value)
+      if (ts.isIdentifier(value))
+        for (const initializer of initializers.get(value.text) ?? []) collectRoles(initializer)
+      if (ts.isStringLiteral(value) && roles.has(value.text)) roleValues.add(value.text)
+      ts.forEachChild(value, collectRoles)
+    }
+    collectRoles(role)
+    for (const value of roleValues) report(node, `role:${value}`)
+  }
   function suppliedToSdk(node) {
     let parent = node.parent
     while (parent && !ts.isJsxAttribute(parent) && !ts.isJsxElement(parent)) parent = parent.parent
@@ -152,14 +167,20 @@ function inspect(file) {
     }
     if (ts.isCallExpression(node)) {
       const name = node.expression.getText(source)
-      const tag = node.arguments[0]
-      if (
-        /^(?:React\.)?createElement$/.test(name) &&
-        tag &&
-        ts.isStringLiteral(tag) &&
-        nativeControls.has(tag.text)
-      ) {
-        report(node, `native:${tag.text}`)
+      const [tag, props] = node.arguments
+      if (/^(?:React\.)?createElement$/.test(name) && tag && ts.isStringLiteral(tag)) {
+        if (nativeControls.has(tag.text)) report(node, `native:${tag.text}`)
+        if (props && ts.isObjectLiteralExpression(props)) {
+          const role = props.properties.findLast(property => {
+            if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property))
+              return false
+            return (
+              (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+              property.name.text === 'role'
+            )
+          })
+          if (role) reportRoles(node, ts.isPropertyAssignment(role) ? role.initializer : role.name)
+        }
       }
       if (
         /^(?:(?:window|globalThis)\.)?(?:confirm|prompt)$/.test(name) &&
@@ -183,19 +204,7 @@ function inspect(file) {
             (attribute('hidden') || string('className')?.split(/\s+/).includes('hidden'))))
       if (!suppliedToSdk(element)) {
         if (nativeControls.has(tag) && !browserField) report(node, `native:${tag}`)
-        const roleValues = new Set()
-        const role = attribute('role')?.initializer
-        const examined = new Set()
-        function collectRoles(value) {
-          if (examined.has(value)) return
-          examined.add(value)
-          if (ts.isIdentifier(value))
-            for (const initializer of initializers.get(value.text) ?? []) collectRoles(initializer)
-          if (ts.isStringLiteral(value) && roles.has(value.text)) roleValues.add(value.text)
-          ts.forEachChild(value, collectRoles)
-        }
-        if (role) collectRoles(role)
-        for (const role of roleValues) report(node, `role:${role}`)
+        reportRoles(node, attribute('role')?.initializer)
       }
     }
     ts.forEachChild(node, visit)

@@ -46,6 +46,7 @@ test('registers translated plugin development actions through the Wework service
   })
   assert.ok(moduleRegistration)
 
+  let debugSession
   const useState = value => [value, () => {}]
   const plugin = moduleRegistration.factory(specifier => {
     assert.equal(specifier, 'react')
@@ -57,8 +58,11 @@ test('registers translated plugin development actions through the Wework service
       useMemo(create) {
         return create()
       },
+      useRef(initialValue) {
+        return { current: initialValue }
+      },
       useSyncExternalStore(_subscribe, getSnapshot) {
-        return getSnapshot()
+        return debugSession ? { ...getSnapshot(), session: debugSession } : getSnapshot()
       },
       useState,
     }
@@ -100,7 +104,14 @@ test('registers translated plugin development actions through the Wework service
   const createAction = contributions.find(item => item.slot === 'wework.plugins.action')
   assert.ok(createAction)
   assert.equal(createAction.descriptor.labelKey, 'workbench.plugin_development_create')
-  const controls = { Button: 'host-button' }
+  const controls = {
+    Button: 'host-button',
+    ConfirmDialog: 'host-confirm-dialog',
+    Menu: 'host-menu',
+    MenuContent: 'host-menu-content',
+    MenuItem: 'host-menu-item',
+    MenuTrigger: 'host-menu-trigger',
+  }
   const rendered = createAction.component({
     controls,
     onCreate: async () => {},
@@ -113,12 +124,13 @@ test('registers translated plugin development actions through the Wework service
   const debugTab = contributions.find(item => item.slot === 'wework.workspace.sidebar.tab')
   assert.deepEqual([...debugTab.descriptor.when.projectKinds], ['wework-core-dsh-plugin'])
   assert.equal(debugTab.descriptor.when.codexPluginKeys, undefined)
-  const debugPanel = debugTab.component({
+  const debugPanelProps = {
     controls,
     scope: { cwd: '/workspace/plugin-development-project' },
     t: (_key, fallback) => fallback,
     visible: true,
-  })
+  }
+  const debugPanel = debugTab.component(debugPanelProps)
   const debugMarkup = JSON.stringify(debugPanel)
   assert.match(debugMarkup, /"type":"host-button","props":\{"type":"button","variant":"unstyled"/)
   assert.doesNotMatch(debugMarkup, /"type":"button","props"/)
@@ -131,6 +143,21 @@ test('registers translated plugin development actions through the Wework service
   assert.match(debugMarkup, /col-span-2 flex min-w-0 items-center/)
   assert.match(debugMarkup, /whitespace-nowrap bg-text-primary/)
   assert.doesNotMatch(debugMarkup, /wework-plugin-development-diagnostics-toggle/)
+
+  debugSession = { id: 'debug-instance', status: 'ready' }
+  const runningPanel = debugTab.component(debugPanelProps)
+  const [header, confirmation] = runningPanel.props.children
+  const menu = header.props.children.find(child => child?.type === controls.Menu)
+  const [trigger, content] = menu.props.children
+  const [stopItem] = content.props.children
+  assert.equal(trigger.type, controls.MenuTrigger)
+  assert.equal(trigger.props['data-testid'], 'wework-plugin-development-sidebar-more')
+  assert.equal(content.type, controls.MenuContent)
+  assert.equal(stopItem.type, controls.MenuItem)
+  assert.equal(stopItem.props['data-testid'], 'wework-plugin-development-sidebar-stop-request')
+  assert.equal(confirmation.type, controls.ConfirmDialog)
+  assert.equal(confirmation.props.confirmTestId, 'wework-plugin-development-sidebar-stop')
+  assert.equal(confirmation.props.open, false)
 })
 
 test('documents and demonstrates every extension point declared by the Wework host', async () => {

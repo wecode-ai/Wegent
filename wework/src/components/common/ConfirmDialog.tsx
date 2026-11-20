@@ -1,5 +1,6 @@
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { DialogFinalFocus } from '@ui-sdk/react/dialog'
 import { Loader2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useRef } from 'react'
@@ -18,6 +19,7 @@ interface ConfirmDialogProps {
   pending?: boolean
   confirmDisabled?: boolean
   overlayClassName?: string
+  finalFocus?: DialogFinalFocus
   onClose: () => void
   onConfirm: () => void
 }
@@ -35,6 +37,7 @@ export function ConfirmDialog({
   pending = false,
   confirmDisabled = false,
   overlayClassName = 'z-modal',
+  finalFocus,
   onClose,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -53,6 +56,7 @@ export function ConfirmDialog({
         }}
         active={open}
         initialFocus={destructive ? 'button:first-of-type' : 'button:last-of-type'}
+        finalFocus={finalFocus}
         render={
           <div
             ref={dialogRef}
