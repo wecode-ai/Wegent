@@ -852,6 +852,12 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 - 小组协作流程完整通过，覆盖按两次 Escape、焦点恢复及智能体选择器的箭头导航。Python 运行时专项也已通过，包含准备通知与真实插件执行验证。[小组日志](https://github.com/wecode-ai/Wegent/actions/runs/44712386714/job/136209245363) · [Python 日志](https://github.com/wecode-ai/Wegent/actions/runs/44712386714/job/136209245582)
 - 插件开发、Stand-in 与 Stand-in 个人任务通过同轮打包验证。后台会话队列在切出源会话后等待第三条跟进请求超时，仍需复验。[桌面 Core 8 日志](https://github.com/wecode-ai/Wegent/actions/runs/44712386714/job/136209245622)
 
+## 打包 Electron 复核（ddd8f40f9a）
+
+- Linux 协作体验专项完整通过，包含返回看板、滚动至原事项活动流并复核已发布正文，以及评论唯一性和私有草稿恢复。[协作体验日志](https://github.com/wecode-ai/Wegent/actions/runs/44716235148/job/136222802833)
+- Linux 后台队列通过三条跟进请求的顺序检查、恢复后去重和暂停后续跑；诊断产物记录到 `runtime-queue-resume-04`。后续独立的所属执行器并发场景在查询已完成的 Codex 线程时超时。[队列日志](https://github.com/wecode-ai/Wegent/actions/runs/44716235148/job/136222803068)
+- macOS 本地队列专项构建成功。Electron 启动时仍在解包 DSH 运行时，控制器连接超时，流程未进入队列交互。Aqua 前台激活依旧缺少证据。
+
 ## 仍需真实验收的边界
 
 - 未逐一打开全部 234 个 source owner 或 45 个真实 Page。DSH 动态入口、委托表单、弹出工作台、进程视图、设备/插件/应用工作区仍需登录与原生 host 前提。

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
-import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import { waitForCompletedOwnerTaskThread } from './runtime-task-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -53,6 +53,12 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         maxConcurrentAgentTasks: 1,
       }
       const capacity = () => rpc(control, 'runtime.capacity.get', {})
+      const waitForCompletedThread = taskId =>
+        waitForCompletedOwnerTaskThread(
+          async id => (await rpc(control, 'runtime.tasks.get', { taskId: id })).task,
+          taskId,
+          uiTimeoutMs
+        )
       const waitRequested = prompt =>
         waitForValue(
           async () => [...requested],
@@ -167,8 +173,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         await waitRequested(promptFor('personal', 2))
         for (const kind of ['personal', 'standIn', 'agent'])
           for (const index of [1, 2]) release(kind, index)
-        for (const taskId of taskIds)
-          await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
+        for (const taskId of taskIds) await waitForCompletedThread(taskId)
         await waitForValue(
           capacity,
           state => state.active === 0 && state.queued === 0,
@@ -209,7 +214,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
             'A background follow-up consumed personal capacity'
           )
           release(kind, 'followup')
-          await waitForCompletedRuntimeTaskThread(control, taskId, uiTimeoutMs)
+          await waitForCompletedThread(taskId)
           await waitForValue(
             capacity,
             current => current.active === 0 && current.queued === 0,
