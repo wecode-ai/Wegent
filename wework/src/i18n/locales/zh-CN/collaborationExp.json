@@ -89,7 +89,22 @@
     "background": "背景与目标",
     "unknownTime": "时间不可用",
     "unknownSource": "来源未知",
+    "traceRestricted": "私人来源不可查看",
+    "assistantSources": "助理参与来源",
+    "openAssistantSource": "打开原私人工作区",
+    "participation": {
+      "unverified": "来源可打开",
+      "restricted": "来源仅参与者可查看",
+      "history-unavailable": "历史来源不可用"
+    },
     "system": "系统",
+    "unknownMember": "未知成员（历史数据）",
+    "provenance": {
+      "humanPublished": "人工生成 · 人工发布",
+      "aiPending": "AI 生成 · 待确认",
+      "aiHumanPublished": "AI 生成 · 人工发布",
+      "aiPublished": "AI 生成 · AI 发布"
+    },
     "statusChanged": "状态：{{from}} → {{to}}",
     "handoff": "{{action}}：{{target}}",
     "handoffActions": {
@@ -163,6 +178,11 @@
     "continueDiscussion": "继续讨论"
   },
   "assistant": {
+    "availability": {
+      "online": "在线",
+      "offline": "离线",
+      "unknown": "未知"
+    },
     "runtimeWorkUnavailable": "工作目录加载失败，请重试以确认助理团当前状态。",
     "snapshot": {
       "title": "当前工作",
@@ -232,6 +252,7 @@
     "paused": "已暂停",
     "unavailable": "助理团信息尚不可用。",
     "managementUnavailable": "助理配置尚不可用，请重试加载后再管理。",
+    "deviceUnavailable": "配置的执行设备当前不可用，请刷新设备后重试。",
     "state": {
       "waiting": "待确认",
       "running": "推进中",
@@ -258,6 +279,13 @@
     "summary": "交付摘要",
     "summaryPlaceholder": "一句话说明要解决什么、交付什么。",
     "defaults": "项目、负责人和日期都有默认值；创建后随时能在任务详情中修改。",
+    "assistantRoster": "将范围内的任务分配给你的项目助理",
+    "riskLevel": "执行风险",
+    "risk": {
+      "high": "高风险 · 操作前确认",
+      "low": "低风险 · 可按策略自动执行"
+    },
+    "registerInProject": "登记到 {{project}}",
     "cancel": "取消",
     "submit": "创建并打开任务",
     "search": "搜索选项",

@@ -705,3 +705,17 @@ impl UserRepository {
             .await
     }
 }
+
+/// Read every requested release state on the caller's existing pool or transaction.
+pub(crate) async fn list_release_rows_by_ids_on<Q: PluginQuery>(
+    query: &mut Q,
+    ids: &[i64],
+) -> MysqlResult<Vec<PluginReleaseRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(", ");
+    query.fetch_all(format!(
+        "SELECT {RELEASE_COLUMNS} FROM plugin_releases WHERE plugin_releases.id IN ({placeholders})"
+    ), ids.to_vec()).await
+}

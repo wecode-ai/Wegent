@@ -23,6 +23,20 @@ mod terminal;
 
 use admission::AuthenticatedUser;
 
+#[cfg(test)]
+pub(crate) async fn build_test_server() -> Result<brz_socket_io::Server, BoxError> {
+    let server = Server::builder().build().await?;
+    brz_socket_io::handlers!(
+        server.io(),
+        app = crate::app_test_support::app(
+            brz_mysql::MysqlService::connect_lazy("mysql://root@127.0.0.1:1/test").unwrap(),
+        ),
+        runtime = crate::socketio::runtime::SocketRuntime::new().0
+    )
+    .await?;
+    Ok(server)
+}
+
 /// Register every public namespace on the shared HTTP service.
 pub async fn build(state: Arc<AppState>) -> Result<Server, BoxError> {
     let server = Server::builder().build().await?;

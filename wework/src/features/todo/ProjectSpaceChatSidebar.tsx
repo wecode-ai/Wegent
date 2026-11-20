@@ -1,7 +1,7 @@
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Check, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -188,26 +188,21 @@ export function ProjectSpaceChatSidebar({
   const resizeStartRef = useRef({ pointerX: 0, width: PROJECT_CHAT_DEFAULT_WIDTH })
   const resizedWidthRef = useRef(width)
 
-  useEffect(() => {
-    if (!conversationMenuOpen) return
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!conversationMenuRef.current?.contains(event.target as Node)) {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
+      if (!conversationMenuRef.current?.contains(event.target as Node))
         setConversationMenuOpen(false)
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
+    },
+    { enabled: conversationMenuOpen }
+  )
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') setConversationMenuOpen(false)
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [conversationMenuOpen])
+    },
+    { enabled: conversationMenuOpen }
+  )
 
   const selectedConversation = creatingNew
     ? null

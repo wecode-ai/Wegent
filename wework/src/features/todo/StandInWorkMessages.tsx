@@ -1,5 +1,6 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { ArrowRight, GripVertical, Split } from 'lucide-react'
 import type { StandInExecutorApi, StandInInboxMessage, StandInInboxWork } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -35,9 +36,25 @@ export function StandInWorkMessages({
   onOrganize(value: StandInWorkDrag): Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const [messages, setMessages] = useState<StandInInboxMessage[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [revision, setRevision] = useState(0)
+  const { id: workId, roleId, messageCount } = work
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify(['stand-in-work-messages', userId, deviceId, roleId, workId]),
+        () => api.workMessages(userId, deviceId, workId)
+      ),
+    [api, userId, deviceId, roleId, workId]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, messageCount),
+    [resource, messageCount]
+  )
+  const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
+  const messages = snapshot.data?.messages ?? []
+  const error =
+    snapshot.status === 'error' || snapshot.error !== undefined
+      ? getStandInErrorMessage(snapshot.error)
+      : null
   const canSplit = messages.length > 1
   const canMove = siblings.some(
     value => value.id !== work.id && value.roleId === work.roleId && value.messageCount > 0
@@ -49,23 +66,6 @@ export function StandInWorkMessages({
     messageIds: [message.recordId],
     canSplit,
   })
-  useEffect(() => {
-    let active = true
-    void api
-      .workMessages(userId, deviceId, work.id)
-      .then(value => {
-        if (active) {
-          setMessages(value.messages)
-          setError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, userId, deviceId, work.id, work.messageCount, revision])
   return (
     <details
       open={expanded}
@@ -85,7 +85,7 @@ export function StandInWorkMessages({
           <button
             type="button"
             data-testid="stand-in-messages-retry"
-            onClick={() => setRevision(value => value + 1)}
+            onClick={() => void resource.reload()}
             className="min-h-11 underline md:min-h-9"
           >
             {t('standIn.reload')}

@@ -12,10 +12,11 @@ import {
 } from "./order-wework-linux-e2e.mjs";
 import { isResourceExclusiveCheckpoint } from "../../wework/e2e/desktop/checkpoint-scheduler.mjs";
 import { balanceUnitTests } from "./balance-wework-unit-tests.mjs";
+import { balanceWindowsMatrix } from "./balance-wework-windows-e2e.mjs";
 import { coreRunnerSlots } from "./core-runner-slots.mjs";
 
 const root = new URL("../../", import.meta.url);
-function fullMatrix() {
+function fullMatrix(lane = "core") {
   const directory = mkdtempSync(join(tmpdir(), "ci-runner-capacity-"));
   try {
     const output = join(directory, "output");
@@ -29,7 +30,7 @@ function fullMatrix() {
     );
     const line = readFileSync(output, "utf8")
       .split("\n")
-      .find((value) => value.startsWith("wework_desktop_core_e2e_matrix="));
+      .find((value) => value.startsWith(`wework_desktop_${lane}_e2e_matrix=`));
     return JSON.parse(line.slice(line.indexOf("=") + 1));
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -72,7 +73,7 @@ test("benchmark checkpoints cannot create empty ordinary runners in narrow selec
   assert.deepEqual(checkpoints(result), checkpoints(matrix));
 });
 
-test("workflow preserves the approved runner budget and keeps sharding tests in CI", () => {
+test("workflow adds desktop runner capacity and keeps sharding tests in CI", () => {
   const readWorkflow = (path) =>
     JSON.parse(
       execFileSync(
@@ -91,13 +92,13 @@ test("workflow preserves the approved runner budget and keeps sharding tests in 
   const step = desktop.jobs.changes.steps.find(
     (entry) => entry.id === "linux-matrix",
   );
-  assert.equal(Number(step.env.CORE_RUNNER_SCALE), 1);
+  assert.equal(Number(step.env.CORE_RUNNER_SCALE), 1.5);
   const matrix = balanceLinuxCoreMatrix(
     original,
     undefined,
     Number(step.env.CORE_RUNNER_SCALE),
   );
-  assert.equal(matrix.include.length, original.include.length);
+  assert.equal(matrix.include.length, Math.ceil(original.include.length * 1.5));
   assert.deepEqual(checkpoints(matrix), checkpoints(original));
   const units = readWorkflow(".github/workflows/test.yml").jobs["test-wework"];
   assert.deepEqual(units.strategy.matrix.shard, [1, 2, 3, 4]);
@@ -114,6 +115,7 @@ test("workflow preserves the approved runner budget and keeps sharding tests in 
 });
 
 for (const [platform, balance, script, args] of [
+  ["Windows", balanceWindowsMatrix, "balance-wework-windows-e2e.mjs", []],
   [
     "Linux",
     balanceLinuxCoreMatrix,
@@ -131,11 +133,16 @@ for (const [platform, balance, script, args] of [
       new Set(checkpoints(result)).size,
       checkpoints(original).length,
     );
-    for (const id of ["core-9", "core-10"])
+    for (const id of ["core-9", "core-10"]) {
+      const originalShard = original.include.find((entry) => entry.id === id);
+      const expected = platform === "Linux"
+        ? { ...originalShard, segments: originalShard.segments.split(",")[0] }
+        : originalShard;
       assert.deepEqual(
         result.include.find((entry) => entry.id === id),
-        original.include.find((entry) => entry.id === id),
+        expected,
       );
+    }
     assert.equal(JSON.stringify(original), snapshot);
     assert.deepEqual(balance(original, undefined, 1.5), result);
     const cli = execFileSync(
@@ -222,4 +229,18 @@ test("four unit shards preserve every measured file once and halve predicted ren
     );
   assert.deepEqual(split(4).flat().sort(), [...files].sort());
   assert(longest(split(4)) < longest(split(2)) * 0.55);
+});
+
+test("Cloud capacity adds four runners without duplicating or dropping checkpoints", () => {
+  const matrix = fullMatrix("cloud");
+  const seconds = JSON.parse(
+    readFileSync(
+      new URL("../ci/wework-linux-checkpoint-durations.json", import.meta.url),
+    ),
+  ).scopes.cloud;
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds, 1.5, "cloud");
+  assert.equal(balanced.include.length, 12);
+  assert.deepEqual(checkpoints(balanced), checkpoints(matrix));
+  assert.equal(new Set(checkpoints(balanced)).size, checkpoints(matrix).length);
+  assert(balanced.include.every((entry) => entry.segments.length > 0));
 });

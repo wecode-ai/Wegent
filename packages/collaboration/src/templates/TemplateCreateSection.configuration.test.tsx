@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { act, useState } from 'react'
+import { act, useState, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TemplateCreateSection } from './TemplateCreateSection'
+import { createTemplatePageNavigation, templateConfigurationDetail } from './templatePageNavigation'
 import { CollaborationTemplateContext } from './context'
 import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
@@ -41,10 +42,6 @@ function Harness({
   initial?: boolean
   onSelect?(document: CollaborationTemplate | null): void
 }) {
-  const [navigation, setNavigation] = useState<{ title: string; onBack: (() => void) | null }>({
-    title: 'Create project',
-    onBack: null,
-  })
   const [store] = useState(
     () =>
       new CollaborationTemplateStore({
@@ -53,10 +50,17 @@ function Harness({
         persistence: { read: async () => [], write: async () => {} },
       })
   )
+  const [templateNavigation] = useState(() => createTemplatePageNavigation(store))
+  const templateState = useSyncExternalStore(
+    templateNavigation.subscribe,
+    templateNavigation.getSnapshot,
+    templateNavigation.getSnapshot
+  )
+  const navigation = templateConfigurationDetail(templateNavigation, 'en', templateState)
   return (
     <CollaborationTemplateContext value={store}>
-      <h2 data-testid="host-title">{navigation.title}</h2>
-      <div hidden={Boolean(navigation.onBack)}>
+      <h2 data-testid="host-title">{navigation?.title ?? 'Create project'}</h2>
+      <div hidden={Boolean(navigation)}>
         <TemplateCreateSection
           setup={{
             location: 'local',
@@ -70,7 +74,7 @@ function Harness({
           initialTemplate={initial ? builtinCollaborationTemplates()[0].document : undefined}
           configurationHost={{
             target,
-            navigate: (title, onBack) => setNavigation({ title, onBack }),
+            navigation: templateNavigation,
           }}
           onSelect={onSelect}
           onChange={vi.fn()}

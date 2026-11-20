@@ -5,8 +5,9 @@
 //! Disposable MySQL fixture shared by the base-table and routed-store regressions.
 
 use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlService, MysqlServiceOptions};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use wegent_backend_rs::task_store::TaskStore;
+use wegent_backend_test_support::unique_database_name;
 
 pub const LARGE_RESULT_BYTES: usize = 20 * 1024 * 1024;
 pub const LONG_CONVERSATION_ROWS: usize = 65_536;
@@ -30,11 +31,7 @@ impl Fixture {
             MysqlService::connect(&format!("mysql://root@{address}/mysql?ssl-mode=disabled"))
                 .await
                 .unwrap();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let database = format!("responses_json_{}_{unique}", std::process::id());
+        let database = unique_database_name("responses_json");
         admin
             .execute(format!("CREATE DATABASE {database}"), ())
             .await

@@ -62,8 +62,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         let operation =
             operation.ok_or_else(|| invalid("Source input has no durable event operation"))?;
-        let records =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let records = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| {
                 Ok(state["operations"]
                     .as_object()
                     .into_iter()
@@ -73,7 +75,8 @@ impl RuntimeWorkRpcHandler {
                     })
                     .map(|(id, record)| (id.clone(), record.clone()))
                     .collect::<Vec<_>>())
-            })?;
+            },
+        )?;
         if records.len() != 1 {
             return Err(invalid(
                 "Source input has no unique durable native session binding",
@@ -124,7 +127,7 @@ mod tests {
             .automatic_input_admission("caller", &request)
             .unwrap();
         checkpoint().unwrap();
-        workbench_control::journal::transact(&path, |state| {
+        event_store::transact(&path, |state| {
             state["operations"].as_object_mut().unwrap().remove("wait");
             Ok(())
         })
@@ -167,8 +170,8 @@ mod tests {
             handler.save_event_subscription("wait",&record).unwrap();
             assert!(crate::runtime_work::conversation_sessions::bind_thread(&mut link,"replacement-thread",now_ms()));
             handler.store.upsert_task(link);
-            handler.collect_conversation_subscription("wait",record,"cycle").await.unwrap();
-            let saved=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["wait"].clone())).unwrap();
+            handler.collect_conversation_subscription("wait",record).await.unwrap();
+            let saved=event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["wait"].clone())).unwrap();
             assert_eq!(saved["status"],"cancelled");
             assert_eq!(saved["error_code"],"native_session_changed");
             assert_eq!(saved["session"],original);
@@ -203,11 +206,10 @@ mod tests {
             admit().is_err(),
             "a durable queued command cannot be redirected after its original session closes"
         );
-        let saved =
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                Ok(state["operations"]["wait"].clone())
-            })
-            .unwrap();
+        let saved = event_store::transact(&handler.event_subscription_path(), |state| {
+            Ok(state["operations"]["wait"].clone())
+        })
+        .unwrap();
         assert_eq!(saved["status"], "cancelled");
         assert_eq!(saved["error_code"], "native_session_changed");
     }

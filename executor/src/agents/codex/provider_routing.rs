@@ -85,9 +85,13 @@ pub(super) fn configure_request_provider(
                 "direct_payload_provider"
             }
         });
-    log_route(request, route)?;
+    let provider = request_provider(request)?;
+    launch.inference_model_provider = Some(provider.clone());
+    log_route(request, route, &provider)?;
     if let Some((mut upstream, _)) = upstream {
         inject_session_headers(&mut upstream.default_headers, &request.task_id);
+        let official_websocket = upstream.is_official_chatgpt_codex()
+            && native_provider::official_websocket_enabled(&request_home(request)?)?;
         configure_codex_router(
             launch,
             route_scope,
@@ -95,9 +99,9 @@ pub(super) fn configure_request_provider(
             codex_request_model(request),
             request_model_switched(request),
             vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
+            official_websocket,
         );
     } else {
-        let provider = request_provider(request)?;
         launch.model_provider = Some(codex_model_catalog::PROVIDER_ID.to_owned());
         let headers = if is_builtin_codex_provider(&provider) {
             Vec::new()
@@ -137,13 +141,13 @@ fn request_provider(request: &ExecutionRequest) -> Result<String, String> {
     )
 }
 
-fn log_route(request: &ExecutionRequest, route: &str) -> Result<(), String> {
+fn log_route(request: &ExecutionRequest, route: &str, provider: &str) -> Result<(), String> {
     log_executor_event(
         "codex model route selected",
         &[
             ("task_id", request.task_id.clone()),
             ("route", route.to_owned()),
-            ("provider", request_provider(request)?),
+            ("provider", provider.to_owned()),
             ("model", codex_request_model(request).unwrap_or_default()),
             (
                 "payload_base_url_present",
@@ -207,6 +211,7 @@ experimental_bearer_token="must-not-select"
             Some("gpt-test".to_owned()),
             false,
             None,
+            false,
         );
         assert!(launch.local_proxy_registration.is_some());
         assert!(!launch

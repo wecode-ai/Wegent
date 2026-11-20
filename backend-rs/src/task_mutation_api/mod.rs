@@ -8,6 +8,7 @@
 //! (`app.api.endpoints.adapter.tasks`).
 
 mod cancel_task;
+pub(crate) use cancel_task::cancel_task;
 pub(crate) mod delete_task;
 mod models;
 pub(crate) use models::TaskUpdateBody;

@@ -1,3 +1,5 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
+import { useOutsideClick } from '@wegent/collaboration/composer/useOutsideClick'
 import {
   CircleCheck,
   CircleDot,
@@ -9,7 +11,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
@@ -177,32 +179,16 @@ export function ChangeRequestStatusIcon({
     gap: 4,
   })
 
-  useEffect(() => {
-    if (!open) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (
-        !(event.target instanceof Node) ||
-        rootRef.current?.contains(event.target) ||
-        popoverRef.current?.contains(event.target)
-      ) {
-        return
-      }
-      setOpen(false)
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+  useOutsideClick(rootRef, open, () => setOpen(false), [popoverRef])
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       setOpen(false)
       triggerRef.current?.focus()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+    },
+    { enabled: open }
+  )
 
   if (!changeRequest) return null
   const status = changeRequestVisualStatus(changeRequest)

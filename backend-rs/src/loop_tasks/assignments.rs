@@ -59,6 +59,8 @@ pub(super) struct IssueAssignmentResponse {
     receipt_tracking: bool,
     human_read_at: Option<String>,
     stand_in_received_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) dispatch_receipt: Option<serde_json::Value>,
 }
 
 /// `IssueAssignmentListResponse`.
@@ -83,7 +85,14 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    list_assignment_items(&state.mysql, item_id, current_user).await
+    let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
+    for item in &mut result.items {
+        if let Some(receipt) = item.dispatch_receipt.as_mut() {
+            super::assignment_receipts::project_delivery(state, receipt).await?;
+            super::assignment_receipts::project_device_wait(state, receipt).await;
+        }
+    }
+    Ok(result)
 }
 
 /// Read and render assignments after the existing Issue access checks.
@@ -472,6 +481,7 @@ async fn assignment_response(
         receipt_tracking: metadata.receipt_tracking.unwrap_or(false),
         human_read_at: metadata.human_read_at.clone(),
         stand_in_received_at: metadata.stand_in_received_at.clone(),
+        dispatch_receipt: metadata.dispatch_receipt.clone(),
     })
 }
 
@@ -652,6 +662,7 @@ mod tests {
             receipt_tracking: false,
             human_read_at: None,
             stand_in_received_at: None,
+            dispatch_receipt: None,
         };
         let value = crate::json_contract_tests::serialized(&row).unwrap();
         assert_eq!(

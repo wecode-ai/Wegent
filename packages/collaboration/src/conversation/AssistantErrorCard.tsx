@@ -37,14 +37,8 @@ export function AssistantErrorCard({
       ? t("assistant_error.types.model_protocol_error.description_with_model", {
           model: modelName,
         })
-      : parsedError.type === "model_service_connection_error" &&
-          parsedError.endpoint
-        ? t(
-            "assistant_error.types.model_service_connection_error.description_with_endpoint",
-            {
-              endpoint: parsedError.endpoint,
-            },
-          )
+      : parsedError.timeoutSeconds
+        ? t(parsedError.descriptionKey, { seconds: parsedError.timeoutSeconds })
         : !hasErrorDetails && parsedError.type === "generic_error"
           ? t("assistant_error.types.generic_error.description_without_details")
           : t(parsedError.descriptionKey);
@@ -114,14 +108,12 @@ export function AssistantErrorCard({
             </button>
           )}
         </div>
-        {hasErrorDetails && (
+        {hasErrorDetails && isDetailExpanded && (
           <pre
             data-testid="assistant-error-details"
             className={[
               "mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-xs leading-4 text-text-muted",
-              isDetailExpanded
-                ? "max-h-32 overflow-auto whitespace-pre-wrap break-words"
-                : "overflow-hidden truncate whitespace-nowrap",
+              "max-h-32 overflow-auto whitespace-pre-wrap break-words",
             ].join(" ")}
           >
             {displayError}

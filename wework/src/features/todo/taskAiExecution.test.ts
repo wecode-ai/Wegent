@@ -99,6 +99,41 @@ describe('project chat message ordering', () => {
     const retry = { ...agentMessage, messageId: 'retry-1', sequenceNumber: 2 }
     expect(mergeProjectChatMessages([failed], [retry])).toEqual([failed, retry])
   })
+
+  it('updates a verified source for the same trace while retaining the newer terminal message', () => {
+    const completed: ProjectChatMessage = {
+      ...live,
+      status: 'completed',
+      traceRef: 'same-source',
+      traceState: 'restricted',
+      runtimeAddress: null,
+    }
+    const snapshot: ProjectChatMessage = {
+      ...completed,
+      content: 'Earlier snapshot',
+      updatedAt: '2026-10-14T10:57:40Z',
+      traceState: 'available',
+      runtimeAddress: { deviceId: 'device', taskId: 'task' },
+    }
+    const verified = new Set([snapshot.messageId])
+    const enriched = {
+      ...completed,
+      traceState: snapshot.traceState,
+      runtimeAddress: snapshot.runtimeAddress,
+    }
+    expect(mergeProjectChatMessages([completed], [snapshot], verified)).toEqual([enriched])
+    expect(mergeProjectChatMessages([completed], [snapshot])).toEqual([completed])
+    expect(
+      mergeProjectChatMessages([completed], [{ ...snapshot, traceRef: 'other-source' }], verified)
+    ).toEqual([completed])
+    expect(
+      mergeProjectChatMessages(
+        [enriched],
+        [{ ...snapshot, traceState: 'restricted', runtimeAddress: null }],
+        verified
+      )
+    ).toEqual([completed])
+  })
 })
 
 function createRuntime(): TaskAiRuntimeBridge {

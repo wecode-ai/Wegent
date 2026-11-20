@@ -90,6 +90,7 @@ pub struct AssignmentMetadata {
     pub receipt_tracking: Option<bool>,
     pub human_read_at: Option<String>,
     pub stand_in_received_at: Option<String>,
+    pub dispatch_receipt: Option<serde_json::Value>,
 }
 
 /// Whether a datetime equals the unset sentinel or is NULL

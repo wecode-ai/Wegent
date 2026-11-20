@@ -1,44 +1,42 @@
-import { IssueCommentChildAction } from "./IssueCommentChildAction";
-import { BrowserIssueReplyComposer } from "./BrowserIssueReplyComposer";
-import { useBrowserIssueReplies } from "./browserIssueRepliesContext";
-import type { ExecutionTaskSummary } from "./IssueChatMessage";
+import { IssueCommentChildAction } from './IssueCommentChildAction'
+import { BrowserIssueReplyComposer } from './BrowserIssueReplyComposer'
+import { useBrowserIssueReplies } from './browserIssueRepliesContext'
+import type { ExecutionTaskSummary } from './IssueChatMessage'
 import {
   messageRuntimeExecutionTarget,
   type RuntimeExecutionTarget,
-} from "./runtimeExecutionTarget";
-import { IssueChatMessage } from "./IssueChatMessage";
-import type { ComponentProps } from "react";
-import { useIssueActivityExecutionStatus } from "./useIssueActivityExecutionStatus";
-import { IssueThreadReplyComposer } from "./IssueThreadReplyComposer";
-import {
-  useIssueCommentAttachments,
-  issueCommentBody,
-} from "./useIssueCommentAttachments";
-import { useIssueMentionCandidates } from "./useIssueMentionCandidates";
-import type { ProjectChatMention, ProjectChatMessage } from "@wegent/chat-core";
-import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
-import type { CollaborationAttachment, CollaborationExecution } from "../types";
-import type { CollaborationAgent, CollaborationMember } from "../types";
-import {
-  IssueActivityThread,
-  type IssueActivityThreadModel,
-} from "./IssueActivityThread";
+} from './runtimeExecutionTarget'
+import { IssueChatMessage } from './IssueChatMessage'
+import type { ComponentProps } from 'react'
+import { useIssueActivityExecutionStatus } from './useIssueActivityExecutionStatus'
+import { IssueThreadReplyComposer } from './IssueThreadReplyComposer'
+import { useIssueCommentAttachments, issueCommentBody } from './useIssueCommentAttachments'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
+import type { ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
+import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import type { CollaborationAttachment, CollaborationExecution } from '../types'
+import type { CollaborationAgent, CollaborationMember } from '../types'
+import { IssueActivityThread, type IssueActivityThreadModel } from './IssueActivityThread'
+
+function isExecutionMessage(message: ProjectChatMessage) {
+  return message.sender.type === 'agent' && message.metadata.execution_dispatch !== 'comment_only'
+}
 
 function ActivityMessage({
   singleExecution,
   persistedStatus,
   ...props
 }: ComponentProps<typeof IssueChatMessage> & {
-  singleExecution: boolean;
-  persistedStatus?: string | null;
+  singleExecution: boolean
+  persistedStatus?: string | null
 }) {
   const { status } = useIssueActivityExecutionStatus(
     props.message,
     singleExecution,
     undefined,
-    persistedStatus,
-  );
-  return <IssueChatMessage {...props} executionStatus={status ?? undefined} />;
+    persistedStatus
+  )
+  return <IssueChatMessage {...props} executionStatus={status ?? undefined} />
 }
 
 export function IssueProjectChatThread({
@@ -60,70 +58,40 @@ export function IssueProjectChatThread({
   members,
   agents,
 }: {
-  thread: IssueActivityThreadModel<ProjectChatMessage>;
-  upload?(file: File): Promise<CollaborationAttachment>;
-  remove?(id: string): Promise<void>;
-  canComment: boolean;
-  childAssignment?: import("./useCommentAssignment").CommentAssignment;
-  onChildComment?(
-    text: string,
-    requestId: string,
-    sourceMessageId: string,
-  ): Promise<void>;
-  send(
-    text: string,
-    replyToMessageId: string,
-    mentions?: ProjectChatMention[],
-  ): Promise<unknown>;
-  members?: CollaborationMember[];
-  agents?: CollaborationAgent[];
-  translate(
-    key: string,
-    fallback?: string,
-    options?: Record<string, string | number>,
-  ): string;
-  executions: CollaborationExecution[];
-  taskSummaryForMessage?(
-    message: ProjectChatMessage,
-  ): ExecutionTaskSummary | undefined;
-  singleExecutionForMessage?(message: ProjectChatMessage): boolean;
-  onOpenAttachment?(id: string, filename: string): void;
-  onOpenExecution?(target: RuntimeExecutionTarget): void;
-  onStopExecution?(
-    messageId: string,
-    address: RuntimeTaskAddress,
-  ): Promise<void>;
-  stoppingMessageId?: string | null;
+  thread: IssueActivityThreadModel<ProjectChatMessage>
+  upload?(file: File): Promise<CollaborationAttachment>
+  remove?(id: string): Promise<void>
+  canComment: boolean
+  childAssignment?: import('./useCommentAssignment').CommentAssignment
+  onChildComment?(text: string, requestId: string, sourceMessageId: string): Promise<void>
+  send(text: string, replyToMessageId: string, mentions?: ProjectChatMention[]): Promise<unknown>
+  members?: CollaborationMember[]
+  agents?: CollaborationAgent[]
+  translate(key: string, fallback?: string, options?: Record<string, string | number>): string
+  executions: CollaborationExecution[]
+  taskSummaryForMessage?(message: ProjectChatMessage): ExecutionTaskSummary | undefined
+  singleExecutionForMessage?(message: ProjectChatMessage): boolean
+  onOpenAttachment?(id: string, filename: string): void
+  onOpenExecution?(target: RuntimeExecutionTarget): void
+  onStopExecution?(messageId: string, address: RuntimeTaskAddress): Promise<void>
+  stoppingMessageId?: string | null
 }) {
-  const runtimeReplies = useBrowserIssueReplies();
-  const attachments = useIssueCommentAttachments(upload, remove);
-  const mentionCandidates = useIssueMentionCandidates(
-    members ?? [],
-    agents ?? [],
-    translate,
-  );
-  const rootId = thread.root.messageId;
-  const isExecutionTaskThread =
-    thread.root.sender.type === "agent" &&
-    thread.root.metadata.dispatch_role !== "manager";
-  const displayReplies = thread.displayReplies ?? thread.replies;
-  const runs = [thread.root, ...displayReplies].filter(
-    (message) => message.sender.type === "agent",
-  );
+  const runtimeReplies = useBrowserIssueReplies()
+  const attachments = useIssueCommentAttachments(upload, remove, thread.root.messageId)
+  const mentionCandidates = useIssueMentionCandidates(members ?? [], agents ?? [], translate)
+  const rootId = thread.root.messageId
+  const displayReplies = thread.displayReplies ?? thread.replies
+  const runs = [thread.root, ...displayReplies].filter(isExecutionMessage)
   function renderMessage(message: ProjectChatMessage, eventOnly = false) {
-    const execution = executions.find(
-      (run) => run.id === Number(message.metadata.execution_id),
-    );
-    const target = messageRuntimeExecutionTarget(message, execution);
-    const singleExecution =
-      singleExecutionForMessage?.(target?.activityMessage ?? message) ?? false;
+    const execution = executions.find(run => run.id === Number(message.metadata.execution_id))
+    const target = messageRuntimeExecutionTarget(message, execution)
+    const singleExecution = singleExecutionForMessage?.(target?.activityMessage ?? message) ?? false
     const dispatchRole =
-      message.sender.type === "agent" &&
-      message.metadata.dispatch_role === "manager"
-        ? "manager"
-        : message.sender.type === "agent"
-          ? "member"
-          : undefined;
+      message.sender.type === 'agent' && message.metadata.dispatch_role === 'manager'
+        ? 'manager'
+        : message.sender.type === 'agent'
+          ? 'member'
+          : undefined
     return (
       <div key={message.messageId}>
         <ActivityMessage
@@ -135,7 +103,7 @@ export function IssueProjectChatThread({
           mine={false}
           compact
           plain
-          showInlineExecutionStatus={!eventOnly}
+          showInlineExecutionStatus={!eventOnly && isExecutionMessage(message)}
           agentRole={dispatchRole}
           eventOnly={eventOnly}
           taskSummary={taskSummaryForMessage?.(message)}
@@ -147,13 +115,11 @@ export function IssueProjectChatThread({
               : `cloud-task-activity-execution-badge-${message.messageId}`
           }
           executionAliasTestId={
-            execution
-              ? `collaboration-open-execution-${execution.id}`
-              : undefined
+            execution ? `collaboration-open-execution-${execution.id}` : undefined
           }
           onOpenAttachment={onOpenAttachment}
-          onOpenUrl={(url) => {
-            window.open(url, "_blank", "noopener,noreferrer");
+          onOpenUrl={url => {
+            window.open(url, '_blank', 'noopener,noreferrer')
           }}
           onOpenExecution={
             target && onOpenExecution
@@ -167,34 +133,25 @@ export function IssueProjectChatThread({
           }
           stopping={stoppingMessageId === message.messageId}
         />
-        {!eventOnly &&
-          canComment &&
-          childAssignment?.createChild &&
-          onChildComment && (
-            <IssueCommentChildAction
-              body={message.content}
-              messageId={message.messageId}
-              assignment={childAssignment}
-              translate={translate}
-              onComment={(text, id) =>
-                onChildComment(text, id, message.messageId)
-              }
-            />
-          )}
+        {!eventOnly && canComment && childAssignment?.createChild && onChildComment && (
+          <IssueCommentChildAction
+            body={message.content}
+            messageId={message.messageId}
+            assignment={childAssignment}
+            translate={translate}
+            onComment={(text, id) => onChildComment(text, id, message.messageId)}
+          />
+        )}
       </div>
-    );
+    )
   }
   const activityThread = (
     <IssueActivityThread
       cardAttributes={{
-        "data-testid": `collaboration-chat-card-${rootId}`,
+        'data-testid': `collaboration-chat-card-${rootId}`,
       }}
       message={renderMessage(thread.root)}
-      replies={
-        displayReplies.length
-          ? displayReplies.map((message) => renderMessage(message))
-          : null
-      }
+      replies={displayReplies.length ? displayReplies.map(message => renderMessage(message)) : null}
       repliesTestId={`collaboration-chat-replies-${rootId}`}
       composer={
         canComment && runtimeReplies ? (
@@ -216,17 +173,17 @@ export function IssueProjectChatThread({
               await send(
                 issueCommentBody(text, attachments.attachments),
                 rootId,
-                ...(mentions.length ? [mentions] : []),
-              );
-              return { ok: true };
+                ...(mentions.length ? [mentions] : [])
+              )
+              return { ok: true }
             }}
             labels={{
-              placeholder: translate("todo.reply_placeholder"),
-              send: translate("todo.send_message"),
-              attach: translate("todo.attach_file"),
-              removeAttachment: translate("todo.remove_attachment"),
-              uploading: translate("todo.attachments_uploading"),
-              sendFailed: translate("todo.send_failed"),
+              placeholder: translate('todo.reply_placeholder'),
+              send: translate('todo.send_message'),
+              attach: translate('todo.attach_file'),
+              removeAttachment: translate('todo.remove_attachment'),
+              uploading: translate('todo.attachments_uploading'),
+              sendFailed: translate('todo.send_failed'),
             }}
             testIds={{
               composer: `collaboration-chat-reply-${rootId}`,
@@ -239,23 +196,13 @@ export function IssueProjectChatThread({
           />
         ) : null
       }
-      eventLabel={translate("todo.execution_count", "{{count}} 条运行动态", {
+      eventLabel={translate('todo.execution_count', '{{count}} 条运行动态', {
         count: runs.length,
       })}
       eventTestId={`collaboration-chat-events-${rootId}`}
-      events={
-        runs.length ? runs.map((message) => renderMessage(message, true)) : null
-      }
+      events={runs.length ? runs.map(message => renderMessage(message, true)) : null}
     />
-  );
+  )
 
-  if (!isExecutionTaskThread) {
-    return activityThread;
-  }
-
-  return (
-    <div data-testid={`cloud-task-activity-card-${rootId}`}>
-      {activityThread}
-    </div>
-  );
+  return <div data-testid={`cloud-task-activity-card-${rootId}`}>{activityThread}</div>
 }

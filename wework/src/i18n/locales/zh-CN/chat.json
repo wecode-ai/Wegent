@@ -71,9 +71,7 @@
     "no_output": "此子代理没有可显示的消息"
   },
   "tool_activity": {
-    "reconnecting": "连接中断，正在重连…",
     "rate_limit_wait": "模型限流，等待自动重试…",
-    "chatgpt_network_unavailable": "当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？",
     "open_proxy_settings": "设置代理",
     "summary_other": "调用 {{count}} 个工具",
     "mixed_summary_other": "{{toolSummary}}，编辑 {{count}} 个文件",
@@ -125,7 +123,10 @@
     "quota_wait_unknown": "额度已用完，正在查询恢复时间，将用原模型自动继续。",
     "cancel_automatic_recovery": "取消自动继续",
     "quota_wait_until": "额度已用完，将在 {{remaining}} 后用原模型自动继续。",
-    "quota_checking": "正在检查额度恢复情况，恢复后将用原模型自动继续…"
+    "quota_checking": "正在检查额度恢复情况，恢复后将用原模型自动继续…",
+    "server_overloaded_retry": "服务器繁忙，正在重新连接…",
+    "retry_progress": "{{status}}（{{attempt}}/{{total}}）",
+    "reconnecting": "正在重新连接…"
   },
   "assistant_status": {
     "working": "处理中",
@@ -305,16 +306,16 @@
       },
       "model_service_connection_error": {
         "title": "无法连接模型服务",
-        "description": "连接错误：向模型服务发送请求失败。请检查网络或 VPN 连接后重试。",
-        "description_with_endpoint": "连接错误：向 {{endpoint}} 发送请求失败。请检查网络或 VPN 连接后重试。"
+        "description": "连接错误：向模型服务发送请求失败。请检查网络或 VPN 连接后重试。"
       },
       "network_error": {
         "title": "网络连接失败：请检查网络连接后重试",
         "description": "当前连接中断或服务暂时不可达，请稍后重试。"
       },
       "timeout_error": {
-        "title": "请求超时：服务响应时间过长，请稍后重试",
-        "description": "服务暂时没有及时响应，可以稍后重新发送。"
+        "title": "等待响应超时",
+        "description": "本次请求未能及时收到响应。请重试或切换模型。",
+        "description_with_seconds": "本次请求在 {{seconds}} 秒内未收到模型或工具进展。请重试或切换模型。"
       },
       "llm_error": {
         "title": "模型调用失败：模型暂时不可用，请稍后重试",
@@ -369,6 +370,10 @@
         "title": "消息生成失败",
         "description": "请求未能完成。你可以稍后重试，或查看错误详情。",
         "description_without_details": "请求未能完成。你可以稍后重试。"
+      },
+      "server_overloaded": {
+        "title": "模型服务繁忙",
+        "description": "模型服务当前过载。请稍后重试或切换模型。"
       }
     }
   }

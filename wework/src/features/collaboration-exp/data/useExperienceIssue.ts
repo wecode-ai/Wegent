@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { canStartWorkOnCollaborationIssue } from '@wegent/collaboration'
 import type {
   CollaborationIssue,
@@ -23,53 +28,50 @@ export function useExperienceIssue(
   revision: number
 ) {
   const owner = useMemo(() => ({ source, projectId, issueId }), [source, projectId, issueId])
-  const [snapshot, setSnapshot] = useState<{
-    owner: typeof owner
-    data: ExperienceIssueData | null
-    error: string | null
-    revision: number
-  }>({ owner, data: null, error: null, revision: -1 })
-  useEffect(() => {
-    if (!active || !source || !projectId || !issueId) return
-    let cancelled = false
-    void Promise.all([source.api.projects.get(projectId), source.api.issues.get(issueId)])
-      .then(async ([project, issue]) => {
-        if (
-          project.id !== projectId ||
-          project.project_store !== source.store ||
-          issue.cloud_project_id !== projectId ||
-          issue.id !== issueId ||
-          !canStartWorkOnCollaborationIssue(issue)
-        )
-          throw new Error('Issue is unavailable')
-        if (cancelled) return
-        const taskBindings = await source.api.taskBindings.list(issueId, projectId)
-        if (!cancelled)
-          setSnapshot({
-            owner,
-            data: { project, participationViewer: source.participationViewer, issue, taskBindings },
-            error: null,
-            revision,
-          })
-      })
-      .catch(cause => {
-        if (!cancelled)
-          setSnapshot({
-            owner,
-            data: null,
-            error: cause instanceof Error ? cause.message : String(cause),
-            revision,
-          })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [owner, source, projectId, issueId, active, revision])
-  return snapshot.owner === owner
-    ? {
-        ...snapshot,
-        loading: active && snapshot.revision !== revision,
-        error: snapshot.revision === revision ? snapshot.error : null,
-      }
-    : { owner, data: null, error: null, loading: active && Boolean(issueId) }
+  const resource = useMemo(
+    () =>
+      createAsyncResource<ExperienceIssueData>(
+        JSON.stringify([projectId, issueId]),
+        async signal => {
+          const [project, issue] = await Promise.all([
+            source!.api.projects.get(projectId!),
+            source!.api.issues.get(issueId!),
+          ])
+          signal.throwIfAborted()
+          if (
+            project.id !== projectId ||
+            project.project_store !== source!.store ||
+            issue.cloud_project_id !== projectId ||
+            issue.id !== issueId ||
+            !canStartWorkOnCollaborationIssue(issue)
+          )
+            throw new Error('Issue is unavailable')
+          const taskBindings = await source!.api.taskBindings.list(issueId!, projectId!)
+          return { project, participationViewer: source!.participationViewer, issue, taskBindings }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [source, projectId, issueId]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, revision),
+    [resource, revision]
+  )
+  const query = useSyncExternalStore(
+    active && source && projectId && issueId ? subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  return {
+    owner,
+    revision,
+    data: query.status === 'error' ? null : (query.data ?? null),
+    error:
+      query.status === 'error'
+        ? query.error instanceof Error
+          ? query.error.message
+          : String(query.error)
+        : null,
+    loading: active && Boolean(issueId) && (query.status === 'idle' || query.status === 'loading'),
+  }
 }

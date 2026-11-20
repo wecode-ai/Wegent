@@ -3,11 +3,59 @@ use super::stand_in::settings_error;
 use super::*;
 use sha2::{Digest, Sha256};
 
+fn is_cloud_collaboration_issue_origin(origin: &Value) -> bool {
+    matches!(
+        origin["type"].as_str(),
+        Some("board_task" | "board_comment" | "issue_dispatch" | "project_automation")
+    ) && matches!(origin["dispatchRole"].as_str(), Some("manager" | "member"))
+        && origin["initiatedBy"] != "stand_in"
+        && origin["projectStore"] != "local"
+        && origin["dispatchId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+        && ["cloudProjectId", "loopItemId"]
+            .into_iter()
+            .all(|key| id_field(origin, key).is_some_and(|id| !id.is_empty()))
+}
+
+fn is_public_issue_origin(origin: &Value) -> bool {
+    (origin["type"] == "issue_dispatch" && origin["initiatedBy"] == "stand_in")
+        || is_cloud_collaboration_issue_origin(origin)
+}
+
 fn issue_reply_role<'a>(roles: &'a [Value], origin: &Value) -> Option<&'a Value> {
     roles.iter().find(|role| role["id"] == origin["standInId"])
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn set_public_issue_guidance_target(
+        &self,
+        task: &str,
+        turn: &str,
+        comment: &str,
+        pending: bool,
+    ) {
+        self.store.update_task(task, |link| {
+            let public_turn = &mut link.runtime_handle["standInPublicTurn"];
+            if public_turn["turn"] != turn
+                || !is_cloud_collaboration_issue_origin(&public_turn["origin"])
+            {
+                return;
+            }
+            if !public_turn["guidanceCommentIds"].is_array() {
+                public_turn["guidanceCommentIds"] = json!([]);
+            }
+            let targets = public_turn["guidanceCommentIds"].as_array_mut().unwrap();
+            if pending {
+                if !targets.iter().any(|target| target == comment) {
+                    targets.push(json!(comment));
+                }
+            } else {
+                targets.retain(|target| target != comment);
+            }
+        });
+    }
+
     pub(super) async fn read_stand_in_issue(
         &self,
         store: &LocalTaskStore,
@@ -21,12 +69,17 @@ impl RuntimeWorkRpcHandler {
                 .unwrap()
         } else {
             self.verify_runtime_user(&json!({"userId":user})).await?;
-            self.runtime_http(
-                reqwest::Method::GET,
-                &format!("/v1/loop-items/{issue_id}"),
-                None,
-            )
-            .await?
+            let path = format!("/v1/loop-items/{issue_id}");
+            let response = self
+                .runtime_request(reqwest::Method::GET, &path, None)
+                .await?;
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                return Err(AppIpcError::new(
+                    "not_found",
+                    "Issue is no longer available",
+                ));
+            }
+            Self::read_runtime_response(reqwest::Method::GET, &path, response).await?
         };
         if issue["cloud_project_id"] != project {
             return Err(AppIpcError::new(
@@ -91,14 +144,13 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    pub(super) fn persist_stand_in_issue_reply(&self, task: &str, message: &CodexNotification) {
+    pub(super) fn persist_public_issue_reply(&self, task: &str, message: &CodexNotification) {
         let notification = codex_notification(message);
         if notification.method != "turn/started" && notification.method != "item/completed" {
             return;
         }
         if self.store.read_task(task, |link| {
-            link.runtime_handle["origin"]["type"] == "issue_dispatch"
-                && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
+            is_public_issue_origin(&link.runtime_handle["origin"])
                 && !super::super::util::is_private_discussion(&runtime_event_request_from_link(
                     link,
                 ))
@@ -116,22 +168,31 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         if notification.method == "turn/started" {
+            let trigger_comment_id = self
+                .active_local_executions
+                .lock()
+                .expect("active local execution map lock should not be poisoned")
+                .get(task)
+                .and_then(|execution| execution.request.as_ref())
+                .and_then(|request| request.extra.get("issue_comment_trigger_id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             let result = self.store.try_update_task(task, |link| {
-                if link.runtime_handle["origin"]["type"] == "issue_dispatch"
-                    && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
+                if is_public_issue_origin(&link.runtime_handle["origin"])
                     && codex_notification_thread_id(message).as_deref() == link.thread_id.as_deref()
                 {
                     link.runtime_handle["standInPublicTurn"] = json!({
                         "thread":codex_notification_thread_id(message),
                         "turn":codex_notification_turn_id(message),
                         "generation":message.process_generation(),
-                        "origin":link.runtime_handle["origin"]
+                        "origin":link.runtime_handle["origin"],
+                        "triggerCommentId":trigger_comment_id
                     });
                 }
             });
             if let Err(error) = result {
                 log_executor_event(
-                    "Stand-in public turn persistence failed",
+                    "Issue public turn persistence failed",
                     &[("error", error.to_string())],
                 );
             }
@@ -165,9 +226,8 @@ impl RuntimeWorkRpcHandler {
         let result = self.store.try_update_task(task, |link| {
             let public_turn = &link.runtime_handle["standInPublicTurn"];
             let origin = &public_turn["origin"];
-            if origin["type"] != "issue_dispatch"
-                || origin["initiatedBy"] != "stand_in"
-                || link.runtime_handle["origin"]["type"] != "issue_dispatch"
+            if !is_public_issue_origin(origin)
+                || !is_public_issue_origin(&link.runtime_handle["origin"])
                 || link.thread_id.as_deref() != Some(&thread)
                 || link.runtime_handle["lastTurnId"].as_str() != Some(&turn)
                 || public_turn["thread"] != thread
@@ -176,7 +236,8 @@ impl RuntimeWorkRpcHandler {
             {
                 return;
             }
-            let report = json!({"origin":origin,"body":text,"messageId":key});
+            let report =
+                json!({"origin":origin,"body":text,"messageId":key,"publicTurn":public_turn});
             if !link.runtime_handle["standInIssueReplies"].is_object() {
                 link.runtime_handle["standInIssueReplies"] = json!({});
             }
@@ -189,15 +250,15 @@ impl RuntimeWorkRpcHandler {
         });
         if let Err(error) = result {
             log_executor_event(
-                "Stand-in public reply persistence failed",
+                "Issue public reply persistence failed",
                 &[("error", error.to_string())],
             );
             return;
         }
-        self.sync_stand_in_issue_replies(task);
+        self.sync_public_issue_replies(task);
     }
 
-    pub(super) fn sync_stand_in_issue_replies(&self, task: &str) {
+    pub(super) fn sync_public_issue_replies(&self, task: &str) {
         if self.store.read_task(task, |link| {
             link.runtime_handle["standInIssueReplies"]
                 .as_object()
@@ -233,13 +294,13 @@ impl RuntimeWorkRpcHandler {
                 else {
                     return;
                 };
-                match handler.publish_stand_in_issue_reply(&task, &report).await {
+                match handler.publish_public_issue_reply(&task, &report).await {
                     Ok(()) => {
                         if let Err(error) = handler.store.try_update_task(&task, |link| {
-                            link.runtime_handle["standInIssueReplies"][&key] = json!({"sent":true});
+                            link.runtime_handle["standInIssueReplies"][&key] = json!({"sent":true,"messageId":report["messageId"],"origin":report["origin"],"publicTurn":report["publicTurn"]});
                         }) {
                             log_executor_event(
-                                "Stand-in public receipt persistence failed",
+                                "Issue public receipt persistence failed",
                                 &[("error", error.to_string())],
                             );
                             return;
@@ -258,7 +319,7 @@ impl RuntimeWorkRpcHandler {
                                     json!({"rejected":true});
                             }) {
                                 log_executor_event(
-                                    "Stand-in public rejection persistence failed",
+                                    "Issue public rejection persistence failed",
                                     &[("error", error.to_string())],
                                 );
                                 return;
@@ -266,7 +327,7 @@ impl RuntimeWorkRpcHandler {
                             continue;
                         }
                         log_executor_event(
-                            "Stand-in public reply synchronization failed",
+                            "Issue public reply synchronization failed",
                             &[("task_id", task.clone()), ("code", error.code)],
                         );
                         return;
@@ -276,12 +337,36 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    async fn publish_stand_in_issue_reply(
+    async fn publish_public_issue_reply(
         &self,
         task: &str,
         report: &Value,
     ) -> Result<(), AppIpcError> {
         let origin = &report["origin"];
+        if is_cloud_collaboration_issue_origin(origin) {
+            let public_turn = &report["publicTurn"];
+            let trigger = &public_turn["triggerCommentId"];
+            let has_other_targets = public_turn["guidanceCommentIds"]
+                .as_array()
+                .is_some_and(|targets| targets.iter().any(|target| target != trigger));
+            let source = json!({
+                "device_id": self.cloud_device_id()?,
+                "task_id": task,
+                "dispatch_id": origin["dispatchId"],
+                "message_id": report["messageId"],
+                "execution_trigger_comment_id": trigger,
+                "trigger_comment_id": if has_other_targets { &Value::Null } else { trigger },
+            });
+            return self
+                .send_cloud_issue_reply(
+                    origin,
+                    json!({
+                        "body": report["body"],
+                        "collaboration": source,
+                    }),
+                )
+                .await;
+        }
         let user = origin["userId"]
             .as_i64()
             .ok_or_else(|| AppIpcError::new("permission_denied", "Missing reply owner"))?;
@@ -309,14 +394,25 @@ impl RuntimeWorkRpcHandler {
             emit_runtime_work_changed(&self.event_tx, &self.device_id, task);
             return Ok(());
         }
-        let response = self.runtime_request(reqwest::Method::POST, &format!("/v1/cloud-projects/{}/loop-items/{}/activity-comments", origin["cloudProjectId"].as_str().unwrap_or_default(), origin["loopItemId"].as_str().unwrap_or_default()), Some(&json!({
+        self.send_cloud_issue_reply(origin, json!({
             "body":report["body"],"stand_in":{
                 "device_id":self.cloud_device_id()?,"task_id":task,"role_id":origin["standInId"],
                 "role_name":origin["roleName"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Stand-in"),
                 "message_id":report["messageId"],"human_assignment_id":if origin["trigger"] == "mention" {Value::Null} else {origin["humanAssignmentId"].clone()},
                 "trigger_comment_id":origin["triggerCommentId"]
             }
-        }))).await?;
+        })).await
+    }
+
+    async fn send_cloud_issue_reply(&self, origin: &Value, body: Value) -> Result<(), AppIpcError> {
+        let path = format!(
+            "/v1/cloud-projects/{}/loop-items/{}/activity-comments",
+            id_field(origin, "cloudProjectId").unwrap_or_default(),
+            id_field(origin, "loopItemId").unwrap_or_default(),
+        );
+        let response = self
+            .runtime_request(reqwest::Method::POST, &path, Some(&body))
+            .await?;
         if !response.status().is_success() {
             let permanent = matches!(response.status().as_u16(), 400 | 403 | 404 | 409 | 422);
             return Err(AppIpcError::new(
@@ -486,6 +582,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: format!("http://{}", listener.local_addr().unwrap()),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
@@ -557,7 +654,7 @@ mod tests {
             ..Default::default()
         });
         // The conflicting index directory forces a real atomic replacement failure.
-        handler.persist_stand_in_issue_reply("issue-chat", &json!({"method":"item/completed","params":{"threadId":"parent","turnId":"turn","item":{"id":"reply","type":"agentMessage","phase":"commentary","text":"Received"}}}).into());
+        handler.persist_public_issue_reply("issue-chat", &json!({"method":"item/completed","params":{"threadId":"parent","turnId":"turn","item":{"id":"reply","type":"agentMessage","phase":"commentary","text":"Received"}}}).into());
         assert!(handler
             .local_task_link("issue-chat")
             .unwrap()
@@ -576,7 +673,7 @@ mod tests {
             runtime_handle:json!({"lastTurnId":"turn", "origin":{"type":"issue_dispatch","initiatedBy":"stand_in","userId":7,"standInId":"review","loopItemId":"one","humanAssignmentId":"first"}}),
             ..Default::default()
         });
-        handler.persist_stand_in_issue_reply(
+        handler.persist_public_issue_reply(
             "issue-chat",
             &json!({"method":"turn/started","params":{"threadId":"parent","turnId":"turn"}}).into(),
         );
@@ -586,7 +683,7 @@ mod tests {
             }))
         };
         for id in ["Received", "Result", "Result"] {
-            handler.persist_stand_in_issue_reply(
+            handler.persist_public_issue_reply(
                 "issue-chat",
                 &notification(id, "parent", "agentMessage", "commentary"),
             );
@@ -597,13 +694,13 @@ mod tests {
             ("Reasoning", "parent", "agentMessage", "analysis"),
         ] {
             handler
-                .persist_stand_in_issue_reply("issue-chat", &notification(id, thread, kind, phase));
+                .persist_public_issue_reply("issue-chat", &notification(id, thread, kind, phase));
         }
         // A reassignment cannot relabel an old turn's late output with its new grant.
         handler.store.update_task("issue-chat", |link| {
             link.runtime_handle["origin"]["humanAssignmentId"] = json!("second")
         });
-        handler.persist_stand_in_issue_reply(
+        handler.persist_public_issue_reply(
             "issue-chat",
             &notification("Late", "parent", "agentMessage", "final_answer"),
         );
@@ -626,11 +723,11 @@ mod tests {
         handler.store.update_task("issue-chat", |link| {
             link.runtime_handle["origin"]["type"] = json!("stand_in_identity")
         });
-        handler.persist_stand_in_issue_reply(
+        handler.persist_public_issue_reply(
             "issue-chat",
             &json!({"method":"turn/started","params":{"threadId":"parent","turnId":"turn"}}).into(),
         );
-        handler.persist_stand_in_issue_reply(
+        handler.persist_public_issue_reply(
             "issue-chat",
             &notification("Private", "parent", "agentMessage", "final_answer"),
         );

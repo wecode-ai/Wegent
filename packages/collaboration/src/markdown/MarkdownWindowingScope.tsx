@@ -8,6 +8,7 @@ export interface MarkdownWindowingScope {
   getHeight(content: string, width: number): number | undefined
   setHeight(content: string, width: number, height: number): void
   onChunkLayout(element: HTMLElement): void
+  captureNativeScrollRange(): void
   registerViewportCheck(check: (viewport: DOMRect) => (() => void) | undefined): () => void
   getViewportRenders(): Array<() => void>
 }
@@ -15,7 +16,8 @@ export interface MarkdownWindowingScope {
 export function createMarkdownWindowingScope(
   scrollElementRef: RefObject<HTMLElement | null> | undefined,
   onChunkLayout: (element: HTMLElement) => void,
-  rootFontSize = 16
+  rootFontSize = 16,
+  onNativeScrollRange?: () => void
 ): MarkdownWindowingScope {
   const heights = new Map<string, number>()
 
@@ -24,6 +26,7 @@ export function createMarkdownWindowingScope(
     ...createViewportChecks(scrollElementRef),
     scrollElementRef,
     onChunkLayout,
+    captureNativeScrollRange: () => onNativeScrollRange?.(),
     getHeight(content, width) {
       if (!isPositiveFinite(width)) return undefined
       const key = JSON.stringify([content, width])

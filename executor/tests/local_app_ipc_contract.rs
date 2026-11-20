@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 use sha2::Digest;
 use wegent_executor::local::{
@@ -1543,21 +1544,19 @@ async fn app_ipc_native_directory_listing_preserves_directory_projection() {
 }
 
 #[tokio::test]
-async fn app_ipc_runtime_auth_status_uses_executor_codex_home() {
+async fn app_ipc_runtime_auth_status_scopes_catalog_to_the_codex_user_and_workspace() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
     let executor_home = root.path().join("executor-home");
     let codex_home = executor_home.join("codex");
     fs::create_dir_all(&codex_home).unwrap();
-    fs::write(codex_home.join("auth.json"), "{}").unwrap();
     let _executor_home =
         EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
     let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", "");
     let _native_codex_home = EnvGuard::set("CODEX_HOME", "");
 
-    let response = AppIpcServer::new()
-        .handle_line(
-            &json!({
+    let server = AppIpcServer::new();
+    let request = json!({
                 "type": "request",
                 "id": "req-runtime-auth-status",
                 "method": "device.execute_command",
@@ -1566,19 +1565,67 @@ async fn app_ipc_runtime_auth_status_uses_executor_codex_home() {
                     "timeout_seconds": 10,
                     "max_output_bytes": 4096
                 }
+    })
+    .to_string();
+    let read_status = || async {
+        let result = server.handle_line(&request).await.unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["result"]["success"], true);
+        result["result"]["stdout"].clone()
+    };
+    let missing = read_status().await;
+    assert_eq!(missing["exists"], false);
+    assert!(missing["catalog_scope"].is_null());
+
+    let auth_path = codex_home.join("auth.json");
+    let write_auth = |user: &str, workspace: &str, token: &str| {
+        let claims = URL_SAFE_NO_PAD.encode(
+            json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_user_id": user,
+                    "chatgpt_account_id": workspace
+                }
+            })
+            .to_string(),
+        );
+        fs::write(
+            &auth_path,
+            json!({
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "account_id": workspace,
+                    "id_token": format!("header.{claims}.signature"),
+                    "access_token": token
+                }
             })
             .to_string(),
         )
-        .await
         .unwrap();
-
-    assert_eq!(response["ok"], true);
-    assert_eq!(response["result"]["success"], true);
+    };
+    write_auth("user-a", "workspace-a", "synthetic-initial");
+    let initial = read_status().await;
     assert_eq!(
-        response["result"]["stdout"]["target_path"],
-        json!(codex_home.join("auth.json").display().to_string())
+        initial["target_path"],
+        json!(auth_path.display().to_string())
     );
-    assert_eq!(response["result"]["stdout"]["exists"], true);
+    assert_eq!(initial["exists"], true);
+    assert!(initial["catalog_scope"].is_string());
+    assert!(!initial.to_string().contains("synthetic-initial"));
+    write_auth("user-a", "workspace-a", "synthetic-refreshed");
+    let refreshed = read_status().await;
+    assert_ne!(refreshed["sha256"], initial["sha256"]);
+    assert_eq!(refreshed["catalog_scope"], initial["catalog_scope"]);
+    write_auth("user-b", "workspace-a", "synthetic-other-user");
+    assert_ne!(
+        read_status().await["catalog_scope"],
+        initial["catalog_scope"]
+    );
+    write_auth("user-a", "workspace-b", "synthetic-other-workspace");
+    assert_ne!(
+        read_status().await["catalog_scope"],
+        initial["catalog_scope"]
+    );
+    assert!(!codex_home.join("wework-account-profiles").exists());
 }
 
 #[tokio::test]

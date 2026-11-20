@@ -19,7 +19,6 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   triggerModelReloadUntilCloudFailure,
 } from '../e2e/desktop/modules/shared.mjs'
-import { sendOrderFollowUp } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 test('retains a submission error without an unhandled model observer rejection', async () => {
   const sharedUrl = pathToFileURL(
@@ -147,55 +146,6 @@ test('waits for the checkpoint model request before starting its unchanged UI bu
     vi.clearAllTimers()
     vi.useRealTimers()
   }
-})
-
-test('starts the message-order UI budget after its model response has finished', async () => {
-  vi.useFakeTimers()
-  try {
-    const responseDelay = DEFAULT_STEP_TIMEOUT_MS + 250
-    const requests = Array.from({ length: 21 }, (_, index) => ({ followUpNumber: index + 1 }))
-    const control = Object.assign(Object.create(DesktopE2EServer.prototype), {
-      scenarioRequests: new Map([['message_order_follow_up', requests]]),
-      scenarioWaiters: new Map(),
-      fatalErrorPromise: new Promise(() => {}),
-      async command(action, _selector, options = {}) {
-        if (action === 'fill') return options.value
-        if (action === 'clickWhenEnabled') {
-          setTimeout(() => {
-            this.recordScenarioRequest('message_order_follow_up', { followUpNumber: 22 })
-          }, responseDelay)
-        }
-        if (action === 'waitFor') {
-          assert.equal(requests.length, 22, 'UI waiting started before the model response')
-          assert.equal(options.text, 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION_22')
-          assert.equal(options.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
-        }
-        return ''
-      },
-    })
-
-    const sent = sendOrderFollowUp(control, 22, DEFAULT_STEP_TIMEOUT_MS, 30_000).then(
-      () => null,
-      error => error
-    )
-    await vi.advanceTimersByTimeAsync(responseDelay)
-    assert.equal(await sent, null)
-    assert.equal(vi.getTimerCount(), 0)
-  } finally {
-    vi.clearAllTimers()
-    vi.useRealTimers()
-  }
-})
-
-test('rejects a model response recorded for a different message-order turn', async () => {
-  const control = {
-    command: vi.fn(async (action, _selector, options = {}) =>
-      action === 'fill' ? options.value : ''
-    ),
-    awaitScenarioRequestCount: vi.fn(async () => ({ followUpNumber: 21 })),
-  }
-  await assert.rejects(sendOrderFollowUp(control, 22, 10_000, 30_000), /different follow-up turn/)
-  assert.equal(control.command.mock.calls.length, 2)
 })
 
 test('submits once after a restored conversation finishes loading its model catalog', async () => {

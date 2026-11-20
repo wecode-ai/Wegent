@@ -94,7 +94,14 @@ pub(crate) struct MembershipRow {
 /// `db.get(Kind, workspace_id)` (`CloudProject.workspace_id`). The source
 /// skips the lookup when the project has no unique parent workspace.
 pub(crate) async fn workspace_kind<M: Mysql>(
-    mysql: &M,
+    mut mysql: &M,
+    workspace_id: Option<i64>,
+) -> MysqlResult<Option<WorkspaceKindRow>> {
+    workspace_kind_on(&mut mysql, workspace_id).await
+}
+
+pub(crate) async fn workspace_kind_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
     workspace_id: Option<i64>,
 ) -> MysqlResult<Option<WorkspaceKindRow>> {
     let Some(workspace_id) = workspace_id else {
@@ -106,7 +113,7 @@ pub(crate) async fn workspace_kind<M: Mysql>(
          FROM kinds \n\
          WHERE kinds.id = {workspace_id}"
     );
-    mysql.fetch_optional(sql, ()).await
+    query.fetch_optional(sql, ()).await
 }
 
 /// `_membership(db, kind, resource_id, user_id)`: the approved grant with a
@@ -250,7 +257,7 @@ pub(crate) struct MemberResponse {
 
 #[path = "members/roster.rs"]
 mod roster;
-pub(crate) use roster::list_project_members;
+pub(crate) use roster::{list_project_members, list_project_members_on};
 
 #[cfg(test)]
 mod tests {

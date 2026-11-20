@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import {
   Check,
   ChevronDown,
@@ -121,11 +122,11 @@ export function AutomationDetailWorkspace({
   const [frequencySettingsOpen, setFrequencySettingsOpen] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => {
-    if (!validationError) return
-    if (!draft.name.trim()) nameRef.current?.focus()
-    else if (!draft.prompt.trim()) promptRef.current?.focus()
-  }, [validationError, draft.name, draft.prompt])
+  useFocusRequest(
+    !draft.name.trim() ? nameRef : promptRef,
+    JSON.stringify([validationError, draft.name, draft.prompt]),
+    { enabled: Boolean(validationError && (!draft.name.trim() || !draft.prompt.trim())) }
+  )
   const localDeviceIdSet = new Set(localDeviceIds)
   const taskOptions: AutomationTaskMenuOption[] = buildAutomationTaskOptions(runtimeWork).map(
     option => {

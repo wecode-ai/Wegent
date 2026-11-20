@@ -8,24 +8,16 @@ use axum::{
 
 #[tokio::test]
 async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner() {
-    let router = Router::new()
-        .route(
-            "/api/devices/runtime-owner",
-            get(|headers: HeaderMap| async move {
-                if headers["authorization"] == "Bearer wg-remote-key" {
-                    (StatusCode::OK, Json(json!({"id": 7})))
-                } else {
-                    (StatusCode::UNAUTHORIZED, Json(json!({})))
-                }
-            }),
-        )
-        .route(
-            "/api/users/me",
-            get(|headers: HeaderMap| async move {
-                assert_eq!(headers["authorization"], "Bearer desktop-session");
-                Json(json!({"id": 7}))
-            }),
-        );
+    let router = Router::new().route(
+        "/api/devices/runtime-owner",
+        get(|headers: HeaderMap| async move {
+            if headers["authorization"] == "Bearer wg-remote-key" {
+                (StatusCode::OK, Json(json!({"id": 7})))
+            } else {
+                (StatusCode::UNAUTHORIZED, Json(json!({})))
+            }
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
@@ -40,6 +32,7 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
     };
     let owner = json!({"userId": 7});
 
+    assert_eq!(handler.connection_service_owner().await.unwrap(), 7);
     handler.verify_runtime_user(&owner).await.unwrap();
     for payload in [json!({"userId": 8}), json!({})] {
         let error = handler.verify_runtime_user(&payload).await.unwrap_err();
@@ -49,10 +42,77 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
     let error = handler.verify_runtime_user(&owner).await.unwrap_err();
     assert_eq!(error.code, "cloud_request_failed");
     assert!(error.message.contains("401"));
+    assert!(handler
+        .connection_service_owner()
+        .await
+        .unwrap_err()
+        .message
+        .contains("401"));
 
-    connection.lock().unwrap().as_mut().unwrap().auth_token = "desktop-session".into();
-    handler.verify_runtime_user(&owner).await.unwrap();
+    {
+        let mut snapshot = connection.lock().unwrap();
+        *snapshot = Some(ConnectionConfig {
+            backend_url: snapshot.as_ref().unwrap().backend_url.clone(),
+            auth_token: "desktop-session".into(),
+            ..Default::default()
+        });
+    }
     server.abort();
+    assert_eq!(
+        handler.verify_runtime_user(&owner).await.unwrap_err().code,
+        "permission_denied"
+    );
+    connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(7);
+    handler.verify_runtime_user(&owner).await.unwrap();
+    connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(8);
+    assert_eq!(
+        handler.verify_runtime_user(&owner).await.unwrap_err().code,
+        "permission_denied"
+    );
+}
+
+#[tokio::test]
+async fn standalone_session_initializes_an_owner_for_offline_event_processing() {
+    let router = Router::new().route(
+        "/api/users/me",
+        get(|headers: HeaderMap| async move {
+            assert_eq!(headers["authorization"], "Bearer standalone-session");
+            Json(json!({"id": 7}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let handler = RuntimeWorkRpcHandler {
+        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "standalone-session".into(),
+            ..Default::default()
+        }))),
+        ..RuntimeWorkRpcHandler::new("remote-device", "unused")
+    };
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+
+    assert_eq!(handler.connection_service_owner().await.unwrap(), 7);
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+    handler.verify_local_stand_in_owner(7).unwrap();
+    handler
+        .verify_runtime_user(&json!({"userId":7}))
+        .await
+        .unwrap();
+    assert_eq!(
+        handler.verify_local_stand_in_owner(8).unwrap_err().code,
+        "permission_denied"
+    );
 }
 
 #[tokio::test]
@@ -100,6 +160,7 @@ async fn stand_in_reservation_uses_registered_device_for_each_assignment_and_rec
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         }))),
         ..RuntimeWorkRpcHandler::new("electron-desktop", "unused")
@@ -176,6 +237,7 @@ async fn cloud_denials_identify_the_request_without_leaking_response_content() {
         backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url,
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         }))),
         ..RuntimeWorkRpcHandler::new("electron-desktop", "unused")

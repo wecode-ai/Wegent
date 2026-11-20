@@ -1,5 +1,5 @@
 import { BookOpenText, Boxes, Loader2 } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface SkillDetailTarget {
@@ -30,20 +30,11 @@ export function SkillDetailDialog({
   onToggle,
 }: SkillDetailDialogProps) {
   const { t } = useTranslation('common')
-  const closeRef = useRef<HTMLButtonElement>(null)
   const logo = skill.pluginLogoUrl?.trim() || ''
 
-  useEffect(() => {
-    closeRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  useDocumentEvent('keydown', event => {
+    if (event.key === 'Escape' && true) onClose()
+  })
 
   return (
     <div
@@ -115,7 +106,7 @@ export function SkillDetailDialog({
           )}
           <div className="flex gap-2">
             <button
-              ref={closeRef}
+              autoFocus
               type="button"
               data-testid="skill-detail-close"
               className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"

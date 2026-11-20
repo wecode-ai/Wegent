@@ -55,7 +55,7 @@ fn cloud_collection_rpc_relays_only_a_source_credential_to_the_known_host() {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
-        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"private-session-token".into(),..Default::default()});
+        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"private-session-token".into(),authenticated_user_id:Some(7),..Default::default()});
         handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
         let result = handler.handle_runtime_rpc(json!({"method":"runtime.connections.observations.collect","payload":{"expectedOwnerId":7,"collectorToken":"source-lease-token","backendUrl":"https://untrusted.example","taskId":"arbitrary-task","executionRequest":{"prompt":"Never run"}}})).await.unwrap();
         assert_eq!(result["accepted"], true);
@@ -235,11 +235,12 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
             *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
                 backend_url: format!("http://{address}"),
                 auth_token: "synthetic-runtime-session".into(),
+                authenticated_user_id: Some(7),
                 ..Default::default()
             });
             seed(&handler, "task");
             let id = handler.subscription_id("task", "wait");
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+            event_store::transact(&handler.event_subscription_path(), |state| {
                 state["operations"][&id] = record;
                 Ok(())
             })
@@ -253,11 +254,11 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
                 );
             tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
-                    let status = workbench_control::journal::transact(
-                        &handler.event_subscription_path(),
-                        |state| Ok(state["operations"][&id]["status"].clone()),
-                    )
-                    .unwrap();
+                    let status =
+                        event_store::transact(&handler.event_subscription_path(), |state| {
+                            Ok(state["operations"][&id]["status"].clone())
+                        })
+                        .unwrap();
                     if status == "pending" {
                         break;
                     }
@@ -283,11 +284,10 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
                     .collect::<Vec<_>>(),
                 vec!["get_subscription", "admit_delivery"]
             );
-            let persisted =
-                workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                    Ok(state["operations"][&id].clone())
-                })
-                .unwrap();
+            let persisted = event_store::transact(&handler.event_subscription_path(), |state| {
+                Ok(state["operations"][&id].clone())
+            })
+            .unwrap();
             assert!(
                 persisted["operation_id"].is_null(),
                 "Rejected cloud admission cannot create a local continuation"
@@ -334,7 +334,7 @@ fn backend_cancellation_removes_the_wait_before_ack_and_recovers_a_lost_ack() {
                                 (axum::http::StatusCode::OK, axum::Json(snapshot))
                             }
                             "ack_projection" => {
-                                let status = workbench_control::journal::transact(&path, |state| {
+                                let status = event_store::transact(&path, |state| {
                                     Ok(state["operations"][&id]["status"].clone())
                                 })
                                 .unwrap();
@@ -360,6 +360,7 @@ fn backend_cancellation_removes_the_wait_before_ack_and_recovers_a_lost_ack() {
             *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
                 backend_url: format!("http://{address}"),
                 auth_token: "synthetic-runtime-session".into(),
+                authenticated_user_id: Some(7),
                 ..Default::default()
             });
             let health = json!({"subscriptionId":signal["subscriptionId"]});
@@ -454,13 +455,13 @@ fn remote_model_subscription_recovers_lost_registration_without_reinitializing_o
         let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
         let model_service = handler.clone();
         let handler = handler.with_connection_observation_device_type("remote");
-        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),..Default::default()});
+        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),authenticated_user_id:Some(7),..Default::default()});
         handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
         seed(&handler, "task");
         let args = json!({"subscription_key":"wait","source":{"providerId":"documents","profile":"account","kind":"document","id":"doc","name":"Document"},"match":{"/eventType":"document.updated"},"continuation":"Continue editing"});
         assert!(model_service.control_operation(&context("task"), "subscribe_connection_events", args.clone()).await.is_err());
         let id = handler.subscription_id("task", "wait");
-        let read = || workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
+        let read = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(read()["status"], "preparing");
         handler.poll_conversation_connection_events(true).await.unwrap();
         assert_eq!(read()["status"], "armed");
@@ -538,7 +539,7 @@ fn goal_pause_recovers_cloud_cancellation_after_a_lost_attach_response_and_resta
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let connection = ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),..Default::default()};
+        let connection = ConnectionConfig {backend_url:format!("http://{address}"),auth_token:"synthetic-runtime-session".into(),authenticated_user_id:Some(7),..Default::default()};
         let handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
         *handler.backend_connection.lock().unwrap() = Some(connection.clone());
         seed(&handler, "task");
@@ -547,7 +548,7 @@ fn goal_pause_recovers_cloud_cancellation_after_a_lost_attach_response_and_resta
         assert!(handler.register_cloud_connection_subscription(&id, &mut record).await.is_err());
         assert_eq!(*remote_status.lock().unwrap(), "armed");
         handler.cancel_connection_goal_waits("task", Some("paused"));
-        let read = || workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
+        let read = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(read()["status"], "cancelled");
         assert_eq!(read()["cloud_cancel_pending"], true);
         assert!(read()["cloud_subscription"].is_null());

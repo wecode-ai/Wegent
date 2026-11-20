@@ -60,6 +60,10 @@ def add_activity_comment(
         project_id=project_id,
         item_id=item_id,
         body=values.body,
+        client_message_id=values.client_message_id,
         mentions=values.mentions,
         stand_in=values.stand_in,
+        collaboration=values.collaboration,
+        reply_to_comment_id=values.reply_to_comment_id,
+        assistant_source=values.assistant_source,
     )

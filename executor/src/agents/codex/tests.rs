@@ -65,6 +65,9 @@ fn cloud_config_bundle_failures_are_detected() {
     assert!(is_codex_cloud_config_error(
         "failed to reload config: timed out waiting for cloud config bundle after 20s"
     ));
+    assert!(is_codex_cloud_config_error("failed to read configuration layers: Your authentication session could not be refreshed automatically. Please log out and sign in again."));
+    assert!(is_codex_cloud_config_error("failed to load configuration: Your authentication session could not be refreshed automatically. Please log out and sign in again."));
+    assert!(!is_codex_cloud_config_error("Your authentication session could not be refreshed automatically. Please log out and sign in again."));
     assert!(!is_codex_cloud_config_error("model not found"));
 }
 
@@ -3201,9 +3204,57 @@ fn codex_full_access_permission_profile_is_applied_by_default() {
 }
 
 #[test]
+fn full_access_command_approval_uses_the_selected_reviewer_and_only_accepts_plain_commands() {
+    let mut request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    let mut approval = json!({
+        "id": 5,
+        "method": "item/commandExecution/requestApproval",
+        "params": {"command": "rm -f fixture"}
+    });
+    for (mode, reviewer) in [
+        ("manual", "user"),
+        ("ai", "auto_review"),
+        ("automatic", "user"),
+    ] {
+        request
+            .extra
+            .insert("runtime_command_approval".into(), json!(mode));
+        let params = turn_start_params("thread-1", &request, &launch, Vec::new());
+        assert_eq!(params["approvalsReviewer"], reviewer);
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["sandbox_approval"],
+            true
+        );
+        assert_eq!(
+            automatic_command_approval_id(&approval, codex_auto_approve_commands(&request)),
+            (mode == "automatic").then_some(json!(5))
+        );
+    }
+
+    for (key, value) in [
+        ("networkApprovalContext", json!({"host": "example.test"})),
+        ("additionalPermissions", json!({})),
+        ("kind", json!("stdin")),
+        ("reason", json!("explicit rule")),
+        ("availableDecisions", json!(["decline"])),
+    ] {
+        let previous = approval["params"][key].take();
+        approval["params"][key] = value;
+        assert!(automatic_command_approval_id(&approval, true).is_none());
+        approval["params"][key] = previous;
+    }
+
+    request
+        .extra
+        .insert("runtime_permission_profile".into(), json!(":workspace"));
+    assert!(!codex_auto_approve_commands(&request));
+}
+
+#[test]
 fn codex_only_auto_approves_mcp_tool_calls_with_full_access() {
     let full_access = ExecutionRequest::default();
-    assert!(codex_auto_approve_mcp_tool_calls(&full_access));
+    assert!(codex_has_full_access(&full_access));
 
     for profile in [
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -3214,7 +3265,7 @@ fn codex_only_auto_approves_mcp_tool_calls_with_full_access() {
             "runtime_permission_profile".to_owned(),
             Value::String(profile.to_owned()),
         );
-        assert!(!codex_auto_approve_mcp_tool_calls(&request));
+        assert!(!codex_has_full_access(&request));
     }
 }
 
@@ -4535,7 +4586,7 @@ fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
         codex_runtime_permission_profile(&request),
         CODEX_READ_ONLY_PERMISSION_PROFILE
     );
-    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(!codex_has_full_access(&request));
 }
 
 #[test]
@@ -4553,7 +4604,7 @@ fn owner_identity_uses_native_guardian_without_bypassing_tool_review() {
         .as_str()
         .unwrap()
         .contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
-    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(!codex_has_full_access(&request));
     assert!(launch.config_overrides.contains(
         &"mcp_servers.wework_stand_in.tools.schedule_task.approval_mode=\"writes\"".into()
     ));

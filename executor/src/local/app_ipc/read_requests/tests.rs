@@ -12,6 +12,7 @@ use super::*;
 #[derive(Clone, Default)]
 struct ControlledRuntime {
     entered: Arc<Notify>,
+    entered_methods: Arc<StdMutex<Vec<String>>>,
     release: Arc<Notify>,
     started: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -26,11 +27,23 @@ impl Drop for DropCounter {
 }
 
 impl RuntimeWorkHandler for ControlledRuntime {
-    fn handle_runtime_rpc<'a>(&'a self, _: Value) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        request: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         Box::pin(async move {
             let _counter = DropCounter(self.dropped.clone());
             self.started.fetch_add(1, Ordering::SeqCst);
-            self.entered.notify_one();
+            self.entered_methods
+                .lock()
+                .expect("handler entries should not be poisoned")
+                .push(method);
+            self.entered.notify_waiters();
             self.release.notified().await;
             Ok(json!({"accepted": true}))
         })
@@ -78,6 +91,44 @@ async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
     .expect("history request count must settle");
 }
 
+async fn wait_for_handler_entry(runtime: &ControlledRuntime, method: &str) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            // Register before inspecting the queue so an entry cannot be lost
+            // between the check and the wait.
+            let notified = runtime.entered.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let entered = {
+                let mut methods = runtime
+                    .entered_methods
+                    .lock()
+                    .expect("handler entries should not be poisoned");
+                methods
+                    .iter()
+                    .position(|entered| entered == method)
+                    .map(|index| methods.remove(index))
+            };
+            if entered.is_some() {
+                return;
+            }
+            notified.await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{method} must enter before the test deadline"));
+}
+
+async fn wait_for_available_permits(admission: &ReadAdmission, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while admission.pending.available_permits() != expected {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("read admission permits must settle");
+}
+
 async fn start_history_reads(
     writer: &mut tokio::io::WriteHalf<DuplexStream>,
     runtime: &ControlledRuntime,
@@ -90,7 +141,7 @@ async fn start_history_reads(
         )
         .await;
         if index < MAX_CONCURRENT_HISTORY_READS {
-            runtime.entered.notified().await;
+            wait_for_handler_entry(runtime, "runtime.tasks.transcript").await;
         }
     }
 }
@@ -101,15 +152,15 @@ fn request(id: &str, method: &str) -> Value {
 
 #[test]
 fn cancellation_only_covers_cooperative_reads() {
-    for method in CANCELLABLE_READ_METHODS {
-        assert!(is_cancellable_read(Some(method)));
+    for method in cancellable_read_methods() {
+        assert!(admission_kind(Some(method)).is_some());
     }
     for method in [
         "runtime.tasks.transcript.search",
         "runtime.tasks.search",
         "runtime.tasks.send",
     ] {
-        assert!(!is_cancellable_read(Some(method)));
+        assert!(admission_kind(Some(method)).is_none());
     }
 }
 
@@ -119,7 +170,7 @@ async fn cancelling_history_read_releases_handler_and_preserves_control_requests
     let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
     let (mut reader, mut writer) = connect(server).await;
     write_frame(&mut writer, request("read", "runtime.tasks.transcript")).await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     write_frame(&mut writer, json!({"type": "cancel", "id": "read"})).await;
     write_frame(&mut writer, request("control", "executor.health")).await;
     let mut responses = [
@@ -144,7 +195,7 @@ async fn cancelling_connection_capability_reads_releases_their_native_handlers()
         let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
         let (mut reader, mut writer) = connect(server).await;
         write_frame(&mut writer, request("collection", method)).await;
-        runtime.entered.notified().await;
+        wait_for_handler_entry(&runtime, method).await;
         write_frame(&mut writer, json!({"type":"cancel","id":"collection"})).await;
         let response = read_response(&mut reader).await;
         assert_eq!(response["error"]["code"], "request_cancelled");
@@ -159,7 +210,7 @@ async fn cancellation_is_connection_scoped_and_cannot_interrupt_sends() {
     let (mut reader, mut writer) = connect(server.clone()).await;
     let (mut other_reader, mut other_writer) = connect(server).await;
     write_frame(&mut writer, request("send", "runtime.tasks.send")).await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.send").await;
     write_frame(&mut writer, json!({"type": "cancel", "id": "send"})).await;
     write_frame(&mut writer, request("send-control", "executor.health")).await;
     assert_eq!(read_response(&mut reader).await["id"], "send-control");
@@ -168,7 +219,7 @@ async fn cancellation_is_connection_scoped_and_cannot_interrupt_sends() {
     assert_eq!(read_response(&mut reader).await["result"]["accepted"], true);
 
     write_frame(&mut writer, request("read", "runtime.tasks.transcript")).await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     write_frame(&mut other_writer, json!({"type": "cancel", "id": "read"})).await;
     write_frame(
         &mut other_writer,
@@ -235,7 +286,7 @@ async fn history_reads_wait_across_connections_without_blocking_control_requests
     let (mut other_reader, mut other_writer) = connect(server.clone()).await;
     for id in ["first", "second"] {
         write_frame(&mut writer, request(id, "runtime.tasks.transcript")).await;
-        runtime.entered.notified().await;
+        wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     }
     write_frame(
         &mut other_writer,
@@ -250,7 +301,7 @@ async fn history_reads_wait_across_connections_without_blocking_control_requests
     );
     runtime.release.notify_one();
     assert_eq!(read_response(&mut reader).await["result"]["accepted"], true);
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     assert_eq!(
         runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_HISTORY_READS + 1
@@ -263,15 +314,35 @@ async fn history_reads_wait_across_connections_without_blocking_control_requests
 
 #[tokio::test]
 async fn queued_history_admission_is_fifo_across_connections() {
-    let admission = Arc::new(HistoryReadAdmission::default());
-    let first_connection = ConnectionReadRequests::new(admission.clone());
-    let second_connection = ConnectionReadRequests::new(admission.clone());
-    let (mut first, _) = first_connection.admit("first").unwrap();
-    let (mut second, _) = second_connection.admit("second").unwrap();
-    first.wait_for_admission().await.unwrap();
-    second.wait_for_admission().await.unwrap();
-    let (mut queued_first, _) = second_connection.admit("queued-first").unwrap();
-    let (mut queued_second, _) = first_connection.admit("queued-second").unwrap();
+    let admission = new_history_read_admission();
+    let first_connection =
+        ConnectionReadRequests::new(admission.clone(), new_connection_read_admission());
+    let second_connection =
+        ConnectionReadRequests::new(admission.clone(), new_connection_read_admission());
+    let (mut first, _) = first_connection
+        .admit(Some("runtime.tasks.transcript"), "first")
+        .unwrap()
+        .unwrap();
+    let (mut second, _) = second_connection
+        .admit(Some("runtime.tasks.transcript"), "second")
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), first.wait_for_admission())
+        .await
+        .expect("the first connection read must acquire an active permit")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), second.wait_for_admission())
+        .await
+        .expect("the second connection read must acquire an active permit")
+        .unwrap();
+    let (mut queued_first, _) = second_connection
+        .admit(Some("runtime.tasks.transcript"), "queued-first")
+        .unwrap()
+        .unwrap();
+    let (mut queued_second, _) = first_connection
+        .admit(Some("runtime.tasks.transcript"), "queued-second")
+        .unwrap()
+        .unwrap();
     {
         let first_wait = queued_first.wait_for_admission();
         let second_wait = queued_second.wait_for_admission();
@@ -294,6 +365,174 @@ async fn queued_history_admission_is_fifo_across_connections() {
     assert_eq!(
         admission.pending.available_permits(),
         MAX_PENDING_HISTORY_READS
+    );
+}
+
+#[tokio::test]
+async fn connection_reads_do_not_consume_transcript_admission() {
+    let runtime = ControlledRuntime::default();
+    let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+    let (mut reader, mut writer) = connect(server.clone()).await;
+    let (mut other_reader, mut other_writer) = connect(server.clone()).await;
+
+    for index in 0..MAX_PENDING_CONNECTION_READS {
+        write_frame(
+            &mut writer,
+            request(
+                &format!("connection-{index}"),
+                "runtime.connections.git.read",
+            ),
+        )
+        .await;
+        if index < MAX_CONCURRENT_CONNECTION_READS {
+            wait_for_handler_entry(&runtime, "runtime.connections.git.read").await;
+        }
+    }
+    wait_for_available_permits(&server.connection_read_admission, 0).await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS
+    );
+
+    write_frame(
+        &mut other_writer,
+        request("connection-overflow", "runtime.connections.git.read"),
+    )
+    .await;
+    let overflow = read_response(&mut other_reader).await;
+    assert_eq!(overflow["error"]["code"], "runtime_read_busy");
+
+    write_frame(
+        &mut other_writer,
+        request("transcript", "runtime.tasks.transcript"),
+    )
+    .await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS + 1
+    );
+    assert_eq!(runtime.dropped.load(Ordering::SeqCst), 0);
+
+    let expected_entries = MAX_PENDING_CONNECTION_READS + 1;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while runtime.started.load(Ordering::SeqCst) < expected_entries {
+            runtime.release.notify_one();
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("all admitted reads must enter after releasing capacity");
+    runtime.release.notify_one();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    runtime.release.notify_one();
+
+    let mut responses = Vec::new();
+    for _ in 0..MAX_PENDING_CONNECTION_READS {
+        responses.push(read_response(&mut reader).await);
+    }
+    responses.push(read_response(&mut other_reader).await);
+    assert!(responses.iter().all(|response| response["ok"] == true));
+    assert!(responses
+        .iter()
+        .any(|response| response["id"] == json!("transcript")));
+}
+
+#[tokio::test]
+async fn padded_connection_read_methods_are_limited_and_cancellable() {
+    let runtime = ControlledRuntime::default();
+    let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+    let (mut reader, mut writer) = connect(server.clone()).await;
+    let padded_method = " runtime.connections.git.read ";
+
+    for id in ["first", "second"] {
+        write_frame(&mut writer, request(id, padded_method)).await;
+        wait_for_handler_entry(&runtime, "runtime.connections.git.read").await;
+    }
+    write_frame(
+        &mut writer,
+        json!({"type":"request","id":"invalid","method":padded_method,"params":[]}),
+    )
+    .await;
+    let invalid = read_response(&mut reader).await;
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS,
+        "an invalid request must not consume active admission"
+    );
+
+    write_frame(&mut writer, request("third", padded_method)).await;
+    wait_for_available_permits(
+        &server.connection_read_admission,
+        MAX_PENDING_CONNECTION_READS - 3,
+    )
+    .await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS,
+        "a padded method must not bypass the connection admission limit"
+    );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            wait_for_handler_entry(&runtime, "runtime.connections.git.read"),
+        )
+        .await
+        .is_err(),
+        "the third read must wait for an active admission permit"
+    );
+
+    write_frame(&mut writer, json!({"type":"cancel","id":"first"})).await;
+    let cancelled = read_response(&mut reader).await;
+    assert_eq!(cancelled["id"], "first");
+    assert_eq!(cancelled["error"]["code"], "request_cancelled");
+    assert_eq!(runtime.dropped.load(Ordering::SeqCst), 1);
+
+    wait_for_handler_entry(&runtime, "runtime.connections.git.read").await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS + 1
+    );
+    let mut responses = Vec::new();
+    for _ in 0..MAX_CONCURRENT_CONNECTION_READS {
+        runtime.release.notify_one();
+        responses.push(read_response(&mut reader).await);
+    }
+    assert!(responses.iter().all(|response| response["ok"] == true));
+}
+
+#[tokio::test]
+async fn connection_read_waits_for_active_capacity() {
+    let admission = new_connection_read_admission();
+    let requests = ConnectionReadRequests::new(new_history_read_admission(), admission.clone());
+    let method = "runtime.connections.git.read";
+    let (mut first, _) = requests.admit(Some(method), "first").unwrap().unwrap();
+    let (mut second, _) = requests.admit(Some(method), "second").unwrap().unwrap();
+    let (mut third, _) = requests.admit(Some(method), "third").unwrap().unwrap();
+
+    first.wait_for_admission().await.unwrap();
+    second.wait_for_admission().await.unwrap();
+    {
+        let third_wait = third.wait_for_admission();
+        tokio::pin!(third_wait);
+        assert!(
+            futures_util::poll!(third_wait.as_mut()).is_pending(),
+            "the third connection read must wait for an active permit"
+        );
+
+        drop(first);
+        tokio::time::timeout(Duration::from_secs(1), third_wait.as_mut())
+            .await
+            .expect("the third connection read must acquire the released permit")
+            .unwrap();
+    }
+    assert_eq!(admission.active.available_permits(), 0);
+    drop(second);
+    drop(third);
+    assert_eq!(
+        admission.active.available_permits(),
+        MAX_CONCURRENT_CONNECTION_READS
     );
 }
 
@@ -373,7 +612,89 @@ async fn disconnect_cancels_active_and_queued_reads_without_starting_waiting_wor
         request("fresh", "runtime.tasks.transcript"),
     )
     .await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     runtime.release.notify_one();
     assert_eq!(read_response(&mut other_reader).await["id"], "fresh");
+}
+
+#[cfg(unix)]
+#[test]
+fn slow_project_git_discovery_does_not_block_ipc_health() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "WEWORK_SLOW_GIT_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let test_name = format!(
+            "{}::slow_project_git_discovery_does_not_block_ipc_health",
+            module_path!().split_once("::").unwrap().1
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &test_name, "--nocapture"])
+            .env(CHILD, "1")
+            .env("WEWORK_PROJECT_INDEX_DIAGNOSTICS", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let git = root.path().join("git");
+    std::fs::write(&git, "#!/bin/sh\ndir=$(/usr/bin/dirname \"$0\")\n: > \"$dir/entered\"\nwhile [ ! -e \"$dir/release\" ]; do /bin/sleep 0.01; done\nexit 1\n").unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        root.path().join(".codex-global-state.json"),
+        json!({"electron-saved-workspace-roots":[root.path()]}).to_string(),
+    )
+    .unwrap();
+    for key in ["PATH", "CODEX_HOME", "WEGENT_EXECUTOR_HOME"] {
+        std::env::set_var(key, root.path());
+    }
+    let (release, released) = std::sync::mpsc::channel();
+    let release_file = root.path().join("release");
+    let watchdog = std::thread::spawn(move || {
+        let signaled = released
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .is_ok();
+        std::fs::write(release_file, "release").unwrap();
+        signaled
+    });
+    let outcome = std::panic::catch_unwind(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut reader, mut writer) = connect(AppIpcServer::new()).await;
+                write_frame(&mut writer, request("projects", "projects.list")).await;
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while !root.path().join("entered").exists() {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .expect("project discovery must reach Git");
+                write_frame(&mut writer, request("health", "executor.health")).await;
+                let health = read_response(&mut reader).await;
+                assert_eq!(
+                    health["id"], "health",
+                    "Git discovery must not occupy the IPC reactor"
+                );
+                assert_eq!(health["ok"], true);
+                release.send(()).unwrap();
+                let projects = read_response(&mut reader).await;
+                assert_eq!(projects["id"], "projects");
+                assert_eq!(projects["ok"], true, "{projects}");
+            });
+    });
+    let signaled = watchdog.join().unwrap();
+    if let Err(error) = outcome {
+        std::panic::resume_unwind(error);
+    }
+    assert!(signaled, "Git must stay blocked until health responds");
 }

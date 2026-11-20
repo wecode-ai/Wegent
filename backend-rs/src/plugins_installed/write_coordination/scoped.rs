@@ -42,8 +42,27 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
     pub(crate) async fn acquire_names_wait(
         redis: Option<&'a R>,
         user_id: i64,
+        names: Vec<String>,
+        wait: Duration,
+    ) -> MysqlResult<Self> {
+        let deadline = Instant::now()
+            + if names.len() > 1 {
+                OPERATION_BUDGET
+            } else if wait.is_zero() {
+                Duration::from_secs(1)
+            } else {
+                wait
+            };
+        Self::acquire_names_until(redis, user_id, names, wait, deadline).await
+    }
+
+    /// Stop acquiring new keys at the shared deadline, then drain owned leases.
+    pub(super) async fn acquire_names_until(
+        redis: Option<&'a R>,
+        user_id: i64,
         mut names: Vec<String>,
         wait: Duration,
+        deadline: Instant,
     ) -> MysqlResult<Self> {
         let redis = redis.ok_or_else(|| coordination_error("plugin_write_unavailable"))?;
         names.sort();
@@ -51,20 +70,32 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         if names.is_empty() {
             names.push("@empty".to_owned());
         }
-        let wait = if names.len() > 1 {
-            Duration::ZERO
-        } else {
-            wait
-        };
-        let deadline = Instant::now() + wait;
+        let one_attempt = names.len() > 1 || wait.is_zero();
+        let acquire_deadline = (Instant::now() + wait).min(deadline);
         let mut acquired: Option<Self> = None;
         for name in names {
-            let mut random = [0u8; 16];
-            getrandom::getrandom(&mut random)
-                .map_err(|_| coordination_error("plugin_write_unavailable"))?;
-            let token = random.iter().map(|byte| format!("{byte:02x}")).collect();
-            let wait = deadline.saturating_duration_since(Instant::now());
-            match Self::acquire_named_token(redis, user_id, &name, token, wait).await {
+            let outcome = async {
+                let mut random = [0u8; 16];
+                getrandom::getrandom(&mut random)
+                    .map_err(|_| coordination_error("plugin_write_unavailable"))?;
+                let token = random.iter().map(|byte| format!("{byte:02x}")).collect();
+                let attempt_deadline = if one_attempt {
+                    (Instant::now() + Duration::from_secs(1)).min(deadline)
+                } else {
+                    acquire_deadline
+                };
+                Self::acquire_named_token(
+                    redis,
+                    user_id,
+                    &name,
+                    token,
+                    attempt_deadline,
+                    one_attempt,
+                )
+                .await
+            }
+            .await;
+            match outcome {
                 Ok(lease) => {
                     if let Some(group) = acquired.as_mut() {
                         group.additional.push((lease.key, lease.token));
@@ -136,6 +167,27 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         Ok(Self::acquire_names(redis, user_id, names)
             .await?
             .for_installations(ids))
+    }
+
+    /// Local receipts share one request deadline across all installation IDs.
+    pub(crate) async fn acquire_installed_until<M: Mysql>(
+        mysql: &M,
+        redis: Option<&'a R>,
+        user_id: i64,
+        ids: Option<&[i64]>,
+        deadline: Instant,
+    ) -> MysqlResult<Self> {
+        let (names, ids) = tokio::time::timeout_at(
+            deadline,
+            mysql.with_transaction(async |tx| installation_scope(tx, user_id, ids).await),
+        )
+        .await
+        .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))?;
+        Ok(
+            Self::acquire_names_until(redis, user_id, names, ACQUIRE_WAIT, deadline)
+                .await?
+                .for_installations(ids),
+        )
     }
 
     pub(crate) async fn read_plugin_revisions<T: MysqlTransaction>(

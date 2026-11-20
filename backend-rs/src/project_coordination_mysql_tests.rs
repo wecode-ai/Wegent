@@ -2,7 +2,7 @@
 use super::*;
 use brz_mysql::MysqlService;
 
-pub(super) async fn seed(mysql: &MysqlService) {
+pub(crate) async fn seed(mysql: &MysqlService) {
     let integers = [
         "sequence_number",
         "next_item_number",

@@ -38,22 +38,30 @@ fn projection(record: &Value) -> Value {
 
 impl RuntimeWorkRpcHandler {
     fn read_ui_observer(&self, id: &str) -> Result<Value, AppIpcError> {
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            validate_observer_map(state)?;
-            Ok(state["observers"][id].clone())
-        })
+        event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observers", id),
+            |state| {
+                validate_observer_map(state)?;
+                Ok(state["observers"][id].clone())
+            },
+        )
     }
 
     fn save_ui_observer(&self, record: &Value) -> Result<(), AppIpcError> {
         let id = field(record, "id")?;
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            validate_observer_map(state)?;
-            if state["observers"][id]["status"] == "stopped" && record["status"] != "stopped" {
-                return Err(lease_lost());
-            }
-            state["observers"][id] = record.clone();
-            Ok(())
-        })
+        event_store::update(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observers", id),
+            |state| {
+                validate_observer_map(state)?;
+                if state["observers"][id]["status"] == "stopped" && record["status"] != "stopped" {
+                    return Err(lease_lost());
+                }
+                state["observers"][id] = record.clone();
+                Ok(())
+            },
+        )
     }
 
     pub(in crate::runtime_work::handler) async fn connection_observer_operation(
@@ -104,10 +112,11 @@ impl RuntimeWorkRpcHandler {
             self.read_cloud_ui_observer(&mut record, operation == "refresh")
                 .await?;
         } else {
-            let cached =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                    Ok(state["observations"][field(&record, "observation_id")?].clone())
-                })?;
+            let cached = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("observations", field(&record, "observation_id")?),
+                |state| Ok(state["observations"][field(&record, "observation_id")?].clone()),
+            )?;
             if !cached.is_object()
                 || !cached["source"].is_object()
                 || !cached["checkpoint"].is_object()
@@ -151,6 +160,7 @@ impl RuntimeWorkRpcHandler {
         generation: &str,
         input: &Value,
     ) -> Result<Value, AppIpcError> {
+        let _activation = self.connection_observation_activations.read().await;
         let mut source = if input["source"].is_object() {
             input["source"].clone()
         } else {
@@ -174,6 +184,18 @@ impl RuntimeWorkRpcHandler {
         for name in ["providerId", "profile", "kind", "id", "name"] {
             field(&source, name)?;
         }
+        // Exact PR/MR views and merge waits share the same current-status observation.
+        if matches!(
+            source["providerId"].as_str(),
+            Some("@wegent/dsh-connection-git/github" | "@wegent/dsh-connection-git/gitlab")
+        ) && source["monitoredObjects"]
+            .as_array()
+            .is_some_and(|objects| {
+                objects.len() == 1 && objects[0]["entityKind"] == "change_request"
+            })
+        {
+            source["observeCurrentStatus"] = json!(true);
+        }
         source["enabledAfter"] = json!(chrono::Utc::now().to_rfc3339());
         source["policy"] = json!({"automatic":false,"askBeforeAct":true});
         self.connection_call("validate", source["providerId"].as_str(), source.clone())
@@ -184,15 +206,8 @@ impl RuntimeWorkRpcHandler {
             let connection = self
                 .backend_connection_snapshot()?
                 .ok_or_else(|| invalid("Connect this Runtime to its cloud account"))?;
-            let owner = self
-                .runtime_http(reqwest::Method::GET, "/users/me", None)
-                .await?;
-            if owner["id"].as_i64().map_or(true, |id| id <= 0)
-                || self.backend_connection_snapshot()?.as_ref() != Some(&connection)
-            {
-                return Err(invalid("Connection account changed"));
-            }
-            record["cloud_registration"] = json!({"owner_id":owner["id"],"device_id":self.cloud_device_id()?,"backend_url":connection.backend_url});
+            let owner = Self::local_connection_user(&connection)?;
+            record["cloud_registration"] = json!({"owner_id":owner,"device_id":self.cloud_device_id()?,"backend_url":connection.backend_url});
         }
         self.save_ui_observer(&record)?;
         Ok(record)

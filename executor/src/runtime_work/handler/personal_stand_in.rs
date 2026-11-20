@@ -172,6 +172,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if save {
+            let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user}"));
+            let _git_settings = git_settings.lock().await;
             let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
             let _guard = gate.lock().await;
             let previous = store
@@ -329,6 +331,7 @@ pub(super) fn automatic_assignment_roles<'a>(
 ) -> Vec<&'a Value> {
     matching_personal_roles(configs, issue)
         .into_iter()
+        .filter(|role| dispatch_authorizes_role(role, issue))
         // One automatic assignment selects one role; explicit role dispatch is separate.
         .min_by_key(|role| {
             if role["tags"].as_array().is_some_and(|tags| !tags.is_empty()) {
@@ -339,6 +342,35 @@ pub(super) fn automatic_assignment_roles<'a>(
         })
         .into_iter()
         .collect()
+}
+
+fn dispatch_authorizes_role(role: &Value, issue: &Value) -> bool {
+    let metadata = &issue["metadata"];
+    let policy = metadata.get("assistant_autonomy_policy");
+    if policy
+        .and_then(|value| value.get("automatic"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    if policy
+        .and_then(|value| value.get("ask_before_act"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return false;
+    }
+    let Some(endpoint) = metadata
+        .get("assistant_endpoint_ref")
+        .and_then(Value::as_str)
+    else {
+        return true;
+    };
+    endpoint
+        .rsplit_once(':')
+        .map(|(_, role_id)| role["id"].as_str() == Some(role_id))
+        .unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -362,5 +394,40 @@ mod automatic_role_selection_tests {
             "general"
         );
         assert!(automatic_assignment_roles(&roles[1..], &json!({"tags":["other"]})).is_empty());
+    }
+
+    #[test]
+    fn dispatch_limits_automatic_intake_to_the_authorized_roster_endpoint_and_policy() {
+        let roles = vec![json!({"id":"review"}), json!({"id":"general"})];
+        let issue = json!({
+            "metadata": {
+                "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": true, "ask_before_act": false}
+            }
+        });
+        assert_eq!(
+            automatic_assignment_roles(&roles, &issue)[0]["id"],
+            "review"
+        );
+        assert!(automatic_assignment_roles(
+            &roles,
+            &json!({
+                "metadata": {
+                    "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": false, "ask_before_act": false}
+                }
+            })
+        )
+        .is_empty());
+        assert!(automatic_assignment_roles(
+            &roles,
+            &json!({
+                "metadata": {
+                    "assistant_endpoint_ref": "local_wework:7:review",
+                    "assistant_autonomy_policy": {"automatic": true, "ask_before_act": true}
+                }
+            })
+        )
+        .is_empty());
     }
 }

@@ -10,6 +10,7 @@ use std::time::Duration;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlError, MysqlResult, MysqlTransaction};
 use brz_redis::{Redis, SetExpiration, SetOptions};
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::http_compat::FastApiError;
 
@@ -75,6 +76,20 @@ pub(crate) fn business_revision(document: &serde_json::Value) -> MysqlResult<i64
     }
 }
 
+pub(crate) async fn complete_plugin_write<T, F>(operation: F) -> MysqlResult<T>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = MysqlResult<T>> + Send + 'static,
+{
+    // Client cancellation must not drop the transaction before its lease is released.
+    // The operation retains its existing acquisition, transaction and release bounds.
+    tokio::spawn(operation.in_current_span())
+        .await
+        .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+            reason: "plugin write task failed".into(),
+        })?
+}
+
 impl<'a, R: Redis> PluginWriteLease<'a, R> {
     pub async fn acquire(redis: Option<&'a R>, user_id: i64) -> MysqlResult<Self> {
         let redis = redis.ok_or_else(|| coordination_error("plugin_write_unavailable"))?;
@@ -91,7 +106,22 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         token: String,
         wait: Duration,
     ) -> MysqlResult<Self> {
-        Self::acquire_named_token(redis, user_id, "@account-policy", token, wait).await
+        let one_attempt = wait.is_zero();
+        let deadline = Instant::now()
+            + if one_attempt {
+                Duration::from_secs(1)
+            } else {
+                wait
+            };
+        Self::acquire_named_token(
+            redis,
+            user_id,
+            "@account-policy",
+            token,
+            deadline,
+            one_attempt,
+        )
+        .await
     }
 
     async fn acquire_named_token(
@@ -99,18 +129,16 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         user_id: i64,
         name: &str,
         token: String,
-        wait: Duration,
+        acquire_deadline: Instant,
+        one_attempt: bool,
     ) -> MysqlResult<Self> {
         let key = format!("wegent:plugin-write:{user_id}:{name}");
-        let acquire_deadline = Instant::now() + wait;
-        let one_attempt = wait.is_zero();
         loop {
+            if Instant::now() >= acquire_deadline {
+                return Err(coordination_error("plugin_write_busy"));
+            }
             let result = tokio::time::timeout_at(
-                if one_attempt {
-                    Instant::now() + Duration::from_secs(1)
-                } else {
-                    acquire_deadline
-                },
+                acquire_deadline,
                 redis.set_with(
                     key.as_str(),
                     token.as_str(),

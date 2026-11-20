@@ -126,12 +126,23 @@ impl HttpPackageProvider {
         let url = self.resolve_backend_url(path)?;
         let backend = parse_url_with_trailing_slash(&self.backend_url)?;
         let should_send_backend_auth = same_origin(&backend, &url);
-        let mut request = self.client.get(url);
         let auth_token = self.auth_token.trim();
-        if should_send_backend_auth && !auth_token.is_empty() {
-            request = request.bearer_auth(auth_token);
-        }
-        let response = request.send().await.map_err(|error| {
+        let send = || {
+            let request = self.client.get(url.clone());
+            if should_send_backend_auth && !auth_token.is_empty() {
+                request.bearer_auth(auth_token).send()
+            } else {
+                request.send()
+            }
+        };
+        let response = match send().await {
+            // A GET that lost the connection before headers can be replayed.
+            Err(error) if error.is_request() && !error.is_timeout() && !error.is_connect() => {
+                send().await
+            }
+            result => result,
+        };
+        let response = response.map_err(|error| {
             CapabilitySyncError::invalid_payload(format!(
                 "Capability package download failed: {}",
                 transport_error_details(&error)
@@ -290,7 +301,40 @@ fn canonical_digest(value: &Value) -> String {
 #[cfg(test)]
 mod download_error_tests {
     use super::{transport_io_details, HttpPackageProvider};
-    use tokio::{io::AsyncReadExt, net::TcpListener, time::Duration};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        time::Duration,
+    };
+
+    #[tokio::test]
+    async fn package_get_retries_when_the_connection_closes_before_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut buffer = [0; 4096];
+            let (mut first, _) = listener.accept().await.unwrap();
+            assert!(first.read(&mut buffer).await.unwrap() > 0);
+            drop(first);
+            let (mut second, _) = listener.accept().await.unwrap();
+            assert!(second.read(&mut buffer).await.unwrap() > 0);
+            second
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\npackage",
+                )
+                .await
+                .unwrap();
+        });
+        let mut provider = HttpPackageProvider::new(format!("http://{address}"), "");
+        provider.client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let bytes =
+            tokio::time::timeout(Duration::from_secs(3), provider.get_bytes("/package.zip"))
+                .await
+                .unwrap()
+                .unwrap();
+        server.await.unwrap();
+        assert_eq!(bytes, b"package");
+    }
 
     #[tokio::test]
     async fn download_error_retains_transport_cause_without_signed_url_or_auth() {
@@ -298,10 +342,12 @@ mod download_error_tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             tokio::time::timeout(Duration::from_secs(3), async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut buffer = [0; 4096];
-                assert!(stream.read(&mut buffer).await.unwrap() > 0);
-                // Close before response headers to reproduce a transport-level failure.
+                for _ in 0..2 {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut buffer = [0; 4096];
+                    assert!(stream.read(&mut buffer).await.unwrap() > 0);
+                    // Close before response headers to reproduce a transport-level failure.
+                }
             })
             .await
             .unwrap();

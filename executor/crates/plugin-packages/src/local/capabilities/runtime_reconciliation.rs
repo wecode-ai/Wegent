@@ -24,6 +24,8 @@ impl GlobalCapabilityStore {
             || entry.get("runtime_recovery_error").is_some()
             || (self.codex_only_plugins && entry["runtime"].get("claude_link").is_some())
             || RecoveryJournal::pending_identity(self, &spec.key)?.is_some()
+            || cache_selection::pending(self, &spec.key)
+            || cache_selection::has_conflicts(self, spec)?
             || !same_definition(spec, entry)
         {
             return Ok(false);

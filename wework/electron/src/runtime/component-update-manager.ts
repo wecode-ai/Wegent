@@ -22,6 +22,7 @@ import { publishImmutableDirectory } from './immutable-directory.js'
 import {
   materializeBundledComponentArchive,
   type BundledComponentArchive,
+  type ComponentPreparationReporter,
 } from './bundled-component-archive.js'
 import * as tar from 'tar'
 import { hashComponentPath, sha256 } from './component-content-hash.js'
@@ -109,6 +110,7 @@ interface ResolvedComponent {
 export interface ComponentUpdateManagerOptions {
   resourcesRoot: string
   dataDirectory: string
+  bundledComponentDirectory?: string
   updateBaseUrl: string
   currentAppVersion: string
   platform?: NodeJS.Platform
@@ -117,11 +119,14 @@ export interface ComponentUpdateManagerOptions {
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
   validateExecutor?: (path: string) => Promise<void>
+  deferBundledExecutorValidation?: boolean
+  reportPreparation?: ComponentPreparationReporter
 }
 
 export class ComponentUpdateManager {
   private readonly resourcesRoot: string
   private readonly root: string
+  private readonly bundledRoot: string
   private readonly updateBaseUrl: string
   private readonly currentAppVersion: string
   private readonly platform: NodeJS.Platform
@@ -138,13 +143,18 @@ export class ComponentUpdateManager {
   } | null = null
   private packaged: PackagedComponentManifest | null = null
   private readonly validateExecutor: (path: string) => Promise<void>
+  private readonly deferBundledExecutorValidation: boolean
+  private readonly reportPreparation?: ComponentPreparationReporter
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
     this.validateExecutor = options.validateExecutor ?? (async () => undefined)
+    this.deferBundledExecutorValidation = options.deferBundledExecutorValidation ?? false
+    this.reportPreparation = options.reportPreparation
     this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
+    this.bundledRoot = resolve(options.bundledComponentDirectory ?? this.root)
     this.updateBaseUrl = options.updateBaseUrl.replace(/\/+$/, '')
     this.currentAppVersion = options.currentAppVersion
     this.platform = options.platform ?? process.platform
@@ -160,8 +170,10 @@ export class ComponentUpdateManager {
 
   async prepareStartup(): Promise<ComponentPaths> {
     this.usingPackagedFallback = false
+    this.reportPreparation?.('read-manifest-and-state', 'started')
     const packaged = await this.packagedManifest()
     const saved = await this.readState()
+    this.reportPreparation?.('read-manifest-and-state', 'completed')
     let state = saved
     if (state.activationInProgress) {
       const crossedHostVersion =
@@ -193,13 +205,18 @@ export class ComponentUpdateManager {
     const current = state.current?.appVersion === this.currentAppVersion ? state.current : undefined
     let paths: ComponentPaths
     try {
-      paths = await this.checkedPaths(packaged, current)
+      paths =
+        current || !this.deferBundledExecutorValidation
+          ? await this.checkedPaths(packaged, current)
+          : await this.resolvePaths(packaged)
     } catch (error) {
       if (!current) throw error
       console.error('[components] active component set is invalid; using packaged resources', error)
       // A local build may reject components that another installed build still needs.
       this.usingPackagedFallback = true
-      return this.checkedPaths(packaged)
+      return this.deferBundledExecutorValidation
+        ? this.resolvePaths(packaged)
+        : this.checkedPaths(packaged)
     }
     if (state !== saved) await this.writeState(state)
     return paths
@@ -476,12 +493,14 @@ export class ComponentUpdateManager {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
     }
+    this.reportPreparation?.('compose-core-plugins', 'started')
     const composedCorePlugins = await this.composeCorePlugins(
       paths.weworkCorePlugins,
       paths.weworkAppStatic,
       fingerprints.weworkCorePlugins,
       fingerprints.weworkAppStatic
     )
+    this.reportPreparation?.('compose-core-plugins', 'completed')
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
       .update('\0')
@@ -560,9 +579,11 @@ export class ComponentUpdateManager {
     if (component.archive)
       return materializeBundledComponentArchive(
         this.resourcesRoot,
-        join(this.root, 'packaged', id),
+        join(this.bundledRoot, 'packaged', id),
         component.archive,
-        component.sha256
+        component.sha256,
+        (step, status, details) =>
+          this.reportPreparation?.(step, status, { component: id, ...details })
       )
     const path = join(this.resourcesRoot, component.path)
     await stat(path)
@@ -581,7 +602,7 @@ export class ComponentUpdateManager {
       .update('\0')
       .update(staticSha256)
       .digest('hex')
-    const target = join(this.root, 'composed', 'wework-core-plugins', fingerprint)
+    const target = join(this.bundledRoot, 'composed', 'wework-core-plugins', fingerprint)
     return publishImmutableDirectory(target, content =>
       this.populateCorePlugins(corePlugins, appStatic, content)
     )

@@ -1,3 +1,4 @@
+import type { HarnessAppLaunchRequest } from '@/features/harness-apps/harnessAppLaunchActor'
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type { PersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
@@ -284,6 +285,7 @@ export interface WorkbenchContextValue {
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
+    captureAttachmentsForScope: (scope: string) => Attachment[]
     handleFileSelect: (files: File | File[]) => Promise<void>
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
@@ -530,6 +532,9 @@ export type WorkbenchPaneContextValue = Omit<
 }
 
 export interface WorkbenchProviderProps {
+  appshotReceiver?: { onOpenWework(): void }
+  taskRouteActive?: boolean
+  harnessAppLaunch?: HarnessAppLaunchRequest
   children: ReactNode
   user: User
   services?: WorkbenchServices

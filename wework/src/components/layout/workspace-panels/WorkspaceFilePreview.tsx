@@ -1,3 +1,4 @@
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { CodeViewFileItem } from '@pierre/diffs'
 import { CodeView, EditProvider, type CodeViewHandle } from '@pierre/diffs/react'
 import FileViewer from '@file-viewer/react'
@@ -9,16 +10,16 @@ import {
   memo,
   Profiler,
   useCallback,
-  useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
   type ProfilerOnRenderCallback,
 } from 'react'
+import { useScrollRequest } from '@wegent/collaboration/dom-events'
 import type { MarkdownFileOpenOptions } from '@wegent/collaboration/markdown'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
@@ -148,30 +149,20 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   const containerRef = useRef<HTMLElement>(null)
   const { t } = useTranslation('common')
   const [preparationAttempt, setPreparationAttempt] = useState(0)
-  const [prepared, setPrepared] = useState<{ source: File; file?: File; error?: boolean } | null>(
-    null
-  )
   const requiresPreparation = isDocxPreviewFile(file.file)
-  useEffect(() => {
-    if (!requiresPreparation) return
-    let active = true
-    void safeOfficePreviewFile(file.file).then(
-      result => {
-        if (active) setPrepared({ source: file.file, file: result })
-      },
-      () => {
-        if (active) setPrepared({ source: file.file, error: true })
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [file.file, requiresPreparation, preparationAttempt])
-  const preparedFile = requiresPreparation
-    ? prepared?.source === file.file
-      ? prepared.file
-      : undefined
-    : file.file
+  const preparation = useMemo(
+    () =>
+      createAsyncResource(`workspace-office-preview:${preparationAttempt}`, () =>
+        requiresPreparation ? safeOfficePreviewFile(file.file) : Promise.resolve(file.file)
+      ),
+    [file.file, requiresPreparation, preparationAttempt]
+  )
+  const prepared = useSyncExternalStore(
+    preparation.subscribe,
+    preparation.getSnapshot,
+    preparation.getSnapshot
+  )
+  const preparedFile = requiresPreparation ? prepared.data : file.file
   const viewerType = workspaceFileViewerType(file.name, file.file.type)
   const isDiagram = viewerType === 'mermaid' || viewerType === 'plantuml'
   const diagramFilename = `${file.name.replace(/\.[^.]+$/, '')}.png`
@@ -185,18 +176,23 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     [themeType]
   )
 
-  useLayoutEffect(() => {
-    const traceId = file.traceId
-    if (!traceId) return
-    logFilePreviewDiagnostic(traceId, 'binary_preview_committed', {
-      fileSize: file.size,
-      viewerType: viewerType ?? null,
-    })
-    scheduleFilePreviewMainThreadProbe(traceId, 'binary_preview_committed')
-    return () => {
-      logFilePreviewDiagnostic(traceId, 'binary_preview_unmounted')
-    }
-  }, [file.size, file.traceId, viewerType])
+  const bindBinaryPreview = useCallback(
+    (container: HTMLElement | null) => {
+      containerRef.current = container
+      if (!container) return
+      const traceId = file.traceId
+      if (!traceId) return
+      logFilePreviewDiagnostic(traceId, 'binary_preview_committed', {
+        fileSize: file.size,
+        viewerType: viewerType ?? null,
+      })
+      scheduleFilePreviewMainThreadProbe(traceId, 'binary_preview_committed')
+      return () => {
+        logFilePreviewDiagnostic(traceId, 'binary_preview_unmounted')
+      }
+    },
+    [file.size, file.traceId, viewerType]
+  )
 
   const handleFileViewerRender = useCallback<ProfilerOnRenderCallback>(
     (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
@@ -227,17 +223,16 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
         data-testid="workspace-office-preview-preparing"
         className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-text-secondary"
       >
-        {prepared?.source === file.file && prepared.error
+        {prepared.status === 'error'
           ? t('workbench.workspace_file_preview_failed')
           : t('workbench.workspace_file_preview_loading', '正在加载文件...')}
-        {prepared?.source === file.file && prepared.error && (
+        {prepared.status === 'error' && (
           <Button
             type="button"
             data-testid="workspace-office-preview-retry-button"
             variant="link"
             size="sm"
             onClick={() => {
-              setPrepared(null)
               setPreparationAttempt(attempt => attempt + 1)
             }}
           >
@@ -251,8 +246,8 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   return (
     <section
       data-testid="workspace-binary-file-preview"
-      ref={containerRef}
-      className="wework-diagram-preview relative min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      ref={bindBinaryPreview}
+      className="wework-diagram-preview relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
       <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
         <FileViewer
@@ -278,22 +273,23 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
 })
 
 function WorkspaceVideoPreview({ file }: { file: File }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-    const value = URL.createObjectURL(file)
-    video.src = value
-    return () => {
-      video.removeAttribute('src')
-      video.load()
-      URL.revokeObjectURL(value)
-    }
-  }, [file])
+  const bindVideo = useCallback(
+    (video: HTMLVideoElement | null) => {
+      if (!video) return
+      const value = URL.createObjectURL(file)
+      video.src = value
+      return () => {
+        video.removeAttribute('src')
+        video.load()
+        URL.revokeObjectURL(value)
+      }
+    },
+    [file]
+  )
   return (
     <video
       data-testid="workspace-video-preview"
-      ref={videoRef}
+      ref={bindVideo}
       controls
       className="h-full min-h-0 w-full flex-1 bg-background"
     />
@@ -372,28 +368,40 @@ function WorkspaceMarkdownPreview({
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLElement>(null)
 
-  useEffect(() => {
-    if (!Number.isInteger(targetLineStart) || Number(targetLineStart) < 1) return
-    const container = containerRef.current
-    if (!container) return
-    const target = Array.from(container.querySelectorAll<HTMLElement>('[data-source-line]'))
-      .filter(anchor => Number(anchor.dataset.sourceLine) <= Number(targetLineStart))
-      .at(-1)
-    if (!target) return
-    target.dataset.sourceLineTarget = 'true'
-    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    const timeoutId = window.setTimeout(() => {
-      target.removeAttribute('data-source-line-target')
-    }, 1_200)
-    return () => {
-      window.clearTimeout(timeoutId)
-      target.removeAttribute('data-source-line-target')
-    }
-  }, [file.path, file.revision, targetLineStart])
+  const sourceLineRequest = useMemo(
+    () => ({ path: file.path, revision: file.revision, line: targetLineStart }),
+    [file.path, file.revision, targetLineStart]
+  )
+  const bindMarkdownPreview = useCallback(
+    (container: HTMLElement | null) => {
+      containerRef.current = container
+      const targetLineStart = sourceLineRequest.line
+      if (!Number.isInteger(targetLineStart) || Number(targetLineStart) < 1) return
+      if (!container) return
+      const target = Array.from(container.querySelectorAll<HTMLElement>('[data-source-line]'))
+        .filter(anchor => Number(anchor.dataset.sourceLine) <= Number(targetLineStart))
+        .at(-1)
+      if (!target) return
+      target.dataset.sourceLineTarget = 'true'
+      const timeoutId = window.setTimeout(() => {
+        target.removeAttribute('data-source-line-target')
+      }, 1_200)
+      return () => {
+        window.clearTimeout(timeoutId)
+        target.removeAttribute('data-source-line-target')
+      }
+    },
+    [sourceLineRequest]
+  )
+  useScrollRequest(containerRef, '[data-source-line-target="true"]', sourceLineRequest, {
+    enabled: Number.isInteger(targetLineStart) && Number(targetLineStart) >= 1,
+    block: 'center',
+    behavior: 'smooth',
+  })
 
   return (
     <section
-      ref={containerRef}
+      ref={bindMarkdownPreview}
       data-testid="workspace-markdown-preview"
       className="scrollbar-soft min-w-0 flex-1 overflow-y-scroll bg-background"
     >
@@ -463,9 +471,9 @@ function WorkspaceFilePreviewContent({
 }: WorkspaceFilePreviewContentProps & { codeFontSize: number }) {
   const codeTheme = useCodeTheme()
   const { t } = useTranslation('common')
-  const codeViewRef = useRef<CodeViewHandle<undefined, undefined>>(null)
   const codeViewHostRef = useRef<HTMLDivElement>(null)
   const editor = useWorkspaceCodeEditor(file.path, codeViewHostRef, targetLineStart, targetLineEnd)
+  const bindEditorView = editor.bindView
   const currentPathRef = useRef(file.path)
   const currentLoadVersion = useRef(loadVersion)
   const [selection, setSelection] = useState<SelectionState | null>(null)
@@ -484,28 +492,6 @@ function WorkspaceFilePreviewContent({
   const codeLineHeight = Math.round(codeFontSize * 1.8)
   const [initialItems] = useState(() => [createWorkspaceCodeItem(file, editing, editedContent)])
 
-  // Pierre owns the live document and undo stack. Saving must not echo a disk
-  // snapshot back over edits made while the write request was in flight.
-  useLayoutEffect(() => {
-    const view = codeViewRef.current
-    if (
-      view &&
-      (currentPathRef.current !== file.path || currentLoadVersion.current !== loadVersion)
-    ) {
-      view.removeItem(currentPathRef.current)
-      view.addItems([createWorkspaceCodeItem(file, editing, editedContent)])
-      currentPathRef.current = file.path
-      currentLoadVersion.current = loadVersion
-      return
-    }
-    const item = view?.getItem(file.path)
-    if (!view || !item || item.type !== 'file') return
-    if (item.edit && editing) return
-    const cacheKey = `${file.path}:${file.revision}`
-    if (item.edit === editing && item.file.cacheKey === cacheKey) return
-    const nextItem = createWorkspaceCodeItem(file, editing, editedContent, (item.version ?? 0) + 1)
-    view.updateItem({ ...item, ...nextItem, file: item.edit ? item.file : nextItem.file })
-  }, [editedContent, editing, file, loadVersion])
   const activeSelection =
     selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
   const activeCommentSelection =
@@ -532,32 +518,70 @@ function WorkspaceFilePreviewContent({
   const allLinesSelected =
     activeSelection?.startLine === 1 && activeSelection.endLine === lines.length
 
-  useEffect(() => {
-    const source = `workspace-preview:${file.path}`
-    const host = codeViewHostRef.current
-    const cleanup =
-      host && activeCommentSelection
+  const bindSelectionHost = useCallback(
+    (host: HTMLDivElement | null) => {
+      if (!host) return
+      const source = `workspace-preview:${file.path}`
+      const cleanup = activeCommentSelection
         ? installCodeViewTextDrag(host, activeCommentSelection.selectedText, rect => {
             publishSelectedTextSelection(source, activeCommentSelection.selectedText, rect)
           })
         : undefined
-    if (!activeCommentSelection) publishSelectedTextSelection(source, null)
-    return () => {
-      cleanup?.()
-      publishSelectedTextSelection(source, null)
-    }
-  }, [activeCommentSelection, file.path])
+      if (!activeCommentSelection) publishSelectedTextSelection(source, null)
+      return () => {
+        cleanup?.()
+        publishSelectedTextSelection(source, null)
+      }
+    },
+    [activeCommentSelection, file.path]
+  )
 
-  useEffect(() => {
-    if (!targetLineRange) return
-    codeViewRef.current?.scrollTo({
-      type: 'range',
-      id: file.path,
-      range: targetLineRange,
-      align: 'center',
-      behavior: 'instant',
-    })
-  }, [file.path, targetLineRange])
+  const scrollRequest = useRef<{ path: string; range: typeof targetLineRange } | null>(null)
+  // Pierre owns the live document and undo stack. Saving must not echo a disk
+  // snapshot back over edits made while the write request was in flight.
+  const bindCodeView = useCallback(
+    (view: CodeViewHandle<undefined, undefined> | null) => {
+      if (!view) return
+      const syncItem = () => {
+        if (currentPathRef.current !== file.path || currentLoadVersion.current !== loadVersion) {
+          view.removeItem(currentPathRef.current)
+          view.addItems([createWorkspaceCodeItem(file, editing, editedContent)])
+          currentPathRef.current = file.path
+          currentLoadVersion.current = loadVersion
+          return
+        }
+        const item = view.getItem(file.path)
+        if (!item || item.type !== 'file' || (item.edit && editing)) return
+        const cacheKey = `${file.path}:${file.revision}`
+        if (item.edit === editing && item.file.cacheKey === cacheKey) return
+        const nextItem = createWorkspaceCodeItem(
+          file,
+          editing,
+          editedContent,
+          (item.version ?? 0) + 1
+        )
+        view.updateItem({ ...item, ...nextItem, file: item.edit ? item.file : nextItem.file })
+      }
+      syncItem()
+      const releaseEditor = bindEditorView(view)
+      if (
+        targetLineRange &&
+        (scrollRequest.current?.path !== file.path ||
+          scrollRequest.current.range !== targetLineRange)
+      ) {
+        view.scrollTo({
+          type: 'range',
+          id: file.path,
+          range: targetLineRange,
+          align: 'center',
+          behavior: 'instant',
+        })
+      }
+      scrollRequest.current = { path: file.path, range: targetLineRange }
+      return releaseEditor
+    },
+    [bindEditorView, editedContent, editing, file, loadVersion, targetLineRange]
+  )
 
   const captureLineSelection = useCallback(
     (selectionRange: WorkspaceCodeViewLineSelection | null) => {
@@ -682,6 +706,7 @@ function WorkspaceFilePreviewContent({
       onMouseUp={editing ? editor.publishSelection : undefined}
     >
       <div
+        ref={bindSelectionHost}
         data-testid="workspace-file-preview-code-view"
         data-file-path={file.path}
         data-theme={themeType}
@@ -690,7 +715,7 @@ function WorkspaceFilePreviewContent({
         <PierreCodeProvider>
           <EditProvider createEditor={editor.createEditor}>
             <CodeView
-              ref={codeViewRef}
+              ref={bindCodeView}
               containerRef={codeViewHostRef}
               initialItems={initialItems}
               selectedLines={editing ? null : selectedLines}

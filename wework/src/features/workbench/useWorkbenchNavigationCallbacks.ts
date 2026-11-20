@@ -1,3 +1,4 @@
+import { getWorkbenchPaneKey } from '@/components/layout/workbenchPaneIdentity'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type { DeviceInfo } from '@/types/api'
 import type { RefreshWorkLists, WorkbenchSelectionOptions } from './workbenchContextTypes'
@@ -265,6 +266,8 @@ export function useSelectStandaloneDevice({
 export function useOpenStandaloneWorkspace({
   projectSelectionStartedRef,
   state,
+  getSnapshot,
+  workspaceTabId,
   executorClient,
   dispatch,
   clearRemoteProjectSyncRemoval,
@@ -273,6 +276,8 @@ export function useOpenStandaloneWorkspace({
 }: {
   projectSelectionStartedRef: RefObject<boolean>
   state: WorkbenchState
+  getSnapshot(): { state: WorkbenchState }
+  workspaceTabId?: string
   executorClient: ExecutorClient
   dispatch: ActionDispatch<[action: WorkbenchAction]>
   clearRemoteProjectSyncRemoval: (target: RuntimeProjectSyncTarget) => void
@@ -288,6 +293,18 @@ export function useOpenStandaloneWorkspace({
       launchOptions?: WorkbenchWorkspaceLaunchOptions
     ) => {
       projectSelectionStartedRef.current = true
+      const launchOwner = (targetDeviceId: string, options: WorkbenchWorkspaceLaunchOptions) => ({
+        ownershipKey,
+        workspaceTabId,
+        paneKey: getWorkbenchPaneKey(
+          options.taskId
+            ? {
+                currentRuntimeTask: { deviceId: targetDeviceId, taskId: options.taskId },
+                currentProject: null,
+              }
+            : getSnapshot().state
+        ),
+      })
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
       if (!requestDeviceId || !normalizedWorkspacePath) return
@@ -346,9 +363,6 @@ export function useOpenStandaloneWorkspace({
           })
         )
         await refreshWorkLists()
-        if (launchOptions) {
-          queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
-        }
         dispatch({
           type: 'project_workspace_selected',
           project: runtimeProjectToProject({
@@ -368,6 +382,13 @@ export function useOpenStandaloneWorkspace({
           }),
           startFreshChat: true,
         })
+        if (launchOptions)
+          queueWorkbenchWorkspaceLaunch(
+            response.deviceId,
+            response.roots[0],
+            launchOptions,
+            launchOwner(response.deviceId, launchOptions)
+          )
         navigateTo('/')
         return
       }
@@ -395,20 +416,26 @@ export function useOpenStandaloneWorkspace({
         requestDeviceId
 
       writeLastProjectId(ownershipKey, null)
-      if (launchOptions) {
-        queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
-      }
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
         workspacePath: openedWorkspacePath,
         label: normalizedLabel,
       })
+      if (launchOptions)
+        queueWorkbenchWorkspaceLaunch(
+          openedDeviceId,
+          openedWorkspacePath,
+          launchOptions,
+          launchOwner(openedDeviceId, launchOptions)
+        )
       navigateTo('/')
     },
     [
       projectSelectionStartedRef,
       state.devices,
+      getSnapshot,
+      workspaceTabId,
       executorClient.runtime,
       executorClient.commands,
       clearRemoteProjectSyncRemoval,

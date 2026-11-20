@@ -1,3 +1,4 @@
+import { useFocusRequest, useWindowEvent } from '../dom-events'
 import { useCollaborationPortalTheme } from '../theme'
 import {
   Check,
@@ -10,15 +11,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ProjectFolderIcon } from './ProjectFolderIcon'
 import { isCloudDevice } from '@wegent/chat-core/device-selection'
@@ -149,8 +142,10 @@ export function ProjectWorkBar({
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
-  const handledProjectMenuOpenSignalRef = useRef<number | undefined>(undefined)
-  const handledExternalMenuOpenSignalRef = useRef<number | undefined>(undefined)
+  const [handledOpenSignals, setHandledOpenSignals] = useState<{
+    project?: number
+    external?: number
+  }>({})
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -313,27 +308,9 @@ export function ProjectWorkBar({
     updateMenuLayout()
   }, [updateMenuLayout])
 
-  useEffect(() => {
-    if (!open) return
-
-    const handleResize = () => {
-      updateMenuLayout()
-    }
-
-    window.addEventListener('resize', handleResize)
-    window.addEventListener('scroll', handleResize, true)
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      window.removeEventListener('scroll', handleResize, true)
-    }
-  }, [open, updateMenuLayout])
-
-  useEffect(() => {
-    if (!open) return
-    if (isMobile) return
-
-    searchInputRef.current?.focus()
-  }, [isMobile, open])
+  useWindowEvent('resize', updateMenuLayout, { enabled: open })
+  useWindowEvent('scroll', updateMenuLayout, { enabled: open, capture: true })
+  useFocusRequest(searchInputRef, undefined, { enabled: open && !isMobile })
 
   const handleSelectDeviceWorkspace = useCallback(
     (projectId: number, workspace: RuntimeDeviceWorkspace) => {
@@ -392,23 +369,20 @@ export function ProjectWorkBar({
   const projectWorkTriggerAriaLabel = selectedProjectLabel
 
   useOutsideClick(containerRef, open, closeMenu, outsideMenuRefs)
-  useEffect(() => {
-    if (!projectMenuOpenSignal) return
-    if (handledProjectMenuOpenSignalRef.current === projectMenuOpenSignal) return
-
-    handledProjectMenuOpenSignalRef.current = projectMenuOpenSignal
-    setExternalMenuAnchorElement(isMobile ? null : projectMenuAnchorElement)
+  const projectOpenRequested =
+    Boolean(projectMenuOpenSignal) && handledOpenSignals.project !== projectMenuOpenSignal
+  const externalOpenRequested =
+    Boolean(externalMenuOpenSignal) && handledOpenSignals.external !== externalMenuOpenSignal
+  if (projectOpenRequested || externalOpenRequested) {
+    setHandledOpenSignals({
+      project: projectOpenRequested ? projectMenuOpenSignal : handledOpenSignals.project,
+      external: externalOpenRequested ? externalMenuOpenSignal : handledOpenSignals.external,
+    })
+    setExternalMenuAnchorElement(
+      externalOpenRequested || isMobile ? null : projectMenuAnchorElement
+    )
     setOpen(true)
-  }, [isMobile, projectMenuAnchorElement, projectMenuOpenSignal])
-
-  useEffect(() => {
-    if (!externalMenuOpenSignal) return
-    if (handledExternalMenuOpenSignalRef.current === externalMenuOpenSignal) return
-
-    handledExternalMenuOpenSignalRef.current = externalMenuOpenSignal
-    setExternalMenuAnchorElement(null)
-    setOpen(true)
-  }, [externalMenuOpenSignal])
+  }
 
   const handleSelectProject = (projectId: number) => {
     const option = projectWorkspaceOptionByProjectId.get(projectId)

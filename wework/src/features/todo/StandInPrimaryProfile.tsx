@@ -1,5 +1,13 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { useCallback, useImperativeHandle, useRef, useState, type Ref, type ReactNode } from 'react'
+import {
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+  type ReactNode,
+  useSyncExternalStore,
+} from 'react'
 import { dequal } from 'dequal'
 import {
   connectionChangeEnablesIdentity,
@@ -7,7 +15,7 @@ import {
   type PersonalStandInSettings,
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { CollaborationProject } from '@wegent/collaboration'
+import { createTagDraft, type CollaborationProject } from '@wegent/collaboration'
 import {
   StandInConnectionSettings,
   type StandInConnectionNavigationHandle,
@@ -111,7 +119,32 @@ export function StandInPrimaryProfile({
     settings.executionDeviceId
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
+  const [tagOwner, setTagOwner] = useState(() => ({
+    api,
+    userId: settings.userId,
+    deviceId: settings.executionDeviceId,
+    store: createTagDraft(),
+  }))
+  if (
+    tagOwner.api !== api ||
+    tagOwner.userId !== settings.userId ||
+    tagOwner.deviceId !== settings.executionDeviceId
+  ) {
+    setDraft(original)
+    setBaseline(original)
+    setTagOwner({
+      api,
+      userId: settings.userId,
+      deviceId: settings.executionDeviceId,
+      store: createTagDraft(),
+    })
+  }
+  const tagDraft = tagOwner.store
+  const connectionDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
 
   const role = {
@@ -241,7 +274,7 @@ export function StandInPrimaryProfile({
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
-            onDraftDirtyChange={setConnectionDraftDirty}
+            tagDraft={tagDraft}
             projects={projects}
             api={api}
             deviceId={settings.executionDeviceId}

@@ -91,6 +91,22 @@ describe('runtime composer plugin source', () => {
     expect(read).toHaveBeenCalledTimes(2)
   })
 
+  it('returns skills while plugin asset reads are still pending', async () => {
+    const value = snapshot()
+    value.skills = [{ name: 'review', path: '/skills/review/SKILL.md' }]
+    const read = vi.fn().mockResolvedValue(value)
+    let finishAsset!: (url: string) => void
+    const asset = new Promise<string>(resolve => {
+      finishAsset = resolve
+    })
+    const source = createRuntimeComposerPluginSource(read, address, translate, () => asset)
+    const apps = source.listApps()
+    expect(await source.listSkills()).toEqual(value.skills)
+    expect(read).toHaveBeenCalledTimes(1)
+    finishAsset('data:image/svg+xml;base64,PHN2Zy8+')
+    expect((await apps)[0].logoUrl).toBe('data:image/svg+xml;base64,PHN2Zy8+')
+  })
+
   it('surfaces failures and allows a fresh request without retaining partial catalogs', async () => {
     const read = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(snapshot())
     const resolveAsset = vi

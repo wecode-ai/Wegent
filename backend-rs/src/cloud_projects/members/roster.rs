@@ -4,9 +4,11 @@ use std::collections::{BTreeSet, HashMap};
 
 use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 
+use crate::plugins_marketplace::query::PluginQuery;
+
 use super::{
     MemberResponse, PermissionSource, collaboration_role, effective_project_role, has_permission,
-    workspace_kind,
+    workspace_kind_on,
 };
 
 #[derive(Debug, FromMysqlRow)]
@@ -71,12 +73,12 @@ fn member_sources(owner_id: i32, grants: Vec<Grant>, inherit: bool) -> HashMap<i
     sources
 }
 
-async fn grants<M: Mysql>(
-    mysql: &M,
+async fn grants(
+    query: &mut impl PluginQuery,
     project_id: i64,
     workspace_id: i64,
 ) -> MysqlResult<Vec<Grant>> {
-    mysql
+    query
         .fetch_all(
             format!(
                 "SELECT id, resource_type, entity_id, `role`, status FROM resource_members
@@ -90,7 +92,7 @@ async fn grants<M: Mysql>(
         .await
 }
 
-async fn users<M: Mysql>(mysql: &M, ids: BTreeSet<i32>) -> MysqlResult<Vec<User>> {
+async fn users(query: &mut impl PluginQuery, ids: BTreeSet<i32>) -> MysqlResult<Vec<User>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -99,7 +101,7 @@ async fn users<M: Mysql>(mysql: &M, ids: BTreeSet<i32>) -> MysqlResult<Vec<User>
         .map(i32::to_string)
         .collect::<Vec<_>>()
         .join(", ");
-    mysql
+    query
         .fetch_all(
             format!(
                 "SELECT id, user_name, email FROM users
@@ -111,14 +113,33 @@ async fn users<M: Mysql>(mysql: &M, ids: BTreeSet<i32>) -> MysqlResult<Vec<User>
 }
 
 pub(crate) async fn list_project_members<M: Mysql>(
-    mysql: &M,
+    mut mysql: &M,
     project_id: i64,
     workspace_id: Option<i64>,
     membership_mode: &str,
     capabilities: &HashMap<String, String>,
     caller_id: i32,
 ) -> MysqlResult<Vec<MemberResponse>> {
-    let Some(workspace) = workspace_kind(mysql, workspace_id).await? else {
+    list_project_members_on(
+        &mut mysql,
+        project_id,
+        workspace_id,
+        membership_mode,
+        capabilities,
+        caller_id,
+    )
+    .await
+}
+
+pub(crate) async fn list_project_members_on(
+    query: &mut impl PluginQuery,
+    project_id: i64,
+    workspace_id: Option<i64>,
+    membership_mode: &str,
+    capabilities: &HashMap<String, String>,
+    caller_id: i32,
+) -> MysqlResult<Vec<MemberResponse>> {
+    let Some(workspace) = workspace_kind_on(query, workspace_id).await? else {
         return Ok(Vec::new());
     };
     if workspace.kind != "CollaborationWorkspace" || !workspace.is_active {
@@ -126,10 +147,10 @@ pub(crate) async fn list_project_members<M: Mysql>(
     }
     let sources = member_sources(
         workspace.user_id,
-        grants(mysql, project_id, workspace.id).await?,
+        grants(query, project_id, workspace.id).await?,
         membership_mode == "inherit",
     );
-    let roster = users(mysql, sources.keys().copied().collect()).await?;
+    let roster = users(query, sources.keys().copied().collect()).await?;
     let expose_email = roster.iter().any(|user| user.id == caller_id);
     Ok(roster
         .into_iter()
@@ -256,8 +277,8 @@ mod tests {
     async fn grant_and_user_queries_are_batched_and_project_only_display_fields() {
         for size in [2, 86] {
             let mysql = KindQueryCapture::default();
-            grants(&mysql, 1001, 2001).await.unwrap();
-            users(&mysql, (1..=size).collect()).await.unwrap();
+            grants(&mut &mysql, 1001, 2001).await.unwrap();
+            users(&mut &mysql, (1..=size).collect()).await.unwrap();
             let queries = mysql.queries();
             assert_eq!(queries.len(), 2);
             assert!(

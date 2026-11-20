@@ -1,5 +1,4 @@
-import { useEffect, useRef } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
 import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
@@ -31,46 +30,7 @@ export function CategoryBrowseDialog({
   onAction: (action: PluginMarketplaceRowAction, item: PluginMarketplaceItem) => void
 }) {
   const { t } = useTranslation('common')
-  const dialogRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frameId = window.requestAnimationFrame(() => dialogRef.current?.focus())
-    return () => {
-      window.cancelAnimationFrame(frameId)
-      if (previouslyFocused?.isConnected) previouslyFocused.focus()
-    }
-  }, [])
-
-  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    // Portaled menus own their keyboard and focus scope, including Escape.
-    if (!event.currentTarget.contains(event.target as Node)) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onClose()
-      return
-    }
-    if (event.key !== 'Tab') return
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ) ?? []
-    )
-    if (focusable.length === 0) {
-      event.preventDefault()
-      dialogRef.current?.focus()
-      return
-    }
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(onClose, true, ':scope')
 
   return (
     <div
@@ -86,7 +46,6 @@ export function CategoryBrowseDialog({
         data-testid="plugins-category-browse-dialog"
         className="plugin-dialog-surface flex max-h-[88vh] w-full max-w-[920px] flex-col overflow-hidden"
         onClick={event => event.stopPropagation()}
-        onKeyDown={handleDialogKeyDown}
       >
         <div className="plugin-dialog-divider flex shrink-0 items-start justify-between gap-6 border-b px-6 py-5">
           <div className="min-w-0">

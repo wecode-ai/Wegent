@@ -9,6 +9,7 @@ import {
 import {
   LINUX_CORE_HISTORY_CHECKPOINT,
   isResourceExclusiveCheckpoint,
+  linuxCoreCheckpointResources,
 } from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
 
 const measurements = JSON.parse(
@@ -22,6 +23,7 @@ export function balanceLinuxCoreMatrix(
   matrix,
   seconds = measurements.scopes.core,
   runnerScale = 1,
+  scope = 'core',
 ) {
   if (!Array.isArray(matrix?.include))
     throw new Error('Invalid Linux Core matrix')
@@ -29,30 +31,38 @@ export function balanceLinuxCoreMatrix(
   const history = include.find((entry) =>
     entry.segments.split(',').includes(LINUX_CORE_HISTORY_CHECKPOINT),
   )
-  if (!history) return { ...matrix, include }
+  if (!history && scope === 'core' && runnerScale === 1) return { ...matrix, include }
   const checkpoints = (entry) =>
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
+  const pinned = (entry) =>
+    scope === 'core' && ['core-9', 'core-10'].includes(entry.id)
   const taskCount = include.reduce(
-    (total, entry) => total + (['core-9', 'core-10'].includes(entry.id)
-      ? 1 : checkpoints(entry).length),
+    (total, entry) => total + (pinned(entry) ? 1 : checkpoints(entry).length),
     0,
   )
-  include.push(...coreRunnerSlots(include, taskCount, runnerScale))
-  // Keep the two latency benchmark shards exclusive.
-  const receivers = include.filter(
-    (entry) => !['core-9', 'core-10'].includes(entry.id),
-  )
+  include.push(...coreRunnerSlots(include, taskCount, runnerScale, scope))
+  // Keep the latency benchmarks on their original runners. Redistribute their tails.
+  const receivers = include.filter((entry) => !pinned(entry))
   if (!receivers.some((entry) => entry !== history))
     return { ...matrix, include }
   if (new Set(before).size !== before.length)
     throw new Error('Overlapping Linux Core checkpoints')
-  const pending = receivers
+  const pending = include
     .filter((entry) => entry.segments.length)
-    .flatMap(checkpoints)
+    .flatMap((entry) => {
+      const selected = checkpoints(entry)
+      if (!pinned(entry)) return selected
+      entry.segments = selected[0]
+      return selected.slice(1)
+    })
     .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
     .sort((a, b) => a.localeCompare(b))
-  const ordered = orderLinuxCheckpoints(pending, 'core', seconds)
+  const exclusiveFor = (checkpoint) => isResourceExclusiveCheckpoint(checkpoint, scope === 'core')
+  // Place isolated prefixes before allocating any work to the parallel workers.
+  const ordered = orderLinuxCheckpoints(pending, scope, seconds).sort(
+    (a, b) => Number(exclusiveFor(b)) - Number(exclusiveFor(a)),
+  )
   const historySeconds = seconds[LINUX_CORE_HISTORY_CHECKPOINT]
   // History reserves every worker until it exits. Its remaining runner time
   // can serve measured ordinary checkpoints without sharing its runtime.
@@ -65,8 +75,10 @@ export function balanceLinuxCoreMatrix(
   }))
   // Exclusive checkpoints precede the worker queue and occupy the whole runner.
   // Add their duration to every worker, retaining the same runtime isolation.
+  const resources = (checkpoint) =>
+    scope === 'core' ? linuxCoreCheckpointResources(checkpoint) : []
   for (const checkpoint of ordered) {
-    const exclusive = isResourceExclusiveCheckpoint(checkpoint, true)
+    const exclusive = exclusiveFor(checkpoint)
     const load = (assignment) =>
       exclusive
         ? Math.max(...assignment.workers)
@@ -79,8 +91,13 @@ export function balanceLinuxCoreMatrix(
           historySeconds !== undefined &&
           seconds[checkpoint] !== undefined),
     )
+    const conflicts = (assignment) => {
+      const occupied = new Set(assignment.checkpoints.flatMap(resources))
+      return Number(resources(checkpoint).some((resource) => occupied.has(resource)))
+    }
     candidates.sort(
       (a, b) =>
+        conflicts(a) - conflicts(b) ||
         load(a) - load(b) ||
         a.workers.reduce((sum, value) => sum + value, 0) -
           b.workers.reduce((sum, value) => sum + value, 0) ||
@@ -141,13 +158,15 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  if (process.argv[2] === '--balance-core') {
+  if (['--balance-core', '--balance-cloud'].includes(process.argv[2])) {
+    const scope = process.argv[2] === '--balance-cloud' ? 'cloud' : 'core'
     if (!process.env.CORE_MATRIX) throw new Error('CORE_MATRIX is required')
     console.log(
       `matrix=${JSON.stringify(balanceLinuxCoreMatrix(
         JSON.parse(process.env.CORE_MATRIX),
-        measurements.scopes.core,
+        measurements.scopes[scope],
         Number(process.env.CORE_RUNNER_SCALE ?? 1),
+        scope,
       ))}`,
     )
   } else {

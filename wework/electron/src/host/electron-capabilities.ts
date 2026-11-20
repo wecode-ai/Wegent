@@ -10,7 +10,7 @@ import { registerNotificationReplyE2E } from './notification-reply-e2e.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
-import { focusE2EWindow } from './e2e-window-focus.js'
+import { blurE2EWindow, focusE2EWindow } from './e2e-window-focus.js'
 import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
@@ -44,8 +44,10 @@ import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
 import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
+import type { OpenAiCatalogStore } from './openai-catalog-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type { ComputerUseService } from './computer-use-service.js'
+import type { AppshotsService } from './appshots-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
@@ -150,6 +152,7 @@ function assertE2EEnabled(control: string): void {
 export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
+  openAiCatalog: OpenAiCatalogStore
   modelConfiguration?: ModelConfigurationStore
   syncLocalModels?: () => Promise<void>
   requestModelRuntime?: (input: Record<string, unknown>) => Promise<unknown>
@@ -157,6 +160,7 @@ export interface ElectronDesktopServices {
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
   executorHome: string
+  appshots?: AppshotsService
   processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateController
   browserAnnotations?: BrowserAnnotationController
@@ -277,13 +281,16 @@ export interface ElectronE2EHost {
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
   closeStartupSplash: () => boolean
-  completeSystemDragDrop: (payload: {
-    action: 'new-chat' | 'follow-up' | 'stash'
-    text: string | null
-    paths: string[]
-  }) => Promise<void>
+  completeSystemDragDrop: (
+    payload: {
+      action: 'new-chat' | 'follow-up' | 'stash'
+      text: string | null
+      paths: string[]
+    },
+    presentationId?: number
+  ) => Promise<boolean | void>
   dismissPopout: () => void
-  dismissSystemDragPanel: () => void
+  dismissSystemDragPanel: (presentationId: number | null) => boolean | void
   focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
@@ -293,7 +300,7 @@ export interface ElectronE2EHost {
   setProcessExplorerWindowSize: (width: number, height: number) => void
   closeProcessExplorerWindow: () => void
   dockVisible: () => boolean
-  getSystemDragContext: () => { conversationTitle: string | null }
+  getSystemDragContext: () => { conversationTitle: string | null; presentationId: number | null }
   runtimeDiagnostics: () => {
     coreDshPid: number | null
     executorPid: number | null
@@ -334,7 +341,7 @@ export interface ElectronE2EHost {
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
-  showSystemDragPanel: () => void | Promise<void>
+  showSystemDragPanel: () => number | void | Promise<number | void>
   systemDragPanelVisible: () => boolean
   takePendingSystemDrops: () => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'
@@ -389,7 +396,7 @@ export function createElectronCapabilityRouter(
     setProcessExplorerWindowSize: () => undefined,
     closeProcessExplorerWindow: () => undefined,
     dockVisible: () => true,
-    getSystemDragContext: () => ({ conversationTitle: null }),
+    getSystemDragContext: () => ({ conversationTitle: null, presentationId: null }),
     runtimeDiagnostics: () => ({
       coreDshPid: null,
       developmentPlugin: null,
@@ -697,6 +704,22 @@ export function createElectronCapabilityRouter(
     await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
+  const appshots = desktopServices.appshots
+  const requireAppshots = (): AppshotsService => {
+    if (!appshots) {
+      throw new HostCapabilityError('capability_unavailable', 'Appshots are unavailable')
+    }
+    return appshots
+  }
+  router.register('appshots.getStatus', () => requireAppshots().status())
+  router.register('appshots.capture', () => requireAppshots().capture())
+  router.register('appshots.openPermissionSettings', params => {
+    const permission = enumParam(params, 'permission', ['screenCapture', 'accessibility'])
+    if (permission !== 'screenCapture' && permission !== 'accessibility') {
+      throw new HostCapabilityError('invalid_params', 'permission is required')
+    }
+    return requireAppshots().openPermissionSettings(permission)
+  })
   router.register('computerUse.status', () => computerUse.status())
   router.register('computerUse.setEnabled', async params => {
     const enabled = booleanParam(params, 'enabled') ?? false
@@ -812,6 +835,23 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('e2e.blurMainWindow', async () => {
+    const target = requiredWindow(window)
+    try {
+      await blurE2EWindow(target, () => target.blur())
+    } catch (error) {
+      const destroyed = target.isDestroyed()
+      console.error('[desktop-e2e-window-blur-failed]', {
+        windowLabel: 'main',
+        pid: process.pid,
+        windowId: destroyed ? null : target.id,
+        destroyed,
+        visible: !destroyed && target.isVisible(),
+        focused: !destroyed && target.isFocused(),
+      })
+      throw error
+    }
   })
   router.register('e2e.insertText', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
@@ -1245,6 +1285,11 @@ export function createElectronCapabilityRouter(
     })
   })
   registerRendererStorageCapabilities(router, rendererStorage)
+  router.register('pluginCatalog.readOpenAi', () => desktopServices.openAiCatalog.read())
+  router.register('pluginCatalog.writeOpenAi', params =>
+    desktopServices.openAiCatalog.write(stringParam(params, 'snapshot'))
+  )
+  router.register('pluginCatalog.clearOpenAi', () => desktopServices.openAiCatalog.clear())
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)
@@ -1435,9 +1480,14 @@ export function createElectronCapabilityRouter(
     requiredSmartApps(smartApps).verify(stringParam(params, 'installationId'))
   )
   router.register('systemDrag.complete', params =>
-    e2eHost.completeSystemDragDrop(systemDragPayload(params))
+    e2eHost.completeSystemDragDrop(
+      systemDragPayload(params),
+      integerParam(params, 'presentationId')
+    )
   )
-  router.register('systemDrag.dismissPanel', () => e2eHost.dismissSystemDragPanel())
+  router.register('systemDrag.dismissPanel', params =>
+    e2eHost.dismissSystemDragPanel(integerParam(params, 'presentationId') ?? null)
+  )
   router.register('systemDrag.getContext', () => e2eHost.getSystemDragContext())
   router.register('systemDrag.panelVisible', () => e2eHost.systemDragPanelVisible())
   router.register('systemDrag.setContext', params =>

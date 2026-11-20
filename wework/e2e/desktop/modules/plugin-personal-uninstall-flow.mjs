@@ -4,6 +4,7 @@ import { lstat, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { refreshPluginInventory } from './plugin-inventory-state.mjs'
+import { collectLocalPluginCacheDiagnostics } from './plugin-runtime-diagnostics.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -260,12 +261,38 @@ export async function verifyAuthorSourceUninstall({
     true,
     'The author source was not installed before uninstall'
   )
-  await uninstallPersonalPluginInUi(control, plugin, { refresh: true, expectedVersion: version })
-  await until(
-    () => pathExists(cache),
-    exists => !exists,
-    'Author local runtime cache survived uninstall'
+  const beforeUninstall = await collectLocalPluginCacheDiagnostics(
+    codexHome,
+    plugin.name,
+    'wework-personal'
   )
+  const uninstallStartedAt = new Date().toISOString()
+  try {
+    await uninstallPersonalPluginInUi(control, plugin, { refresh: true, expectedVersion: version })
+    await until(
+      () => pathExists(cache),
+      exists => !exists,
+      'Author local runtime cache survived uninstall'
+    )
+  } finally {
+    await writeFile(
+      join(resultDir, 'author-source-uninstall-cache.json'),
+      `${JSON.stringify(
+        {
+          uninstallStartedAt,
+          capturedAt: new Date().toISOString(),
+          before: beforeUninstall,
+          after: await collectLocalPluginCacheDiagnostics(
+            codexHome,
+            plugin.name,
+            'wework-personal'
+          ),
+        },
+        null,
+        2
+      )}\n`
+    )
+  }
   await assertPersonalSourceUnchanged(source)
   await assertSharedRelease(cloudEnvironment, plugin, access)
   await assertAccountIdentity(recipientCloud, plugin, recipient)

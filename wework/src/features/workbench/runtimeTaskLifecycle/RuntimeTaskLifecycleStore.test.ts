@@ -28,14 +28,17 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
   }
 }
 
-function runtimeWork(summary: RuntimeTaskSummary): RuntimeWorkListResponse {
+function runtimeWork(
+  summary: RuntimeTaskSummary,
+  deviceId = address.deviceId
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
         project: { key: 'project-1', id: 1, name: 'Wegent' },
         deviceWorkspaces: [
           {
-            deviceId: address.deviceId,
+            deviceId,
             available: true,
             workspacePath: address.workspacePath ?? '',
             tasks: [summary],
@@ -2420,6 +2423,55 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.setCurrentTask(address)
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+  })
+
+  test('marks the open task unread when it settles while the window is unfocused', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.setCurrentTask(address)
+    store.setWindowFocused(false)
+    store.executorSettled(address)
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+
+    store.setWindowFocused(true)
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+  })
+
+  test('keeps the open task unread when a late device alias migration resolves', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const appAddress = { ...address, deviceId: 'app-record-65' }
+    store.syncRuntimeWork(runtimeWork(task({ running: true }), appAddress.deviceId))
+    store.setCurrentTask(appAddress)
+    store.setWindowFocused(false)
+    store.executorSettled(appAddress)
+    store.syncRuntimeWork(runtimeWork(task({ running: false }), appAddress.deviceId))
+
+    expect(store.getTask(appAddress)?.derived.shouldShowUnread).toBe(true)
+
+    store.syncDevices([
+      {
+        id: 65,
+        device_id: address.deviceId,
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+        socket_device_id: appAddress.deviceId,
+        runtime_routes: [
+          {
+            kind: 'local-ipc',
+            device_id: appAddress.deviceId,
+            runtime_device_id: address.deviceId,
+            status: 'online',
+          },
+        ],
+      },
+    ])
+
+    expect(store.getCurrentTask()?.address.deviceId).toBe(address.deviceId)
+    expect(store.getTask(appAddress)?.derived.shouldShowUnread).toBe(true)
   })
 
   test('never marks an active Goal turn gap unread', () => {

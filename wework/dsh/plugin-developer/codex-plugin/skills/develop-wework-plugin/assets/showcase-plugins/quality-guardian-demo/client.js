@@ -2,57 +2,84 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-test-explorer-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useMemo, useRef, useState } = React
+    const { createElement, useMemo, useSyncExternalStore } = React
     const PROVIDER_ID = 'test-explorer'
 
-    function TestExplorer({ scope, visible }) {
-      const [report, setReport] = useState(null)
-      const [selected, setSelected] = useState(new Set())
-      const [run, setRun] = useState(null)
-      const [loading, setLoading] = useState(false)
-      const [error, setError] = useState('')
-      const path = scope?.cwd ?? ''
-      const activePath = useRef(path)
-      const requestSequence = useRef(0)
-      if (activePath.current !== path) {
-        activePath.current = path
-        requestSequence.current += 1
+    function createTestExplorerState(path) {
+      let snapshot = { report: null, selected: new Set(), run: null, loading: false, error: '' }
+      let sequence = 0
+      const listeners = new Set()
+      const publish = patch => {
+        snapshot = { ...snapshot, ...patch }
+        listeners.forEach(listener => listener())
       }
-
-      useEffect(() => {
-        setReport(null)
-        setSelected(new Set())
-        setRun(null)
-        setError('')
-        setLoading(false)
-      }, [path])
-
       const discover = async () => {
-        if (!path || loading) return
-        const requestedPath = path
-        const requestId = ++requestSequence.current
-        const isCurrent = () =>
-          activePath.current === requestedPath && requestSequence.current === requestId
-        setLoading(true)
-        setError('')
+        if (!path || snapshot.loading) return
+        const request = ++sequence
+        publish({ loading: true, error: '' })
         try {
-          const next = await TestExplorer.wework.testing.discover(PROVIDER_ID, {
-            workspacePath: requestedPath,
+          const report = await TestExplorer.wework.testing.discover(PROVIDER_ID, {
+            workspacePath: path,
           })
-          if (!isCurrent()) return
-          setReport(next)
-          setSelected(new Set())
+          if (request === sequence) publish({ report, selected: new Set() })
         } catch (reason) {
-          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
+          if (request === sequence)
+            publish({ error: reason instanceof Error ? reason.message : String(reason) })
         } finally {
-          if (isCurrent()) setLoading(false)
+          if (request === sequence) publish({ loading: false })
         }
       }
+      return {
+        getSnapshot: () => snapshot,
+        subscribe(listener, visible) {
+          listeners.add(listener)
+          if (visible && path) void discover()
+          return () => listeners.delete(listener)
+        },
+        discover,
+        async runSelected() {
+          if (!path || snapshot.loading) return
+          const request = ++sequence
+          const testIds = [...snapshot.selected]
+          publish({ loading: true, error: '', run: { state: 'running', output: '正在启动测试…' } })
+          try {
+            const run = await TestExplorer.wework.testing.run(PROVIDER_ID, {
+              workspacePath: path,
+              testIds,
+            })
+            if (request === sequence) publish({ run })
+          } catch (reason) {
+            if (request === sequence)
+              publish({
+                run: null,
+                error: reason instanceof Error ? reason.message : String(reason),
+              })
+          } finally {
+            if (request === sequence) publish({ loading: false })
+          }
+        },
+        toggle(id) {
+          const selected = new Set(snapshot.selected)
+          if (selected.has(id)) selected.delete(id)
+          else selected.add(id)
+          publish({ selected })
+        },
+      }
+    }
 
-      useEffect(() => {
-        if (visible && path) void discover()
-      }, [path, visible])
-
+    function TestExplorer({ scope, visible }) {
+      const path = scope?.cwd ?? ''
+      const source = useMemo(() => createTestExplorerState(path), [path])
+      const subscribe = useMemo(
+        () => listener => source.subscribe(listener, visible),
+        [source, visible]
+      )
+      const { report, selected, run, loading, error } = useSyncExternalStore(
+        subscribe,
+        source.getSnapshot,
+        source.getSnapshot
+      )
+      const { discover, runSelected, toggle } = source
       const groups = useMemo(() => {
         const values = new Map()
         for (const test of report?.tests ?? []) {
@@ -62,40 +89,6 @@ window.__ModuleLoader__.load({
         }
         return [...values.entries()]
       }, [report])
-
-      const runSelected = async () => {
-        if (!path || loading) return
-        const requestedPath = path
-        const requestId = ++requestSequence.current
-        const isCurrent = () =>
-          activePath.current === requestedPath && requestSequence.current === requestId
-        setLoading(true)
-        setError('')
-        setRun({ state: 'running', output: '正在启动测试…' })
-        try {
-          const next = await TestExplorer.wework.testing.run(PROVIDER_ID, {
-            workspacePath: requestedPath,
-            testIds: [...selected],
-          })
-          if (isCurrent()) setRun(next)
-        } catch (reason) {
-          if (isCurrent()) {
-            setError(reason instanceof Error ? reason.message : String(reason))
-            setRun(null)
-          }
-        } finally {
-          if (isCurrent()) setLoading(false)
-        }
-      }
-
-      const toggle = id => {
-        setSelected(current => {
-          const next = new Set(current)
-          if (next.has(id)) next.delete(id)
-          else next.add(id)
-          return next
-        })
-      }
 
       return createElement(
         'section',

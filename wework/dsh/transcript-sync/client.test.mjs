@@ -23,18 +23,15 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
       },
     },
   }
-  vm.runInNewContext(source, { URLSearchParams, window })
+  vm.runInNewContext(source, { URLSearchParams, window, setInterval, clearInterval })
   assert.ok(handoff)
 
-  let state
   const React = {
     createElement(type, props, ...children) {
       return { type, props: props ?? {}, children: children.flat() }
     },
-    useEffect() {},
-    useState(initial) {
-      state = initial
-      return [state, next => (state = next)]
+    useSyncExternalStore(_subscribe, getSnapshot) {
+      return getSnapshot()
     },
   }
   const plugin = handoff.factory(id => {

@@ -3,6 +3,7 @@
 
 """Direct human Issue dispatch through a personal runtime task."""
 
+import logging
 from uuid import uuid4
 
 import pytest
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
-from app.models.delivery import CloudProject
+from app.models.delivery import CloudProject, LoopNode
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -20,6 +21,50 @@ from tests.utils.collaboration import authorize_project
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize("notify_assignee", [True, False])
+def test_create_assigned_issue_records_wakeup_intake(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+    test_db: Session,
+    direct_human_project: CloudProject,
+    caplog: pytest.LogCaptureFixture,
+    notify_assignee: bool,
+) -> None:
+    caplog.set_level(logging.INFO)
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{direct_human_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Merge GitHub PR wecode-ai/Wegent#4680",
+            "description": "Private instructions must not enter diagnostic logs",
+            "status": "pending",
+            "assignee_user_id": test_user.id,
+            "tags": ["quality gate"],
+            "notify_assignee": notify_assignee,
+        },
+    )
+    assert response.status_code == 201, response.text
+    issue_id = response.json()["id"]
+    events = (
+        test_db.query(LoopNode)
+        .filter_by(resource_type="stand_in_issue_event", user_id=test_user.id)
+        .all()
+    )
+    assert len(events) == int(notify_assignee)
+    if notify_assignee:
+        assert events[0].metadata_json["itemId"] == issue_id
+        assert (
+            events[0].metadata_json["assignmentId"]
+            == response.json()["human_task_binding"]["assignmentId"]
+        )
+        assert "Stand-in Issue wakeup staged" in caplog.text
+    else:
+        assert "reason=notify_assignee_false" in caplog.text
+    assert issue_id in caplog.text
+    assert "Private instructions must not enter diagnostic logs" not in caplog.text
 
 
 @pytest.fixture

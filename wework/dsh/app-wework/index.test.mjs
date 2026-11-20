@@ -38,6 +38,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
     WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: 'false',
     WEWORK_E2E_POSTHOG_KEY: 'posthog-test-key',
     WEWORK_E2E_SEED_LOCAL_MODELS: 'true',
+    WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS: '10000',
     WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '20',
     WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
   })
@@ -55,6 +56,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
   assert.ok(!html.includes('"telemetryDistribution"'))
   assert.ok(html.includes('"localModelsCatalogReady":false'))
   assert.ok(html.includes('"seedLocalModels":true'))
+  assert.ok(html.includes('"conversationCacheIdleTtlMs":10000'))
   assert.ok(html.includes('"transcriptPageSize":20'))
   assert.ok(html.includes('"worktreeCreationDelayMs":1500'))
 })

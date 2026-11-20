@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "contract": "project-surface-resolver-boundary@1",
+  "description": "Boundary cases for empty selectors, precedence conflicts, duplicate keys and prototype-chain keys. These are separate from the 15-case golden fixture.",
+  "resultKeys": [
+    "surface",
+    "mode",
+    "legacyView",
+    "timelineSubview",
+    "lossy",
+    "unsupported"
+  ],
+  "cases": [
+    {
+      "id": "empty-view",
+      "query": "view=",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "empty-surface",
+      "query": "surface=",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "empty-mode-with-work",
+      "query": "surface=work&mode=",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "only-mode",
+      "query": "mode=board",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "invalid-view-valid-pair",
+      "query": "view=not-a-view&surface=admin&mode=settings",
+      "expected": {
+        "surface": "admin",
+        "mode": "settings",
+        "legacyView": "manage",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "empty-view-valid-pair",
+      "query": "view=&surface=admin&mode=settings",
+      "expected": {
+        "surface": "admin",
+        "mode": "settings",
+        "legacyView": "manage",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "admin-default",
+      "query": "surface=admin",
+      "expected": {
+        "surface": "admin",
+        "mode": "files",
+        "legacyView": "files",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "admin-explicit",
+      "query": "surface=admin&mode=files",
+      "expected": {
+        "surface": "admin",
+        "mode": "files",
+        "legacyView": "files",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "valid-view-wins",
+      "query": "view=gantt&surface=admin&mode=files",
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "gantt",
+        "timelineSubview": "gantt",
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "invalid-pair",
+      "query": "surface=plan&mode=board",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "constructor-surface",
+      "query": "surface=constructor&mode=board",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "prototype-surface",
+      "query": "surface=__proto__&mode=board",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": true,
+        "unsupported": true
+      }
+    },
+    {
+      "id": "duplicate-view-first-wins",
+      "query": "view=gantt&view=calendar",
+      "expected": {
+        "surface": "plan",
+        "mode": "timeline",
+        "legacyView": "gantt",
+        "timelineSubview": "gantt",
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "duplicate-surface-first-wins",
+      "query": "surface=admin&surface=work&mode=files",
+      "expected": {
+        "surface": "admin",
+        "mode": "files",
+        "legacyView": "files",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "unrelated-query",
+      "query": "unrelated=value",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    },
+    {
+      "id": "bare-question-mark",
+      "query": "?",
+      "expected": {
+        "surface": "work",
+        "mode": "board",
+        "legacyView": "board",
+        "timelineSubview": null,
+        "lossy": false,
+        "unsupported": false
+      }
+    }
+  ]
+}

@@ -4904,8 +4904,8 @@ async fn verify_rollback_inference_context(native: bool) {
         .expect("the replacement must restore its inference context after control-only revert");
     assert_eq!(inference_resume.1["params"]["modelProvider"], "~");
     assert_eq!(
-        inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"],
-        native
+        inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"], false,
+        "replacement inference context must use HTTP Responses"
     );
     assert_eq!(
         inference_resume.1["params"]["config"]["model_providers.~"]["requires_openai_auth"],

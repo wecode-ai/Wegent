@@ -8,6 +8,7 @@ export type ChatErrorType =
   | "model_service_connection_error"
   | "network_error"
   | "timeout_error"
+  | "server_overloaded"
   | "llm_error"
   | "llm_unsupported"
   | "invalid_parameter"
@@ -26,7 +27,7 @@ export interface ParsedChatError {
   type: ChatErrorType;
   titleKey: string;
   descriptionKey: string;
-  endpoint?: string;
+  timeoutSeconds?: number;
   gitFailure?: GitAccessFailure;
 }
 
@@ -41,6 +42,12 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   model_service_connection_error: "model_service_connection_error",
   network_error: "network_error",
   timeout_error: "timeout_error",
+  server_overloaded: "server_overloaded",
+  serverOverloaded: "server_overloaded",
+  rateLimitExceeded: "rate_limit",
+  usageLimitExceeded: "quota_exceeded",
+  contextWindowExceeded: "context_length_exceeded",
+  unauthorized: "forbidden",
   llm_unsupported: "llm_unsupported",
   forbidden: "forbidden",
   payload_too_large: "payload_too_large",
@@ -135,11 +142,30 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ],
   ["rate_limit", ["rate limit", "rate_limit", "too many requests", "throttl"]],
   [
+    "server_overloaded",
+    [
+      "server is overloaded",
+      "server overloaded",
+      "server_overloaded",
+      "server_is_overloaded",
+      "model is overloaded",
+      "overloaded",
+    ],
+  ],
+  [
     "permission_denied",
     ["permission_denied", "permission denied", "permission_error"],
   ],
   ["forbidden", ["forbidden", "not allowed", "unauthorized", "403"]],
-  ["provider_error", ["error from provider", "upstream error"]],
+  [
+    "provider_error",
+    [
+      "error from provider",
+      "upstream error",
+      "502 bad gateway",
+      "503 service unavailable",
+    ],
+  ],
   [
     "llm_unsupported",
     [
@@ -157,7 +183,6 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
       "model unavailable",
       "model_not_found",
       "model error",
-      "overloaded",
       "llm request failed",
       "llm api error",
       "llm call failed",
@@ -182,10 +207,7 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
       "upstream connection interrupted",
     ],
   ],
-  [
-    "timeout_error",
-    ["timeout", "timed out", "504 gateway", "502 bad gateway", "超时"],
-  ],
+  ["timeout_error", ["timeout", "timed out", "504 gateway", "超时"]],
 ];
 
 export function parseChatError(
@@ -205,15 +227,20 @@ export function parseChatError(
     normalizeBackendType(backendType) ??
     normalizeBackendType(extractStructuredErrorType(error)) ??
     classifyByMessage(error);
+  const timeoutSeconds =
+    type === "timeout_error"
+      ? Number(
+          error.match(
+            /\bturn made no model or tool progress for (\d+)s\b/i,
+          )?.[1],
+        ) || undefined
+      : undefined;
 
   return {
     type,
     titleKey: `assistant_error.types.${type}.title`,
-    descriptionKey: `assistant_error.types.${type}.description`,
-    endpoint:
-      type === "model_service_connection_error"
-        ? extractFailedRequestUrl(error)
-        : undefined,
+    descriptionKey: `assistant_error.types.${type}.${timeoutSeconds ? "description_with_seconds" : "description"}`,
+    timeoutSeconds,
   };
 }
 
@@ -226,6 +253,9 @@ function normalizeBackendType(type?: string | null): ChatErrorType | undefined {
 
 function classifyByMessage(message: string): ChatErrorType {
   const lowerMessage = message.toLowerCase();
+  if (/\bturn made no model or tool progress for \d+s\b/.test(lowerMessage)) {
+    return "timeout_error";
+  }
   if (
     lowerMessage.includes("local model proxy request failed") &&
     (lowerMessage.includes("error sending request for url") ||
@@ -247,12 +277,6 @@ function classifyByMessage(message: string): ChatErrorType {
   }
 
   return "generic_error";
-}
-
-function extractFailedRequestUrl(message: string): string | undefined {
-  return message.match(
-    /(?:error sending request for url|failed to send request(?: to)?)\s*\((https?:\/\/[^)\s]+)\)/i,
-  )?.[1];
 }
 
 function extractStructuredErrorType(message: string): string | undefined {
@@ -304,7 +328,13 @@ function findErrorType(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
 
-  for (const key of ["error_type", "error_code", "type", "code"]) {
+  for (const key of [
+    "error_type",
+    "error_code",
+    "codexErrorInfo",
+    "type",
+    "code",
+  ]) {
     const candidate = record[key];
     if (typeof candidate === "string" && normalizeBackendType(candidate)) {
       return candidate;

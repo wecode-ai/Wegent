@@ -1,3 +1,4 @@
+import { cloudAutomationTargetsKey, eligibleCloudAutomationDevices } from './cloudAutomationDevices'
 import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import {
   createLocalDevicePluginApi,
@@ -30,6 +31,7 @@ import {
 import { mergeRuntimeWorkLists as mergeRuntimeWorkPair } from '@/features/workbench/runtimeWorkMerge'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { runtimeExecutionSnapshot } from '@wegent/chat-core/runtime-execution-snapshot'
+import { logRuntimeExecutionProjection } from './runtimeExecutionProjectionDiagnostics'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import {
@@ -67,7 +69,7 @@ import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
-import { EMPTY_RUNTIME_WORK } from '@/features/workbench/workbenchCloudStatus'
+import { EMPTY_RUNTIME_WORK, nowMs } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
 import type {
   Attachment,
@@ -582,10 +584,13 @@ export function createHybridWorkbenchServices(
     revision: number
   ) => {
     if (revision < rememberedCloudDevicesRevision) return
+    const automationTargetsChanged =
+      cloudAutomationTargetsKey(rememberedCloudDevices) !== cloudAutomationTargetsKey(devices)
     rememberedCloudDevices = devices
     rememberedAppDeviceRegistrations = appDeviceRegistrations
     rememberedCloudDevicesRevision = revision
     observeProjectPluginDevices()
+    if (automationTargetsChanged) notifyWorkbenchAutomationsChanged()
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
@@ -886,15 +891,30 @@ export function createHybridWorkbenchServices(
       NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
     >[0]
   ) => {
+    const startedAt = nowMs()
     const identity = await getLocalRuntimeSidebarIdentity()
+    const identityReadyAt = nowMs()
     try {
       const work = requestOptions
         ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
         : await localServices.runtimeWorkApi!.listRuntimeWork()
+      const workReadyAt = nowMs()
       if (identity)
         assertLocalRuntimeSidebarIdentity(identity, await getLocalRuntimeSidebarIdentity())
+      const ownerVerifiedAt = nowMs()
       const qualifiedWork = identity ? qualifyLocalRuntimeWork(work, identity) : work
       rememberLocalRuntimeWorkDevices(qualifiedWork)
+      const elapsedMs = Math.round(nowMs() - startedAt)
+      if (elapsedMs > 5000) {
+        console.warn(
+          `[Wework] Slow local runtime inventory ${JSON.stringify({
+            elapsedMs,
+            identityMs: Math.round(identityReadyAt - startedAt),
+            listMs: Math.round(workReadyAt - identityReadyAt),
+            ownerRecheckMs: Math.round(ownerVerifiedAt - workReadyAt),
+          })}`
+        )
+      }
       return qualifiedWork
     } catch (error) {
       if (isInvalidLocalRuntimeIdentityError(error)) revokeLocalRuntimeIdentity()
@@ -1183,6 +1203,7 @@ export function createHybridWorkbenchServices(
           ? api.getRuntimeTranscript(data, options)
           : api.getRuntimeTranscript(data))
         const snapshot = runtimeExecutionSnapshot(data, response)
+        logRuntimeExecutionProjection('read', data, response, snapshot)
         if (
           snapshot &&
           response.origin?.projectStore !== 'local' &&
@@ -1192,12 +1213,17 @@ export function createHybridWorkbenchServices(
         ) {
           // Cloud write-back must not prevent an offline local history read.
           // A failed report is retried on the next read, never cached as saved.
-          void cloudServices.projectChatClient.reconcileExecutionSnapshot(snapshot).catch(error => {
-            console.error('[Wework] Failed to persist runtime execution status', {
-              address: runtimeAddressDebug(data),
-              error,
+          void cloudServices.projectChatClient
+            .reconcileExecutionSnapshot(snapshot)
+            .then(messages => {
+              logRuntimeExecutionProjection('acknowledged', data, response, snapshot, messages)
             })
-          })
+            .catch(error => {
+              console.error('[Wework] Failed to persist runtime execution status', {
+                address: runtimeAddressDebug(data),
+                error,
+              })
+            })
         }
         return response
       } catch (error) {
@@ -1600,32 +1626,30 @@ export function createHybridWorkbenchServices(
     )
   }
   const refreshCloudAutomationsInBackground = () => {
-    rememberedCloudDevices
-      .filter(device => isUsableDevice(device) && device.device_type !== 'app')
-      .forEach(device => {
-        const deviceId = device.device_id
-        if (cloudAutomationRequests.has(deviceId)) return
-        const request = automationApiForDevice(deviceId)
-          .listAutomations()
-          .then(response => {
-            const previous = rememberedCloudAutomations.get(deviceId) ?? []
-            rememberAutomationRoutes(deviceId, response.items)
-            rememberedCloudAutomations.set(deviceId, response.items)
-            if (!sameAutomationVersions(previous, response.items)) {
-              notifyWorkbenchAutomationsChanged()
-            }
+    eligibleCloudAutomationDevices(rememberedCloudDevices).forEach(device => {
+      const deviceId = device.device_id
+      if (cloudAutomationRequests.has(deviceId)) return
+      const request = automationApiForDevice(deviceId)
+        .listAutomations()
+        .then(response => {
+          const previous = rememberedCloudAutomations.get(deviceId) ?? []
+          rememberAutomationRoutes(deviceId, response.items)
+          rememberedCloudAutomations.set(deviceId, response.items)
+          if (!sameAutomationVersions(previous, response.items)) {
+            notifyWorkbenchAutomationsChanged()
+          }
+        })
+        .catch(error => {
+          console.warn('[Wework] Failed to refresh cloud automations in background', {
+            deviceId,
+            error,
           })
-          .catch(error => {
-            console.warn('[Wework] Failed to refresh cloud automations in background', {
-              deviceId,
-              error,
-            })
-          })
-          .finally(() => {
-            cloudAutomationRequests.delete(deviceId)
-          })
-        cloudAutomationRequests.set(deviceId, request)
-      })
+        })
+        .finally(() => {
+          cloudAutomationRequests.delete(deviceId)
+        })
+      cloudAutomationRequests.set(deviceId, request)
+    })
   }
   const automationMutationDeviceId = (data: { taskRequest?: RuntimeTaskCreateRequest }) => {
     const deviceId = data.taskRequest?.deviceId?.trim()

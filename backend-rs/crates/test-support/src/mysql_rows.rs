@@ -60,10 +60,10 @@ fn column(name: &str, value: &Value) -> Vec<u8> {
 async fn definitions(stream: &mut TcpStream, sequence: &mut u8, row: &Row) {
     for (name, value) in row {
         packet(stream, *sequence, &column(name, value)).await;
-        *sequence += 1;
+        *sequence = sequence.wrapping_add(1);
     }
     packet(stream, *sequence, EOF).await;
-    *sequence += 1;
+    *sequence = sequence.wrapping_add(1);
 }
 
 async fn result(stream: &mut TcpStream, columns: Row, rows: Vec<Row>, status: u8) {
@@ -85,7 +85,7 @@ async fn result(stream: &mut TcpStream, columns: Row, rows: Vec<Row>, status: u8
             }
         }
         packet(stream, sequence, &bytes).await;
-        sequence += 1;
+        sequence = sequence.wrapping_add(1);
     }
     packet(stream, sequence, &[0xfe, 0, 0, status, 0]).await;
 }

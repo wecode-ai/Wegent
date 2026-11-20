@@ -21,7 +21,7 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
 pub(crate) struct Execute {
     pub task_id: i64,
     pub assistant_subtask_id: i64,
@@ -85,10 +85,31 @@ fn claim_allowed(task: &Task, assistant: &Assistant, input: &Execute) -> bool {
         && assistant.task_id == input.task_id
         && assistant.user_id == input.user_id
         && assistant.role == "ASSISTANT"
-        && assistant.status == "PENDING"
+        && matches!(assistant.status.as_str(), "PENDING" | "RUNNING")
 }
 
 pub(crate) async fn execute(state: &AppState, input: Execute) -> Result<Value> {
+    let redis = state
+        .redis
+        .as_ref()
+        .context("Managed execution requires Redis")?;
+    let key = format!(
+        "wegent:lock:managed-execution:{}:{}",
+        input.task_id, input.assistant_subtask_id
+    );
+    // The durable job may be redelivered after its process dies. Database
+    // RUNNING is not an execution owner; the renewable lease fences replays.
+    crate::internal_callback::completion::with_owned_lease(
+        redis,
+        &key,
+        || anyhow::anyhow!("Managed execution ownership is unavailable"),
+        None,
+        |_| execute_owned(state, input),
+    )
+    .await
+}
+
+async fn execute_owned(state: &AppState, input: Execute) -> Result<Value> {
     match execute_inner(state, &input).await {
         Ok(dispatched) => {
             Ok(json!({"status":if dispatched{"dispatched"}else{"skipped"},"task_id":input.task_id}))
@@ -137,21 +158,14 @@ pub(crate) async fn execute(state: &AppState, input: Execute) -> Result<Value> {
 }
 
 async fn execute_inner(state: &AppState, input: &Execute) -> Result<bool> {
+    if !super::super::robot::managed::authorize_task(state, input.task_id, input.user_id).await? {
+        return Ok(false);
+    }
     let tables = state.task_store.table_templates();
     let mysql = state
         .mysql
         .route(crate::task_routing::ByTaskId(input.task_id as u64));
-    let claimed=mysql.with_transaction(async |tx| {
-        let task:Option<Task>=tx.fetch_optional(format!("SELECT user_id,json,project_id FROM {} WHERE id=? AND kind='Task' FOR UPDATE",tables.tasks),(input.task_id,)).await?;
-        let assistant:Option<Assistant>=tx.fetch_optional(format!("SELECT id,task_id,user_id,role,status,message_id,executor_name,executor_namespace FROM {} WHERE id=? FOR UPDATE",tables.subtasks),(input.assistant_subtask_id,)).await?;
-        let (Some(mut task),Some(assistant))=(task,assistant) else{return Ok(false)};
-        if !claim_allowed(&task,&assistant,input) {return Ok(false)}
-        let now=Utc::now().naive_utc();
-        task.json.0["status"]["status"]=json!("RUNNING");task.json.0["status"]["updatedAt"]=json!(super::store::iso(now));
-        tx.execute(format!("UPDATE {} SET status='RUNNING' WHERE id=? AND task_id=? AND user_id=? AND role='ASSISTANT' AND status='PENDING'",tables.subtasks),(input.assistant_subtask_id,input.task_id,input.user_id)).await?;
-        tx.execute(format!("UPDATE {} SET json=?,updated_at=? WHERE id=?",tables.tasks),(task.json,now,input.task_id)).await?;
-        Ok(true)
-    }).await?;
+    let claimed = claim(&mysql, tables, input).await?;
     if !claimed {
         return Ok(false);
     }
@@ -160,6 +174,9 @@ async fn execute_inner(state: &AppState, input: &Execute) -> Result<bool> {
             .await?;
     }
     let request = request_for_task(state, input).await?;
+    if !super::super::robot::managed::authorize_task(state, input.task_id, input.user_id).await? {
+        return Ok(false);
+    }
     // Cancellation can race expensive credential/skills/request preparation.
     let still_running:Option<Assistant>=mysql.fetch_optional(format!("SELECT id,task_id,user_id,role,status,message_id,executor_name,executor_namespace FROM {} WHERE id=? AND task_id=? AND user_id=? AND role='ASSISTANT' AND status='RUNNING'",tables.subtasks),(input.assistant_subtask_id,input.task_id,input.user_id)).await?;
     let task: Option<Task> = mysql
@@ -178,8 +195,36 @@ async fn execute_inner(state: &AppState, input: &Execute) -> Result<bool> {
     {
         return Ok(false);
     }
-    dispatch(state, &request).await?;
+    if !super::super::robot::managed::mark_started(
+        state,
+        input.task_id,
+        input.user_id,
+        routing::shell_type(&request) == "Chat",
+    )
+    .await?
+    {
+        return Ok(false);
+    }
+    dispatch_inner(state, &request, true).await?;
     Ok(true)
+}
+
+pub(super) async fn claim<M: Mysql>(
+    mysql: &M,
+    tables: crate::task_store::TableTemplates,
+    input: &Execute,
+) -> brz_mysql::MysqlResult<bool> {
+    mysql.with_transaction(async |tx| {
+        let task:Option<Task>=tx.fetch_optional(format!("SELECT user_id,json,project_id FROM {} WHERE id=? AND kind='Task' FOR UPDATE",tables.tasks),(input.task_id,)).await?;
+        let assistant:Option<Assistant>=tx.fetch_optional(format!("SELECT id,task_id,user_id,role,status,message_id,executor_name,executor_namespace FROM {} WHERE id=? FOR UPDATE",tables.subtasks),(input.assistant_subtask_id,)).await?;
+        let (Some(mut task),Some(assistant))=(task,assistant) else{return Ok(false)};
+        if !claim_allowed(&task,&assistant,input) {return Ok(false)}
+        let now=Utc::now().naive_utc();
+        task.json.0["status"]["status"]=json!("RUNNING");task.json.0["status"]["updatedAt"]=json!(super::store::iso(now));
+        tx.execute(format!("UPDATE {} SET status='RUNNING' WHERE id=? AND task_id=? AND user_id=? AND role='ASSISTANT' AND status IN ('PENDING','RUNNING')",tables.subtasks),(input.assistant_subtask_id,input.task_id,input.user_id)).await?;
+        tx.execute(format!("UPDATE {} SET json=?,updated_at=? WHERE id=?",tables.tasks),(task.json,now,input.task_id)).await?;
+        Ok(true)
+    }).await
 }
 
 pub(crate) async fn request_for_task(
@@ -227,7 +272,8 @@ pub(crate) async fn request_for_task(
         bail!("No valid bots found in managed project automation Team")
     }
     let member = &team.json.0["spec"]["members"][0];
-    let request_id = crate::task_creation::pending_task_name();
+    // Reuse the automatic-pipeline queue's task/turn idempotency contract.
+    let request_id = format!("pipeline-{}-{}", input.task_id, input.assistant_subtask_id);
     let mut request = create::request::build_background_execution_request(
         state,
         &BuildExecutionRequestInput {
@@ -308,6 +354,14 @@ fn add_board_capabilities(request: &mut ExecutionRequest) {
 }
 
 pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Result<()> {
+    dispatch_inner(state, request, false).await
+}
+
+async fn dispatch_inner(
+    state: &AppState,
+    request: &ExecutionRequest,
+    recovering: bool,
+) -> Result<()> {
     let shell = routing::shell_type(request);
     let chat = create::seam::chat_shell_url();
     let chat_shell_mode = routing::chat_shell_mode();
@@ -326,6 +380,18 @@ pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Re
         CommunicationMode::Sse | CommunicationMode::Inprocess => {
             let mut consumer = create::sse_sync::ConsumerContext::from_app(state);
             consumer.package_mode = target.mode == CommunicationMode::Inprocess;
+            if recovering {
+                consumer.recover_terminal = true;
+                crate::internal_callback::session::cleanup_streaming_state(
+                    state
+                        .redis
+                        .as_ref()
+                        .context("Managed execution requires Redis")?,
+                    request.subtask_id,
+                    None,
+                )
+                .await?;
+            }
             create::sse_sync::collect(
                 &consumer,
                 target
@@ -355,11 +421,70 @@ pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Re
                 .await?;
         }
         CommunicationMode::Polling => {
+            if recovering
+                && !claim_polling_handoff(
+                    &state
+                        .mysql
+                        .route(crate::task_routing::ByTaskId(request.task_id as u64)),
+                    state.task_store.table_templates(),
+                    request.task_id,
+                    request.subtask_id,
+                    request.user_id,
+                )
+                .await?
+            {
+                return Ok(());
+            }
             crate::background_jobs::video::create::dispatch(state, request).await?
         }
         other => bail!("managed project execution cannot route {other:?}"),
     }
     Ok(())
+}
+
+/// Polling providers do not implement the executor queue's request deduplication.
+/// Persist the handoff before calling them; an interrupted, ambiguous submission
+/// must not silently create a second external job. Accepted videos already have
+/// a durable job identity consumed by the existing video recovery scanner.
+pub(super) async fn claim_polling_handoff<M: Mysql>(
+    mysql: &M,
+    tables: crate::task_store::TableTemplates,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+) -> Result<bool> {
+    #[derive(FromMysqlRow)]
+    struct Current {
+        result: Option<Json<Value>>,
+    }
+    let decision = mysql.with_transaction(async |tx| {
+        let row: Option<Current> = tx.fetch_optional(
+            format!("SELECT s.result FROM {} s JOIN {} t ON t.id=s.task_id WHERE s.id=? AND s.task_id=? AND s.user_id=? AND t.user_id=? AND t.is_active=1 AND s.role='ASSISTANT' AND s.status='RUNNING' FOR UPDATE", tables.subtasks, tables.tasks),
+            (subtask_id, task_id, user_id, user_id),
+        ).await?;
+        let Some(row) = row else { return Ok(None) };
+        let mut result = row.result.map(|v| v.0).unwrap_or_else(|| json!({}));
+        if result["managed_polling_dispatch_started"] == true || result.get("video_job").is_some() {
+            return Ok(Some((false, result)));
+        }
+        result["managed_polling_dispatch_started"] = json!(true);
+        tx.execute(format!("UPDATE {} SET result=?,updated_at=NOW() WHERE id=?", tables.subtasks), (Json(result.clone()), subtask_id)).await?;
+        Ok(Some((true, result)))
+    }).await?;
+    match decision {
+        None => Ok(false),
+        Some((true, _)) => Ok(true),
+        Some((false, result))
+            if result["video_job"]["job_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()) =>
+        {
+            Ok(false)
+        }
+        Some((false, _)) => bail!(
+            "Polling execution was interrupted during provider handoff; acceptance is unknown and automatic resubmission is unsafe"
+        ),
+    }
 }
 
 #[cfg(test)]

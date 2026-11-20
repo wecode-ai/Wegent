@@ -8,7 +8,8 @@ use std::{
     path::Path,
 };
 
-use serde_json::{json, Value};
+use serde::Deserialize;
+use serde_json::{json, value::RawValue, Value};
 
 use super::util::{codex_wrapped_item_payload, integer_field, item_type, string_field};
 
@@ -31,7 +32,7 @@ pub(crate) fn rollout_context_usage(thread: &Value) -> Option<Value> {
 
 pub(super) fn record_context_usage(item: &Value) -> Option<Value> {
     let payload = codex_wrapped_item_payload(item).unwrap_or(item);
-    if !matches!(item_type(payload).as_str(), "tokencount" | "token_count") {
+    if item_type(payload) != "tokencount" {
         return None;
     }
     payload
@@ -41,13 +42,53 @@ pub(super) fn record_context_usage(item: &Value) -> Option<Value> {
 }
 
 fn rollout_path_context_usage(path: &Path) -> Option<Value> {
-    let reader = BufReader::new(File::open(path).ok()?);
-    reader
-        .lines()
-        .map_while(Result::ok)
-        .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
-        .filter_map(|item| record_context_usage(&item))
-        .last()
+    let mut reader = BufReader::new(File::open(path).ok()?);
+    let mut line = String::new();
+    let mut usage = None;
+    while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+        if may_contain_context_usage(&line) {
+            if let Some(next) = serde_json::from_str(&line)
+                .ok()
+                .and_then(|item| record_context_usage(&item))
+            {
+                usage = Some(next);
+            }
+        }
+        line.clear();
+    }
+    usage
+}
+
+#[derive(Deserialize)]
+struct RolloutHeader<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Option<&'a RawValue>,
+    #[serde(borrow)]
+    payload: Option<&'a RawValue>,
+}
+
+impl RolloutHeader<'_> {
+    fn kind(&self) -> String {
+        self.kind
+            .and_then(|kind| serde_json::from_str::<String>(kind.get()).ok())
+            .unwrap_or_default()
+            .replace('_', "")
+            .to_ascii_lowercase()
+    }
+}
+
+fn may_contain_context_usage(line: &str) -> bool {
+    let Ok(record) = serde_json::from_str::<RolloutHeader>(line) else {
+        return true;
+    };
+    match record.kind().as_str() {
+        "tokencount" => true,
+        "responseitem" | "eventmsg" => record.payload.is_some_and(|payload| {
+            serde_json::from_str::<RolloutHeader>(payload.get())
+                .map_or(true, |payload| payload.kind() == "tokencount")
+        }),
+        _ => false,
+    }
 }
 
 fn normalize_token_usage_info(info: &Value) -> Option<Value> {
@@ -97,4 +138,33 @@ fn normalize_token_usage_breakdown(value: &Value) -> Option<Value> {
             .or_else(|| integer_field(value, "reasoningOutputTokens"))
             .unwrap_or(0),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rollout_usage_uses_the_latest_valid_token_count_record() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let counts = |total| {
+            json!({"type":"token_count","info":{
+                "total_token_usage":{"total_tokens":total},
+                "last_token_usage":{"total_tokens":2},
+                "model_context_window":200
+            }})
+        };
+        let lines = [
+            counts(10),
+            json!({"type":"response_item","payload":{"type":"message","content":[counts(90)]}}),
+            json!({"type":"event_msg","payload":counts(20)}),
+            json!({"type":"event_msg","payload":{"type":"token_count","info":null}}),
+        ];
+        let contents = lines.map(|line| line.to_string()).join("\n");
+        std::fs::write(file.path(), contents).unwrap();
+
+        let usage = rollout_path_context_usage(file.path()).unwrap();
+        assert_eq!(usage["total"]["totalTokens"], 20);
+        assert_eq!(usage["last"]["totalTokens"], 2);
+    }
 }

@@ -8,6 +8,7 @@ import {
   selectE2EModel,
   fetchJson,
   CLOUD_PUBLIC_MODEL_NAME,
+  MODEL_REQUEST_TIMEOUT_MS,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -289,7 +290,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: `${DONE} ${round}` }
+            { text: `${DONE} ${round}`, timeoutMs: MODEL_REQUEST_TIMEOUT_MS }
           )
           assert.equal(await readFile(artifact, 'utf8'), TOOL_OK)
         }

@@ -1,3 +1,4 @@
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { runtimeProjectRefFromWorkspace } from '../../../../packages/chat-core/src/runtime-project-metadata'
 import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
@@ -2358,11 +2359,14 @@ export function createRuntimeWorkApiFromIpc(
     async listRuntimeWork(
       requestOptions?: RuntimeWorkListRequestOptions
     ): Promise<RuntimeWorkListResponse> {
+      const loadStartedAt = nowMs()
       const identity = await options.getLocalRuntimeSidebarIdentity?.()
+      const identityReadyAt = nowMs()
       if (options.getLocalRuntimeSidebarIdentity && !identity) {
         throw new Error('local-sidebar-identity-unavailable')
       }
-      const localDeviceId = requestOptions?.deviceId ?? (await getDefaultDeviceId())
+      const localDeviceId =
+        requestOptions?.deviceId ?? identity?.deviceId ?? (await getDefaultDeviceId())
       const startedAt = nowMs()
       try {
         const response = await request(
@@ -2376,18 +2380,31 @@ export function createRuntimeWorkApiFromIpc(
           },
           localDeviceId
         )
+        const responseReceivedAt = nowMs()
         if (identity) {
           assertLocalRuntimeSidebarIdentity(
             identity,
             (await options.getLocalRuntimeSidebarIdentity?.()) ?? null
           )
         }
+        const ownerVerifiedAt = nowMs()
         const runtimeWork = adaptListResponse(
           response,
           identity?.deviceId ?? localDeviceId,
           requestOptions,
           identity ?? undefined
         )
+        const e2eConfig = getDesktopE2ERuntimeConfig()
+        if (e2eConfig.controlUrl && !e2eConfig.disabled) {
+          logRuntimeTaskCreateStage('local-runtime-work-list', {
+            identityElapsedMs: Math.round(identityReadyAt - loadStartedAt),
+            defaultDeviceElapsedMs: Math.round(startedAt - identityReadyAt),
+            ipcElapsedMs: Math.round(responseReceivedAt - startedAt),
+            ownerRecheckElapsedMs: Math.round(ownerVerifiedAt - responseReceivedAt),
+            adaptElapsedMs: Math.round(nowMs() - ownerVerifiedAt),
+            totalElapsedMs: Math.round(nowMs() - loadStartedAt),
+          })
+        }
         return identity ? qualifyLocalRuntimeWork(runtimeWork, identity) : runtimeWork
       } catch (error) {
         console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
@@ -3582,13 +3599,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
     async (method, params, _deviceId, requestOptions) => {
-      if (
-        (method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search') &&
-        (!params?.runtime || params.runtime === 'codex')
-      ) {
-        // Restored sessions may read Codex before model discovery initializes its proxy/catalog.
-        await ensureStatus()
-      }
+      // IPC owns read readiness; model catalog preparation belongs to execution.
       return requestOptions
         ? request(method, params, undefined, requestOptions)
         : request(method, params)
@@ -4019,6 +4030,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: localParticipationIdentity.currentUser,
+    viewerUserIds: localParticipationIdentity.viewerUserIds,
     async prepareExecution({ projectId, taskId, agentId, text, runnerSelection }) {
       const [projects, task, agents] = await Promise.all([
         deliveryApi.listCloudProjects(),

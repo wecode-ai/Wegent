@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
 import {
   CollaborationFilesView,
   createCollaborationTranslator,
@@ -56,10 +56,6 @@ function WeworkFilesView({
   project: CloudProject
 }) {
   const { i18n, t } = useTranslation('common')
-  const translateRef = useRef(t)
-  useEffect(() => {
-    translateRef.current = t
-  }, [t])
   const language = i18n.resolvedLanguage ?? i18n.language ?? 'zh-CN'
   const sharedTranslate = useMemo(
     () => createCollaborationTranslator(language.startsWith('en') ? 'en' : 'zh-CN'),
@@ -81,15 +77,12 @@ function WeworkFilesView({
   )
   const translate = useCallback(
     (key: string, fallback?: string, options?: CollaborationFilesTranslateOptions) => {
-      const translated =
-        fallback === undefined
-          ? translateRef.current(key, options)
-          : translateRef.current(key, fallback, options)
+      const translated = fallback === undefined ? t(key, options) : t(key, fallback, options)
       return typeof translated === 'string' && translated !== key
         ? translated
         : sharedTranslate(key, fallback, options)
     },
-    [sharedTranslate]
+    [sharedTranslate, t]
   )
   const renderTooltip = useCallback(
     (label: string, child: ReactNode, align: 'start' | 'center' | 'end' = 'center') => (

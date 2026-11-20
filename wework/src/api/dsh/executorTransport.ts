@@ -80,6 +80,8 @@ export class DshExecutorTransportError extends Error {
 
 export async function describeDshExecutor(): Promise<DshExecutorDescription> {
   const response = await fetch(EXECUTOR_BASE_PATH, {
+    // Read live identity without serializing on Chromium HTTP cache entries.
+    cache: 'no-store',
     headers: { accept: 'application/json' },
   })
   const body = (await response.json()) as DshExecutorDescribeResponse | DshExecutorErrorBody

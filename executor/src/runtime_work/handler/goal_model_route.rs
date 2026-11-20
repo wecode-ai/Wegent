@@ -34,13 +34,22 @@ impl RuntimeWorkRpcHandler {
         );
         self.apply_backend_connection(&mut request);
         self.resolve_local_model_reference(&mut request, &link.local_task_id)?;
-        let registration = self
+        self.register_thread_event_route(
+            thread_id,
+            link.local_task_id.clone(),
+            request.clone(),
+            false,
+        );
+        self.ensure_notification_router().await;
+        // Apply the execution profile while the Goal is still stopped. Otherwise
+        // recovery reloads the passive history profile after activation and can
+        // unload the native continuation that the mutation already started.
+        let thread_path = runtime_thread_path_from_link(link);
+        let (_, registration) = self
             .codex_app_server
-            .bind_thread_model_route(&request, thread_id)
+            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
             .await
             .map_err(|error| AppIpcError::new("model_route_failed", error))?;
-        self.register_thread_event_route(thread_id, link.local_task_id.clone(), request, false);
-        self.ensure_notification_router().await;
         if let Some(route) = self
             .thread_event_routing
             .lock()

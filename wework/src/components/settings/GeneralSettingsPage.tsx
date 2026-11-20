@@ -4,7 +4,9 @@ import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice
 import { saveTelemetryConsent, useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
 import { ReplyPredictionSettings } from './ReplyPredictionSettings'
-import { useContext, useEffect, useState } from 'react'
+import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import {
   Activity,
   Bell,
@@ -49,7 +51,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
+import { harnessAppsApi } from '@/api/local/harnessApps'
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
 import { getPlatform } from '@/lib/platform'
 import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
@@ -84,17 +86,42 @@ export function GeneralSettingsPage() {
   const cloudConnection = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
   const workbench = useContext(WorkbenchContext)
-  const [preferences, setPreferences] = useState<AppPreferences>(
-    appPreferences?.loaded ? appPreferences.preferences : defaultAppPreferences
+  const [preferenceResource] = useState(() =>
+    createAsyncResource('settings/general-preferences', () => getAppPreferences(), {
+      refreshOnSubscribe: true,
+      failure(error) {
+        console.error('[Wework] Failed to load app preferences', error)
+      },
+    })
   )
-  const [cloudQuotaName, setCloudQuotaName] = useState<string | null>(null)
-  const [loading, setLoading] = useState(!appPreferences?.loaded)
+  const preferenceSnapshot = useSyncExternalStore(
+    appPreferences ? subscribeIdleResource : preferenceResource.subscribe,
+    preferenceResource.getSnapshot
+  )
+  const sourcePreferences = appPreferences
+    ? appPreferences.loaded
+      ? appPreferences.preferences
+      : undefined
+    : preferenceSnapshot.data
+  const [preferences, setPreferences] = useState<AppPreferences>(
+    sourcePreferences ?? defaultAppPreferences
+  )
+  const [preferenceSource, setPreferenceSource] = useState(sourcePreferences)
+  if (sourcePreferences && sourcePreferences !== preferenceSource) {
+    setPreferenceSource(sourcePreferences)
+    setPreferences(sourcePreferences)
+  }
+  const loading = appPreferences ? !appPreferences.loaded : !preferenceSnapshot.settled
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [actionError, setError] = useState<string | null>(null)
+  const error =
+    actionError ??
+    (!appPreferences && preferenceSnapshot.status === 'error'
+      ? t('workbench.general_settings_load_failed')
+      : null)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [pendingWorkbenchMode, setPendingWorkbenchMode] = useState<WorkbenchMode | null>(null)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
-  const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
   const [pendingSendKey, setPendingSendKey] = useState<'enter' | 'cmd_enter' | null>(null)
   const [pendingFollowUpBehavior, setPendingFollowUpBehavior] = useState<'queue' | 'guide' | null>(
     null
@@ -105,76 +132,40 @@ export function GeneralSettingsPage() {
     workbench?.state?.user?.preferences?.follow_up_behavior ?? 'queue'
   const followUpBehavior = pendingFollowUpBehavior ?? persistedFollowUpBehavior
 
-  useEffect(() => {
-    if (appPreferences && !appPreferences.loaded) return
-
-    let cancelled = false
-
-    const preferences = appPreferences
-      ? Promise.resolve(appPreferences.preferences)
-      : getAppPreferences()
-
-    preferences
-      .then(nextPreferences => {
-        if (!cancelled) {
-          setPreferences(nextPreferences)
-          setError(null)
-        }
-      })
-      .catch(fetchError => {
-        console.error('[Wework] Failed to load app preferences', fetchError)
-        if (!cancelled) {
-          setError(t('workbench.general_settings_load_failed'))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [appPreferences, t])
-
-  useEffect(() => {
-    if (!preferences.experimentalFeaturesEnabled) return
-    void harnessAppsApi
-      .list()
-      .then(setInstalledSmartApps)
-      .catch(error => {
+  const [smartAppsResource] = useState(() =>
+    createAsyncResource('settings/fixed-smart-apps', () => harnessAppsApi.list(), {
+      refreshOnSubscribe: true,
+      failure(error) {
         console.warn('[Wework] Failed to load installed Smart apps for fixed tabs', error)
-      })
-  }, [preferences.experimentalFeaturesEnabled])
-
-  useEffect(() => {
-    if (!cloudConnection.isConnected) return
-
-    let cancelled = false
-    getWegentUsageDisplay({
-      isConnected: cloudConnection.isConnected,
-      apiBaseUrl: cloudConnection.apiBaseUrl,
-      token: cloudConnection.token,
+      },
     })
-      .then(usage => {
-        if (!cancelled) {
-          setCloudQuotaName(usage.status === 'available' ? usage.sourceText : null)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setCloudQuotaName(null)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    cloudConnection.apiBaseUrl,
-    cloudConnection.isConnected,
-    cloudConnection.serviceKey,
-    cloudConnection.token,
-  ])
+  )
+  const smartAppsSnapshot = useSyncExternalStore(
+    preferences.experimentalFeaturesEnabled ? smartAppsResource.subscribe : subscribeIdleResource,
+    smartAppsResource.getSnapshot
+  )
+  const installedSmartApps = preferences.experimentalFeaturesEnabled
+    ? (smartAppsSnapshot.data ?? [])
+    : []
+  const { isConnected, apiBaseUrl, token, serviceKey } = cloudConnection
+  const userId = cloudConnection.user?.id
+  const quotaConnection = useMemo(
+    () => ({ isConnected, apiBaseUrl, token, serviceKey, userId }),
+    [isConnected, apiBaseUrl, token, serviceKey, userId]
+  )
+  const quotaResource = useMemo(
+    () =>
+      createAsyncResource('settings/cloud-quota-name', () =>
+        getWegentUsageDisplay(quotaConnection)
+      ),
+    [quotaConnection]
+  )
+  const quotaSnapshot = useSyncExternalStore(
+    isConnected ? quotaResource.subscribe : subscribeIdleResource,
+    quotaResource.getSnapshot
+  )
+  const cloudQuotaName =
+    quotaSnapshot.data?.status === 'available' ? quotaSnapshot.data.sourceText : null
 
   const handlePreferenceChange = async (key: BooleanPreferenceKey, value: boolean) => {
     setPreferences(current => ({ ...current, [key]: value }))
@@ -216,10 +207,9 @@ export function GeneralSettingsPage() {
     }
   }
 
-  useEffect(() => {
-    if (!recordingPopoutShortcut) return undefined
-
-    const handleKeyDown = (event: KeyboardEvent) => {
+  useWindowEvent(
+    'keydown',
+    event => {
       event.preventDefault()
       event.stopPropagation()
       if (event.key === 'Escape') {
@@ -230,11 +220,9 @@ export function GeneralSettingsPage() {
       if (!shortcut || !shortcut.includes('+')) return
       setRecordingPopoutShortcut(false)
       void savePopoutShortcut(shortcut)
-    }
-
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  })
+    },
+    { enabled: recordingPopoutShortcut, capture: true }
+  )
 
   const renderSwitchRow = ({ preferenceKey, testId, label, description }: SwitchRowProps) => (
     <SettingsRow
@@ -571,6 +559,22 @@ export function GeneralSettingsPage() {
             disabled={loading || saving}
             onSave={saveFixedWorkspaceTabs}
           />
+          {preferences.experimentalFeaturesEnabled && smartAppsSnapshot.status === 'error' && (
+            <div
+              data-testid="general-smart-apps-error"
+              className="px-4 py-3 text-sm text-destructive"
+            >
+              <span>{t('workbench.smart_apps_load_failed')}</span>
+              <button
+                type="button"
+                data-testid="general-smart-apps-retry"
+                onClick={() => void smartAppsResource.reload()}
+                className="ml-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+              >
+                {t('common.retry')}
+              </button>
+            </div>
+          )}
           {renderSwitchRow({
             preferenceKey: 'showMainWindowOnLaunch',
             testId: 'general-show-main-window-on-launch-toggle',
@@ -872,6 +876,16 @@ export function GeneralSettingsPage() {
               (loading ? t('common.loading', '加载中...') : t('workbench.general_settings_saving'))}
           </span>
         </div>
+      )}
+      {!appPreferences && preferenceSnapshot.status === 'error' && (
+        <button
+          type="button"
+          data-testid="general-settings-retry"
+          onClick={() => void preferenceResource.reload()}
+          className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+        >
+          {t('common.retry')}
+        </button>
       )}
       {showImportDialog && (
         <ExternalContentImportDialog onClose={() => setShowImportDialog(false)} />

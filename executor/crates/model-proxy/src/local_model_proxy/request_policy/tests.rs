@@ -81,14 +81,18 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
             {
                 "type": "message",
                 "role": "user",
+                "id": "wework_event_4d7b7f0ca34416937adf4da7ab5046a3",
                 "content": [{"type": "input_text", "text": "continue"}]
             }
         ]
     });
 
+    let encoded = serde_json::to_string(&original)
+        .unwrap()
+        .replace("wework_event_", r"\u0077ework_event_");
     let prepared = prepare(
         &upstream,
-        &serde_json::to_vec(&original).unwrap(),
+        encoded.as_bytes(),
         None,
         &Default::default(),
         false,
@@ -104,6 +108,7 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
     assert_eq!(request["input"][0]["summary"][0]["text"], "foreign thought");
     assert!(request["input"][0].get("id").is_none());
     assert!(request["input"][0].get("encrypted_content").is_none());
+    assert!(request["input"][1].get("id").is_none());
     assert_eq!(request["input"][1]["content"][0]["text"], "continue");
 }
 
@@ -200,6 +205,47 @@ async fn passthrough_without_model_mapping_preserves_request_bytes() {
     .await
     .unwrap();
     assert_eq!(prepared.body, original);
+}
+
+#[tokio::test]
+async fn responses_adapts_agent_messages_in_auto_and_standard_modes() {
+    let original = json!({"input": [
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "User input"}]},
+        {"type": "agent_message", "author": "/root", "recipient": "/root/worker",
+         "id": "amsg_one", "content": [{"type": "input_text", "text": "Continue the task"}]}
+    ]});
+    let mut compatible = original.clone();
+    compatible["input"][1] = json!({
+        "type": "message", "role": "developer",
+        "content": original["input"][1]["content"]
+    });
+
+    for (mode, model, forked, expected) in [
+        ("auto", "moonshot-kimi-k3", false, &compatible),
+        ("standard", "another-provider", true, &compatible),
+        ("passthrough", "another-provider", true, &original),
+    ] {
+        let mut config = upstream(mode);
+        config.model_id = Some(model.to_owned());
+        let mut input = original.clone();
+        if mode == "standard" {
+            input["input"][1]["encrypted_content"] = json!("stale-fork-state");
+        }
+        let prepared = prepare(
+            &config,
+            &serde_json::to_vec(&input).unwrap(),
+            None,
+            &Default::default(),
+            false,
+            forked,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(request["input"], expected["input"], "mode {mode}");
+    }
 }
 
 #[tokio::test]

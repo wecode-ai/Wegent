@@ -1,6 +1,13 @@
 classify_path() {
   local path="$1"
 
+  # The account wrapper and extracted provider retain the same feature gates.
+  case "$path" in
+    wework/src/features/workbench/OwnedWorkbenchProvider.*)
+      path="${path/OwnedWorkbenchProvider/WorkbenchProvider}"
+      ;;
+  esac
+
   # Feature-local dependencies add coverage without replacing existing routes.
   select_path_targets "$path" "${additional_catalog_path_targets[@]}" || true
 
@@ -17,7 +24,7 @@ classify_path() {
       wework-mobile/src/domain/mobileSubagents* | \
       wework-mobile/src/domain/mobileProcessingBlocks* | \
       wework-mobile/src/services/mobileTranscriptTransfer*)
-      select_target "core:streaming-subagents"
+      select_target "core:streaming-subagent-guidance"
       return
       ;;
     # The existing cloud fixture verifies Mobile's file transport, not native UI.
@@ -53,7 +60,7 @@ classify_path() {
       case "$path" in
         wework/dsh/coordination-runtime/index.js|wework/dsh/coordination-runtime/package.json|wework/dsh/coordination-runtime/cordis.patch.yml)
           select_target "core:release-package-startup"
-          select_target "core:core-dsh-plugin-management"
+          select_target "core:plugin-development"
           ;;
       esac
       return
@@ -196,7 +203,7 @@ classify_path() {
       packages/collaboration/src/controls/model-reasoning* | \
       packages/collaboration/src/controls/model-ui* | \
       packages/collaboration/src/controls/model-selector-utils*)
-      select_target "cloud:cloud-model-presets"
+      select_target "cloud:model-routing"
       select_target "core:codex-native-catalog"
       ;;
   esac
@@ -364,7 +371,7 @@ classify_path() {
       ;;
     executor/src/runtime_work/codex_transcript_page.rs)
       select_target "core:transcript-sync"
-      select_target "core:environment-panel-scroll"
+      select_target "core:window-lifecycle"
       ;;
     backend-rs/migrations/reference/versions/*wework_transcript* | \
       backend/app/api/endpoints/wework_transcripts.py | \
@@ -387,7 +394,7 @@ classify_path() {
     executor/src/local/app_ipc.rs | \
       executor/src/local/codex_home.rs | \
       executor/tests/local_app_ipc_contract.rs)
-      select_target "core:external-content-import"
+      select_target "core:workbench-mode"
       ;;
     backend/app/api/endpoints/runtime_work.py | \
       backend/app/api/ws/device_namespace.py | \
@@ -411,7 +418,6 @@ classify_path() {
       wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs | \
       packages/collaboration/src/issue-detail/IssueDelivery* | \
       packages/collaboration/src/issue-detail/deliveryMessages*)
-      select_target "core:collaboration-deliveries"
       select_target "core:collaboration-delivery-editing"
       ;;
     wework/e2e/desktop/scenarios/collaboration-template-agents.scenario.mjs | \
@@ -423,11 +429,11 @@ classify_path() {
       backend-rs/init_data/04-collaboration-templates.yaml | \
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"
-      select_target "core:collaboration-template-lifecycle"
-      select_target "core:collaboration-template-agents"
+      select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-templates"
       select_target "core:collaboration-template-app-device-routing"
       if [[ "$path" == packages/collaboration/src/templates/* ]]; then
-        select_target "core:collaboration-group-onboarding"
+        select_target "core:collaboration-personal-issues"
       fi
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
@@ -438,52 +444,45 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
-      select_target "core:collaboration-issue-archive"
-      select_target "core:collaboration-first-use"
-      select_target "core:collaboration-group-onboarding"
+      select_target "core:collaboration-milestones"
+      select_target "core:collaboration-personal-issues"
       select_collaboration_dispatch_checkpoints
       if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
         "$path" == packages/collaboration/src/agent-form/runnerRouting* ]]; then
-        select_target "core:collaboration-template-agents"
+        select_target "core:collaboration-templates"
         select_target "core:collaboration-template-app-device-routing"
       fi
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
-        select_target "core:collaboration-deliveries"
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
     wework/src/api/agentRoutingCatalog* | \
       wework/src/features/collaboration/WeworkProjectAgentConfigurationHost*)
-      select_target "core:collaboration-template-agents"
+      select_target "core:collaboration-templates"
       select_target "core:collaboration-template-app-device-routing"
       ;;
     packages/collaboration/*)
       if [[ "$path" == packages/collaboration/src/conversation/useConversationScrollController* ]]; then
-        select_target "core:follow-up-task-switch"
+        select_target "core:follow-up-message-visibility"
       fi
-      select_target "core:collaboration-parent-board"
+      select_target "core:collaboration-board-move-recovery"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
         select_target "core:task-attachments"
       fi
       select_target "core:collaboration-shared-core"
-      select_target "core:collaboration-issue-archive"
-      select_target "core:collaboration-first-use"
-      select_target "core:collaboration-group-onboarding"
+      select_target "core:collaboration-milestones"
+      select_target "core:collaboration-personal-issues"
       select_collaboration_dispatch_checkpoints
-      select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
-      select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
-      select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
-      select_target "core:collaboration-home-preload"
-      select_target "core:board-transcript-followup"
+      select_target "core:collaboration-issue-assignment-activity"
+      select_target "core:transcript-sync"
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
         "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
-        select_target "core:collaboration-deliveries"
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
@@ -507,7 +506,7 @@ classify_path() {
       backend/app/api/endpoints/deliveries.py | \
       backend/tests/api/test_cloud_projects_api.py | \
       backend/tests/api/test_deliveries_api.py)
-      select_target "core:collaboration-issue-attachment-preview"
+      select_target "core:collaboration-issue-comment-attachments"
       ;;
     shared/rust/* | backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
@@ -524,7 +523,6 @@ classify_path() {
       .github/actions/setup-node-workspace/* | \
       .github/actions/setup-python-uv-cache/* | \
       .github/actions/setup-wework-native-test-dependencies/* | \
-      .github/ci/wework-native-test-ubuntu.sources | \
       .github/actions/build-wework-windows-e2e/* | \
       .github/actions/build-wework-macos-e2e/* | \
       .github/workflows/wework-e2e.yml | \

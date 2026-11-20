@@ -28,6 +28,8 @@ const RESPONSE_ID_PREFIX: &str = "resp_";
 #[derive(Debug)]
 pub struct Continuation {
     pub task_id: i64,
+    /// The Socket.IO scope read identified this row as a subscription task.
+    pub is_subscription: bool,
     /// The Task's stored CRD, marked `PENDING` for this turn.
     pub task_json: Value,
 }
@@ -78,7 +80,11 @@ pub async fn resolve(
     let mut task_json = row.json.0.to_value();
     ensure_runnable(&task_json)?;
     mark_pending(&mut task_json, now);
-    Ok(Some(Continuation { task_id, task_json }))
+    Ok(Some(Continuation {
+        task_id,
+        is_subscription: false,
+        task_json,
+    }))
 }
 
 /// `check_task_status`: a Task that is still `RUNNING`/`PENDING` cannot accept

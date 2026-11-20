@@ -1,7 +1,9 @@
 //! Real HTTP/MySQL/Redis contract; invoked by the existing Backend Rust CI job.
 use super::*;
 use crate::{Application, auth::AppAuthenticator, config::AuthConfig};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+
+use anyhow::Context as _;
 
 #[path = "local_sync_completion_mysql_tests.rs"]
 mod completion_tests;
@@ -13,11 +15,11 @@ struct StoredKind {
 }
 
 fn http_client() -> brz_http::Client {
-    // The default 400ms socket budget is shorter than the valid 3s lease wait.
+    // Completion may use its shared 20-second contention budget.
     brz_http::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
-        .read_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(25))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap()
 }
@@ -26,10 +28,17 @@ fn http_client() -> brz_http::Client {
 #[ignore = "requires disposable MySQL/Redis and PLUGIN_LOCAL_SYNC_ENABLED=true"]
 async fn http_without_device_reuses_account_state_without_ledgers() -> anyhow::Result<()> {
     assert!(enabled());
-    crate::migrations::mysql_tests::isolated(verify).await
+    eprintln!("[plugin-local-sync] Opening the isolated MySQL schema");
+    tokio::time::timeout(
+        Duration::from_secs(120),
+        crate::migrations::mysql_tests::isolated(verify),
+    )
+    .await
+    .context("Local plugin sync fixture timed out; see the last fixture phase above")?
 }
 
 async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
+    eprintln!("[plugin-local-sync] Creating the HTTP fixture and validating the account snapshot");
     crate::migrations::upgrade(mysql).await?;
     for id in [81001, 81002] {
         mysql.execute("INSERT INTO users (id,user_name,password_hash,email,is_active,role,auth_source,preferences,git_info,created_at,updated_at) VALUES (?,?,'unused','',1,'user','password','{}','{}',NOW(),NOW())",(id,format!("local-sync-{id}"))).await?;
@@ -106,6 +115,13 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             json!({"protocolVersion":1,"instanceId":"native"}),
         )
     };
+    let recovery_plan = |user, instance| {
+        post(
+            user,
+            "/api/plugins/local-sync",
+            json!({"protocolVersion":1,"instanceId":instance,"recoveryPending":true}),
+        )
+    };
     let plan = read().await.json::<Value>().await?;
     assert_eq!(plan["generation"], 1);
     assert!(plan.get("snapshotId").is_none());
@@ -123,6 +139,12 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             (account.json, account.id),
         )
         .await?;
+    let active = recovery_plan(81001, "native").await.json::<Value>().await?;
+    assert_eq!(active["currentOperationIds"], json!(["target-operation"]));
+    for (user, instance) in [(81002, "native"), (81001, "other-native")] {
+        let isolated = recovery_plan(user, instance).await.json::<Value>().await?;
+        assert_eq!(isolated["currentOperationIds"], json!([]));
+    }
     // An unrelated bad package must not enter the targeted execution plan.
     mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','unrelated',?,1,NOW(),NOW())",(json!({"spec":{"installState":"installed","version":"bad","source":{"pluginKey":"unrelated"},"packageRef":{"checksum":"invalid"}}}),)).await?;
     let plan=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"instanceId":"native","targeted":true,"operationId":"target-operation"})).await.json::<Value>().await?;
@@ -159,10 +181,18 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         target.id
     );
     assert_eq!(removed["payload"]["plugins"], json!([]));
+    // The full replacement must identify the old intent as superseded without a
+    // separate replay response. Remove the unrelated malformed package first.
+    mysql.execute("UPDATE kinds SET is_active=0 WHERE user_id=81001 AND kind='InstalledPlugin' AND name='unrelated'",()).await?;
+    let superseded = recovery_plan(81001, "native").await.json::<Value>().await?;
+    assert_eq!(superseded["currentOperationIds"], json!([]));
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync' OR kind='Device'",()).await?.n,0);
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
+    eprintln!("[plugin-local-sync] Validating device receipts and lease contention");
     completion_tests::verify(mysql, address, target.id, &state).await?;
+    eprintln!("[plugin-local-sync] Draining the HTTP fixture");
     stop.send(()).unwrap();
     task.await??;
+    eprintln!("[plugin-local-sync] Closing the isolated MySQL schema");
     Ok(())
 }

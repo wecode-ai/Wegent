@@ -1,7 +1,9 @@
 export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
   if (value === undefined) return undefined
   if (!Array.isArray(value) || value.length < 1 || value.length > 100)
-    throw invalid('Select between 1 and 100 issue or change-request references')
+    throw invalid(
+      'Select between 1 and 100 issue, change-request or supported workflow-run references'
+    )
   const unique = new Map()
   for (const object of value) {
     if (
@@ -9,11 +11,15 @@ export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
       typeof object !== 'object' ||
       Array.isArray(object) ||
       Object.keys(object).some(key => !['entityKind', 'number'].includes(key)) ||
-      !['issue', 'change_request'].includes(object.entityKind) ||
+      ![
+        'issue',
+        'change_request',
+        ...(platform === 'github' ? ['workflow_run'] : ['pipeline']),
+      ].includes(object.entityKind) ||
       !Number.isSafeInteger(object.number) ||
       object.number < 1
     )
-      throw invalid('Select a valid issue or change-request reference')
+      throw invalid('Select a valid issue, change-request or supported workflow-run reference')
     unique.set(`${object.entityKind}:${object.number}`, {
       entityKind: object.entityKind,
       number: object.number,
@@ -22,7 +28,7 @@ export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
   const monitoredObjects = [...unique.values()].sort(
     (a, b) => a.entityKind.localeCompare(b.entityKind) || a.number - b.number
   )
-  const groups = ['change_request', 'issue'].flatMap(kind => {
+  const groups = ['change_request', 'issue', 'workflow_run', 'pipeline'].flatMap(kind => {
     const numbers = monitoredObjects
       .filter(object => object.entityKind === kind)
       .map(
@@ -30,8 +36,15 @@ export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
       )
     return numbers.length
       ? [
-          (kind === 'issue' ? 'Issues ' : platform === 'github' ? 'PRs ' : 'MRs ') +
-            numbers.join(', '),
+          (kind === 'workflow_run'
+            ? 'Workflow runs '
+            : kind === 'pipeline'
+              ? 'Pipelines '
+              : kind === 'issue'
+                ? 'Issues '
+                : platform === 'github'
+                  ? 'PRs '
+                  : 'MRs ') + numbers.join(', '),
         ]
       : []
   })

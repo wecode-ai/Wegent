@@ -1160,6 +1160,43 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test.each([
+    [
+      '已发现的缺陷直接当作本次根因。',
+      '发现的缺陷直接当作本次根因。',
+      1,
+      '已发现的缺陷直接当作本次根因。',
+    ],
+    ['看🙂结尾', '🙂结尾继续', 1, '看🙂结尾继续'],
+    ['重复', '重复', 2, '重复重复'],
+  ] as const)(
+    'merges positioned process text against history: %s',
+    (content, delta, offset, expected) => {
+      const state = reduceWorkbenchMessages([], {
+        type: 'block_created',
+        subtaskId: '9',
+        block: {
+          id: 'message-1',
+          type: 'text',
+          content,
+          status: 'streaming',
+          createdAt: 1,
+        },
+      })
+      const update = {
+        type: 'block_updated' as const,
+        subtaskId: '9',
+        blockId: 'message-1',
+        updates: { contentDelta: delta, contentOffset: offset },
+      }
+      const next = reduceWorkbenchMessages(state, update)
+      expect(next[0].blocks?.[0]).toMatchObject({ content: expected })
+      expect(
+        reduceWorkbenchMessages(next, update)[0].blocks?.[0],
+      ).toMatchObject({ content: expected })
+    },
+  )
+
   test('preserves custom tool render payload on block create and update', () => {
     const requestPayload = {
       kind: 'request_user_input',

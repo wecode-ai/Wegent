@@ -11,31 +11,86 @@ fn waiting(record: &Value, task: &str) -> bool {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(in crate::runtime_work::handler) fn resume_goal_after_owner_input(
+        &self,
+        task: &str,
+        thread: &str,
+    ) {
+        if self
+            .store
+            .read_task(task, |link| link.goal_status.as_deref() == Some("blocked"))
+            != Some(true)
+        {
+            return;
+        }
+        let handler = self.clone();
+        let task = task.to_owned();
+        let thread = thread.to_owned();
+        tokio::spawn(async move {
+            if let Err(error) = handler.resume_blocked_goal_for_owner(&task, &thread).await {
+                log_executor_event(
+                    "manual event Goal resume failed",
+                    &[("task_id", task), ("code", error.code)],
+                );
+            }
+        });
+    }
+
+    async fn resume_blocked_goal_for_owner(
+        &self,
+        task: &str,
+        thread: &str,
+    ) -> Result<(), AppIpcError> {
+        let records = self.connection_goal_records(task)?;
+        if records.is_empty() {
+            return Ok(());
+        }
+        let goal = self.read_event_goal(task).await?;
+        if goal["status"] != "blocked" || goal["threadId"] != thread {
+            return Ok(());
+        }
+        let identity = goal_identity(&goal);
+        if !records.values().any(|record| {
+            record["session"]["engine"] == "Codex"
+                && record["session"]["id"] == thread
+                && record["waiting_goal"] == identity
+        }) {
+            return Ok(());
+        }
+        let result = self
+            .set_task_goal(json!({
+                "taskId": task, "status": "active", "eventGoalExpected": goal,
+            }))
+            .await?;
+        if result["accepted"] != true {
+            return Err(invalid("Cannot resume the Goal after owner input"));
+        }
+        Ok(())
+    }
+
     fn connection_goal_records(
         &self,
         task: &str,
     ) -> Result<serde_json::Map<String, Value>, AppIpcError> {
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            Ok(state["operations"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .filter(|(_, record)| waiting(record, task))
-                .map(|(id, record)| (id.clone(), record.clone()))
-                .collect())
-        })
+        event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Waiting(task),
+            |state| {
+                Ok(state["operations"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .filter(|(_, record)| waiting(record, task))
+                    .map(|(id, record)| (id.clone(), record.clone()))
+                    .collect())
+            },
+        )
     }
 
     pub(in crate::runtime_work::handler) fn schedule_connection_goal_reconciliation(
         &self,
         task: &str,
     ) {
-        if !self
-            .connection_goal_records(task)
-            .is_ok_and(|records| !records.is_empty())
-        {
-            return;
-        }
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -92,7 +147,7 @@ impl RuntimeWorkRpcHandler {
                     || (current["status"] == "active"
                         && matches!(
                             record["status"].as_str(),
-                            Some("preparing" | "resuming_goal")
+                            Some("preparing" | "pending" | "resuming_goal")
                         )));
             let same_session = match session::validate(&record, &link) {
                 Ok(()) => true,

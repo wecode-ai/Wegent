@@ -15,6 +15,7 @@
 //!
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction as _};
 use brz_socket_io::{ClientError, Reply};
@@ -29,6 +30,7 @@ use crate::state::AppState;
 use crate::task_store::task_update_timestamp;
 
 use super::chat_support::{access_denied, error_ack, expired, internal_error};
+use crate::internal_callback::is_cancelled;
 
 /// `CANCEL_KEY_PREFIX`.
 pub(crate) fn cancel_key(subtask_id: i64) -> String {
@@ -36,7 +38,12 @@ pub(crate) fn cancel_key(subtask_id: i64) -> String {
 }
 /// `CANCEL_FLAG_TTL`.
 const CANCEL_FLAG_TTL: u64 = 300;
-/// `settings.CANCELLING_STUCK_TIMEOUT_SECONDS`.
+/// Wait for an active chat-shell SSE consumer to settle its own cancellation.
+/// The consumer polls the flag once per second and flushes buffered deltas
+/// before completion, so it owns terminal persistence while it is alive.
+const CHAT_CANCEL_GRACE: Duration = Duration::from_millis(2_500);
+/// Reuse the SSE consumer's one-second polling cadence while waiting for it.
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const CANCELLING_STUCK_TIMEOUT_SECONDS: i64 = 1800;
 /// `DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS`.
 const GUIDANCE_QUEUE_TTL_SECONDS: u64 = 60 * 60 * 24;
@@ -79,10 +86,7 @@ pub(crate) async fn cancel(
         .get("shell_type")
         .and_then(Value::as_str)
         .unwrap_or("Chat");
-    if device_id.is_none()
-        && shell_type != "Chat"
-        && let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await?
-    {
+    if let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await? {
         return Ok(Reply::payload(ack));
     }
     if !mark_cancelling(state, info.task_id, subtask_id).await? {
@@ -92,75 +96,159 @@ pub(crate) async fn cancel(
         state, runtime, user_id, &info, subtask_id, device_id, shell_type,
     )
     .await?;
-    if !stream_alive(state, info.task_id, subtask_id).await {
-        let finalized = finalize_stuck_cancellation(state, info.task_id).await?;
-        if let Some(finalized) = finalized {
-            if let Some(redis) = state.redis.as_ref() {
-                use crate::internal_callback::completion::{
-                    Completion, publish_task_completed_for_owner,
-                };
-                let ctx = Completion {
-                    app: Some(state),
-                    mysql: &state.mysql,
-                    redis,
-                    tables: crate::internal_callback::tables(state),
-                    executor_manager: &state.executor_manager,
-                };
-                for &subtask_id in &finalized {
-                    publish_task_completed_for_owner(
-                        &ctx,
-                        info.task_id,
-                        subtask_id,
-                        user_id,
-                        "CANCELLED",
-                        None,
-                        None,
-                    )
-                    .await;
-                    // A runtime that never received the turn cannot send a terminal callback.
-                    use crate::internal_callback::{
-                        emitter,
-                        event::{EventType, ExecutionEvent},
-                        session,
-                    };
-                    let event = ExecutionEvent::new(EventType::Cancelled, info.task_id, subtask_id);
-                    if let Err(error) =
-                        session::publish_callback_event(redis, subtask_id, &event).await
-                    {
-                        tracing::warn!(subtask_id, %error, "local cancellation callback failed");
-                    }
-                    if let Err(error) = emitter::emit_terminal_frames(
-                        redis,
-                        &event,
-                        Some(user_id),
-                        &Value::Null,
-                        None,
-                    )
-                    .await
-                    {
-                        tracing::warn!(subtask_id, %error, "local cancellation notification failed");
-                    }
-                }
-            }
+    if device_id.is_none() && shell_type == "Chat" {
+        let client_partial_content = data
+            .get("partial_content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if wait_for_chat_cancellation(state, info.task_id, subtask_id).await {
             tracing::info!(
                 task_id = info.task_id,
                 subtask_id,
-                ?finalized,
-                "chat:cancel finalized locally (stream runtime gone)"
+                "chat:cancel settled by streaming runtime"
             );
             return Ok(Reply::payload(json!({"success": true, "finalized": true})));
         }
+        process_local_cancellation(state, info.task_id, subtask_id, client_partial_content).await?;
+        // The missing consumer cannot run the SSE finally branch, so close its
+        // cancel lifecycle explicitly after the local terminal transition.
+        crate::responses::stream_state::unregister_stream(state.redis.as_ref(), subtask_id).await;
+        tracing::info!(
+            task_id = info.task_id,
+            subtask_id,
+            "chat:cancel finalized locally after runtime timeout"
+        );
+        return Ok(Reply::payload(json!({"success": true, "finalized": true})));
+    }
+    // A non-Chat executor can lose its runtime before the turn is dispatched.
+    // Keep the recovery fallback for that path while Chat waits for its SSE
+    // consumer above.
+    if !stream_alive(state, info.task_id, subtask_id).await? {
+        process_local_cancellation(state, info.task_id, subtask_id, "").await?;
+        tracing::info!(
+            task_id = info.task_id,
+            subtask_id,
+            "chat:cancel finalized locally (stream runtime gone)"
+        );
+        return Ok(Reply::payload(json!({"success": true, "finalized": true})));
     }
     if !delivered {
-        tracing::error!(
-            subtask_id,
-            "chat:cancel Runtime did not acknowledge cancellation"
-        );
         return Ok(Reply::payload(error_ack(
             "Runtime did not acknowledge cancellation",
         )));
     }
     Ok(Reply::payload(json!({"success": true})))
+}
+
+/// Delivery failure alone does not prove that an executor stopped streaming.
+async fn stream_alive(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+) -> Result<bool, ClientError> {
+    use brz_redis::Redis as _;
+
+    let Some(redis) = state.redis.as_ref() else {
+        return Err(internal_error());
+    };
+    let raw = redis
+        .get::<_, String>(format!("chat:task_streaming:{task_id}"))
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, task_id, subtask_id, "cancel liveness read failed");
+            internal_error()
+        })?;
+    let status = raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+    Ok(status.as_ref().is_some_and(|status| {
+        status.get("subtask_id").and_then(python_integer) == Some(subtask_id)
+            && status
+                .get("last_activity_at")
+                .and_then(Value::as_str)
+                .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+                .is_some_and(|stamp| {
+                    Utc::now().signed_duration_since(stamp).num_seconds()
+                        <= CANCELLING_STUCK_TIMEOUT_SECONDS
+                })
+    }))
+}
+
+/// Publish the terminal cancellation event through the shared callback path.
+/// This preserves partial streamed content, cleans streaming state, and emits
+/// the same terminal frames as a runtime cancellation callback.
+async fn process_local_cancellation(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    client_partial_content: &str,
+) -> Result<(), ClientError> {
+    // Server-side streaming state can be newer than the client's rendered
+    // snapshot, especially when the consumer dies after flushing deltas.
+    let accumulated_content = match state.redis.as_ref() {
+        Some(redis) => {
+            crate::internal_callback::session::get_accumulated_content(redis, subtask_id).await
+        }
+        None => String::new(),
+    };
+    let partial_content = if accumulated_content.trim().is_empty() {
+        client_partial_content
+    } else {
+        accumulated_content.as_str()
+    };
+    let event = crate::internal_callback::event::ExecutionEvent::new(
+        crate::internal_callback::event::EventType::Cancelled,
+        task_id,
+        subtask_id,
+    );
+    let event = crate::internal_callback::event::ExecutionEvent {
+        result: Some(json!({ "value": partial_content })),
+        ..event
+    };
+    crate::internal_callback::process_execution_event(state, event, None, None)
+        .await
+        .map_err(|_| internal_error())
+}
+
+/// Wait briefly for the active consumer to observe the cancel flag and commit
+/// a terminal status. Stale streaming metadata cannot block local recovery.
+async fn wait_for_chat_cancellation(state: &AppState, task_id: i64, subtask_id: i64) -> bool {
+    let deadline = tokio::time::Instant::now() + CHAT_CANCEL_GRACE;
+    loop {
+        if cancellation_settled(state, task_id, subtask_id).await {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + CANCEL_POLL_INTERVAL))
+            .await;
+    }
+}
+
+/// The live streaming consumer removes its cancel flag when it exits. A
+/// terminal subtask status means this consumer or a callback committed the
+/// outcome, so there is no local work left to do.
+async fn cancellation_settled(state: &AppState, task_id: i64, subtask_id: i64) -> bool {
+    if let Some(redis) = state.redis.as_ref()
+        && is_cancelled(redis, &cancel_key(subtask_id)).await
+    {
+        return false;
+    }
+    let tables = crate::internal_callback::tables(state);
+    state
+        .mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
+        .fetch_optional::<_, _, brz_mysql::MysqlRow>(
+            format!(
+                "SELECT 1 FROM {} WHERE id = ? AND task_id = ? AND status IN ('COMPLETED', 'FAILED', 'CANCELLED')",
+                tables.subtasks
+            ),
+            (subtask_id, task_id),
+        )
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(%error, task_id, subtask_id, "chat:cancel settled read failed");
+        })
+        .is_ok_and(|row| row.is_some())
 }
 
 /// One subtask's cancel-relevant fields (`_get_subtask_for_cancel`).
@@ -290,8 +378,16 @@ async fn deliver_cancel(
         };
         use brz_redis::Redis as _;
         let key = cancel_key(subtask_id);
-        return match redis.set_ex(key.as_str(), CANCEL_FLAG_TTL, "true").await {
-            Ok(()) => Ok(true),
+        let intent_key = format!("chat:cancel-intent:{subtask_id}");
+        let result: brz_redis::RedisResult<i64> = redis
+            .eval(
+                "redis.call('SET', KEYS[1], 'true', 'EX', ARGV[1]); redis.call('SET', KEYS[2], 'true', 'EX', ARGV[1]); return 1",
+                [key, intent_key],
+                [CANCEL_FLAG_TTL],
+            )
+            .await;
+        return match result {
+            Ok(_) => Ok(true),
             Err(error) => {
                 tracing::error!(%error, subtask_id, "SSE cancel flag write failed");
                 Ok(false)
@@ -309,105 +405,6 @@ async fn deliver_cancel(
             Ok(false)
         }
     }
-}
-
-/// `is_stream_alive`: a fresh streaming-status document owned by the subtask.
-async fn stream_alive(state: &AppState, task_id: i64, subtask_id: i64) -> bool {
-    let Some(redis) = state.redis.as_ref() else {
-        return false;
-    };
-    let Some(status) = super::chat_events::task_streaming_status(redis, task_id).await else {
-        return false;
-    };
-    if status.get("subtask_id").and_then(python_integer) != Some(subtask_id) {
-        return false;
-    }
-    let Some(last_activity) = status.get("last_activity_at").and_then(Value::as_str) else {
-        return false;
-    };
-    let Ok(last_activity) = chrono::DateTime::parse_from_rfc3339(last_activity) else {
-        return false;
-    };
-    let idle = Utc::now().signed_duration_since(last_activity.with_timezone(&Utc));
-    idle.num_seconds() <= CANCELLING_STUCK_TIMEOUT_SECONDS
-}
-
-/// Finalize a cancellation only while its intent is still current.
-async fn finalize_stuck_cancellation(
-    state: &AppState,
-    task_id: i64,
-) -> Result<Option<Vec<i64>>, ClientError> {
-    let tables = crate::internal_callback::tables(state);
-    let finalized = state
-        .mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64))
-        .with_transaction(async |tx| {
-            let Some(mut payload) = lock_cancel_task(tx, tables.tasks, task_id).await? else {
-                return Ok(Some(Vec::new()));
-            };
-            let status = payload.pointer("/status/status").and_then(Value::as_str);
-            if matches!(
-                status,
-                Some("COMPLETED" | "FAILED" | "CANCELLED" | "DELETE")
-            ) {
-                return Ok(Some(Vec::new()));
-            }
-            if status != Some("CANCELLING") {
-                return Ok(None);
-            }
-            let subtasks = tables.subtasks;
-            let stuck: Vec<i64> = tx
-                .fetch_all(
-                    format!(
-                        "SELECT id FROM {subtasks} WHERE task_id = ? AND role = 'ASSISTANT' \
-                         AND status IN ('PENDING', 'RUNNING') FOR UPDATE"
-                    ),
-                    (task_id,),
-                )
-                .await?;
-            for &subtask_id in &stuck {
-                let now = task_update_timestamp();
-                tx.execute(
-                    format!(
-                        "UPDATE {subtasks} SET status = 'CANCELLED', progress = 100, result = ?, \
-                             updated_at = ?, completed_at = ? WHERE id = ?"
-                    ),
-                    (
-                        python_json_value(&json!({"value": ""})),
-                        now.clone(),
-                        now,
-                        subtask_id,
-                    ),
-                )
-                .await?;
-            }
-            let now = local_isoformat();
-            payload["status"]["status"] = json!("CANCELLED");
-            payload["status"]["errorMessage"] = json!("");
-            payload["status"]["updatedAt"] = json!(now);
-            payload["status"]["completedAt"] = json!(now);
-            tx.execute(
-                crate::task_store::update_task_json_statement(tables.tasks),
-                (
-                    python_json_value(&payload),
-                    task_update_timestamp(),
-                    task_id,
-                ),
-            )
-            .await?;
-            Ok(Some(stuck))
-        })
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, task_id, "cancel finalize commit failed");
-            internal_error()
-        })?;
-    tracing::info!(
-        task_id,
-        ?finalized,
-        "checked local cancellation finalization"
-    );
-    Ok(finalized)
 }
 
 /// `on_chat_guide`.

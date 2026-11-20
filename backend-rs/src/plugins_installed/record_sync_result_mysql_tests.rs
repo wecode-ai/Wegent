@@ -116,19 +116,7 @@ async fn paused_ack(
 ) -> anyhow::Result<MysqlResult<()>> {
     // The migration fixture deliberately has a one-connection pool. Give the
     // paused transaction its own connection so the real dispatch can commit.
-    #[derive(FromMysqlRow)]
-    struct Database {
-        name: String,
-    }
-    let database: Database = context
-        .mysql
-        .fetch_one("SELECT DATABASE() AS name", ())
-        .await?;
-    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
-    let mysql = crate::migrations::connect(&format!(
-        "mysql://root@{address}/{}?ssl-mode=disabled",
-        database.name,
-    ))?;
+    let mysql = context.independent_mysql().await?;
     let lease = write_coordination::PluginWriteLease::acquire_installed(
         context.mysql,
         state.redis.as_ref(),

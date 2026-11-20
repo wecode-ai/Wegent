@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import {
   ComponentUpdateManager,
@@ -26,6 +27,19 @@ interface PrepareDesktopComponentsOptions {
 export interface PreparedDesktopComponents {
   manager: DesktopComponentUpdateController | null
   paths: ComponentPaths | null
+}
+
+export function bundledComponentDirectory(
+  environment: NodeJS.ProcessEnv,
+  userDataDirectory: string
+): string {
+  return (
+    environment.WEWORK_BUNDLED_COMPONENT_DIRECTORY?.trim() ||
+    join(
+      environment.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || userDataDirectory,
+      'managed-components'
+    )
+  )
 }
 
 export async function prepareDesktopComponents(

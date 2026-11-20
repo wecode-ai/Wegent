@@ -11,9 +11,8 @@
 //! (`subscribe`, `send`, `start_agent_response`, `fail_agent_response`,
 //! `_require_scope`).
 //!
-//! `comment:execute`'s migration stops at the scope check: the recorded case
-//! targets a missing project task, and the AI comment-execution pipeline
-//! (loop item assignments, robot queue) remains a documented remainder.
+//! `comment:execute` checks the saved comment and resolves its Issue execution
+//! before queueing a turn or guiding an active collaboration session.
 //!
 //! Mention delivery and durable stand-in wakeups share the comment transaction.
 
@@ -27,8 +26,9 @@ use super::project_chat_mentions::{self, Mention};
 use super::project_chat_messages::{
     InsertMessage, existing_agent_response, existing_client_message, insert_message,
     load_active_agent_response, load_agent, load_message_by_id, load_messages, load_trigger,
-    load_user_message, message_view, metadata_map, project_task_exists, runtime_activity_key,
-    update_message, utc_isoformat_micros, uuid4, validate_agent,
+    load_user_message, message_view_with_actor, metadata_map, project_task_exists,
+    runtime_activity_key, shared_message_payload, update_message, utc_isoformat_micros, uuid4,
+    validate_agent,
 };
 use crate::background_jobs::project::notifications;
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess, has_permission};
@@ -58,6 +58,7 @@ fn payload(data: &Value) -> Map<String, Value> {
         ("replyToMessageId", "reply_to_message_id"),
         ("triggerMessageId", "trigger_message_id"),
         ("afterSequence", "after_sequence"),
+        ("messageId", "message_id"),
     ];
     let mut out = Map::new();
     let Some(object) = data.as_object() else {
@@ -248,11 +249,13 @@ pub(crate) async fn subscribe(
         Err(scope) => return Ok(Reply::payload(scope.ack())),
     };
     let messages = match load_messages(
-        state,
+        &state.mysql,
+        user_id,
         &request.project_id,
         request.task_id.as_deref(),
         request.after_sequence,
         request.limit,
+        request.message_id.as_deref(),
     )
     .await
     {
@@ -288,6 +291,7 @@ struct SubscribeRequest {
     task_id: Option<String>,
     after_sequence: i64,
     limit: i64,
+    message_id: Option<String>,
 }
 
 impl SubscribeRequest {
@@ -296,6 +300,7 @@ impl SubscribeRequest {
             project_id: required_identifier(payload, "project_id")?,
             task_id: optional_identifier(payload, "task_id")?,
             after_sequence: optional_i64(payload, "after_sequence").unwrap_or(0).max(0),
+            message_id: optional_identifier(payload, "message_id")?,
             limit: optional_i64(payload, "limit")
                 .unwrap_or(DEFAULT_LIMIT)
                 .clamp(1, LIMIT_MAX),
@@ -420,7 +425,10 @@ async fn send_message(
                 "client_message_id already belongs to another project",
             ));
         }
-        return Ok((message_view(&existing), false));
+        return Ok((
+            message_view_with_actor(state, user_id, &existing).await?,
+            false,
+        ));
     }
     let reply = reply::resolve(state, request).await?;
     let mut mentions = request.mentions.clone();
@@ -587,7 +595,7 @@ async fn send_message(
     for notification in pending {
         notifications::deliver(state, notification).await;
     }
-    Ok((message_view(&saved), true))
+    Ok((message_view_with_actor(state, user_id, &saved).await?, true))
 }
 
 /// `on_project_chat_agent_start`.
@@ -696,9 +704,9 @@ async fn start_agent(
             let refreshed = load_message_by_id(state, existing.id)
                 .await?
                 .ok_or_else(|| ack_error("INVALID_MESSAGE", "message refresh lost the row"))?;
-            return Ok(message_view(&refreshed));
+            return message_view_with_actor(state, user_id, &refreshed).await;
         }
-        return Ok(message_view(&existing));
+        return message_view_with_actor(state, user_id, &existing).await;
     }
     let message_id = uuid4();
     let run_id = uuid4();
@@ -757,7 +765,7 @@ async fn start_agent(
     let row = load_message_by_id(state, id)
         .await?
         .ok_or_else(|| ack_error("INVALID_MESSAGE", "message refresh lost the row"))?;
-    Ok(message_view(&row))
+    message_view_with_actor(state, user_id, &row).await
 }
 
 /// `on_project_chat_agent_failed`.
@@ -857,7 +865,7 @@ async fn fail_agent(
     let refreshed = load_message_by_id(state, row.id)
         .await?
         .ok_or_else(|| ack_error("INVALID_MESSAGE", "message refresh lost the row"))?;
-    Ok(message_view(&refreshed))
+    message_view_with_actor(state, user_id, &refreshed).await
 }
 
 /// `on_project_chat_comment_execute`'s migrated scope check.
@@ -932,9 +940,10 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
         .unwrap_or_default();
     let task_id = view.get("taskId").and_then(Value::as_str);
     let room = project_chat_room(project_id, task_id);
+    let shared = shared_message_payload(view);
     if let Err(error) = runtime
         .emitters()
-        .project_chat_message(&room, false, view)
+        .project_chat_message(&room, false, &shared)
         .await
     {
         tracing::warn!(%error, room, "project chat local delivery failed");
@@ -942,7 +951,7 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
     publish_room_event(
         state,
         PROJECT_CHAT_CREATED_EVENT,
-        view,
+        &shared,
         RUNTIME_NAMESPACE,
         &room,
     )
@@ -1064,7 +1073,7 @@ mod tests {
                 .and_hms_opt(13, 13, 8)
                 .unwrap(),
         };
-        let view = message_view(&row);
+        let view = super::super::project_chat_messages::message_view(&row);
         assert_eq!(view["clientMessageId"], Value::Null);
         assert_eq!(view["taskId"], Value::Null);
         assert_eq!(view["createdAt"], json!("2026-11-09T05:13:08+00:00"));

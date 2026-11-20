@@ -1,51 +1,20 @@
+import type { IssueAssignmentReceipt } from '@/api/deliveries'
+import { navigateTo } from '@/lib/navigation'
+import { getRuntimeConfig } from '@/config/runtime'
 import { Check, CircleAlert, CircleDashed, CircleHelp } from 'lucide-react'
 import { StandInIcon } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useEffect, useRef, useState } from 'react'
-import type { IssueAssignmentReceipt } from '@/api/deliveries'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { sameIssueAssignment } from './issueAssignmentReceiptScope'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 
-type ReceiptApi = Pick<
-  NonNullable<WorkbenchServices['deliveryApi']>,
-  'getIssueAssignmentReceipts' | 'acknowledgeIssueAssignment'
-> & { getLoopItem(issueId: string): Promise<unknown> }
-
-export interface IssueAssignmentReceiptState {
-  issueId: string
-  version: number
-  assignmentRevision?: string
-  assigneeUserId?: number | null
-  rows: IssueAssignmentReceipt[]
-  error: boolean
-}
-
-function sameReceiptState(
-  previous: IssueAssignmentReceiptState | null,
-  next: IssueAssignmentReceiptState
-): boolean {
-  return (
-    previous?.issueId === next.issueId &&
-    previous.version === next.version &&
-    previous.assignmentRevision === next.assignmentRevision &&
-    previous.assigneeUserId === next.assigneeUserId &&
-    previous.error === next.error &&
-    previous.rows.length === next.rows.length &&
-    previous.rows.every((row, index) => {
-      const other = next.rows[index]
-      return (
-        row.id === other.id &&
-        row.target_type === other.target_type &&
-        row.target_id === other.target_id &&
-        row.target_name === other.target_name &&
-        row.receipt_tracking === other.receipt_tracking &&
-        row.human_read_at === other.human_read_at &&
-        row.stand_in_received_at === other.stand_in_received_at
-      )
-    })
-  )
-}
+import {
+  createIssueAssignmentReceiptObservation,
+  type ReceiptApi,
+  type IssueAssignmentReceiptState,
+  type IssueAssignmentReceiptObservation,
+} from './issueAssignmentReceiptObservation'
+export type { IssueAssignmentReceiptState } from './issueAssignmentReceiptObservation'
 
 export function IssueAssignmentReceipts({
   api,
@@ -54,7 +23,7 @@ export function IssueAssignmentReceipts({
   assignmentRevision,
   currentUserId,
   assigneeUserId,
-  onStateChange,
+  observation,
 }: {
   api: ReceiptApi
   issueId: string
@@ -62,10 +31,13 @@ export function IssueAssignmentReceipts({
   assignmentRevision?: string
   currentUserId?: string | number
   assigneeUserId?: number | null
-  onStateChange?(state: IssueAssignmentReceiptState): void
+  observation?: IssueAssignmentReceiptObservation
 }) {
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
+  const model = useMemo(
+    () => observation ?? createIssueAssignmentReceiptObservation(api),
+    [api, observation]
+  )
+  const state = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getServerSnapshot)
   const scopedState = sameIssueAssignment(
     state,
     issueId,
@@ -75,60 +47,24 @@ export function IssueAssignmentReceipts({
   )
     ? state
     : null
-
-  useEffect(() => {
-    if (scopedState) onStateChange?.(scopedState)
-  }, [scopedState, onStateChange])
-
-  useEffect(() => {
-    if (assigneeUserId == null) return
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const visible = () =>
-      document.visibilityState !== 'hidden' &&
-      !containerRef.current?.closest('[aria-hidden="true"], [hidden]')
-    const refresh = async () => {
-      const publish = (rows: IssueAssignmentReceipt[], error: boolean) => {
-        const next = { issueId, version, assignmentRevision, assigneeUserId, rows, error }
-        setState(previous => (sameReceiptState(previous, next) ? previous : next))
-      }
-      try {
-        if (!visible()) return
-        let receipts = await api.getIssueAssignmentReceipts(issueId)
-        const unread = receipts.filter(
-          row => String(row.target_id) === String(currentUserId) && !row.human_read_at
-        )
-        if (unread.length && active) {
-          // A list projection or a notification preview is not a successful detail read.
-          await api.getLoopItem(issueId)
-          for (const row of unread) {
-            if (!active || !visible()) return
-            await api.acknowledgeIssueAssignment(issueId, row.id, Number(currentUserId))
-          }
-          receipts = await api.getIssueAssignmentReceipts(issueId)
-        }
-        if (active) {
-          publish(receipts, false)
-        }
-      } catch {
-        if (active) {
-          publish([], true)
-        }
-      } finally {
-        if (active) timer = setTimeout(refresh, 5000)
-      }
-    }
-    void refresh()
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [api, issueId, currentUserId, assigneeUserId, version, assignmentRevision])
+  const attach = useCallback(
+    (anchor: HTMLSpanElement | null) => {
+      if (!anchor) return
+      return model.attach(anchor, {
+        issueId,
+        version,
+        assignmentRevision,
+        currentUserId,
+        assigneeUserId,
+      })
+    },
+    [model, issueId, version, assignmentRevision, currentUserId, assigneeUserId]
+  )
 
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 text-xs text-text-muted"
-      ref={containerRef}
+      ref={attach}
       data-testid="issue-assignment-receipts"
       aria-live="polite"
     >
@@ -136,6 +72,7 @@ export function IssueAssignmentReceipts({
         rows={scopedState?.rows ?? []}
         error={scopedState?.error ?? false}
         assigneeUserId={assigneeUserId}
+        currentUserId={currentUserId}
       />
     </span>
   )
@@ -145,7 +82,10 @@ export function IssueAssignmentReceiptStatus({
   rows,
   error,
   assigneeUserId,
-}: Pick<IssueAssignmentReceiptState, 'rows' | 'error' | 'assigneeUserId'>) {
+  currentUserId,
+}: Pick<IssueAssignmentReceiptState, 'rows' | 'error' | 'assigneeUserId'> & {
+  currentUserId?: string | number
+}) {
   const { t } = useTranslation('common')
   return (
     <>
@@ -163,6 +103,13 @@ export function IssueAssignmentReceiptStatus({
                 data-testid={`issue-assignment-receipt-${row.id}`}
                 className="inline-flex items-center gap-1"
               >
+                {row.dispatch_receipt &&
+                getRuntimeConfig().featureFlags?.['collab.humanAssignmentReceipts.v1'] !== false ? (
+                  <DispatchReceipt
+                    receipt={row.dispatch_receipt}
+                    canRepair={String(currentUserId) === String(row.dispatch_receipt.ownerUserId)}
+                  />
+                ) : null}
                 {row.human_read_at ? (
                   <ReceiptIcon
                     label={t('todo.assignment_human_read')}
@@ -193,6 +140,40 @@ export function IssueAssignmentReceiptStatus({
             ))
         ))}
     </>
+  )
+}
+
+function DispatchReceipt({
+  receipt,
+  canRepair,
+}: {
+  receipt: NonNullable<IssueAssignmentReceipt['dispatch_receipt']>
+  canRepair: boolean
+}) {
+  const { t } = useTranslation('common')
+  const repair = receipt.state === 'blocked_policy' || receipt.state === 'waiting_device'
+  const label =
+    receipt.reasonCode === 'tag_mismatch'
+      ? t('todo.dispatch.tag_mismatch')
+      : t(`todo.dispatch.${receipt.state}`)
+  return (
+    <span
+      data-testid="issue-assignment-dispatch"
+      className="inline-flex items-center gap-1"
+      title={`${label} · ${new Date(receipt.updatedAt).toLocaleString()}`}
+    >
+      <span>{label}</span>
+      {repair && canRepair && (
+        <button
+          type="button"
+          data-testid="issue-assignment-dispatch-repair"
+          className="underline"
+          onClick={() => navigateTo('/stand-in?profileId=@primary')}
+        >
+          {t('todo.dispatch.repair')}
+        </button>
+      )}
+    </span>
   )
 }
 

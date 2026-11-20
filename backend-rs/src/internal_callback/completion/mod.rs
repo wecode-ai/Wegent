@@ -45,7 +45,6 @@ pub(crate) use delivery::{
     Delivery, acknowledge_delivery, delivery_lock_key, notification_key, publish_once,
     with_delivery_lock, with_owned_lease,
 };
-pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{
     CollaborationStatus, commit_subtask_running, mark_subtask_running, persist_completed_result,
     update_task_status,

@@ -102,7 +102,7 @@ async fn local_sync(
     }
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
-    super::auto_update::complete_auto_update(async move {
+    super::write_coordination::complete_plugin_write(async move {
         super::plugin_sync_protocol::ensure_sync_state(&mysql, redis.as_ref(), i64::from(user.id))
             .await?;
         super::plugin_sync_protocol::retry_sync_write(|| {
@@ -188,9 +188,30 @@ async fn local_plan(
     }
     let generation = generation.expect("changed snapshot has a generation");
     payload["plugin_sync"] = json!({"version":2,"generation":generation,"complete":!body.targeted});
-    Ok(
-        json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation,"installedRevisions":revisions}),
-    )
+    let mut plan = json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation,"installedRevisions":revisions});
+    if !body.targeted && body.recovery_pending {
+        plan["currentOperationIds"] =
+            current_operation_ids(&state.json, &body.instance_id, &plan["installedRevisions"]);
+    }
+    Ok(plan)
+}
+
+fn current_operation_ids(state: &Value, instance: &str, revisions: &Value) -> Value {
+    // The full plan reads these revisions and the latest slots under the same
+    // account state lock. A replay response is not needed to classify an old intent.
+    let current: Vec<&Value> = state["spec"]["localIntents"][instance]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(id, slot)| {
+            revisions[id.as_str()]
+                .as_i64()
+                .is_some_and(|revision| slot["installedRevision"].as_i64() == Some(revision))
+        })
+        .filter_map(|(_, slot)| slot.get("operationId"))
+        .filter(|operation| operation.is_string())
+        .collect();
+    json!(current)
 }
 
 async fn read_operation(

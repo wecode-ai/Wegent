@@ -1,5 +1,5 @@
 import { useToolInteractionServices } from '../ToolInteractionServices'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useLayoutEffect } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
 import type { ProcessingBlock, SubagentBlock } from './types'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../../markdown/MarkdownServices'
@@ -16,8 +16,7 @@ import { getBlockLabel } from './toolBlockLabels'
 import { renderBlockDetail, hasBlockDetail, getWorkspaceFilePath } from './ToolBlockDetails'
 import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
 import { AutomaticRetryStatus } from '../AutomaticRetryStatus'
-
-const RECONNECTING_DISPLAY_DELAY_MS = 10_000
+import { runtimeRetryStatus, runtimeRetryProgress } from './runtimeRetryStatus'
 
 function reviewReason(output: unknown): string | undefined {
   try {
@@ -64,14 +63,6 @@ export function ToolBlockItem({
         : undefined)
   )
   const isRunning = block.status !== 'done' && block.status !== 'error'
-  const reconnectingBlockId =
-    block.type === 'tool' && block.toolName === 'runtime_reconnecting' && isRunning
-      ? block.id
-      : null
-  const showReconnectingStatus = useDelayedBlockVisibility(
-    reconnectingBlockId,
-    RECONNECTING_DISPLAY_DELAY_MS
-  )
   const hasDetail = block.type === 'tool' && hasBlockDetail(block)
   const expanded = hasDetail && (forceExpanded || userExpanded)
 
@@ -139,12 +130,14 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (!isRunning) return null
+    const status = runtimeRetryStatus(block, t)
     if (block.toolInput?.retry_reason === 'overload') {
-      if (!isRunning) return null
       return (
         <AutomaticRetryStatus
           reason="overload"
           retryAt={Number(block.toolInput.retry_at) || null}
+          progress={runtimeRetryProgress(block)}
           translate={translate}
         />
       )
@@ -156,20 +149,19 @@ export function ToolBlockItem({
           data-testid="runtime-rate-limit-wait-status"
           role="status"
         >
-          {t('tool_activity.rate_limit_wait')}
+          {status}
         </div>
       )
     }
-    if (!showReconnectingStatus) return null
     const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
-    if (isChatGPTModel) {
+    if (isChatGPTModel && block.toolInput?.retry_reason === 'connection') {
       return (
         <div
           className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 py-1 text-sm text-text-muted"
           data-testid="runtime-reconnecting-chatgpt-status"
           role="status"
         >
-          <span>{t('tool_activity.chatgpt_network_unavailable')}</span>
+          <span>{status}</span>
           <button
             type="button"
             data-testid="runtime-reconnecting-open-proxy-settings"
@@ -188,7 +180,7 @@ export function ToolBlockItem({
         data-testid="runtime-reconnecting-status"
         role="status"
       >
-        <ActivityShimmerText variant="tool">{t('tool_activity.reconnecting')}</ActivityShimmerText>
+        <ActivityShimmerText variant="tool">{status}</ActivityShimmerText>
       </div>
     )
   }
@@ -301,21 +293,6 @@ function PlanBlockItem({
       <AssistantPlanCard content={block.content} isStreaming={isStreaming} onOpenPlan={openPlan} />
     </div>
   )
-}
-
-function useDelayedBlockVisibility(blockId: string | null, delayMs: number): boolean {
-  const [visibleBlockId, setVisibleBlockId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!blockId) return
-    const timer = window.setTimeout(() => setVisibleBlockId(blockId), delayMs)
-    return () => {
-      window.clearTimeout(timer)
-      setVisibleBlockId(null)
-    }
-  }, [blockId, delayMs])
-
-  return blockId !== null && visibleBlockId === blockId
 }
 
 function ProcessTextBlockItem({

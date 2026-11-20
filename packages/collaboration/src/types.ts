@@ -196,7 +196,29 @@ export interface CollaborationIssue {
 
 export type CollaborationAssignmentTargetType = "human" | "agent";
 
+export interface DirectHumanAssignmentReceipt {
+  projectId: string;
+  issueId: string;
+  humanAssignmentId: string;
+  ownerUserId: number;
+  state:
+    | "queued"
+    | "waiting_device"
+    | "blocked_policy"
+    | "running"
+    | "waiting_user"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  reasonCode: string | null;
+  runtimeTaskId: string | null;
+  deliveryId: string | null;
+  publicMessageId?: string | null;
+  updatedAt: string;
+}
+
 export interface CollaborationAssignmentReceipt {
+  dispatch_receipt?: DirectHumanAssignmentReceipt | null;
   id: string;
   target_type: string;
   target_id: string;
@@ -207,6 +229,7 @@ export interface CollaborationAssignmentReceipt {
 }
 
 export interface CollaborationAssignment {
+  dispatch_receipt?: DirectHumanAssignmentReceipt | null;
   automation?: IssueHistoryAutomation | null;
   receipt_tracking?: boolean;
   human_read_at?: string | null;
@@ -376,7 +399,10 @@ export interface IssueHistoryAutomation {
 
 export interface SharedIssueAssignmentHistoryEntry {
   automation?: IssueHistoryAutomation;
+  by_agent_id?: string;
+  by_agent_name?: string;
   by_user_id: number;
+  by_user_name?: string | null;
   to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
   to_name?: string | null;
@@ -392,6 +418,7 @@ export interface SharedIssueStatusHistoryEntry {
   to_status_name?: string | null;
   trigger: string;
   by_user_id: number | null;
+  by_user_name?: string | null;
   at: string;
 }
 

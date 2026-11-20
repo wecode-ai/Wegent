@@ -16,6 +16,7 @@ use crate::{
 #[derive(Default)]
 pub(super) struct CodexRunState {
     pub(super) quota_recovery: Option<super::CodexQuotaRecovery>,
+    pub(super) error_type: Option<String>,
     final_text: String,
     final_message_id: Option<String>,
     final_message_saw_delta: bool,
@@ -115,6 +116,7 @@ impl CodexRunState {
             }
             Some("turn/started") => {
                 if !self.is_subagent_message(message_params(message)) {
+                    self.error_type = None;
                     self.reset_turn_output();
                     let params = message_params(message);
                     let turn = params.get("turn").unwrap_or(params);
@@ -176,6 +178,10 @@ impl CodexRunState {
             {
                 let params = message_params(message);
                 let turn = params.get("turn").unwrap_or(params);
+                self.error_type = turn
+                    .get("error")
+                    .and_then(super::codex_error_type)
+                    .map(str::to_owned);
                 self.turn_started_at_ms = integer_field(turn, "startedAt")
                     .or_else(|| integer_field(turn, "started_at"))
                     .map(protocol_timestamp_millis)
@@ -194,6 +200,10 @@ impl CodexRunState {
                 if codex_error_will_retry(params) {
                     return None;
                 }
+                self.error_type = params
+                    .get("error")
+                    .and_then(super::codex_error_type)
+                    .map(str::to_owned);
                 Some(ExecutionOutcome::Failed {
                     message: codex_error_message(params),
                 })

@@ -18,6 +18,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::protocol::ExecutionRequest;
@@ -150,6 +151,17 @@ pub(crate) enum WeworkMcpSurface {
     Control,
 }
 
+impl WeworkMcpSurface {
+    pub(super) fn server_name(&self) -> &'static str {
+        match self {
+            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
+            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpaceMcpClientConfig {
     pub(crate) url: String,
@@ -242,15 +254,6 @@ impl SpaceMcpRequestContext {
 
     pub(crate) fn surface(&self) -> WeworkMcpSurface {
         self.surface
-    }
-
-    fn server_name(&self) -> &'static str {
-        match self.surface {
-            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
-            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
-            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
-            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
-        }
     }
 
     pub(crate) fn set_cloud_collaboration_dispatcher(
@@ -482,7 +485,7 @@ pub(crate) async fn handle_request_with_context(
                 "protocolVersion": protocol_version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {
-                    "name": context.server_name(),
+                    "name": context.surface().server_name(),
                     "version": env!("CARGO_PKG_VERSION")
                 }
             });
@@ -1974,7 +1977,7 @@ async fn call_backend_tool(
     arguments: &Value,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
-    let base = format!("{}/api/v1", context.backend_url.trim_end_matches('/'));
+    let base = crate::agents::runtime_capabilities::api_url(context.backend_url, "/api/v1")?;
     let project_id = context.project_id;
     let grant = context.grant;
     let auth_token = context.auth_token;
@@ -2302,16 +2305,46 @@ async fn call_backend_tool(
                 ("after_sequence", arguments.get("after_sequence").and_then(Value::as_i64).unwrap_or(0)),
                 ("limit", arguments.get("limit").and_then(Value::as_i64).unwrap_or(200)),
             ]),
-        "add_board_item_comment" => client
-            .post(format!(
+        "add_board_item_comment" => {
+            let item = task_id()?;
+            let mut body = json!({
+                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
+                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([])),
+            });
+            if let Some(target) = arguments.get("reply_to_comment_id") {
+                body["reply_to_comment_id"] = target.clone();
+            }
+            let issue_grant = grant.filter(|grant| grant.item_id.as_deref() == Some(item));
+            if let Some(dispatch_id) = issue_grant
+                .and_then(|grant| grant.dispatch_id.as_deref())
+                .filter(|_| body["reply_to_comment_id"].is_string())
+            {
+                let address = delivery_address(issue_grant).map_err(|error| error.to_string())?;
+                let message_key = json!([
+                    "explicit-reply",
+                    body["reply_to_comment_id"],
+                    body["body"]
+                ]);
+                body["collaboration"] = json!({
+                    "device_id": address.device_id,
+                    "task_id": address.task_id,
+                    "dispatch_id": dispatch_id,
+                    "message_id": format!("{:x}", Sha256::digest(message_key.to_string().as_bytes()))
+                });
+            } else if let Some(address) = issue_grant
+                .and_then(|grant| delivery_address(Some(grant)).ok())
+            {
+                body["assistant_source"] = json!({
+                    "device_id": address.device_id, "task_id": address.task_id,
+                    "requires_confirmation": true
+                });
+            }
+            client.post(format!(
                 "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
                 encode_segment(project_id),
-                encode_segment(task_id()?)
-            ))
-            .json(&json!({
-                "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
-                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
-            })),
+                encode_segment(item)
+            )).json(&body)
+        },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
@@ -3151,7 +3184,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "add_board_item_comment",
-            "Post an Issue comment. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Pass mentions as [{\"type\":\"user\",\"id\":\"52\",\"label\":\"qindi\"}]. Plain @name text does not notify. Do not send a separate notification for the same mention.",
+            "Post an Issue comment or reply. To reply in an existing thread, read list_board_item_comments and pass the target's id as reply_to_comment_id. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Plain @name text does not notify. Do not send a separate notification for the same mention.",
             comments::create_schema(),
         ),
         tool(
@@ -4258,7 +4291,7 @@ mod tests {
             }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let backend_url = format!("http://{address}");
+        let backend_url = format!("http://{address}/api/");
         let context = BackendToolContext {
             backend_url: &backend_url,
             auth_token: "unit-token",

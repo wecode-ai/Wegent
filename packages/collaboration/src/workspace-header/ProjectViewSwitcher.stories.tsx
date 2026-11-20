@@ -1,9 +1,9 @@
+import { groupedProjectViewMetadata } from './projectViewNavigation'
 import { useState } from 'react'
 import { CollaborationTheme } from '../theme'
 import '../styles.css'
 import {
   ProjectViewSwitcher,
-  groupedProjectViewMetadata,
   type CollaborationProjectView,
   type CollaborationProjectViewOption,
 } from './ProjectViewSwitcher'
@@ -26,7 +26,7 @@ const views: CollaborationProjectView[] = [
   'files',
   'manage',
 ]
-const groupedOptions = views.map((id) => ({
+const groupedOptions = views.map(id => ({
   id,
   label: labels[id],
   testId: `collaboration-tab-${id}`,
@@ -40,19 +40,10 @@ interface PreviewArgs {
   theme?: 'light' | 'dark'
 }
 
-function Preview({
-  value: initialValue,
-  compact = false,
-  options = groupedOptions,
-}: PreviewArgs) {
+function Preview({ value: initialValue, compact = false, options = groupedOptions }: PreviewArgs) {
   const [value, setValue] = useState(initialValue)
   return (
-    <ProjectViewSwitcher
-      compact={compact}
-      options={options}
-      value={value}
-      onChange={setValue}
-    />
+    <ProjectViewSwitcher compact={compact} options={options} value={value} onChange={setValue} />
   )
 }
 
@@ -89,13 +80,13 @@ export const GroupedAdmin = { args: { value: 'files' } }
 export const GroupedAdminFilesOnly = {
   args: {
     value: 'files',
-    options: groupedOptions.filter((option) => option.id !== 'manage'),
+    options: groupedOptions.filter(option => option.id !== 'manage'),
   },
 }
 export const GroupedPlanNoMilestones = {
   args: {
     value: 'gantt',
-    options: groupedOptions.filter((option) => option.id !== 'milestones'),
+    options: groupedOptions.filter(option => option.id !== 'milestones'),
   },
 }
 export const UngroupedFallback = {
@@ -113,9 +104,7 @@ export const CompactOpen = {
   ...Compact,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     canvasElement
-      .querySelectorAll<HTMLButtonElement>(
-        '[data-testid="collaboration-compact-trigger"]',
-      )
-      .forEach((trigger) => trigger.click())
+      .querySelectorAll<HTMLButtonElement>('[data-testid="collaboration-compact-trigger"]')
+      .forEach(trigger => trigger.click())
   },
 }

@@ -38,6 +38,7 @@ pub(super) struct TurnReadOptions {
     pub notifications: Option<CodexNotificationSender>,
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub auto_approve_mcp_tool_calls: bool,
+    pub auto_approve_commands: bool,
     pub defer_interactive_forms: bool,
     pub stand_in_single_approval: bool,
 }
@@ -161,6 +162,7 @@ impl JsonRpcConnection {
             notifications,
             mut request_user_input_answers,
             auto_approve_mcp_tool_calls,
+            auto_approve_commands,
             defer_interactive_forms,
             stand_in_single_approval,
         } = options;
@@ -305,6 +307,12 @@ impl JsonRpcConnection {
                     saw_turn_response = false;
                     continue;
                 }
+            }
+            if let Some(id) = super::automatic_command_approval_id(&message, auto_approve_commands)
+            {
+                self.write_message(json!({"id": id, "result": {"decision": "accept"}}))
+                    .await?;
+                continue;
             }
             super::elicitation::prepare(&mut message);
             if super::prepare_runtime_notification(

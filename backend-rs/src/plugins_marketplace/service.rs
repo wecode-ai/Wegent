@@ -23,7 +23,7 @@ use super::db::{
 use super::models::{
     DeviceInstallationItem, MarketplaceItem, MarketplaceListResponse, unset_id, unset_str,
 };
-use crate::device_identity::{coalesce_plugin_device_rows, plugin_device_id};
+use crate::device_identity::{DeviceIdentitySnapshot, coalesce_plugin_device_rows_resolved};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 
 /// Optional request filters, mirroring the endpoint's query parameters.
@@ -376,14 +376,19 @@ async fn plugin_device_rows<M>(
 where
     M: Mysql,
 {
-    let canonical_id = plugin_device_id(mysql, user_id, device_id).await?;
     let rows = UserRepository::list_device_installations_by_user(mysql, user_id).await?;
-    Ok(coalesce_plugin_device_rows(mysql, rows)
-        .await?
-        .into_iter()
-        .filter(|((_, canonical), _)| *canonical == canonical_id)
-        .map(|((installed_id, _), row)| (installed_id, row))
-        .collect())
+    let identities = std::iter::once((user_id, device_id.to_string()))
+        .chain(rows.iter().map(|row| (row.user_id, row.device_id.clone())))
+        .collect();
+    let mut snapshot = DeviceIdentitySnapshot::load(mysql, identities).await?;
+    let canonical_id = snapshot.resolve(user_id, device_id);
+    Ok(
+        coalesce_plugin_device_rows_resolved(rows, |owner, id| snapshot.resolve(owner, id))
+            .into_iter()
+            .filter(|((_, canonical), _)| *canonical == canonical_id)
+            .map(|((installed_id, _), row)| (installed_id, row))
+            .collect(),
+    )
 }
 
 /// Build the marketplace listing response for one request.
@@ -401,6 +406,7 @@ where
     M: Mysql,
     R: brz_redis::Redis,
 {
+    let started = std::time::Instant::now();
     let user_id = user.map(|user| user.id);
     let external_entity_types: HashSet<String> =
         resolvers.external_types().map(ToOwned::to_owned).collect();
@@ -535,6 +541,7 @@ where
         None => None,
     };
 
+    let catalog_loaded = started.elapsed();
     let installed_kind_ids: Vec<i64> = installed_by_plugin_id
         .values()
         .map(|selection| selection.kind_id)
@@ -580,23 +587,8 @@ where
             continue;
         };
         let installed = installed_by_plugin_id.get(&plugin.id);
-        let preloaded_row =
+        let device_row =
             installed.and_then(|installed| device_rows_by_kind_id.get(&installed.kind_id));
-        // Source `_to_marketplace_item`: with an active device filter, an
-        // installed plugin whose preloaded device row is absent is re-resolved
-        // through `_device_installation`, which issues one `plugin_device_rows`
-        // per such plugin. The re-resolved row comes from the same lookup, so
-        // it stays absent here, but the source still emits the queries.
-        let fallback_rows: HashMap<i64, DeviceInstallationRow> =
-            match (preloaded_row, installed, device_filter) {
-                (None, Some(_installed), Some(device_id)) => {
-                    let user_id = user_id.expect("installed kinds require an authenticated user");
-                    plugin_device_rows(mysql, user_id, device_id).await?
-                }
-                _ => HashMap::new(),
-            };
-        let device_row = preloaded_row
-            .or_else(|| installed.and_then(|installed| fallback_rows.get(&installed.kind_id)));
         items.push(marketplace_item(MarketplaceItemInput {
             plugin,
             release,
@@ -609,6 +601,15 @@ where
             external_entity_types: &external_entity_types,
         }));
     }
+    tracing::debug!(
+        plugins = rows.len(),
+        items = items.len(),
+        installations = installed_kind_ids.len(),
+        device_installations = device_rows_by_kind_id.len(),
+        catalog_ms = catalog_loaded.as_secs_f64() * 1000.0,
+        enrichment_ms = (started.elapsed() - catalog_loaded).as_secs_f64() * 1000.0,
+        "marketplace batch projection"
+    );
     Ok(MarketplaceListResponse { items })
 }
 
@@ -886,13 +887,9 @@ mod tests {
         assert!(item.last_sync_at.is_none());
     }
 
-    /// Source `plugin_device_rows` composes exactly two reads: the canonical
-    /// device resolution (`kinds` Device lookup) followed by the user's
-    /// `plugin_device_installations` rows. Source `_to_marketplace_item`
-    /// re-invokes this helper for each installed plugin without a preloaded
-    /// device row, so the helper must stay a single reusable call.
+    /// Device rows and request-scoped identities are loaded once, including misses.
     #[tokio::test]
-    async fn plugin_device_rows_reads_device_then_installations() {
+    async fn plugin_device_rows_batches_installations_and_owned_devices() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let rows = plugin_device_rows(&mysql, 1555, "electron-4958888b")
             .await
@@ -901,13 +898,9 @@ mod tests {
 
         let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
         assert_eq!(queries.len(), 2, "{queries:?}");
+        assert!(queries[1].contains("kinds.kind = 'Device'"), "{queries:?}");
         assert!(
-            queries[0].starts_with("SELECT kinds.id AS kinds_id")
-                && queries[0].contains("kinds.kind = 'Device'"),
-            "{queries:?}"
-        );
-        assert!(
-            queries[1].starts_with(
+            queries[0].starts_with(
                 "SELECT plugin_device_installations.id AS plugin_device_installations_id"
             ),
             "{queries:?}"

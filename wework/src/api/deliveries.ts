@@ -160,6 +160,8 @@ export interface CloudLoopItem {
   execution_last_event_seq?: number | null
   can_approve?: boolean
   assignment_history?: Array<{
+    by_agent_id?: string
+    by_agent_name?: string
     by_user_id: number
     to_type: 'user' | 'agent' | 'team' | 'group' | null
     to_id: string | null

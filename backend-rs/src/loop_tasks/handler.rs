@@ -64,7 +64,7 @@ async fn loop_item_tasks(
 
 /// `LoopItemService._require_item_access` with no issue action:
 /// `require_cloud_project_role(Viewer)` then `can_view_item`.
-async fn require_item_access(
+pub(super) async fn require_item_access(
     state: &AppState,
     item: &TaskItemFullRow,
     user_id: i32,

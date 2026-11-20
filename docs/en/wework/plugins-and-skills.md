@@ -219,7 +219,11 @@ Built-in application plugins use `visibility=workspace`, so Sites use `plugin://
 
 The Sites list contains both Sites you own and Sites where you are a collaborator. A Site owner can use **… → Manage collaborators** to add or remove collaborators by username. Collaborators can continue development, edit, publish, delete, configure environment variables, and update internal Site access, but cannot manage collaborators. For an internal Site, use **… → Access permissions** to allow anonymous users, signed-in users, project members only, or project members plus specified users; project owners and collaborators always retain access. Clicking a Site URL in the list opens it in the system browser. **Continue developing** makes sure `wegent-sites` is installed on the selected device and inserts both the plugin reference and Site reference into a fresh task composer so the AI receives the Site workflow and target-project context together.
 
+Access and collaborator dialogs read only the current Site. Switching Sites or account connections reloads data and clears the old draft. Failed access reads prevent saving and offer Retry. Failed collaborator reads show an error and Retry rather than an empty member list. A collaborator added while the initial list is loading remains visible when that older read completes.
+
 Use **… → Environment variables** on a Site row to add, change, or remove `Plain` and `Secret` variables as one update. Secret values are never returned by the server; leave an already configured Secret empty to keep its value unchanged. A saved revision takes effect on the next deployment. Static Sites inject variables into the browser bundle, so their Secret values are visible to Site visitors and are suitable only for internal audiences.
+
+The application list loads only the visible Sites or Mini Programs type. Switching types clears search, and late search or pagination results cannot enter the current list. An environment configuration deep link opens its dialog after the target Site loads. Closing the dialog clears those configuration parameters, so refreshing the list does not reopen it.
 
 Wegent marketplace publication and upload accept packages containing either `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json`. Backend adds the missing runtime manifest before storing the package, so every installed plugin is synchronized into both the Codex and Claude Code plugin directories on each device.
 
@@ -240,6 +244,8 @@ without launching an external browser. Restored sessions reuse the plugin set re
 were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
+
+The collaboration home uses the same slash picker when creating an Issue task. Skills become selectable once their catalog is available, without waiting for plugin icons to load.
 
 ### Inspect and toggle individual Skills
 

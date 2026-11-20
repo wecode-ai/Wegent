@@ -1,51 +1,24 @@
 import { Download, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
-import {
-  ensurePython,
-  listExecutionEnvironments,
-  type ExecutionEnvironmentStatus,
-} from '@/desktop/executionEnvironments'
+import { executionEnvironmentResource } from '@/desktop/executionEnvironmentResource'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function PluginPythonRuntimeNotice() {
   const { t } = useTranslation('common')
-  const [status, setStatus] = useState<ExecutionEnvironmentStatus | null>(null)
-  const [dismissed, setDismissed] = useState(false)
-  const [retrying, setRetrying] = useState(false)
-  const previousState = useRef<string | null>(null)
-  useEffect(() => {
-    let active = true
-    let revision = 0
-    const receive = (next: ExecutionEnvironmentStatus) => {
-      if (!active) return
-      if (
-        next.state === 'error' ||
-        (next.state === 'downloading' && previousState.current !== 'downloading')
-      )
-        setDismissed(false)
-      previousState.current = next.state
-      setStatus(next)
-    }
-    const unlisten = subscribeDesktopHostEvents(event => {
-      if (event.type !== 'python-runtime-status') return
-      revision += 1
-      receive(event.payload as unknown as ExecutionEnvironmentStatus)
-    })
-    void listExecutionEnvironments()
-      .then(environments => {
-        if (revision !== 0) return
-        const python = environments.find(environment => environment.id === 'python')
-        if (python) receive(python)
-      })
-      .catch(() => undefined)
-    return () => {
-      active = false
-      unlisten()
-    }
-  }, [])
-  if (dismissed || !status || !['downloading', 'error'].includes(status.state)) return null
+  const snapshot = useSyncExternalStore(
+    executionEnvironmentResource.subscribe,
+    executionEnvironmentResource.getSnapshot
+  )
+  const status = snapshot.environments.find(environment => environment.id === 'python')
+  const [dismissedRevision, setDismissedRevision] = useState<number | null>(null)
+  const retrying = snapshot.preparingPython
+  if (
+    dismissedRevision === snapshot.noticeRevision ||
+    !status ||
+    !['downloading', 'error'].includes(status.state)
+  )
+    return null
   const failed = status.state === 'error'
   const determinate = status.phase === 'download' && status.totalBytes > 0
   const progress = determinate
@@ -58,16 +31,6 @@ export function PluginPythonRuntimeNotice() {
       : status.phase === 'verify'
         ? t('workbench.plugin_python_verifying', '正在验证插件 Python 环境…')
         : t('workbench.plugin_python_downloading', '正在下载插件 Python 环境…')
-  const retry = async () => {
-    setRetrying(true)
-    try {
-      setStatus(await ensurePython())
-    } catch {
-      setStatus(current => (current ? { ...current, state: 'error' } : current))
-    } finally {
-      setRetrying(false)
-    }
-  }
   // AppShell is fixed and owns a stacking context; stay beside its modal descendants.
   return (
     <aside
@@ -85,7 +48,7 @@ export function PluginPythonRuntimeNotice() {
           type="button"
           data-testid="plugin-python-runtime-dismiss"
           aria-label={t('workbench.plugin_python_dismiss', '关闭提示')}
-          onClick={() => setDismissed(true)}
+          onClick={() => setDismissedRevision(snapshot.noticeRevision)}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-7 md:w-7"
         >
           <X className="h-4 w-4" />
@@ -114,7 +77,7 @@ export function PluginPythonRuntimeNotice() {
           size="sm"
           disabled={retrying}
           data-testid="plugin-python-runtime-retry"
-          onClick={() => void retry()}
+          onClick={() => void executionEnvironmentResource.preparePython().catch(() => undefined)}
         >
           {t('workbench.execution_environment_retry', '重试安装')}
         </Button>

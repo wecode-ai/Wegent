@@ -4,7 +4,13 @@ import {
   AgentModelFields,
 } from '@/features/collaboration/AgentRoutingFields'
 import { useAgentRuntimeSettings } from '@/features/collaboration/useAgentRuntimeSettings'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { createAgentResourceSaveOperation } from '@/features/collaboration/agentResourceSaveOperation'
 import {
   AgentCapabilitiesSelector,
   AgentCapabilityModeSelector,
@@ -41,6 +47,17 @@ export type ProjectChatAgentEditorApi = Pick<
 >
 type SkillApi = Pick<ReturnType<typeof createAgentResourceApi>, 'listSkills'>
 
+interface EditorModelOption {
+  name: string
+  displayName?: string
+  namespace?: string
+  type?: ModelType
+}
+const EMPTY_MODELS: EditorModelOption[] = []
+const EMPTY_SKILLS: UnifiedSkill[] = []
+const EMPTY_PLUGINS: UnifiedAgentPluginRef[] = []
+const EMPTY_SKILL_REFS: UnifiedAgentDefinition['skills'] = []
+
 function skillKey(skill: { name: string; namespace?: string }): string {
   return `${skill.namespace || 'default'}:${skill.name}`
 }
@@ -61,18 +78,7 @@ function modelKey(model: LocalProjectChatAgentModel): string {
   return `${model.type ?? ''}:${model.namespace ?? 'default'}:${model.name}`
 }
 
-export function ProjectChatAgentEditor({
-  api,
-  deviceApi,
-  editingAgentId,
-  modelApi,
-  pluginApi,
-  projectId = DEFAULT_WORK_ITEM_PROJECT_ID,
-  skillApi,
-  onClose,
-  onSaved,
-  ownerLabel,
-}: {
+type ProjectChatAgentEditorProps = {
   api: ProjectChatAgentEditorApi
   deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
   editingAgentId?: string
@@ -83,7 +89,35 @@ export function ProjectChatAgentEditor({
   onClose(): void
   onSaved(): Promise<void>
   ownerLabel?: string
-}) {
+}
+
+export function ProjectChatAgentEditor(props: ProjectChatAgentEditorProps) {
+  const [owner, setOwner] = useState({ api: props.api, revision: 0 })
+  if (owner.api !== props.api) setOwner({ api: props.api, revision: owner.revision + 1 })
+  return (
+    <ProjectChatAgentEditorContent
+      key={JSON.stringify([
+        owner.revision,
+        props.projectId ?? DEFAULT_WORK_ITEM_PROJECT_ID,
+        props.editingAgentId,
+      ])}
+      {...props}
+    />
+  )
+}
+
+function ProjectChatAgentEditorContent({
+  api,
+  deviceApi,
+  editingAgentId,
+  modelApi,
+  pluginApi,
+  projectId = DEFAULT_WORK_ITEM_PROJECT_ID,
+  skillApi,
+  onClose,
+  onSaved,
+  ownerLabel,
+}: ProjectChatAgentEditorProps) {
   const { t } = useTranslation('common')
   const editing = Boolean(editingAgentId)
   const [name, setName] = useState(createAgentResourceName)
@@ -104,27 +138,18 @@ export function ProjectChatAgentEditor({
   const [selectedCapabilityMode, setCapabilityMode] =
     useState<UnifiedAgentCapabilityMode>('follow_device')
   const [mcpConfig, setMcpConfig] = useState('{}')
-  const [models, setModels] = useState<
-    Array<{
-      name: string
-      displayName?: string
-      namespace?: string
-      type?: ModelType
-    }>
-  >([])
-  const [skills, setSkills] = useState<UnifiedSkill[]>([])
-  const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([])
-  const [plugins, setPlugins] = useState<UnifiedAgentPluginRef[]>([])
+  const [skillBindings, setSkillBindings] =
+    useState<UnifiedAgentDefinition['skills']>(EMPTY_SKILL_REFS)
+  const selectedSkillKeys = useMemo(() => storedSkillKeys(skillBindings), [skillBindings])
   const [selectedPluginIds, setSelectedPluginIds] = useState<string[]>([])
-  const [loadingSkills, setLoadingSkills] = useState(Boolean(skillApi))
-  const [loadingPlugins, setLoadingPlugins] = useState(Boolean(pluginApi))
-  const [pluginLoadError, setPluginLoadError] = useState<string | null>(null)
-  const [loadingAgent, setLoadingAgent] = useState(editing)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [capabilitiesActive, setCapabilitiesActive] = useState(false)
-  const [skillLoadError, setSkillLoadError] = useState<string | null>(null)
-  const [savedSkills, setSavedSkills] = useState<UnifiedAgentDefinition['skills']>([])
+  const [saveOperation] = useState(createAgentResourceSaveOperation)
+  const { saving: busy, error: saveError } = useSyncExternalStore(
+    saveOperation.subscribe,
+    saveOperation.getSnapshot,
+    saveOperation.getSnapshot
+  )
+  const setError = saveOperation.setError
   const deviceState = useCurrentAgentDevice(deviceApi, pluginApi, capabilitiesActive)
   const defaultDeviceAgent = isDefaultLocalAgentName(name)
   const preserveRouting = editing && !routing.changed && !defaultDeviceAgent
@@ -141,140 +166,129 @@ export function ProjectChatAgentEditor({
     visibility: 'creator_admin',
   })
 
-  useEffect(() => {
-    if (!defaultDeviceAgent || !routing.activated) return
-    let active = true
-    void modelApi
-      .listModels()
-      .then(response => {
-        if (!active) return
-        setModels(
-          response.data.filter(isSupportedModelFamily).map(item => ({
-            name: item.name,
-            displayName: item.displayName ?? undefined,
-            namespace: item.namespace,
-            type: item.type,
-          }))
-        )
-      })
-      .catch(() => {
-        if (active) setModels([])
-      })
-
-    return () => {
-      active = false
-    }
-  }, [defaultDeviceAgent, modelApi, routing.activated])
-
-  useEffect(() => {
-    if (!capabilitiesActive) return
-    let active = true
-    if (skillApi) {
-      void skillApi
-        .listSkills()
-        .then(items => {
-          if (active) setSkills(items.filter(skill => skill.visible !== false))
-        })
-        .catch(cause => {
-          if (active) setSkillLoadError(cause instanceof Error ? cause.message : String(cause))
-        })
-        .finally(() => {
-          if (active) setLoadingSkills(false)
-        })
-    }
-
-    if (pluginApi) {
-      void pluginApi
-        .listPlugins('')
-        .then(items => {
-          if (active) setPlugins(items)
-        })
-        .catch(cause => {
-          if (!active) return
-          setPluginLoadError(
-            cause instanceof Error
-              ? cause.message
-              : t('workbench.agent_creator_plugins_load_failed', '加载插件失败')
+  const modelsResource = useMemo(
+    () =>
+      createAsyncResource('project-agent-models', async () => {
+        const response = await modelApi.listModels()
+        return response.data.filter(isSupportedModelFamily).map(item => ({
+          name: item.name,
+          displayName: item.displayName ?? undefined,
+          namespace: item.namespace,
+          type: item.type,
+        }))
+      }),
+    [modelApi]
+  )
+  const skillsResource = useMemo(
+    () =>
+      skillApi
+        ? createAsyncResource('project-agent-skills', async () =>
+            (await skillApi.listSkills()).filter(skill => skill.visible !== false)
           )
-        })
-        .finally(() => {
-          if (active) setLoadingPlugins(false)
-        })
-    }
-
-    return () => {
-      active = false
-    }
-  }, [capabilitiesActive, skillApi, pluginApi, t])
-
-  useEffect(() => {
-    let active = true
-    if (editingAgentId) {
-      void api
-        .list(projectId)
-        .then(agents => {
-          if (!active) return
-          const agent = agents.find(candidate => candidate.id === editingAgentId)
-          if (!agent) {
-            setError(t('workbench.project_chat_agent_unavailable'))
-            return
-          }
-          setName(agent.name)
-          setDisplayName(agent.displayName || agent.name)
-          setNamespace(agent.namespace || 'default')
-          setSystemPrompt(agent.systemPrompt)
-          setModel(agent.model ?? '')
-          setModelType(agent.modelType ?? undefined)
-          setModelNamespace(agent.modelNamespace || 'default')
-          setAllowedModels(
-            agent.allowedModels ??
-              (agent.model
-                ? [
-                    {
-                      name: agent.model,
-                      type: agent.modelType,
-                      namespace: agent.modelNamespace,
-                    },
-                  ]
-                : [])
+        : null,
+    [skillApi]
+  )
+  const pluginsResource = useMemo(
+    () =>
+      pluginApi
+        ? createAsyncResource('project-agent-plugins', () => pluginApi.listPlugins(''))
+        : null,
+    [pluginApi]
+  )
+  const agentResource = useMemo(
+    () =>
+      editingAgentId
+        ? createAsyncResource(
+            JSON.stringify([projectId, editingAgentId]),
+            async () =>
+              (await api.list(projectId)).find(candidate => candidate.id === editingAgentId) ?? null
           )
-          setRuntime(agent.runtime)
-          loadRouting(agent.executionPolicy, agent.modelPolicy)
-          setCapabilityMode(agent.capabilityMode)
-          setMcpConfig(JSON.stringify(agent.mcpServers ?? {}, null, 2))
-          setSelectedSkillKeys(storedSkillKeys(agent.additionalSkills))
-          setSavedSkills(agent.additionalSkills)
-          setSelectedPluginIds(agent.plugins.map(plugin => plugin.id))
-          setPlugins(current => {
-            const merged = new Map(current.map(plugin => [plugin.id, plugin]))
-            agent.plugins.forEach(plugin => merged.set(plugin.id, merged.get(plugin.id) ?? plugin))
-            return [...merged.values()]
-          })
-          setLegacyConfig({
-            capabilityDescription: agent.capabilityDescription,
-            maxConcurrentExecutions: agent.maxConcurrentExecutions,
-            version: agent.version,
-            visibility: agent.visibility,
-          })
-        })
-        .catch(cause => {
-          if (active) {
-            setError(
-              cause instanceof Error
-                ? cause.message
-                : t('workbench.project_chat_agents_load_failed')
-            )
-          }
-        })
-        .finally(() => {
-          if (active) setLoadingAgent(false)
-        })
-    }
-
-    return () => {
-      active = false
-    }
-  }, [api, editingAgentId, projectId, t, loadRouting])
+        : null,
+    [api, editingAgentId, projectId]
+  )
+  const modelSnapshot = useSyncExternalStore(
+    defaultDeviceAgent && routing.activated ? modelsResource.subscribe : subscribeIdleResource,
+    modelsResource.getSnapshot,
+    modelsResource.getSnapshot
+  )
+  const skillSnapshot = useSyncExternalStore(
+    capabilitiesActive && skillsResource ? skillsResource.subscribe : subscribeIdleResource,
+    skillsResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const pluginSnapshot = useSyncExternalStore(
+    capabilitiesActive && pluginsResource ? pluginsResource.subscribe : subscribeIdleResource,
+    pluginsResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const agentSnapshot = useSyncExternalStore(
+    agentResource?.subscribe ?? subscribeIdleResource,
+    agentResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const models = modelSnapshot.data ?? EMPTY_MODELS
+  const skills = skillSnapshot.data ?? EMPTY_SKILLS
+  const detail = agentSnapshot.data
+  const plugins = useMemo(() => {
+    const merged = new Map(
+      (pluginSnapshot.data ?? EMPTY_PLUGINS).map(plugin => [plugin.id, plugin])
+    )
+    detail?.plugins.forEach(plugin => merged.set(plugin.id, merged.get(plugin.id) ?? plugin))
+    return [...merged.values()]
+  }, [pluginSnapshot.data, detail])
+  const loadingSkills = Boolean(skillsResource && !skillSnapshot.settled)
+  const loadingPlugins = Boolean(pluginsResource && !pluginSnapshot.settled)
+  const loadingAgent = Boolean(agentResource && !agentSnapshot.settled)
+  const skillLoadError =
+    skillSnapshot.status === 'error'
+      ? skillSnapshot.error instanceof Error
+        ? skillSnapshot.error.message
+        : String(skillSnapshot.error)
+      : null
+  const pluginLoadError =
+    pluginSnapshot.status === 'error'
+      ? pluginSnapshot.error instanceof Error
+        ? pluginSnapshot.error.message
+        : t('workbench.agent_creator_plugins_load_failed', '加载插件失败')
+      : null
+  const detailError =
+    agentSnapshot.status === 'error'
+      ? agentSnapshot.error instanceof Error
+        ? agentSnapshot.error.message
+        : t('workbench.project_chat_agents_load_failed')
+      : editing && agentSnapshot.settled && !detail
+        ? t('workbench.project_chat_agent_unavailable')
+        : null
+  const error = saveError || detailError
+  const [initializedAgent, setInitializedAgent] = useState<LocalProjectChatAgent | null>(null)
+  if (detail && initializedAgent !== detail) {
+    setInitializedAgent(detail)
+    setName(detail.name)
+    setDisplayName(detail.displayName || detail.name)
+    setNamespace(detail.namespace || 'default')
+    setSystemPrompt(detail.systemPrompt)
+    setModel(detail.model ?? '')
+    setModelType(detail.modelType ?? undefined)
+    setModelNamespace(detail.modelNamespace || 'default')
+    setAllowedModels(
+      detail.allowedModels ??
+        (detail.model
+          ? [{ name: detail.model, type: detail.modelType, namespace: detail.modelNamespace }]
+          : [])
+    )
+    setRuntime(detail.runtime)
+    loadRouting(detail.executionPolicy, detail.modelPolicy)
+    setCapabilityMode(detail.capabilityMode)
+    setMcpConfig(JSON.stringify(detail.mcpServers ?? {}, null, 2))
+    setSkillBindings(detail.additionalSkills)
+    setSelectedPluginIds(detail.plugins.map(plugin => plugin.id))
+    setLegacyConfig({
+      capabilityDescription: detail.capabilityDescription,
+      maxConcurrentExecutions: detail.maxConcurrentExecutions,
+      version: detail.version,
+      visibility: detail.visibility,
+    })
+  }
 
   const selectedSkillSet = useMemo(() => new Set(selectedSkillKeys), [selectedSkillKeys])
   const selectedPluginSet = useMemo(() => new Set(selectedPluginIds), [selectedPluginIds])
@@ -317,7 +331,7 @@ export function ProjectChatAgentEditor({
   )
 
   const save = async () => {
-    if (busy || loadingAgent) return
+    if (busy || loadingAgent || (editing && !detail)) return
     if (defaultDeviceAgent ? allowedModels.length === 0 : !routingReady) {
       setError(t('workbench.agent_creator_model_required', '请选择模型'))
       return
@@ -331,8 +345,8 @@ export function ProjectChatAgentEditor({
       setError(t('workbench.agent_creator_mcp_invalid', 'MCP 配置必须是有效的 JSON 对象'))
       return
     }
-    setBusy(true)
-    setError(null)
+    const token = saveOperation.begin()
+    if (!token) return
     try {
       const primaryModel = defaultDeviceAgent ? allowedModels[0] : null
       const definition: UnifiedAgentDefinition = {
@@ -349,8 +363,8 @@ export function ProjectChatAgentEditor({
         systemPrompt,
         skills:
           capabilityMode === 'manual'
-            ? !capabilitiesActive
-              ? savedSkills
+            ? !capabilitiesActive || !skillsResource
+              ? skillBindings
               : skills
                   .filter(skill => effectiveSelectedSkillSet.has(skillKey(skill)))
                   .map(skill => ({
@@ -412,13 +426,15 @@ export function ProjectChatAgentEditor({
       } else {
         await api.create(projectId, input)
       }
+      if (!saveOperation.owns(token)) return
       await onSaved()
     } catch (cause) {
+      if (!saveOperation.owns(token)) return
       setError(
         cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
       )
     } finally {
-      setBusy(false)
+      saveOperation.finish(token)
     }
   }
 
@@ -471,9 +487,22 @@ export function ProjectChatAgentEditor({
             }
             onSkillChange={(skill, selected) => {
               const key = skillKey(skill)
-              setSelectedSkillKeys(current =>
-                selected ? [...current, key] : current.filter(candidate => candidate !== key)
-              )
+              const entry = skills.find(candidate => skillKey(candidate) === key)
+              if (selected && !entry) return
+              setSkillBindings(current => {
+                const remaining = current.filter(candidate => skillKey(candidate) !== key)
+                return selected && entry
+                  ? [
+                      ...remaining,
+                      {
+                        skillId: entry.id,
+                        name: entry.name,
+                        namespace: entry.namespace || 'default',
+                        isPublic: entry.is_public,
+                      },
+                    ]
+                  : remaining
+              })
             }}
             pluginError={pluginLoadError}
             pluginsEnabled={runtime === 'codex'}
@@ -613,6 +642,26 @@ export function ProjectChatAgentEditor({
                 '负责人 AI 会根据任务，从这里预先配置的模型中选择。'
               )}
             </p>
+            {routing.activated && !modelSnapshot.settled && (
+              <p role="status">{t('workbench.local_model_loading_models_action')}</p>
+            )}
+            {modelSnapshot.status === 'error' && (
+              <div role="alert" className="text-sm text-destructive">
+                <p>
+                  {modelSnapshot.error instanceof Error
+                    ? modelSnapshot.error.message
+                    : t('workbench.agent_creator_models_load_failed', '加载模型失败')}
+                </p>
+                <button
+                  type="button"
+                  data-testid="cloud-project-chat-agent-models-retry"
+                  className="min-h-11 underline md:min-h-8"
+                  onClick={() => void modelsResource.reload()}
+                >
+                  {t('workbench.retry')}
+                </button>
+              </div>
+            )}
             <div className="max-h-48 space-y-1 overflow-y-auto">
               {models.map(candidate => {
                 const value = {
@@ -652,7 +701,8 @@ export function ProjectChatAgentEditor({
                   >
                     <span>
                       {candidate.name}
-                      {t('workbench.project_chat_agent_model_unavailable', '（当前不可用）')}
+                      {modelSnapshot.status === 'ready' &&
+                        t('workbench.project_chat_agent_model_unavailable', '（当前不可用）')}
                     </span>
                     <button
                       aria-label={`${t(
@@ -727,6 +777,7 @@ export function ProjectChatAgentEditor({
       }
       saveDisabled={
         loadingAgent ||
+        (editing && !detail) ||
         (defaultDeviceAgent ? allowedModels.length === 0 : !routingReady) ||
         (capabilityMode === 'manual' &&
           capabilitiesActive &&

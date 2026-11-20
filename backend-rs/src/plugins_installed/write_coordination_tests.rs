@@ -73,17 +73,18 @@ struct LeaseRedis {
     evalsha_error_kind: Option<brz_redis::ErrorKind>,
     script_load_fails: bool,
     script_loaded: Mutex<bool>,
+    set_delay: Duration,
 }
 
 #[tokio::test]
-async fn cancelling_auto_update_response_keeps_transaction_and_unlock_owned() {
+async fn cancelling_plugin_write_response_keeps_transaction_and_unlock_owned() {
     let redis = std::sync::Arc::new(LeaseRedis::default());
     let operation_redis = redis.clone();
     let (entered, entered_rx) = tokio::sync::oneshot::channel();
     let (finish, finish_rx) = tokio::sync::oneshot::channel();
     let (released, released_rx) = tokio::sync::oneshot::channel();
     let response = tokio::spawn(async move {
-        super::super::auto_update::complete_auto_update(async move {
+        complete_plugin_write(async move {
             let lease = PluginWriteLease::acquire(Some(operation_redis.as_ref()), 23).await?;
             entered.send(()).unwrap();
             finish_rx.await.unwrap();
@@ -194,6 +195,9 @@ impl LeaseRedis {
 
 impl Redis for LeaseRedis {
     async fn command<T: FromRedisValue + Send>(&self, command: Cmd) -> RedisResult<T> {
+        if command.name().as_ref() == "SET" && !self.set_delay.is_zero() {
+            tokio::time::sleep(self.set_delay).await;
+        }
         if self.stall {
             std::future::pending::<()>().await;
         }
@@ -887,4 +891,47 @@ async fn batch_never_holds_another_plugin_while_waiting_for_a_busy_one() {
             .contains_key("wegent:plugin-write:23:plugin-a")
     );
     held.release().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn slow_batch_acquisition_stops_at_the_shared_deadline_and_releases_owned_keys() {
+    let redis = LeaseRedis {
+        set_delay: Duration::from_millis(75),
+        ..LeaseRedis::default()
+    };
+    let started = Instant::now();
+    let outcome = PluginWriteLease::acquire_names_until(
+        Some(&redis),
+        23,
+        vec!["plugin-a".into(), "plugin-b".into(), "plugin-c".into()],
+        ACQUIRE_WAIT,
+        started + Duration::from_millis(100),
+    )
+    .await;
+    let error = outcome
+        .err()
+        .expect("The batch must not reset the deadline for every SET");
+    assert_eq!(plugin_write_error_code(&error), Some("plugin_write_busy"));
+    assert_eq!(started.elapsed(), Duration::from_millis(100));
+    assert!(
+        redis.owners.lock().unwrap().is_empty(),
+        "Earlier successful claims must be released"
+    );
+    let commands = redis.commands.lock().unwrap();
+    let claims: Vec<_> = commands
+        .iter()
+        .filter(|command| command[0] == "SET")
+        .collect();
+    assert_eq!(
+        claims.len(),
+        1,
+        "No later plugin may be claimed after the shared deadline"
+    );
+    assert_eq!(claims[0][1], "wegent:plugin-write:23:plugin-a");
+    assert!(
+        commands
+            .iter()
+            .any(|command| command[0] == "EVALSHA"
+                && command[3] == "wegent:plugin-write:23:plugin-a")
+    );
 }

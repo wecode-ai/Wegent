@@ -20,8 +20,10 @@ export async function migrateStandIn(
     targetUser: number
     targetDevice: string
     primaryName: string
+    assertOwnership?(): void
   }
 ): Promise<StandInRole> {
+  input.assertOwnership?.()
   const { sourceUser, sourceDevice, roleId, targetUser, targetDevice } = input
   if (sourceDevice === targetDevice) throw new StandInMigrationError('same_device')
   const [source, memories, target] = await Promise.all([
@@ -78,12 +80,14 @@ export async function migrateStandIn(
       ))
   )
     throw new StandInMigrationError('conflict')
+  input.assertOwnership?.()
   if (!existing)
     await api.personalSave(
       targetUser,
       { ...target, roles: [...target.roles, migrated] },
       targetDevice
     )
+  input.assertOwnership?.()
   const imported = await api.memories(targetUser, targetDevice)
   for (const memory of memories.filter(
     memory =>
@@ -97,6 +101,7 @@ export async function migrateStandIn(
       )
     )
       continue
+    input.assertOwnership?.()
     imported.push(
       await api.saveMemory(targetUser, targetDevice, {
         content: memory.content,
@@ -104,9 +109,11 @@ export async function migrateStandIn(
       })
     )
   }
+  input.assertOwnership?.()
   const current = await api.personalGet(sourceUser, sourceDevice)
   if (current.version !== source.version) throw new StandInMigrationError('changed')
   if (current.lifecycle?.status !== 'stopped') throw new StandInMigrationError('not_stopped')
+  input.assertOwnership?.()
   // History, memories and device grants remain on the stopped source. Never restart it here.
   return existing ?? migrated
 }

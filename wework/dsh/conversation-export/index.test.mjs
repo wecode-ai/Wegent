@@ -24,126 +24,141 @@ test('loads after packaging without workspace dependencies', async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-test('writes and overwrites an export through a polled backend task', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-'))
-  const destination = join(root, 'conversation.md')
-  await writeFile(destination, 'Old export\n')
-  let registration
-  const cleanups = []
-  const ctx = {
-    effect(factory) {
-      cleanups.push(factory())
-    },
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
+test(
+  'writes and overwrites an export through a polled backend task',
+  { timeout: 30_000 },
+  async t => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-'))
+    const destination = join(root, 'conversation.md')
+    await writeFile(destination, 'Old export\n')
+    let registration
+    const cleanups = []
+    const ctx = {
+      effect(factory) {
+        cleanups.push(factory())
       },
-    },
+      weworkPluginRuntime: {
+        register(_owner, value) {
+          registration = value
+        },
+      },
+    }
+    apply(ctx)
+
+    const { exportTaskId } = await registration.methods.start({ path: destination })
+    await registration.methods.append({ exportTaskId, content: '# Conversation\n' })
+    await registration.methods.append({ exportTaskId, content: 'Complete.\n' })
+    const finishing = await registration.methods.finish({ exportTaskId })
+    const result = await waitForTerminalStatus(registration.methods, exportTaskId, t.signal)
+
+    assert.equal(finishing.state, 'finalizing')
+    assert.equal(await readFile(destination, 'utf8'), '# Conversation\nComplete.\n')
+    assert.deepEqual(result, {
+      assetsCompleted: 0,
+      assetsTotal: 0,
+      exportTaskId,
+      phase: 'finalizing',
+      state: 'completed',
+      path: destination,
+      size: Buffer.byteLength('# Conversation\nComplete.\n'),
+    })
+    for (const cleanup of cleanups) cleanup()
+    await rm(root, { recursive: true, force: true })
   }
-  apply(ctx)
+)
 
-  const { exportTaskId } = await registration.methods.start({ path: destination })
-  await registration.methods.append({ exportTaskId, content: '# Conversation\n' })
-  await registration.methods.append({ exportTaskId, content: 'Complete.\n' })
-  const finishing = await registration.methods.finish({ exportTaskId })
-  const result = await waitForTerminalStatus(registration.methods, exportTaskId)
-
-  assert.equal(finishing.state, 'finalizing')
-  assert.equal(await readFile(destination, 'utf8'), '# Conversation\nComplete.\n')
-  assert.deepEqual(result, {
-    assetsCompleted: 0,
-    assetsTotal: 0,
-    exportTaskId,
-    phase: 'finalizing',
-    state: 'completed',
-    path: destination,
-    size: Buffer.byteLength('# Conversation\nComplete.\n'),
-  })
-  for (const cleanup of cleanups) cleanup()
-  await rm(root, { recursive: true, force: true })
-})
-
-test('packages the document and conversation assets into a zip export', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-zip-'))
-  const destination = join(root, 'conversation.zip')
-  let registration
-  apply({
-    effect() {},
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
+test(
+  'packages the document and conversation assets into a zip export',
+  { timeout: 30_000 },
+  async t => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-zip-'))
+    const destination = join(root, 'conversation.zip')
+    let registration
+    apply({
+      effect() {},
+      weworkPluginRuntime: {
+        register(_owner, value) {
+          registration = value
+        },
       },
-    },
-  })
+    })
 
-  const { exportTaskId } = await registration.methods.start({
-    path: destination,
-    archive: true,
-    documentName: 'conversation.md',
-    assetCount: 1,
-  })
-  await registration.methods.append({
-    exportTaskId,
-    content: '# Conversation\n\n![Image](<images/image.png>)\n',
-  })
-  await registration.methods.appendAsset({
-    exportTaskId,
-    archivePath: 'images/image.png',
-    contentBase64: Buffer.from([1, 2, 3, 4]).toString('base64'),
-  })
-  await registration.methods.finish({ exportTaskId })
-  const result = await waitForTerminalStatus(registration.methods, exportTaskId)
-  const archive = await JSZip.loadAsync(await readFile(destination))
+    const { exportTaskId } = await registration.methods.start({
+      path: destination,
+      archive: true,
+      documentName: 'conversation.md',
+      assetCount: 1,
+    })
+    await registration.methods.append({
+      exportTaskId,
+      content: '# Conversation\n\n![Image](<images/image.png>)\n',
+    })
+    await registration.methods.appendAsset({
+      exportTaskId,
+      archivePath: 'images/image.png',
+      contentBase64: Buffer.from([1, 2, 3, 4]).toString('base64'),
+    })
+    await registration.methods.finish({ exportTaskId })
+    const result = await waitForTerminalStatus(registration.methods, exportTaskId, t.signal)
+    const archive = await JSZip.loadAsync(await readFile(destination))
 
-  assert.equal(result.state, 'completed')
-  assert.equal(
-    await archive.file('conversation.md').async('string'),
-    '# Conversation\n\n![Image](<images/image.png>)\n'
-  )
-  assert.deepEqual([...(await archive.file('images/image.png').async('uint8array'))], [1, 2, 3, 4])
-  await rm(root, { recursive: true, force: true })
-})
+    assert.equal(result.state, 'completed')
+    assert.equal(
+      await archive.file('conversation.md').async('string'),
+      '# Conversation\n\n![Image](<images/image.png>)\n'
+    )
+    assert.deepEqual(
+      [...(await archive.file('images/image.png').async('uint8array'))],
+      [1, 2, 3, 4]
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+)
 
-test('packages an uploaded asset without sending it in one request', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-upload-'))
-  const destination = join(root, 'conversation.zip')
-  let registration
-  apply({
-    effect() {},
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
+test(
+  'packages an uploaded asset without sending it in one request',
+  { timeout: 30_000 },
+  async t => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-upload-'))
+    const destination = join(root, 'conversation.zip')
+    let registration
+    apply({
+      effect() {},
+      weworkPluginRuntime: {
+        register(_owner, value) {
+          registration = value
+        },
       },
-    },
-  })
+    })
 
-  const { exportTaskId } = await registration.methods.start({
-    path: destination,
-    archive: true,
-    documentName: 'conversation.html',
-    assetCount: 1,
-  })
-  await registration.methods.append({ exportTaskId, content: '<p>Attachment</p>' })
-  await registration.methods.appendAsset({
-    exportTaskId,
-    archivePath: 'attachments/data.bin',
-    contentBase64: Buffer.from([1, 2]).toString('base64'),
-  })
-  await registration.methods.appendAsset({
-    exportTaskId,
-    archivePath: 'attachments/data.bin',
-    contentBase64: Buffer.from([3, 4]).toString('base64'),
-  })
-  await registration.methods.finish({ exportTaskId })
-  await waitForTerminalStatus(registration.methods, exportTaskId)
-  const archive = await JSZip.loadAsync(await readFile(destination))
+    const { exportTaskId } = await registration.methods.start({
+      path: destination,
+      archive: true,
+      documentName: 'conversation.html',
+      assetCount: 1,
+    })
+    await registration.methods.append({ exportTaskId, content: '<p>Attachment</p>' })
+    await registration.methods.appendAsset({
+      exportTaskId,
+      archivePath: 'attachments/data.bin',
+      contentBase64: Buffer.from([1, 2]).toString('base64'),
+    })
+    await registration.methods.appendAsset({
+      exportTaskId,
+      archivePath: 'attachments/data.bin',
+      contentBase64: Buffer.from([3, 4]).toString('base64'),
+    })
+    await registration.methods.finish({ exportTaskId })
+    await waitForTerminalStatus(registration.methods, exportTaskId, t.signal)
+    const archive = await JSZip.loadAsync(await readFile(destination))
 
-  assert.deepEqual(
-    [...(await archive.file('attachments/data.bin').async('uint8array'))],
-    [1, 2, 3, 4]
-  )
-  await rm(root, { recursive: true, force: true })
-})
+    assert.deepEqual(
+      [...(await archive.file('attachments/data.bin').async('uint8array'))],
+      [1, 2, 3, 4]
+    )
+    await rm(root, { recursive: true, force: true })
+  }
+)
 
 test('rejects concurrent exports to the same destination', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-conflict-'))

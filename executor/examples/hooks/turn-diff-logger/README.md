@@ -46,6 +46,17 @@ flowchart LR
 
 `record.json` 是脚本补全后的完整事件记录，包含宿主原始事件 `event`、采集时间、工作区、脱敏的 `git_url`、前后树 ID、文件数、增删行数及产物描述符。Git 地址在结束快照采集时固定到待处理项，不在延迟归档时重新读取；未配置 `remote.origin.url` 时为 `null`。URL 中的用户名、密码、查询参数和片段不会进入日志。产物路径相对于记录目录。二进制文件保留完整 Git 二进制补丁；无法按 UTF-8 表示的文件名用 `path_bytes_hex` 写入 `files.jsonl`。事件序号只在同一次执行内递增，后台完成顺序可能不同；不要只按时间戳跳过晚完成的记录。
 
+Codex 的模型元数据采用本轮 turn/start 的模型参数；未覆盖时采用原生线程返回的实际模型。
+提供方记录实际推理提供方，不使用宿主内部路由标识；这些信息仅用于 Hook 元数据，不修改推理请求。
+
+可复用脚本接口：`gitStream(cwd, args, options)` 流式读取 Git 输出；
+`processQueue(root, { processJob, onArchive, onError })` 支持自定义消费。
+提供 `processJob` 时直接处理固定的前后快照，不生成默认归档；回调成功后才确认任务、释放引用，
+失败会保留任务并退避重试。`onArchive` 在默认归档持久化后调用。
+`startWorker(root, { logFile })` 以后台队列进程启动，`logFile: null` 不创建工作日志。
+`writeJson(path, value, { modifiedAt })` 在原子发布前持久化指定修改时间，便于外部插件管理数据寿命。
+默认日志插件继续归档所有快照差异，包含 pull／merge 引入的变化；不内置上报或过滤策略。
+
 宿主事件协议版本为 `schema_version: 1`，只包含明确选取的元数据，不转发原始请求、提示词、认证信息或完整模型配置：
 
 | 字段                                                      | 含义                                                                                                  |
@@ -56,7 +67,7 @@ flowchart LR
 | `runtime_task_id`、`device_id`                            | 当前设备上的本地任务 ID 和实际执行设备 ID，不采用请求中指定的目标设备替代实际设备                     |
 | `runtime`、`executor_version`、`platform`、`arch`         | `Codex` / `ClaudeCode`、实际 Executor 版本、操作系统和架构；Executor 版本不是桌面客户端或新插件的版本 |
 | `user.id`、`user.name`                                    | 来源请求中已有的用户身份，缺少 ID 时为 `null`，缺少名称时为 `anonymous`                               |
-| `model`、`model_provider`                                 | 请求中指定的模型和提供方；未指定时为 `null`，不读取原生认证或配置文件来填充                           |
+| `model`、`model_provider`                                 | Codex 实际模型和推理提供方；其他运行时取请求值，未知时为 `null`，不读取原生认证或配置文件             |
 | `cwd`、`session_id`、`turn_id`                            | 工作目录、原生会话与轮次标识；开始时原生标识可以为 `null`                                             |
 | `hook_event_name`、`status`、`permission_mode`、`is_test` | 生命周期事件、状态、执行权限模式及是否为设置页合成测试                                                |
 
@@ -90,19 +101,32 @@ Private indexes preserve the real index, HEAD and branches. Private refs protect
 
 `record.json` is the complete event record enriched by the script. It contains the original host `event`, capture time, workspace, sanitized `git_url`, before/after tree IDs, totals and relative artifact descriptors. The remote is captured with the ending snapshot and persisted in the pending job, rather than read during deferred archival. Missing `remote.origin.url` becomes `null`. URL usernames, passwords, query strings and fragments are removed. Non-UTF-8 paths use `path_bytes_hex`. Event sequences are local to an execution; archive completion order can differ.
 
+Codex model metadata uses the current turn/start override, or the actual model returned by the native
+thread when unspecified. The provider identifies inference rather than the internal router. These
+values update Hook metadata only and never change the inference request.
+
+Reusable APIs include `gitStream(cwd, args, options)` for streamed Git output and
+`processQueue(root, { processJob, onArchive, onError })` for custom consumers. Supplying `processJob`
+processes fixed before/after snapshots without creating default archives. Successful consumption
+acknowledges jobs and releases refs; failures retain jobs and retry with backoff. `onArchive` runs
+after the default archive is durable. `startWorker(root, { logFile })` launches the queue worker;
+`logFile: null` creates no worker log. `writeJson(path, value, { modifiedAt })` durably sets the
+modification timestamp before atomic publication. Default logging still archives every snapshot
+difference, including pull/merge imports; reporting and filtering policies belong to custom plugins.
+
 Host protocol `schema_version: 1` explicitly selects metadata and never forwards raw requests, prompts, credentials or whole model configurations:
 
-| Fields                                                    | Meaning                                                                                                                                    |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `event_id`, `execution_id`, `sequence`                    | Unique event, execution and execution-local sequence for correlation and deduplication                                                     |
-| `emitted_at_ms`                                           | Unix milliseconds when the host emits the event, distinct from script `captured_at`                                                        |
-| `task_id`, `request_id`                                   | Source request task and subtask IDs, distinct from native turn IDs                                                                         |
-| `runtime_task_id`, `device_id`                            | Device-local task and actual execution device, not a target device supplied by the request                                                 |
-| `runtime`, `executor_version`, `platform`, `arch`         | `Codex` / `ClaudeCode`, actual Executor version, OS and architecture; the Executor version is not the desktop client or new plugin version |
-| `user.id`, `user.name`                                    | Existing request identity; an absent ID is `null`, and an absent name is `anonymous`                                                       |
-| `model`, `model_provider`                                 | Explicit request model and provider, or `null`; native authentication/configuration files are not read to fill missing values              |
-| `cwd`, `session_id`, `turn_id`                            | Working directory and native identifiers, which can be null at startup                                                                     |
-| `hook_event_name`, `status`, `permission_mode`, `is_test` | Event, status, execution permission mode and synthetic settings test flag                                                                  |
+| Fields                                                    | Meaning                                                                                                                                         |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event_id`, `execution_id`, `sequence`                    | Unique event, execution and execution-local sequence for correlation and deduplication                                                          |
+| `emitted_at_ms`                                           | Unix milliseconds when the host emits the event, distinct from script `captured_at`                                                             |
+| `task_id`, `request_id`                                   | Source request task and subtask IDs, distinct from native turn IDs                                                                              |
+| `runtime_task_id`, `device_id`                            | Device-local task and actual execution device, not a target device supplied by the request                                                      |
+| `runtime`, `executor_version`, `platform`, `arch`         | `Codex` / `ClaudeCode`, actual Executor version, OS and architecture; the Executor version is not the desktop client or new plugin version      |
+| `user.id`, `user.name`                                    | Existing request identity; an absent ID is `null`, and an absent name is `anonymous`                                                            |
+| `model`, `model_provider`                                 | Actual Codex model and inference provider; request values for other runtimes, or `null`; native authentication/configuration files are not read |
+| `cwd`, `session_id`, `turn_id`                            | Working directory and native identifiers, which can be null at startup                                                                          |
+| `hook_event_name`, `status`, `permission_mode`, `is_test` | Event, status, execution permission mode and synthetic settings test flag                                                                       |
 
 Combine `workspace` with each relative `path` in `files.jsonl` for file paths and read per-file added/deleted line counts there. Text additions/deletions are available in `diff.patch` hunks. Large contents remain in file artifacts described by byte length and SHA-256, rather than host events or stdout. Binary patches preserve byte changes without inventing text lines. A new plugin can derive stable report IDs from `event_id` and path; report constants, plugin/client versions and batching belong to that plugin and its actual environment. This example implements no specific reporting protocol.
 

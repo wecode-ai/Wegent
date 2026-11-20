@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use brz_redis::RedisBytes;
 use brz_socket_io::{ClientError, Reply};
 use serde_json::{Value, json};
 
@@ -387,20 +386,6 @@ async fn latest_device_executor(
         internal_error()
     })?;
     Ok(row.and_then(|row| row.executor_name))
-}
-
-/// `session_manager.get_task_streaming_status`'s raw document (`is_stream_alive`).
-pub(crate) async fn task_streaming_status<R: brz_redis::Redis>(
-    redis: &R,
-    task_id: i64,
-) -> Option<Value> {
-    let key = format!("chat:task_streaming:{task_id}");
-    let bytes = redis
-        .get::<_, RedisBytes>(key.as_str())
-        .await
-        .ok()
-        .flatten()?;
-    serde_json::from_slice(bytes.as_ref()).ok()
 }
 
 #[cfg(test)]

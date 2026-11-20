@@ -14,6 +14,7 @@ from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import DeviceCapabilitySyncResult
 from app.services import plugin_write_operations
+from app.services.device import capability_sync_service
 from app.services.device import plugin_reconciliation as module
 from app.services.device import plugin_removal_sync
 from app.services.plugin_installation_operations import uninstall_account_plugin
@@ -480,6 +481,119 @@ def test_pending_removal_diagnostics_explain_target_filter(
 
 
 @pytest.mark.asyncio
+async def test_removal_receipt_cannot_clear_a_newer_removal_of_the_same_plugin(
+    installed_reconciliation,
+):
+    from app.services.plugin_kind_revision import replace_installed_kind
+    from app.services.plugin_write_coordination import acquire_plugin_write_lock
+
+    user_id, installed_id, _, sessions = installed_reconciliation
+    with sessions() as db:
+        uninstall_account_plugin(db=db, user_id=user_id, installed_id=installed_id)
+    previous = plugin_removal_sync._pending_removals(user_id, "desktop")
+    with sessions() as db:
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
+        installed = db.get(Kind, installed_id)
+        replace_installed_kind(db, installed, installed.json)
+        db.commit()
+
+    current = plugin_removal_sync._pending_removals(user_id, "desktop")
+    assert current[installed_id] > previous[installed_id]
+    receipt = DeviceCapabilitySyncResult(
+        device_id="desktop", success=True, acknowledged=True
+    )
+    await plugin_removal_sync._record_sync_result(user_id, receipt, previous)
+    assert plugin_removal_sync._pending_removals(user_id, "desktop") == current
+    await plugin_removal_sync._record_sync_result(user_id, receipt, current)
+    assert plugin_removal_sync._pending_removals(user_id, "desktop") == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("added_during_dispatch", [False, True])
+async def test_legacy_removal_records_an_install_ack_in_the_same_full_snapshot(
+    installed_reconciliation, monkeypatch, added_during_dispatch
+):
+    user_id, removed_id, release_id, sessions = installed_reconciliation
+    with sessions() as db:
+        uninstall_account_plugin(db=db, user_id=user_id, installed_id=removed_id)
+
+    def stage_install():
+        with sessions() as db:
+            additional = Kind(
+                name="another-installed-plugin",
+                kind="InstalledPlugin",
+                namespace="default",
+                user_id=user_id,
+                is_active=True,
+                json={
+                    "spec": {"revision": 2, "releaseId": release_id, "enabled": True}
+                },
+            )
+            db.add(additional)
+            db.flush()
+            installed_id = additional.id
+            db.add(
+                PluginDeviceInstallation(
+                    user_id=user_id,
+                    device_id="desktop",
+                    installed_kind_id=installed_id,
+                    state="pending",
+                    desired_release_id=release_id,
+                )
+            )
+            db.commit()
+            return installed_id
+
+    installed_id = None if added_during_dispatch else stage_install()
+    sent_snapshots = []
+
+    async def device_ack(_sio, *, payload, **_):
+        nonlocal installed_id
+        assert "_receipt_revisions" not in payload
+        sent_ids = [plugin["installed_plugin_id"] for plugin in payload["plugins"]]
+        sent_snapshots.append(sent_ids)
+        if installed_id is None:
+            installed_id = await asyncio.to_thread(stage_install)
+        return {
+            "success": True,
+            "plugins": [{"id": item, "status": "synced"} for item in sent_ids],
+        }
+
+    service = plugin_removal_sync.device_capability_sync_service
+    monkeypatch.setattr(service, "_session_factory", sessions)
+    monkeypatch.setattr(
+        plugin_removal_sync.runtime_route_resolver,
+        "resolve",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                online_info={}, runtime_device_id="desktop", socket_id="socket"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_installed_plugins",
+        lambda *_args, **_kwargs: (
+            [] if installed_id is None else [{"installed_plugin_id": installed_id}]
+        ),
+    )
+    monkeypatch.setattr(capability_sync_service, "get_sio", Mock())
+    monkeypatch.setattr(capability_sync_service, "call_capability_sync", device_ack)
+    await plugin_removal_sync.sync_pending_plugin_removals(user_id, "desktop")
+
+    assert sent_snapshots == (
+        [[], [installed_id]] if added_during_dispatch else [[installed_id]]
+    )
+    with sessions() as db:
+        row = db.query(PluginDeviceInstallation).filter_by(user_id=user_id).one()
+        assert (row.installed_kind_id, row.state, row.actual_release_id) == (
+            installed_id,
+            "installed",
+            release_id,
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("wakeups", [0, 1, 3])
 @pytest.mark.parametrize("first_outcome", ["busy", "rejected", "removed"])
 async def test_removal_retains_heartbeat_received_before_snapshot_failure(
@@ -492,10 +606,19 @@ async def test_removal_retains_heartbeat_received_before_snapshot_failure(
     with sessions() as db:
         uninstall_account_plugin(db=db, user_id=user_id, installed_id=installed_id)
     service = plugin_removal_sync.device_capability_sync_service
-    monkeypatch.setattr(service, "supports_plugin_delta", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        plugin_removal_sync.runtime_route_resolver,
+        "resolve",
+        AsyncMock(
+            return_value=Mock(
+                online_info={"runtime_features": {"pluginSync": {"protocolVersion": 2}}}
+            )
+        ),
+    )
     started, release = asyncio.Event(), asyncio.Event()
 
     async def synchronize(**kwargs):
+        assert kwargs.pop("versioned") is True
         if dispatch.await_count == 1:
             started.set()
             await release.wait()

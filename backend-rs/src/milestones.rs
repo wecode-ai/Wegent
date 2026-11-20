@@ -137,12 +137,8 @@ async fn authorize<M: Mysql>(
     })
 }
 
-async fn list<M: Mysql>(
-    mysql: &M,
-    project: &str,
-    visibility: &str,
-) -> Result<Vec<Milestone>, FastApiError> {
-    let sql = format!("SELECT m.id, m.cloud_project_id AS project_id, m.title, m.description, m.status AS state,
+fn milestone_query(visibility: &str, selection: &str) -> String {
+    format!("SELECT m.id, m.cloud_project_id AS project_id, m.title, m.description, m.status AS state,
         CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(m.metadata, '$.due_on')), 'null') AS CHAR) AS due_on, m.version,
         CAST(COALESCE(c.open_issues, 0) AS SIGNED) AS open_issues,
         CAST(COALESCE(c.closed_issues, 0) AS SIGNED) AS closed_issues,
@@ -156,11 +152,27 @@ async fn list<M: Mysql>(
           GROUP BY JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.milestone_id'))
         ) c ON c.milestone_id = m.id
         WHERE m.cloud_project_id = ? AND m.resource_type = 'milestone' AND (m.deleted_at IS NULL OR m.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
-        ORDER BY m.created_at DESC, m.id");
+        {selection} ORDER BY m.created_at DESC, m.id")
+}
+
+async fn list<M: Mysql>(
+    mysql: &M,
+    project: &str,
+    visibility: &str,
+) -> Result<Vec<Milestone>, FastApiError> {
     mysql
-        .fetch_all(sql, (project, project))
+        .fetch_all(milestone_query(visibility, ""), (project, project))
         .await
         .map_err(internal)
+}
+
+async fn written_milestone(
+    tx: &mut impl MysqlTransaction,
+    project: &str,
+    id: &str,
+) -> brz_mysql::MysqlResult<Milestone> {
+    tx.fetch_one(milestone_query("", "AND m.id = ?"), (project, project, id))
+        .await
 }
 
 #[brz_http_server::get("/api/v1/cloud-projects/:project_id/milestones")]
@@ -249,15 +261,10 @@ async fn create_milestone(
                 ),
             )
             .await?;
-            Ok(())
+            written_milestone(tx, project_id, &id).await
         })
         .await
-        .map_err(internal)?;
-    list(&state.mysql, project_id, "")
-        .await?
-        .into_iter()
-        .find(|m| m.id == id)
-        .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Milestone not found"))
+        .map_err(internal)
 }
 
 #[brz_http_server::patch("/api/v1/cloud-projects/:project_id/milestones/:milestone_id")]
@@ -275,19 +282,17 @@ async fn update_milestone(
     let version = input.version.ok_or_else(|| {
         FastApiError::detail(StatusCode::UNPROCESSABLE_ENTITY, "version is required")
     })?;
-    let result = state.mysql.execute("UPDATE loop_items SET title=?,description=?,status=?,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP() WHERE id=? AND cloud_project_id=? AND resource_type='milestone' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) AND version=?",
-        (input.title.trim(), input.description.as_str(), input.state.as_str(), Json(json!({"due_on":input.due_on})), milestone_id, project_id, version)).await.map_err(internal)?;
-    if result.rows_affected != 1 {
-        return Err(FastApiError::detail(
-            StatusCode::CONFLICT,
-            "Milestone changed; refresh and try again",
-        ));
-    }
-    list(&state.mysql, project_id, "")
-        .await?
-        .into_iter()
-        .find(|m| m.id == milestone_id)
-        .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Milestone not found"))
+    state.mysql.with_transaction(async |tx| {
+        let result = tx.execute("UPDATE loop_items SET title=?,description=?,status=?,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP() WHERE id=? AND cloud_project_id=? AND resource_type='milestone' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) AND version=?",
+            (input.title.trim(), input.description.as_str(), input.state.as_str(), Json(json!({"due_on":input.due_on})), milestone_id, project_id, version)).await?;
+        if result.rows_affected != 1 {
+            return Ok(Err(FastApiError::detail(
+                StatusCode::CONFLICT,
+                "Milestone changed; refresh and try again",
+            )));
+        }
+        written_milestone(tx, project_id, milestone_id).await.map(Ok)
+    }).await.map_err(internal)?
 }
 
 #[derive(Deserialize)]
@@ -330,6 +335,46 @@ async fn delete_milestone(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+    async fn mutation_response_reads_the_uncommitted_writer_row() -> anyhow::Result<()> {
+        crate::migrations::mysql_tests::isolated(async |mysql| {
+            crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+            let saved = mysql
+                .with_transaction(async |tx| {
+                    let required = crate::loop_node_storage::required_columns(tx).await?;
+                    tx.execute(
+                        milestone_insert_sql(&required),
+                        (
+                            "milestone-qa",
+                            "1001",
+                            "Release",
+                            "",
+                            "open",
+                            Json(json!({"due_on":null})),
+                            7,
+                        ),
+                    )
+                    .await?;
+                    written_milestone(tx, "1001", "milestone-qa").await
+                })
+                .await?;
+            assert_eq!(saved.id, "milestone-qa");
+            assert_eq!(saved.version, 1);
+            assert_eq!(
+                (
+                    saved.open_issues,
+                    saved.closed_issues,
+                    saved.archived_issues
+                ),
+                (0, 0, 0)
+            );
+            assert_eq!(list(mysql, "1001", "").await.unwrap().len(), 1);
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn rejects_unknown_project_before_reading_milestones() {

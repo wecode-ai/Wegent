@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useCallback, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Pencil } from 'lucide-react'
 
 export function HoverEditableText({
@@ -21,14 +21,13 @@ export function HoverEditableText({
   onChange(value: string): void
 }) {
   const [editing, setEditing] = useState(false)
-  const editButton = useRef<HTMLButtonElement>(null)
   const restoreFocus = useRef(false)
-  useEffect(() => {
-    if (!editing && restoreFocus.current) {
+  const focusEditButton = useCallback((node: HTMLButtonElement | null) => {
+    if (node && restoreFocus.current) {
       restoreFocus.current = false
-      editButton.current?.focus()
+      node.focus()
     }
-  }, [editing])
+  }, [])
   if (editing) {
     const sharedProps = {
       autoFocus: true,
@@ -86,7 +85,7 @@ export function HoverEditableText({
         {value || placeholder}
       </span>
       <button
-        ref={editButton}
+        ref={focusEditButton}
         type="button"
         aria-label={ariaLabel}
         onClick={() => setEditing(true)}

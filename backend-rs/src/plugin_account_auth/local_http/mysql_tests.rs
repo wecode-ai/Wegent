@@ -22,6 +22,16 @@ async fn http_auth_execution_lifecycle_and_uncertain_recovery_without_device() -
     assert!(crate::plugins_installed::local_sync_enabled());
     crate::migrations::mysql_tests::isolated(verify).await
 }
+// Real HTTP, MySQL, and Redis lease work needs an integration timeout budget.
+fn http_client() -> brz_http::Client {
+    brz_http::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .read_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap()
+}
+
 struct Api {
     base: String,
     client: brz_http::Client,
@@ -134,7 +144,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     });
     let api = Api {
         base: format!("http://{address}"),
-        client: brz_http::Client::new(),
+        client: http_client(),
     };
     // Session creation proves desktop key possession; no Device query or row exists.
     api.session(desktop_proof("/api/auth/wework/refresh"), 401)

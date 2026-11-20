@@ -72,6 +72,73 @@ describe('PermissionModeSelector', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  test('shows all three choices in the first Full access confirmation', () => {
+    const onChange = vi.fn()
+    const onCommandApprovalChange = vi.fn()
+    render(
+      <PermissionModeSelector
+        value="workspace-write"
+        onChange={onChange}
+        onCommandApprovalChange={onCommandApprovalChange}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
+
+    const manual = screen.getByTestId('command-approval-confirm-option-manual')
+    const ai = screen.getByTestId('command-approval-confirm-option-ai')
+    const automatic = screen.getByTestId('command-approval-confirm-option-automatic')
+    expect(manual).toBeChecked()
+    expect(ai).toBeVisible()
+    expect(automatic).toBeVisible()
+
+    fireEvent.click(automatic)
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+    expect(onChange).toHaveBeenCalledWith('full-access', 'automatic')
+    expect(onCommandApprovalChange).not.toHaveBeenCalled()
+  })
+
+  test('allows changing the approval choice inside the automatic execution confirmation', () => {
+    const onCommandApprovalChange = vi.fn()
+    render(
+      <PermissionModeSelector
+        value="full-access"
+        commandApproval="manual"
+        onChange={vi.fn()}
+        onCommandApprovalChange={onCommandApprovalChange}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    fireEvent.click(screen.getByTestId('command-approval-automatic'))
+
+    expect(screen.getByTestId('command-approval-confirm-option-automatic')).toBeChecked()
+    fireEvent.click(screen.getByTestId('command-approval-confirm-option-ai'))
+    expect(onCommandApprovalChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+    expect(onCommandApprovalChange).toHaveBeenCalledWith('ai')
+  })
+
+  test('reports confirmation of the current command approval when enabling full access', () => {
+    const onChange = vi.fn()
+    render(
+      <PermissionModeSelector
+        value="workspace-write"
+        commandApproval="manual"
+        onChange={onChange}
+        onCommandApprovalChange={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
+    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+
+    expect(onChange).toHaveBeenCalledWith('full-access', 'manual')
+  })
+
   test('traps keyboard focus and restores it to the permission trigger', async () => {
     const user = userEvent.setup()
     render(<PermissionModeSelector value="workspace-write" onChange={vi.fn()} />)

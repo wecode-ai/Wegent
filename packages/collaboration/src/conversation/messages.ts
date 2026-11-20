@@ -117,16 +117,19 @@ export const conversationMessages: Record<
       "无法连接模型服务",
     "conversation.assistant_error.types.model_service_connection_error.description":
       "连接错误：向模型服务发送请求失败。请检查网络或 VPN 连接后重试。",
-    "conversation.assistant_error.types.model_service_connection_error.description_with_endpoint":
-      "连接错误：向 {{endpoint}} 发送请求失败。请检查网络或 VPN 连接后重试。",
     "conversation.assistant_error.types.network_error.title":
       "网络连接失败：请检查网络连接后重试",
     "conversation.assistant_error.types.network_error.description":
       "当前连接中断或服务暂时不可达，请稍后重试。",
-    "conversation.assistant_error.types.timeout_error.title":
-      "请求超时：服务响应时间过长，请稍后重试",
+    "conversation.assistant_error.types.timeout_error.title": "等待响应超时",
     "conversation.assistant_error.types.timeout_error.description":
-      "服务暂时没有及时响应，可以稍后重新发送。",
+      "本次请求未能及时收到响应。请重试或切换模型。",
+    "conversation.assistant_error.types.timeout_error.description_with_seconds":
+      "本次请求在 {{seconds}} 秒内未收到模型或工具进展。请重试或切换模型。",
+    "conversation.assistant_error.types.server_overloaded.title":
+      "模型服务繁忙",
+    "conversation.assistant_error.types.server_overloaded.description":
+      "模型服务当前过载。请稍后重试或切换模型。",
     "conversation.assistant_error.types.llm_error.title":
       "模型调用失败：模型暂时不可用，请稍后重试",
     "conversation.assistant_error.types.llm_error.description":
@@ -351,8 +354,6 @@ export const conversationMessages: Record<
     "conversation.tool_activity.call_done": "调用 {{name}}",
     "conversation.tool_activity.call_error": "调用 {{name}} 失败",
     "conversation.tool_activity.call_running": "调用 {{name}}",
-    "conversation.tool_activity.chatgpt_network_unavailable":
-      "当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？",
     "conversation.tool_activity.command": "命令",
     "conversation.tool_activity.command_action": "运行命令",
     "conversation.tool_activity.create_action": "创建文件",
@@ -384,8 +385,12 @@ export const conversationMessages: Record<
     "conversation.tool_activity.open_proxy_settings": "设置代理",
     "conversation.tool_activity.other": "其他工具",
     "conversation.tool_activity.other_action": "调用工具",
-    "conversation.tool_activity.reconnecting": "连接中断，正在重连…",
     "conversation.tool_activity.retrying": "正在自动重试…",
+    "conversation.tool_activity.reconnecting": "正在重新连接…",
+    "conversation.tool_activity.server_overloaded_retry":
+      "服务器繁忙，正在重新连接…",
+    "conversation.tool_activity.retry_progress":
+      "{{status}}（{{attempt}}/{{total}}）",
     "conversation.tool_activity.rate_limit_wait": "模型限流，等待自动重试…",
     "conversation.tool_activity.overload_retry_in": "模型繁忙，将在 {{remaining}} 后用原模型重试…",
     "conversation.tool_activity.overload_retrying": "模型繁忙，正在用原模型重试…",
@@ -404,6 +409,10 @@ export const conversationMessages: Record<
     "conversation.tool_activity.summary_other": "调用 {{count}} 个工具",
     "conversation.tool_activity.tool_input": "输入",
     "conversation.tool_activity.tool_no_output": "工具未返回内容",
+    "conversation.tool_activity.event_provider_summary":
+      "连接事件来源 {{total}} 个，{{ready}} 个已就绪",
+    "conversation.tool_activity.show_full_result": "查看完整结果",
+    "conversation.tool_activity.hide_full_result": "收起完整结果",
     "conversation.tool_activity.tool_output": "输出",
     "conversation.tool_activity.wait_done": "等待工具结果",
     "conversation.tool_activity.wait_error": "等待工具结果失败",
@@ -565,16 +574,20 @@ export const conversationMessages: Record<
       "Unable to connect to the model service",
     "conversation.assistant_error.types.model_service_connection_error.description":
       "Connection error: The request could not be sent to the model service. Check your network or VPN connection and retry.",
-    "conversation.assistant_error.types.model_service_connection_error.description_with_endpoint":
-      "Connection error: The request could not be sent to {{endpoint}}. Check your network or VPN connection and retry.",
     "conversation.assistant_error.types.network_error.title":
       "Network error: Please check your connection and try again",
     "conversation.assistant_error.types.network_error.description":
       "The connection was interrupted or the service is temporarily unreachable.",
     "conversation.assistant_error.types.timeout_error.title":
-      "Request timeout: Service response time exceeded",
+      "Timed out waiting for a response",
     "conversation.assistant_error.types.timeout_error.description":
-      "The service did not respond in time. Try sending the message again later.",
+      "The request did not receive a response in time. Retry or switch models.",
+    "conversation.assistant_error.types.timeout_error.description_with_seconds":
+      "No model or tool progress was received within {{seconds}} seconds. Retry or switch models.",
+    "conversation.assistant_error.types.server_overloaded.title":
+      "Model service is busy",
+    "conversation.assistant_error.types.server_overloaded.description":
+      "The model service is overloaded. Retry later or switch models.",
     "conversation.assistant_error.types.llm_error.title":
       "Model error: The model is temporarily unavailable",
     "conversation.assistant_error.types.llm_error.description":
@@ -815,8 +828,6 @@ export const conversationMessages: Record<
     "conversation.tool_activity.call_done": "Called {{name}}",
     "conversation.tool_activity.call_error": "Failed to call {{name}}",
     "conversation.tool_activity.call_running": "Call {{name}}",
-    "conversation.tool_activity.chatgpt_network_unavailable":
-      "The current model uses ChatGPT, but the network is unavailable. Would you like to configure a proxy?",
     "conversation.tool_activity.command": "Commands",
     "conversation.tool_activity.command_action": "Run command",
     "conversation.tool_activity.create_action": "Create file",
@@ -852,9 +863,12 @@ export const conversationMessages: Record<
     "conversation.tool_activity.open_proxy_settings": "Configure proxy",
     "conversation.tool_activity.other": "Other tools",
     "conversation.tool_activity.other_action": "Call tool",
-    "conversation.tool_activity.reconnecting":
-      "Connection interrupted. Reconnecting…",
     "conversation.tool_activity.retrying": "Retrying automatically…",
+    "conversation.tool_activity.reconnecting": "Reconnecting…",
+    "conversation.tool_activity.server_overloaded_retry":
+      "Server is busy, reconnecting…",
+    "conversation.tool_activity.retry_progress":
+      "{{status}} ({{attempt}}/{{total}})",
     "conversation.tool_activity.rate_limit_wait":
       "Model rate limited. Waiting to retry…",
     "conversation.tool_activity.overload_retry_in": "Model at capacity. Retrying the same model in {{remaining}}…",
@@ -875,6 +889,10 @@ export const conversationMessages: Record<
     "conversation.tool_activity.summary_other": "Called {{count}} tools",
     "conversation.tool_activity.tool_input": "Input",
     "conversation.tool_activity.tool_no_output": "Tool returned no content",
+    "conversation.tool_activity.event_provider_summary":
+      "Connection event providers: {{total}} total, {{ready}} ready",
+    "conversation.tool_activity.show_full_result": "Show full result",
+    "conversation.tool_activity.hide_full_result": "Hide full result",
     "conversation.tool_activity.tool_output": "Output",
     "conversation.tool_activity.wait_done": "Waited for tool result",
     "conversation.tool_activity.wait_error": "Failed waiting for tool result",

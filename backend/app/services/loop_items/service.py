@@ -2205,6 +2205,14 @@ class LoopItemService:
         project = db.get(CloudProject, str(item.cloud_project_id))
         human = require_active_issue_user(db, target_user_id)
         if not notify:
+            logger.info(
+                "Stand-in Issue wakeup suppressed reason=notify_assignee_false "
+                "issue_id=%s project_id=%s user_id=%s assignment_id=%s",
+                item.id,
+                item.cloud_project_id,
+                target_user_id,
+                assignment.id if assignment else None,
+            )
             return
         from app.services.collaboration_human_assignments import (
             notify_direct_human_assignment,
@@ -3629,6 +3637,7 @@ class LoopItemService:
         to_name: str | None,
         *,
         automation_context: dict[str, Any] | None = None,
+        actor_agent: ProjectChatAgent | None = None,
     ) -> None:
         """Record who assigned to whom. Run state lives in the execution table."""
 
@@ -3642,6 +3651,14 @@ class LoopItemService:
             {
                 "by_user_id": user_id,
                 **automation_history_actor(automation_context),
+                **(
+                    {
+                        "by_agent_id": str(actor_agent.id),
+                        "by_agent_name": actor_agent.title or actor_agent.name,
+                    }
+                    if actor_agent is not None
+                    else {}
+                ),
                 "to_type": to_type,
                 "to_id": to_id,
                 "to_name": to_name,

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CalendarClock, ChevronDown } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import { WorkdayOnlyField } from './WorkdayOnlyField'
 
 import type { AutomationEventType } from '../automation/types'
@@ -55,13 +55,15 @@ export function AutomaticProcessingTriggerFields({
   statuses,
 }: AutomaticProcessingTriggerFieldsProps) {
   const cronInput = useRef<HTMLInputElement>(null)
-  const cronDetails = useRef<HTMLDetailsElement>(null)
-  useEffect(() => {
-    if (!cronError) return
-    if (cronDetails.current) cronDetails.current.open = true
-    cronInput.current?.focus()
-    cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
-  }, [cronError])
+  const attachCronDetails = useCallback(
+    (details: HTMLDetailsElement | null) => {
+      if (!details || !cronError) return
+      details.open = true
+      cronInput.current?.focus()
+      cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
+    },
+    [cronError]
+  )
   const schedule = parseSchedule(draft.cronExpression)
   const selectedHook = hooks.find(hook => hook.id === draft.hookId)
   const externalEventTypes = selectedHook ? eventTypesForHook(selectedHook) : []
@@ -157,7 +159,10 @@ export function AutomaticProcessingTriggerFields({
                   updateDraft(
                     value === '__entered_processing__'
                       ? { statuses: [], statusTransition: 'entered_processing' }
-                      : { statuses: value ? [value] : [], statusTransition: 'any' }
+                      : {
+                          statuses: value ? [value] : [],
+                          statusTransition: 'any',
+                        }
                   )
                 }}
               >
@@ -300,7 +305,7 @@ export function AutomaticProcessingTriggerFields({
               </div>
 
               <details
-                ref={cronDetails}
+                ref={attachCronDetails}
                 className="group rounded-lg border border-border bg-background"
                 data-testid="automatic-processing-cron-advanced"
               >

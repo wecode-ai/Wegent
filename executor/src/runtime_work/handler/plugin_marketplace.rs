@@ -298,6 +298,7 @@ mod tests {
         let config_path = root.path().join("config.toml");
         let original = concat!(
             "personality = \"pragmatic\"\n",
+            "[agents]\nmax_concurrent_threads_per_session = 6\n",
             "[marketplaces.wework]\nsource_type = \"local\"\nsource = \"/other\"\n",
             "[plugins.\"kept@wework-personal\"]\nenabled = false\n",
         );

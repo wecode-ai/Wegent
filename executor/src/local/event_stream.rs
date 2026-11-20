@@ -397,6 +397,16 @@ fn merge_block_updates(pending: &mut Value, next: &Value) -> bool {
             return false;
         }
     }
+    if let Some(offset) = next_updates.get("content_offset").and_then(Value::as_u64) {
+        let contiguous = current_updates
+            .get("content_offset")
+            .and_then(Value::as_u64)
+            .zip(current_updates.get("content_delta").and_then(Value::as_str))
+            .is_some_and(|(start, delta)| start + delta.chars().count() as u64 == offset);
+        if !contiguous {
+            return false;
+        }
+    }
     if next_updates.iter().any(|(key, next_value)| {
         current_updates.get(key).is_some_and(|current_value| {
             (current_value.is_object() || next_value.is_object()) && current_value != next_value
@@ -405,6 +415,9 @@ fn merge_block_updates(pending: &mut Value, next: &Value) -> bool {
         return false;
     }
     for (key, value) in next_updates {
+        if key == "content_offset" {
+            continue;
+        }
         let value = match (
             key.as_str(),
             current_updates.get(key).and_then(Value::as_str),
@@ -912,6 +925,25 @@ mod tests {
                 "status": "streaming", "tool_name": "exec", "tool_output_delta": "tick-6\n"
             })
         );
+    }
+
+    #[test]
+    fn positioned_text_deltas_keep_the_first_code_point_offset() {
+        let event = |offset, delta| {
+            json!({
+                "event": "response.block.updated",
+                "payload": {"data": {"updates": {"content_offset": offset, "content_delta": delta}}}
+            })
+        };
+        let mut pending = event(2, "看🙂");
+        assert!(merge_coalesced_event(&mut pending, &event(4, "结尾")));
+        assert_eq!(
+            pending["payload"]["data"]["updates"],
+            json!({"content_offset": 2, "content_delta": "看🙂结尾"})
+        );
+        let original = pending.clone();
+        assert!(!merge_coalesced_event(&mut pending, &event(3, "重复")));
+        assert_eq!(pending, original);
     }
 
     #[test]

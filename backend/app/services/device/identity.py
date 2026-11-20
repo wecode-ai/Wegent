@@ -91,7 +91,7 @@ def _unambiguous_device(matches: list[Kind]) -> Kind | None:
     return None
 
 
-def _resolve_device_alias(devices: list[Kind], device_id: str) -> Kind | None:
+def resolve_device_alias(devices: list[Kind], device_id: str) -> Kind | None:
     """Apply the same installation identity rules to one owned device snapshot."""
     submitted = device_id.strip()
     if not submitted:
@@ -134,8 +134,8 @@ def resolve_owned_device_alias(
     record_id = record_id_from_route(submitted)
     if record_id is not None:
         device = query.filter_by(id=record_id).one_or_none()
-        return _resolve_device_alias([device] if device is not None else [], submitted)
-    return _resolve_device_alias(query.all(), submitted)
+        return resolve_device_alias([device] if device is not None else [], submitted)
+    return resolve_device_alias(query.all(), submitted)
 
 
 def active_device_connection(
@@ -159,11 +159,11 @@ def owned_device_aliases(db: Session, *, user_id: int, device_id: str) -> set[st
 
     aliases = {device_id}
     devices = _owned_devices_query(db, user_id).all()
-    device = _resolve_device_alias(devices, device_id)
+    device = resolve_device_alias(devices, device_id)
     if device is None:
         return aliases
     for alias in device_identity_ids(device):
-        resolved = _resolve_device_alias(devices, alias)
+        resolved = resolve_device_alias(devices, alias)
         if resolved is not None and resolved.id == device.id:
             aliases.add(alias)
     return aliases
@@ -215,7 +215,7 @@ def lock_online_device_for_binding(
     ]
     if len(exact) > 1:
         return None
-    device = exact[0] if exact else _resolve_device_alias(rows, device_id)
+    device = exact[0] if exact else resolve_device_alias(rows, device_id)
     if device is None:
         return None
     route_id = device_connection_route_id(device)

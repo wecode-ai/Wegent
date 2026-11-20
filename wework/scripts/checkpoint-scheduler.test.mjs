@@ -76,12 +76,12 @@ test('ordinary checkpoint failures retain the full diagnostic collection policy'
 test('terminal native input runs alone before ordinary checkpoints regain parallelism', async () => {
   const started = []
   const release = new Map()
-  const checkpoints = ['ordinary-a', 'background-terminals', 'ordinary-b', 'ordinary-c']
+  const checkpoints = ['ordinary-a', 'exclusive-checkpoint', 'ordinary-b', 'ordinary-c']
   const pending = runWithCheckpointResources({
     checkpoints,
     workerCount: 3,
     resourceFor: () => [],
-    exclusiveFor: checkpoint => checkpoint === 'background-terminals',
+    exclusiveFor: checkpoint => checkpoint === 'exclusive-checkpoint',
     run: checkpoint =>
       new Promise(resolve => {
         started.push(checkpoint)
@@ -90,10 +90,10 @@ test('terminal native input runs alone before ordinary checkpoints regain parall
   })
 
   await tick()
-  assert.deepEqual(started, ['background-terminals'])
-  release.get('background-terminals')()
+  assert.deepEqual(started, ['exclusive-checkpoint'])
+  release.get('exclusive-checkpoint')()
   await tick()
-  assert.deepEqual(started, ['background-terminals', 'ordinary-a', 'ordinary-b', 'ordinary-c'])
+  assert.deepEqual(started, ['exclusive-checkpoint', 'ordinary-a', 'ordinary-b', 'ordinary-c'])
   for (const resolve of release.values()) resolve()
   await pending
   assert.equal(new Set(started).size, checkpoints.length)
@@ -124,12 +124,12 @@ test('exclusive checkpoint failures propagate before ordinary work starts', asyn
   const failure = new Error('Native keyboard verification failed')
   await assert.rejects(
     runWithCheckpointResources({
-      checkpoints: ['background-terminals', 'ordinary'],
+      checkpoints: ['exclusive-checkpoint', 'ordinary'],
       workerCount: 2,
       resourceFor: () => [],
-      exclusiveFor: checkpoint => checkpoint === 'background-terminals',
+      exclusiveFor: checkpoint => checkpoint === 'exclusive-checkpoint',
       run: async checkpoint => {
-        if (checkpoint === 'background-terminals') throw failure
+        if (checkpoint === 'exclusive-checkpoint') throw failure
         completed.push(checkpoint)
       },
     }),

@@ -1,6 +1,6 @@
 import { Bot, CircleAlert, CircleCheck, UserRound } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { TodoDetailItem } from './TodoDetailPanel'
+import type { TodoDetailItem } from './todoViewTypes'
 
 interface TodoMyWorkProps {
   items: TodoDetailItem[]

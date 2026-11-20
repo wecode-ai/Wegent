@@ -63,6 +63,71 @@ struct RegisteredContext {
     context: SpaceMcpRequestContext,
     expires_at: Instant,
     lifetime: ContextLifetime,
+    active_executions: usize,
+}
+
+impl RegisteredContext {
+    fn is_live(&self, now: Instant) -> bool {
+        self.active_executions != 0 || self.expires_at > now
+    }
+}
+
+pub(crate) struct ControlMcpExecution {
+    contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
+    handle: String,
+}
+
+impl std::fmt::Debug for ControlMcpExecution {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ControlMcpExecution")
+    }
+}
+
+impl Drop for ControlMcpExecution {
+    fn drop(&mut self) {
+        if let Ok(mut contexts) = self.contexts.lock() {
+            if let Some(registered) = contexts.get_mut(&self.handle) {
+                registered.active_executions -= 1;
+                if registered.active_executions == 0 {
+                    registered.expires_at = Instant::now() + CONTEXT_HANDLE_TTL;
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn retain_control_mcp_context(
+    handle: &str,
+) -> Result<Option<ControlMcpExecution>, String> {
+    let contexts = {
+        let registry = running_endpoint()
+            .lock()
+            .map_err(|_| "Wework MCP endpoint state is poisoned".to_owned())?;
+        let Some(running) = registry.as_ref() else {
+            #[cfg(test)]
+            return Ok(None);
+            #[cfg(not(test))]
+            return Err("Wework MCP endpoint is not ready".to_owned());
+        };
+        std::sync::Arc::clone(&running.contexts)
+    };
+    {
+        let mut registry = contexts
+            .lock()
+            .map_err(|_| "Wework MCP context registry is poisoned".to_owned())?;
+        let now = Instant::now();
+        let registered = registry
+            .get_mut(handle)
+            .filter(|context| {
+                context.lifetime == ContextLifetime::Conversation && context.is_live(now)
+            })
+            .ok_or_else(|| "Wework control MCP context is unavailable".to_owned())?;
+        registered.active_executions += 1;
+    }
+    Ok(Some(ControlMcpExecution {
+        contexts,
+        handle: handle.to_owned(),
+    }))
 }
 
 #[derive(Clone)]
@@ -343,7 +408,7 @@ pub(crate) fn space_mcp_http_endpoint() -> Option<SpaceMcpEndpoint> {
 
 async fn health(State(state): State<SpaceMcpHttpState>, headers: HeaderMap) -> Response {
     if !authorized(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        return reject_mcp_auth(WeworkMcpSurface::ProjectSpace, "health", "bearer_rejected");
     }
     Json(json!({
         "status": "ready",
@@ -390,22 +455,30 @@ async fn handle_mcp_for_surface(
     request: Value,
     expected_surface: WeworkMcpSurface,
 ) -> Response {
-    if !authorized(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-
     let method = request
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let operation = if method == "initialize" {
+        "initialize"
+    } else {
+        "request"
+    };
+    if !authorized(&headers, &state.token) {
+        return reject_mcp_auth(expected_surface, operation, "bearer_rejected");
+    }
     let (session_id, mut context) = if method == "initialize" {
-        let Some(context) = registered_context(&state, &headers, expected_surface) else {
-            return json_rpc_http_error(
-                request.get("id").cloned().unwrap_or(Value::Null),
-                -32001,
-                "Invalid or expired Wework MCP context",
-                StatusCode::UNAUTHORIZED,
-            );
+        let context = match registered_context(&state, &headers, expected_surface) {
+            Ok(context) => context,
+            Err(reason) => {
+                log_mcp_auth_rejection(expected_surface, operation, reason);
+                return json_rpc_http_error(
+                    request.get("id").cloned().unwrap_or(Value::Null),
+                    -32001,
+                    "Invalid or expired Wework MCP context",
+                    StatusCode::UNAUTHORIZED,
+                );
+            }
         };
         let session_id = Uuid::new_v4().to_string();
         state.sessions.lock().await.insert(
@@ -437,7 +510,7 @@ async fn handle_mcp_for_surface(
             && header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
                 != Some(session.context_handle.as_str())
         {
-            return StatusCode::UNAUTHORIZED.into_response();
+            return reject_mcp_auth(expected_surface, operation, "session_context_mismatch");
         }
         (session_id, session.context)
     };
@@ -445,11 +518,11 @@ async fn handle_mcp_for_surface(
         return StatusCode::FORBIDDEN.into_response();
     }
     if expected_surface == WeworkMcpSurface::Control {
-        let Some(current) = registered_context(&state, &headers, expected_surface) else {
-            return StatusCode::UNAUTHORIZED.into_response();
-        };
         // A persistent conversation transport must use this turn's execution context.
-        context = current;
+        context = match registered_context(&state, &headers, expected_surface) {
+            Ok(current) => current,
+            Err(reason) => return reject_mcp_auth(expected_surface, operation, reason),
+        };
     }
     context.set_cloud_collaboration_dispatcher(
         state
@@ -505,7 +578,7 @@ async fn delete_session_for_surface(
     surface: WeworkMcpSurface,
 ) -> Response {
     if !authorized(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        return reject_mcp_auth(surface, "delete", "bearer_rejected");
     }
     let Some(session_id) = header_text(&headers, MCP_SESSION_ID_HEADER) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -514,13 +587,18 @@ async fn delete_session_for_surface(
     let Some(session) = sessions.get(&session_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if session.context.surface() != surface
-        || (surface == WeworkMcpSurface::Control
-            && (header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
-                != Some(session.context_handle.as_str())
-                || registered_context(&state, &headers, surface).is_none()))
-    {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if session.context.surface() != surface {
+        return reject_mcp_auth(surface, "delete", "session_surface_mismatch");
+    }
+    if surface == WeworkMcpSurface::Control {
+        if header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
+            != Some(session.context_handle.as_str())
+        {
+            return reject_mcp_auth(surface, "delete", "session_context_mismatch");
+        }
+        if let Err(reason) = registered_context(&state, &headers, surface) {
+            return reject_mcp_auth(surface, "delete", reason);
+        }
     }
     sessions.remove(&session_id);
     StatusCode::NO_CONTENT.into_response()
@@ -530,15 +608,47 @@ fn registered_context(
     state: &SpaceMcpHttpState,
     headers: &HeaderMap,
     expected_surface: WeworkMcpSurface,
-) -> Option<SpaceMcpRequestContext> {
-    let handle = header_text(headers, CONTEXT_HANDLE_HEADER)?;
+) -> Result<SpaceMcpRequestContext, &'static str> {
+    let handle = header_text(headers, CONTEXT_HANDLE_HEADER).ok_or("context_header_missing")?;
     let now = Instant::now();
-    let mut contexts = state.contexts.lock().ok()?;
-    contexts.retain(|_, registered| registered.expires_at > now);
-    contexts
-        .get(&handle)
-        .filter(|registered| registered.context.surface() == expected_surface)
-        .map(|registered| registered.context.clone())
+    let mut contexts = state
+        .contexts
+        .lock()
+        .map_err(|_| "context_registry_unavailable")?;
+    let result = match contexts.get(&handle) {
+        None => Err("context_not_registered"),
+        Some(registered) if !registered.is_live(now) => Err("context_expired"),
+        Some(registered) if registered.context.surface() != expected_surface => {
+            Err("context_surface_mismatch")
+        }
+        Some(registered) => Ok(registered.context.clone()),
+    };
+    contexts.retain(|_, registered| registered.is_live(now));
+    result
+}
+
+fn log_mcp_auth_rejection(
+    surface: WeworkMcpSurface,
+    operation: &'static str,
+    reason: &'static str,
+) {
+    log_executor_event(
+        "Wework MCP authentication rejected",
+        &[
+            ("surface", surface.server_name().to_owned()),
+            ("operation", operation.to_owned()),
+            ("reason", reason.to_owned()),
+        ],
+    );
+}
+
+fn reject_mcp_auth(
+    surface: WeworkMcpSurface,
+    operation: &'static str,
+    reason: &'static str,
+) -> Response {
+    log_mcp_auth_rejection(surface, operation, reason);
+    StatusCode::UNAUTHORIZED.into_response()
 }
 
 fn authorized(headers: &HeaderMap, token: &str) -> bool {
@@ -673,6 +783,7 @@ mod tests {
                     context: SpaceMcpRequestContext::new(None, None, None),
                     expires_at: now,
                     lifetime: ContextLifetime::Execution,
+                    active_executions: 0,
                 },
             ),
             (
@@ -681,10 +792,11 @@ mod tests {
                     context: SpaceMcpRequestContext::notifications(None, None),
                     expires_at: now + Duration::from_secs(1),
                     lifetime: ContextLifetime::Execution,
+                    active_executions: 0,
                 },
             ),
         ]);
-        contexts.retain(|_, registered| registered.expires_at > now);
+        contexts.retain(|_, registered| registered.is_live(now));
 
         assert!(!contexts.contains_key("expired"));
         assert_eq!(

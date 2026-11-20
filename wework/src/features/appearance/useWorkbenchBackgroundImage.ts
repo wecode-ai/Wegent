@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { loadWorkbenchBackgroundImage } from './backgroundImage'
 
 export interface WorkbenchBackgroundImageState {
@@ -7,55 +12,27 @@ export interface WorkbenchBackgroundImageState {
   reportLoadError: () => void
 }
 
-interface LoadedBackgroundImage {
-  path: string
-  url: string
-}
-
-/**
- * Resolves a configured background path to a displayable Blob URL and releases
- * the URL when the path changes or the caller unmounts.
- */
+/** Each configured path owns its Blob URL, including responses arriving after unmount. */
 export function useWorkbenchBackgroundImage(path: string | null): WorkbenchBackgroundImageState {
-  const [loaded, setLoaded] = useState<LoadedBackgroundImage | null>(null)
-  const [failedPath, setFailedPath] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!path) return
-
-    let cancelled = false
-    let release: (() => void) | null = null
-
-    loadWorkbenchBackgroundImage(path)
-      .then(image => {
-        if (cancelled) {
-          image?.release()
-          return
-        }
-        release = image?.release ?? null
-        setLoaded(image ? { path, url: image.url } : null)
-      })
-      .catch(() => {
-        if (!cancelled) setFailedPath(path)
-      })
-
-    return () => {
-      cancelled = true
-      release?.()
-      setLoaded(current => (current?.path === path ? null : current))
-      setFailedPath(current => (current === path ? null : current))
-    }
+  const resource = useMemo(
+    () =>
+      path
+        ? createAsyncResource(path, () => loadWorkbenchBackgroundImage(path), {
+            release: image => image?.release(),
+          })
+        : null,
+    [path]
+  )
+  const snapshot = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const [displayError, setDisplayError] = useState({ path, failed: false })
+  if (displayError.path !== path) setDisplayError({ path, failed: false })
+  const reportLoadError = useCallback(() => {
+    if (path) setDisplayError(current => (current.path === path ? { path, failed: true } : current))
   }, [path])
-
-  // A loaded image belongs only to the path it was read from, so changing the
-  // configured file never flashes the previous background.
-  const resolved = path && loaded?.path === path ? loaded : null
-  const failed = Boolean(path && failedPath === path)
-  const reportLoadError = useCallback(() => setFailedPath(path), [path])
-
-  return {
-    url: failed ? null : (resolved?.url ?? null),
-    failed,
-    reportLoadError,
-  }
+  const failed = (displayError.path === path && displayError.failed) || snapshot.status === 'error'
+  return { url: failed ? null : (snapshot.data?.url ?? null), failed, reportLoadError }
 }

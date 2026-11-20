@@ -65,6 +65,10 @@ async function completedWriter(input, mode, evidence) {
   for (const name of ['runtime-confirmation.png', 'user-confirmation.png', 'cleanup-failure.png']) {
     await fs.writeFile(path.join(input.root, name), 'unit diagnostic fixture')
   }
+  await fs.writeFile(
+    path.join(input.root, 'development-release-routing.json'),
+    JSON.stringify({ electronReportsPackaged: true, startMain: true })
+  )
   await fs.writeFile(path.join(input.root, 'recovery.log'), 'app-state cleanup: failed\n')
   await fs.mkdir(path.join(input.root, 'user-data'), { recursive: true })
   await fs.writeFile(path.join(input.root, 'user-data', 'private-fixture'), 'synthetic credential')

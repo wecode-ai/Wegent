@@ -10,7 +10,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
+import { createProjectChatClient } from '../../../../packages/chat-core/src/project-chat'
 import { selectCollaborationProjectView } from '../../utils/collaboration-test-support'
+import { createApiClient } from '../../utils/api-client'
+import { REGULAR_USER } from '../../config/test-users'
+import type { AssistantParticipation, AssistantParticipationWorkroom } from '@wegent/collaboration'
 import {
   authHeaders,
   clearToolScenario,
@@ -97,6 +101,7 @@ interface CollaborationExecution {
   displayState: string
   observedState: string
   syncState: string
+  errorMessage: string | null
 }
 
 interface AgentCase {
@@ -184,6 +189,170 @@ test.describe('Collaboration agent execution', () => {
     await executeAndAssertCase(page, request, projectId, agentCase, testInfo)
   })
 
+  test('runs a managed Chat Team and continues its original persisted Task', async ({
+    page,
+    request,
+  }) => {
+    const projectId = project!.id
+    const prompt = `${TEST_PREFIX} MANAGED_CHAT_FIRST_TURN`
+    const followup = `${TEST_PREFIX} MANAGED_CHAT_SECOND_TURN`
+    configuredPrompts.add(followup)
+    await configureToolScenario(request, followup, [
+      { responseContent: 'MANAGED_CHAT_SECOND_RESULT' },
+    ])
+    const agent = await apiRequest<CollaborationAgent>(
+      request,
+      `/api/v1/cloud-projects/${projectId}/chat-agents`,
+      {
+        method: 'POST',
+        data: {
+          runtime: 'wegent',
+          wegent_team_id: resources.teamId,
+          share_with_workspace: true,
+          name: `${TEST_PREFIX} managed Chat`,
+        },
+      }
+    )
+    const issue = await createIssue(request, projectId, { title: prompt, description: prompt })
+    // Ordinary assignment has no additional instruction. Match the canonical
+    // board reference sent to the model rather than assuming an issue-text copy.
+    const firstInput = `task_id: ${issue.id}`
+    configuredPrompts.add(firstInput)
+    await configureToolScenario(request, firstInput, [
+      { responseContent: 'MANAGED_CHAT_FIRST_RESULT' },
+    ])
+    await page.goto(
+      `/collaboration/workspaces/${workspace!.id}/projects/${projectId}/issues/${issue.id}`
+    )
+    await page.getByTestId('cloud-todo-detail-assignee').click()
+    const saved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+    )
+    await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`).click()
+    expect((await saved).ok()).toBe(true)
+    const first = await waitForCompletedExecution(request, projectId, issue.id)
+    expect(first.executionEnvironment).toBe('wegent')
+    expect(first.teamId).toBe(resources.teamId)
+    expect(first.backendTaskId).toBeGreaterThan(0)
+    expect(first.runtimeTaskId).toBe(String(first.backendTaskId))
+    expect(first.runtimeDeviceId).toBeFalsy()
+    const firstBodies = await getScenarioModelBodies(request, firstInput)
+    expect(firstBodies).toHaveLength(1)
+    expect(modelRequestText(firstBodies)).toContain(
+      `cloud://projects/${projectId}/todos/${issue.id}`
+    )
+    const participationPath = `/api/v1/loop-items/${issue.id}/assistant-participations`
+    const sources = await apiRequest<AssistantParticipation[]>(request, participationPath)
+    const source = sources.find(row => row.source.kind === 'binding')!
+    expect(source).toBeDefined()
+    expect(source.historyState).toBe('unverified')
+    const workroom = await apiRequest<AssistantParticipationWorkroom>(
+      request,
+      `${participationPath}/${source.id}`
+    )
+    expect(workroom.runtimeAddress).toBeNull()
+    expect(workroom.backendTask?.taskId).toBe(first.backendTaskId)
+    const target = new URL(workroom.backendTask!.executionUrl)
+    expect(target.pathname).toBe('/chat')
+    expect(target.searchParams.get('taskId')).toBe(String(first.backendTaskId))
+    const taskRead = await request.get(
+      `${PROVIDER_NATIVE_API_URL}/api/tasks/${first.backendTaskId}`,
+      {
+        headers: authHeaders(resources.token),
+      }
+    )
+    expect(taskRead.ok()).toBe(true)
+    const observer = createApiClient(request, PROVIDER_NATIVE_API_URL)
+    expect((await observer.login(REGULAR_USER.username, REGULAR_USER.password, 1)).status).toBe(200)
+    const observerProfile = await observer.get<{ id: number }>('/api/users/me')
+    expect(observerProfile.status).toBe(200)
+    await apiRequest(request, `/api/v1/cloud-projects/${projectId}/members`, {
+      method: 'POST',
+      data: { user_id: observerProfile.data!.id, role: 'Developer' },
+    })
+    const visible = await observer.get<AssistantParticipation[]>(participationPath)
+    expect(visible.status).toBe(200)
+    expect(visible.data!.length).toBeGreaterThan(0)
+    for (const row of visible.data!) {
+      expect(row.conversationId).toBeNull()
+      expect(row.historyState).toBe('restricted')
+      const restricted = await observer.get<AssistantParticipationWorkroom>(
+        `${participationPath}/${row.id}`
+      )
+      expect(restricted.status).toBe(200)
+      expect(restricted.data!.participation.conversationId).toBeNull()
+      expect(restricted.data!.runtimeAddress).toBeNull()
+      expect(restricted.data!.backendTask).toBeNull()
+    }
+    const chat = createProjectChatClient({
+      socketBaseUrl: PROVIDER_NATIVE_API_URL,
+      socketPath: '/socket.io',
+      getToken: () => resources.token,
+      clientOrigin: 'web',
+    })
+    try {
+      const { snapshot, unsubscribe } = await chat.subscribe(projectId, issue.id, 0, () => {})
+      try {
+        const original = snapshot.messages.find(
+          message => message.metadata?.backend_task_id === first.backendTaskId
+        )
+        expect(original?.messageId).toBeTruthy()
+        expect(original?.metadata?.execution_url).toContain(`taskId=${first.backendTaskId}`)
+        const reply = await chat.send({
+          projectId,
+          taskId: issue.id,
+          clientMessageId: crypto.randomUUID(),
+          text: followup,
+          replyToMessageId: original!.messageId,
+        })
+        const continued = await chat.continueWegentTask!({
+          projectId,
+          taskId: issue.id,
+          triggerMessageId: reply.messageId,
+          agentId: agent.id,
+        })
+        let second: CollaborationExecution | undefined
+        await expect
+          .poll(
+            async () => {
+              const rows = await apiRequest<{ items: CollaborationExecution[] }>(
+                request,
+                `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
+              )
+              second = rows.items.find(row => row.loopItemId === issue.id && row.id !== first.id)
+              return ['completed', 'failed', 'cancelled'].includes(second?.status ?? '')
+            },
+            { timeout: 90_000 }
+          )
+          .toBe(true)
+        expect(second!.status, second!.errorMessage ?? 'Managed continuation must succeed').toBe(
+          'completed'
+        )
+        expect(second!.backendTaskId).toBe(first.backendTaskId)
+        const reloaded = await chat.subscribe(projectId, issue.id, 0, () => {})
+        try {
+          expect(
+            reloaded.snapshot.messages.find(message => message.messageId === continued.messageId)
+              ?.content
+          ).toContain('MANAGED_CHAT_SECOND_RESULT')
+        } finally {
+          reloaded.unsubscribe()
+        }
+        const task = await apiRequest<{ subtasks: Array<{ role: string; prompt: string }> }>(
+          request,
+          `/api/tasks/${first.backendTaskId}`
+        )
+        expect(task.subtasks.filter(turn => turn.role === 'USER')).toHaveLength(2)
+      } finally {
+        unsubscribe()
+      }
+    } finally {
+      chat.dispose()
+    }
+  })
+
   async function executeAndAssertCase(
     page: Page,
     request: APIRequestContext,
@@ -197,7 +366,14 @@ test.describe('Collaboration agent execution', () => {
       'test -n "$plugin_skill"',
       'cat "$plugin_skill"',
     ].join('\n')
-    const issue = await createIssue(request, projectId, agentCase)
+    const issue = await createIssue(request, projectId, {
+      title: 'Wegent agent capability execution',
+      description: [
+        agentCase.prompt,
+        `Call get_document_info with nodeId ${agentCase.nodeId}.`,
+        `Use the preloaded ${SKILL_NAME} Skill and finish with ${agentCase.answerMarker}.`,
+      ].join('\n'),
+    })
     const scenarioMatch = `task_id: ${issue.id}`
     configuredPrompts.add(scenarioMatch)
     await configureToolScenario(request, scenarioMatch, [
@@ -552,17 +728,12 @@ test.describe('Collaboration agent execution', () => {
   async function createIssue(
     request: APIRequestContext,
     projectId: string,
-    agentCase: AgentCase
+    content: { title: string; description: string }
   ): Promise<CollaborationIssue> {
     return apiRequest(request, `/api/v1/cloud-projects/${projectId}/loop-items`, {
       method: 'POST',
       data: {
-        title: 'Wegent agent capability execution',
-        description: [
-          agentCase.prompt,
-          `Call get_document_info with nodeId ${agentCase.nodeId}.`,
-          `Use the preloaded ${SKILL_NAME} Skill and finish with ${agentCase.answerMarker}.`,
-        ].join('\n'),
+        ...content,
         status: 'pending',
         priority: 'high',
         tags: ['collaboration-e2e', 'wegent-agent'],
@@ -576,14 +747,30 @@ test.describe('Collaboration agent execution', () => {
     issueId: string
   ): Promise<CollaborationExecution> {
     let completed: CollaborationExecution | undefined
+    let observed = ''
     await expect
       .poll(
         async () => {
           const response = await apiRequest<{ items: CollaborationExecution[] }>(
             request,
-            `/api/v1/cloud-projects/${projectId}/executions?status=completed`
+            `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
           )
           completed = response.items.find(item => item.loopItemId === issueId)
+          const state = JSON.stringify({
+            issueId,
+            id: completed?.id,
+            status: completed?.status ?? 'missing',
+            observedState: completed?.observedState,
+            syncState: completed?.syncState,
+            backendTaskId: completed?.backendTaskId,
+            errorMessage: completed?.errorMessage,
+          })
+          if (state !== observed) {
+            console.info(`[collaboration-execution] ${state}`)
+            observed = state
+          }
+          expect(completed?.status, state).not.toBe('failed')
+          expect(completed?.status, state).not.toBe('cancelled')
           return completed?.status ?? 'missing'
         },
         {

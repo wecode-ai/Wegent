@@ -19,18 +19,30 @@ export interface MessageLayoutTypography {
   rootFontSize: number
 }
 
-export function readMessageLayoutTypography(element?: HTMLElement | null): MessageLayoutTypography {
-  const style = element ? getComputedStyle(element) : null
-  const size =
-    Number.parseFloat(style?.getPropertyValue('--text-chat') ?? '') || DEFAULT_UI_FONT_SIZE
-  const userSize = Number.parseFloat(style?.getPropertyValue('--text-base') ?? '') || size
+export const MESSAGE_LAYOUT_CSS_PROPERTIES = [
+  '--text-chat',
+  '--text-base',
+  '--font-ui',
+  '--font-weight-ui',
+  '--text-code',
+] as const
+
+interface MessageLayoutStyleValues {
+  fontFamily: string
+  fontWeight: string
+  rootFontSize: string
+  properties: Readonly<Record<string, string>>
+}
+
+export function messageLayoutTypographyFromStyles(
+  style: MessageLayoutStyleValues
+): MessageLayoutTypography {
+  const size = Number.parseFloat(style.properties['--text-chat'] ?? '') || DEFAULT_UI_FONT_SIZE
+  const userSize = Number.parseFloat(style.properties['--text-base'] ?? '') || size
   const family =
-    style?.getPropertyValue('--font-ui').trim() || style?.fontFamily || 'system-ui, sans-serif'
-  const weight = style?.getPropertyValue('--font-weight-ui').trim() || style?.fontWeight || '400'
-  const rootSize =
-    typeof document === 'undefined'
-      ? 16
-      : Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+    style.properties['--font-ui']?.trim() || style.fontFamily || 'system-ui, sans-serif'
+  const weight = style.properties['--font-weight-ui']?.trim() || style.fontWeight || '400'
+  const rootSize = Number.parseFloat(style.rootFontSize) || 16
   return {
     rootFontSize: rootSize,
     font: `${weight} ${size}px ${family}`,
@@ -39,9 +51,23 @@ export function readMessageLayoutTypography(element?: HTMLElement | null): Messa
     lineHeight: rootSize * 1.5,
     userLineHeight: rootSize * 1.25,
     codeLineHeight:
-      (Number.parseFloat(style?.getPropertyValue('--text-code') ?? '') || DEFAULT_CODE_FONT_SIZE) *
-      1.8,
+      (Number.parseFloat(style.properties['--text-code'] ?? '') || DEFAULT_CODE_FONT_SIZE) * 1.8,
   }
+}
+
+export function readMessageLayoutTypography(element?: HTMLElement | null): MessageLayoutTypography {
+  const style = element ? getComputedStyle(element) : null
+  return messageLayoutTypographyFromStyles({
+    fontFamily: style?.fontFamily ?? '',
+    fontWeight: style?.fontWeight ?? '',
+    rootFontSize:
+      typeof document === 'undefined'
+        ? '16px'
+        : getComputedStyle(document.documentElement).fontSize,
+    properties: Object.fromEntries(
+      MESSAGE_LAYOUT_CSS_PROPERTIES.map(name => [name, style?.getPropertyValue(name) ?? ''])
+    ),
+  })
 }
 
 const DEFAULT_TYPOGRAPHY = readMessageLayoutTypography()

@@ -90,6 +90,7 @@ function ScrollableMessagePaneContent({
     internalScrollRef,
     scrollRef,
     contentRef,
+    bindContentRef,
     stickyFooterRef,
     contentFooterRef,
     scrollTailHeight,
@@ -107,6 +108,7 @@ function ScrollableMessagePaneContent({
     preserveUserMessagePosition,
     renderTranscriptGapAfterMessage,
     onVirtualScrollAdjustment,
+    captureNativeScrollRange,
     virtualAnchorToEnd,
     virtualAnchor,
     virtualScrollAdjustmentEnabled,
@@ -226,7 +228,7 @@ function ScrollableMessagePaneContent({
         )}
       >
         <div
-          ref={contentRef}
+          ref={bindContentRef}
           data-testid={`${scrollTestId}-content`}
           className={cn(
             'min-w-0 [overflow-anchor:none]',
@@ -328,6 +330,7 @@ function ScrollableMessagePaneContent({
                 virtualizerRef={virtualizerRef}
                 scrollTailHeight={scrollTailHeight}
                 onVirtualScrollAdjustment={onVirtualScrollAdjustment}
+                onNativeScrollRange={captureNativeScrollRange}
                 renderGapAfterMessage={renderMessageGap}
               />
               {contentFooter ? (

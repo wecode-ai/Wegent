@@ -1,3 +1,7 @@
+import {
+  handleRiskyCommandApproval,
+  RISKY_COMMAND_APPROVAL_SCENARIOS,
+} from './risky-command-approval-flow.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import { completeCommandOnProcessExit } from './process-exit-command.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
@@ -10,6 +14,7 @@ import {
   writeMatrixReport,
 } from './model-matrix-audit.mjs'
 import { writeFileSync } from 'node:fs'
+import { performance } from 'node:perf_hooks'
 import {
   assertProgressiveHi,
   captureMatrixRequest,
@@ -64,14 +69,12 @@ import {
   matrixToolCompletion,
   matrixToolPreamble,
   matrixToolPrompt,
-  namespacedFunctionCall,
   parseTelemetryPayload,
   reasoningTextItem,
   readRawRequestBody,
   readRequestBody,
   requestAdvertisesProgrammaticExec,
   requestAdvertisesShellTool,
-  requestAdvertisesViewImageTool,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
@@ -95,7 +98,6 @@ import {
   streamingTextEvents,
   telemetryEvents,
 } from './response-protocol.mjs'
-import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 
 import {
@@ -103,8 +105,6 @@ import {
   ANTHROPIC_EMPTY_PROMPT,
   ATTACHMENT_ONLY_COMPLETION_TEXT,
   ATTACHMENT_ONLY_FILENAME,
-  AUTOMATION_COMPLETION_TEXT,
-  AUTOMATION_PROMPT,
   BACKGROUND_COMPLETION_RESTORE_PROMPT,
   BACKGROUND_COMPLETION_RESTORE_TEXT,
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
@@ -120,9 +120,6 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
-  CLOUD_HTML_LINK_FILENAME,
-  CLOUD_HTML_LINK_MISSING_FILENAME,
-  CLOUD_HTML_LINK_PROMPT,
   CLOUD_MODEL_CASES,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -146,7 +143,6 @@ import {
   DROPPED_PATH_COMPLETION_TEXT,
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_FOLDER_NAME,
-  EARLIER_TOOL_BLOCK_ID,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
@@ -159,14 +155,8 @@ import {
   FORK_ENCRYPTED_CONTENT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_FOLLOW_UP_PROMPT,
-  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
-  FORK_PROVIDER_FOLLOW_UP_PROMPT,
-  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
-  FORK_PROVIDER_SOURCE_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
-  GENERIC_MCP_TOOL_BLOCK_ID,
-  GENERIC_MCP_TOOL_SEARCH_ID,
   GOAL_BUSY_COMPLETION_TEXT,
   GOAL_BUSY_OBJECTIVE,
   GOAL_BUSY_PLAN_PROMPT,
@@ -191,10 +181,6 @@ import {
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
-  LATER_TOOL_BLOCK_ID,
-  LOCAL_MARKDOWN_IMAGE_ALT,
-  LOCAL_MARKDOWN_IMAGE_FILENAME,
-  LOCAL_MARKDOWN_IMAGE_PROMPT,
   LOCAL_MODEL_CASES,
   LOCAL_MODEL_SWITCH_COMPLETE,
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
@@ -216,8 +202,6 @@ import {
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
   MESSAGE_EDIT_UPDATED_PROMPT,
   MODEL_API_KEY,
-  NODE_REPL_TOOL_BLOCK_ID,
-  NODE_REPL_TOOL_SEARCH_ID,
   OFFICIAL_PLUGIN_COMPLETION_TEXT,
   OFFICIAL_PLUGIN_DISPLAY_NAME,
   OFFICIAL_PLUGIN_MCP_SEARCH_ID,
@@ -250,8 +234,6 @@ import {
   PROVIDER_SWITCH_RESUME_PROMPT,
   PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
   PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
-  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
-  QUALIFIED_SKILL_MENTION_PROMPT,
   QUEUE_CLEAR_INITIAL,
   QUEUE_CLEAR_MANUAL,
   QUEUE_DIRECT_FIRST,
@@ -307,12 +289,8 @@ import {
   TASK_PLAN_STEP,
   TASK_PROMPT,
   TELEMETRY_CAPTURE_PATH,
-  TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-  TOOL_BLOCK_ORDER_PROMPT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
-  VIEW_IMAGE_COMPLETION_TEXT,
-  VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
@@ -358,6 +336,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getTerminalText',
   'getText',
   'getValueWhenReady',
+  'getWorkbenchDebugSnapshot',
   'metrics',
   'snapshot',
   'text',
@@ -387,7 +366,8 @@ function requestContainsSkillLocator(body, skillPath) {
     return `${path.startsWith('//') ? '/' : ''}${posix.normalize(path)}`
   }
   const expectedPath = normalize(skillPath)
-  return Boolean(
+  const advertisedSkillLocators = []
+  const matched = Boolean(
     findNestedString(body, catalog => {
       const roots = new Map()
       let section = null
@@ -412,11 +392,22 @@ function requestContainsSkillLocator(body, skillPath) {
         const separator = locator.indexOf('/')
         const root = roots.get(locator.slice(0, separator))
         const expandedPath = root ? `${root}/${locator.slice(separator + 1)}` : locator
+        advertisedSkillLocators.push(normalize(expandedPath))
         if (normalize(expandedPath) === expectedPath) return true
       }
       return false
     })
   )
+  if (!matched) {
+    // A miss without the advertised paths cannot be attributed after the run.
+    console.error(
+      '[skill-locator] expected',
+      expectedPath,
+      'advertised',
+      JSON.stringify(advertisedSkillLocators.slice(0, 40))
+    )
+  }
+  return matched
 }
 
 /** Text of top-level user messages, excluding quoted messages inside tool output. */
@@ -568,7 +559,6 @@ class DesktopE2EServer {
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.mcpElicitationModel = createMcpElicitationModel()
-    this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
     this.concurrentMemoryTaskNumbers = new Set()
@@ -577,10 +567,8 @@ class DesktopE2EServer {
     this.matrixState = null
     this.toolLessPrewarmHandled = false
     this.embeddedBrowserSetupToolLessPrewarmHandled = false
-    this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
-    this.cloudHtmlLinkToolLessPrewarmHandled = false
     this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -709,18 +697,6 @@ class DesktopE2EServer {
     this.supervisorCorrectionRelease = new Promise(resolvePromise => {
       this.releaseSupervisorCorrection = resolvePromise
     })
-    this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
-      this.resolveToolBlockNodeOutputObserved = resolvePromise
-    })
-    this.toolBlockNodeRelease = new Promise(resolvePromise => {
-      this.releaseToolBlockNode = resolvePromise
-    })
-    this.toolBlockGenericOutputObserved = new Promise(resolvePromise => {
-      this.resolveToolBlockGenericOutputObserved = resolvePromise
-    })
-    this.toolBlockGenericRelease = new Promise(resolvePromise => {
-      this.releaseToolBlockGeneric = resolvePromise
-    })
     this.cloudInitialRelease = new Promise(resolvePromise => {
       this.releaseCloudInitial = resolvePromise
     })
@@ -734,7 +710,6 @@ class DesktopE2EServer {
     this.goalRestartScenarioByThreadId = new Map()
     this.firstResumedGoalRestartScenario = null
     this.cloudGoalRestartStage = 'initial'
-    this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.heldScenarioResponses = new Map()
@@ -932,12 +907,11 @@ class DesktopE2EServer {
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
-        'fork_provider_source',
-        'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
         'request_user_input_async',
         'mcp_elicitation',
+        ...RISKY_COMMAND_APPROVAL_SCENARIOS,
         'window_lifecycle',
         'background_completion_restore',
         'background_follow_up_restore',
@@ -975,17 +949,12 @@ class DesktopE2EServer {
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
-        'cloud_html_link',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
         'multimodal_vision',
-        'view_image',
-        'local_markdown_image',
-        'tool_block_order',
         'official_plugin',
         'plugin_development',
-        'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
@@ -2161,14 +2130,15 @@ class DesktopE2EServer {
           else pending.reject(replacementError)
         }
       }
-      this.ready = ready
+      const admittedReady = { ...ready, receivedAtMs: performance.now() }
+      this.ready = admittedReady
       this.readyCount += 1
-      this.readyResolver?.(ready)
+      this.readyResolver?.(admittedReady)
       this.readyResolver = null
       const remainingWaiters = []
       for (const waiter of this.readyWaiters) {
         if (this.readyCount > waiter.readyCount) {
-          waiter.resolve(ready)
+          waiter.resolve(admittedReady)
         } else {
           remainingWaiters.push(waiter)
         }
@@ -2491,47 +2461,6 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'fork_provider_source' || this.scenario === 'fork_provider_follow_up') {
-      const requestKind = codexRequestKind(body)
-      if (requestKind === 'prewarm' || requestKind === 'compaction') {
-        const responseId = `fork-provider-empty-${this.modelRequests.length}`
-        this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-        return
-      }
-      const expectedModel = LOCAL_MODEL_CASES.find(model => model.protocol === 'responses')
-      assert.ok(expectedModel, 'Missing the responses local model for fork provider verification')
-      assert.equal(
-        protocol,
-        expectedModel.protocol,
-        'The fork provider regression reached the wrong protocol endpoint'
-      )
-      assert.equal(
-        body.model,
-        expectedModel.modelId,
-        'The forked task did not preserve the source model route'
-      )
-      const isFollowUp = this.scenario === 'fork_provider_follow_up'
-      const expectedPrompt = isFollowUp
-        ? FORK_PROVIDER_FOLLOW_UP_PROMPT
-        : FORK_PROVIDER_SOURCE_PROMPT
-      assert.ok(
-        JSON.stringify(body).includes(expectedPrompt),
-        'The fork provider regression request did not contain its expected prompt'
-      )
-      this.recordScenarioRequest(this.scenario, modelRequest)
-      const responseId = `fork-provider-${this.modelRequests.length}`
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(
-          isFollowUp
-            ? FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT
-            : FORK_PROVIDER_SOURCE_COMPLETION_TEXT
-        ),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
     const localModel = localProtocolCase(body.model)
     if (localModel) {
       assert.equal(
@@ -2717,28 +2646,6 @@ class DesktopE2EServer {
     }
 
     if (
-      this.scenario === 'view_image' &&
-      this.viewImageStage === 'initial' &&
-      !this.viewImageToolLessPrewarmHandled &&
-      !requestAdvertisesViewImageTool(body)
-    ) {
-      this.viewImageToolLessPrewarmHandled = true
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (
-      this.scenario === 'cloud_html_link' &&
-      !this.cloudHtmlLinkToolLessPrewarmHandled &&
-      !JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT) &&
-      !requestAdvertisesShellTool(body)
-    ) {
-      this.cloudHtmlLinkToolLessPrewarmHandled = true
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -2767,146 +2674,6 @@ class DesktopE2EServer {
     ) {
       this.officialPluginToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (this.scenario === 'tool_block_order' && !requestAdvertisesShellTool(body)) {
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (this.scenario === 'local_markdown_image') {
-      this.recordScenarioRequest('local_markdown_image', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(LOCAL_MARKDOWN_IMAGE_PROMPT),
-        'The real Codex request did not contain the local Markdown image prompt'
-      )
-      const imageUrl = pathToFileURL(join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)).href
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`![${LOCAL_MARKDOWN_IMAGE_ALT}](${imageUrl})`),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'tool_block_order') {
-      this.recordScenarioRequest('tool_block_order', modelRequest)
-      const requestNumber = this.scenarioRequests.get('tool_block_order').length
-      const requestText = JSON.stringify(body)
-
-      if (requestNumber === 1) {
-        assert.ok(
-          requestText.includes(TOOL_BLOCK_ORDER_PROMPT),
-          'The real Codex request did not contain the tool-block-order prompt'
-        )
-        const tool = selectShellToolCommand(body, 'printf earlier-created-tool', this.workspacePath)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(EARLIER_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 2) {
-        assert.equal(
-          requestContainsToolOutput(body, EARLIER_TOOL_BLOCK_ID),
-          true,
-          'The earlier command output did not return through the real Codex tool loop'
-        )
-        const search = selectToolSearch(body, 'node_repl js')
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(NODE_REPL_TOOL_SEARCH_ID, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 3) {
-        const tool = selectMcpTool(body, 'node_repl', 'js', {
-          code: "nodeRepl.write({ status: 'ready', value: 42 })",
-        })
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(NODE_REPL_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 4) {
-        assert.equal(
-          requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
-          true,
-          'The Node REPL output did not return through the real Codex tool loop'
-        )
-        assert.ok(
-          requestText.includes("{ status: 'executed', result: 84 }"),
-          'The Node REPL MCP server result was not delivered to the model service'
-        )
-        this.resolveToolBlockNodeOutputObserved()
-        await this.toolBlockNodeRelease
-        const search = selectToolSearch(
-          body,
-          'github issue details',
-          'mcp__github__issues__get_issue_details'
-        )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 5) {
-        const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
-          owner: 'wecode-ai',
-          repo: 'Wegent',
-          issue_number: 123,
-        })
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(GENERIC_MCP_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 6) {
-        assert.equal(
-          requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
-          true,
-          'The generic MCP output did not return through the real Codex tool loop'
-        )
-        assert.ok(
-          requestText.includes('Tool detail verification'),
-          'The generic MCP server result was not delivered to the model service'
-        )
-        this.resolveToolBlockGenericOutputObserved()
-        await this.toolBlockGenericRelease
-        const tool = selectShellToolCommand(body, 'printf later-created-tool', this.workspacePath)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(LATER_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      assert.equal(requestNumber, 7, `Unexpected tool-block-order request ${requestNumber}`)
-      assert.equal(
-        requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
-        true,
-        'The later command output did not return through the real Codex tool loop'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(TOOL_BLOCK_ORDER_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
       return
     }
 
@@ -3296,44 +3063,6 @@ class DesktopE2EServer {
       assert.fail(`Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`)
     }
 
-    if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
-      this.recordScenarioRequest('view_image', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(VIEW_IMAGE_PROMPT),
-        'The real Codex request did not contain the view_image prompt'
-      )
-      const image = selectViewImageTool(body, this.workspacePath)
-      this.viewImageStage = 'awaiting_tool_output'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        ...selectedToolCall('wework-e2e-view-image', image),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'view_image') {
-      assert.equal(
-        this.viewImageStage,
-        'awaiting_tool_output',
-        `Unexpected desktop E2E view_image stage: ${this.viewImageStage}`
-      )
-      this.recordScenarioRequest('view_image', modelRequest)
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-view-image'),
-        true,
-        'The real Codex request did not report the view_image tool output to the model service'
-      )
-      this.viewImageStage = 'complete'
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(VIEW_IMAGE_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
     if (this.scenario === 'concurrent_memory') {
       const promptMatch = JSON.stringify(body).match(/WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_(\d+)/)
       assert.ok(promptMatch, 'Concurrent memory request did not contain a task UI prompt')
@@ -3396,30 +3125,6 @@ class DesktopE2EServer {
       this.memoryStage = 'streaming'
       await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
       this.memoryStage = 'complete'
-      return
-    }
-
-    if (this.scenario === 'cloud_html_link') {
-      this.recordScenarioRequest('cloud_html_link', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT),
-        'The real cloud Codex request did not contain the HTML link prompt'
-      )
-      const previewPath = join(this.cloudWorkspacePath, CLOUD_HTML_LINK_FILENAME).replaceAll(
-        '\\',
-        '/'
-      )
-      const missingPath = join(
-        this.cloudWorkspacePath,
-        CLOUD_HTML_LINK_MISSING_FILENAME
-      ).replaceAll('\\', '/')
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(
-          '[Cloud HTML preview](<' + previewPath + '>)\n[Missing Cloud HTML](<' + missingPath + '>)'
-        ),
-        responseCompleted(responseId),
-      ])
       return
     }
 
@@ -4275,6 +3980,8 @@ class DesktopE2EServer {
       return
     }
 
+    if (handleRiskyCommandApproval(this, body, response, responseId, modelRequest)) return
+
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       this.writeSse(response, this.mcpElicitationModel(body, responseId))
@@ -4387,23 +4094,6 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'skill_mention_display') {
-      this.recordScenarioRequest('skill_mention_display', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(QUALIFIED_SKILL_MENTION_PROMPT) &&
-          requestText.includes(`${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`) &&
-          requestText.includes(this.officialPluginSkillPath),
-        'The real Codex request did not preserve the qualified structured skill mention'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(QUALIFIED_SKILL_MENTION_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -4575,46 +4265,6 @@ class DesktopE2EServer {
             `${pathToFileURL(join(this.workspacePath, FILE_PANEL_LINK_NAME)).href}:1`
           )
         ),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'automation') {
-      this.recordScenarioRequest('automation', modelRequest)
-      if (this.automationStage === 'manual_goal' || this.automationStage === 'scheduled_goal') {
-        assert.ok(
-          JSON.stringify(body).includes(AUTOMATION_PROMPT),
-          'The automation prompt was lost before model execution'
-        )
-        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
-        const callId =
-          this.automationStage === 'manual_goal'
-            ? 'wework-e2e-automation-manual-goal'
-            : 'wework-e2e-automation-scheduled-goal'
-        this.automationStage =
-          this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(callId, updateGoal),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-      assert.equal(
-        requestContainsToolOutput(body),
-        true,
-        'The automation Goal did not return its update_goal output'
-      )
-      const manualRun = this.automationStage === 'manual_goal_output'
-      assert.ok(
-        manualRun || this.automationStage === 'scheduled_goal_output',
-        `Unexpected automation model stage: ${this.automationStage}`
-      )
-      this.automationStage = manualRun ? 'scheduled_goal' : 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${manualRun ? 1 : 2}`),
         responseCompleted(responseId),
       ])
       return
@@ -6543,6 +6193,7 @@ class DesktopE2EServer {
 
 export {
   DesktopE2EServer,
+  findNestedString,
   hasUserReplyAfterToolOutput,
   inputUserMessageTexts,
   requestContainsSkillLocator,

@@ -25,22 +25,25 @@ fn source_question_channels_follow_scoped_provider_guidance_without_vendor_rules
         assert!(!instructions.contains("DingTalk"));
         assert!(!instructions.contains("wework_stand_in.reply"));
     }
-    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(!codex_has_full_access(&request));
 }
 
 #[test]
-fn task_recovery_routing_reaches_native_start_fork_and_resume_instructions() {
+fn host_control_routing_reaches_native_start_fork_resume_and_turn_policy() {
     let request = ExecutionRequest::default();
     let launch = CodexLaunchConfig::default();
     for params in [
         thread_start_params(&request, &launch),
         thread_fork_params("source", None, &request, &launch),
         thread_resume_params("source", &request, &launch),
+        effective_instructions::turn_context_for_test(&request),
     ] {
         let instructions = params["developerInstructions"].as_str().unwrap();
         assert!(instructions.contains("Standalone Wework tasks are conversations"));
         assert!(instructions.contains("conversations skill and wework_control"));
         assert!(instructions.contains("Discover those tools before claiming they are unavailable"));
+        assert!(instructions.contains("subscribe_connection_events with wait_for_event:true"));
+        assert!(instructions.contains("Do not use CLI watch commands or status polling to wait."));
     }
     let skill = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/conversations/SKILL.md");
     assert!(skill.contains("`include_archived: true`"));

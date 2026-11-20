@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useRef } from 'react'
+import { createContext, useContext, useId, useState, useSyncExternalStore } from 'react'
+import { createQuestionDiscussionPanels } from './questionDiscussionPanels'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasRequestUserInputResponse,
@@ -137,34 +138,28 @@ export function useQuestionDiscussion() {
   return useContext(QuestionDiscussionContext)
 }
 
-/** Route discussion commands only to the active pane of their source task. */
-export function useQuestionDiscussionWorkspacePanel({
+/** Observe real discussion panels owned by this pane and the current account. */
+export function useQuestionDiscussionPanels({
   address,
   active,
-  openTab,
 }: {
   address: RuntimeTaskAddress | null | undefined
   active: boolean
-  openTab(tab: QuestionDiscussionTab): void
 }) {
   const discussion = useQuestionDiscussion()
-  const request = discussion?.request
-  const consume = discussion?.consume
-  const handled = useRef<QuestionDiscussionRequest | null>(null)
-  useEffect(() => {
-    if (
-      !active ||
-      !request ||
-      handled.current === request ||
-      request.source.deviceId !== address?.deviceId ||
-      request.source.taskId !== address?.taskId
-    )
-      return
-    handled.current = request
-    consume?.(request)
-    const tab: QuestionDiscussionTab = `discussion:${request.key}`
-    openTab(tab)
-  }, [request, consume, active, address?.deviceId, address?.taskId, openTab])
+  const account = useContext(QuestionDiscussionStoreContext)
+  const owner = useId()
+  const [source] = useState(() => createQuestionDiscussionPanels(owner))
+  const view = source.observe({
+    accountKey: account?.accountKey ?? null,
+    authority: account?.requestPanel,
+    address,
+    active,
+    request: discussion?.request,
+    consume: discussion?.consume,
+  })
+  const snapshot = useSyncExternalStore(view.subscribe, view.getSnapshot, view.getSnapshot)
+  return { snapshot, close: view.close }
 }
 
 export function questionDiscussionPrompt(

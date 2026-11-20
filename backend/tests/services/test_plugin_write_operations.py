@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from app.models.kind import Kind
 from app.services import plugin_write_operations as operations
@@ -282,3 +283,32 @@ def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
     assert clock[0] == 20
     assert len(sessions) > 2
     assert all(db.closed and db.rollback.call_count == 1 for db in sessions)
+
+
+def test_mysql_deadlock_rebuilds_snapshot_after_the_failed_session_closes(monkeypatch):
+    sessions = []
+    deadlock = OperationalError("UPDATE kinds", {}, Exception(1213, "Deadlock"))
+
+    @contextmanager
+    def session():
+        db = Mock(closed=False)
+        sessions.append(db)
+        try:
+            yield db
+        finally:
+            db.closed = True
+
+    def snapshot(db):
+        if len(sessions) == 1:
+            raise deadlock
+        assert sessions[0].closed
+        assert db is not sessions[0]
+        return {"generation": 9}
+
+    monkeypatch.setattr(operations, "configure_plugin_session", Mock())
+    assert operations.run_plugin_transaction(
+        snapshot, session, retry_conflicts=True
+    ) == {"generation": 9}
+    assert len(sessions) == 2
+    sessions[0].rollback.assert_called_once()
+    sessions[1].rollback.assert_not_called()

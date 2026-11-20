@@ -5,9 +5,9 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
 import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
-import { TagEditor } from '@wegent/collaboration'
+import { TagEditor, createTagDraft, type TagDraftStore } from '@wegent/collaboration'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { useImperativeHandle, useState, useSyncExternalStore, type Ref } from 'react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
@@ -25,7 +25,7 @@ export function StandInConnections({
   disabled,
   focusedProjectId,
   ref: navigationRef,
-  onDraftDirtyChange,
+  tagDraft: providedTagDraft,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
@@ -34,10 +34,16 @@ export function StandInConnections({
   disabled: boolean
   focusedProjectId?: string
   ref?: Ref<StandInProjectNavigationHandle>
-  onDraftDirtyChange?(dirty: boolean): void
+  tagDraft?: TagDraftStore
 }) {
   const { t } = useTranslation('common')
-  const [tagDraftDirty, setTagDraftDirty] = useState(false)
+  const [ownedTagDraft] = useState(createTagDraft)
+  const tagDraft = providedTagDraft ?? ownedTagDraft
+  const tagDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
   const [discard, setDiscard] = useState(false)
   const [draftVersion, setDraftVersion] = useState(0)
   const navigation = useStandInPanelNavigation(tagDraftDirty, disabled, () => setDiscard(true))
@@ -46,10 +52,6 @@ export function StandInConnections({
       navigation.requestLeave(() => action(tagDraftDirty))
     },
   }))
-  useEffect(() => {
-    onDraftDirtyChange?.(tagDraftDirty)
-    return () => onDraftDirtyChange?.(false)
-  }, [tagDraftDirty, onDraftDirtyChange])
   const source = role.collaboration
   const setSource = (patch: Partial<typeof source>) =>
     onChange({ ...role, collaboration: { ...source, ...patch } })
@@ -186,7 +188,7 @@ export function StandInConnections({
               key={draftVersion}
               tags={source.tags}
               onChange={tags => setSource({ tags })}
-              onDraftDirtyChange={setTagDraftDirty}
+              draftStore={tagDraft}
               disabled={disabled}
               suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
               placeholder={t('standIn.personal.add_tag')}
@@ -254,7 +256,7 @@ export function StandInConnections({
         }}
         onConfirm={() => {
           setDiscard(false)
-          setTagDraftDirty(false)
+          tagDraft.set('')
           setDraftVersion(value => value + 1)
           navigation.confirmLeave(() => {})
         }}

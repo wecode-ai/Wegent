@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Capture repository queries at the Mysql boundary without a database.
+//! Shared SQL query capture and isolation helpers for Backend tests.
+mod database_name;
 pub mod mysql_pool_server;
 
 pub mod mysql_rows;
+
+pub use database_name::unique_database_name;
 
 use brz_mysql::{
     FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,

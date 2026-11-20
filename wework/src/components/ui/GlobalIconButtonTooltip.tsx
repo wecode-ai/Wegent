@@ -1,157 +1,54 @@
 import { createPortal } from 'react-dom'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react'
+import { useCallback, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
+import { createIconButtonTooltipController } from './iconButtonTooltipController'
 
-const SHOW_DELAY_MS = 700
 const VIEWPORT_PADDING_PX = 8
 const TRIGGER_GAP_PX = 8
 
-interface TooltipTarget {
-  button: HTMLButtonElement
-  label: string
-}
-
 export function GlobalIconButtonTooltip() {
-  const [target, setTarget] = useState<TooltipTarget | null>(null)
-  const [visible, setVisible] = useState(false)
-  const [position, setPosition] = useState<CSSProperties>()
-  const showTimerRef = useRef<number | null>(null)
-  const tooltipRef = useRef<HTMLSpanElement>(null)
-  const hoveredTriggerRef = useRef<Element | null>(null)
+  const [controller] = useState(createIconButtonTooltipController)
+  const { target, visible } = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const [placement, setPlacement] = useState<{
+    target: typeof target
+    style: CSSProperties
+  } | null>(null)
+  useDocumentEvent('pointerover', controller.pointerOver)
+  useDocumentEvent('pointerout', controller.pointerOut)
+  useDocumentEvent('focusin', controller.focusIn)
+  useDocumentEvent('focusout', controller.focusOut)
+  useDocumentEvent('click', controller.hide, { capture: true })
+  useDocumentEvent('keydown', controller.keyDown)
+  useWindowEvent('resize', controller.hide)
+  useWindowEvent('scroll', controller.hide, { capture: true })
 
-  const hide = useCallback(() => {
-    if (showTimerRef.current !== null) {
-      window.clearTimeout(showTimerRef.current)
-      showTimerRef.current = null
-    }
-    setVisible(false)
-    setTarget(null)
-    setPosition(undefined)
-  }, [])
-
-  const schedule = useCallback(
-    (button: HTMLButtonElement, eventTarget: EventTarget | null) => {
-      const label = button.getAttribute('aria-label')?.trim()
-      if (
-        !label ||
-        button.closest('[data-tooltip-trigger]') ||
-        (hoveredTriggerRef.current && button.contains(hoveredTriggerRef.current)) ||
-        (eventTarget instanceof Element && eventTarget.closest('[data-tooltip-trigger]'))
-      ) {
-        hide()
-        return
-      }
-      if (showTimerRef.current !== null) window.clearTimeout(showTimerRef.current)
-      setTarget({ button, label })
-      setVisible(false)
-      setPosition(undefined)
-      showTimerRef.current = window.setTimeout(() => {
-        setVisible(true)
-        showTimerRef.current = null
-      }, SHOW_DELAY_MS)
+  const measureTooltip = useCallback(
+    (node: HTMLSpanElement | null) => {
+      if (!node || !target) return
+      const triggerRect = target.button.getBoundingClientRect()
+      const tooltipRect = node.getBoundingClientRect()
+      const preferredTop = triggerRect.bottom + TRIGGER_GAP_PX
+      const alternateTop = triggerRect.top - tooltipRect.height - TRIGGER_GAP_PX
+      const top =
+        preferredTop + tooltipRect.height <= window.innerHeight - VIEWPORT_PADDING_PX
+          ? preferredTop
+          : Math.max(VIEWPORT_PADDING_PX, alternateTop)
+      const centeredLeft = triggerRect.left + (triggerRect.width - tooltipRect.width) / 2
+      const left = Math.min(
+        Math.max(centeredLeft, VIEWPORT_PADDING_PX),
+        window.innerWidth - tooltipRect.width - VIEWPORT_PADDING_PX
+      )
+      setPlacement({ target, style: { left, top } })
     },
-    [hide]
+    [target]
   )
-
-  useEffect(() => {
-    const buttonFromTarget = (eventTarget: EventTarget | null) =>
-      eventTarget instanceof Element
-        ? eventTarget.closest<HTMLButtonElement>('button[aria-label]')
-        : null
-    const handlePointerOver = (event: PointerEvent) => {
-      hoveredTriggerRef.current =
-        event.target instanceof Element ? event.target.closest('[data-tooltip-trigger]') : null
-      const button = buttonFromTarget(event.target)
-      if (button) schedule(button, event.target)
-      else hide()
-    }
-    const handlePointerOut = (event: PointerEvent) => {
-      if (
-        hoveredTriggerRef.current &&
-        (!(event.relatedTarget instanceof Node) ||
-          !hoveredTriggerRef.current.contains(event.relatedTarget))
-      ) {
-        hoveredTriggerRef.current = null
-      }
-      const button = buttonFromTarget(event.target)
-      if (
-        !button ||
-        (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))
-      ) {
-        return
-      }
-      hide()
-    }
-    const handleFocusIn = (event: FocusEvent) => {
-      const button = buttonFromTarget(event.target)
-      if (button) schedule(button, event.target)
-    }
-    const handleFocusOut = (event: FocusEvent) => {
-      const button = buttonFromTarget(event.target)
-      if (
-        !button ||
-        (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))
-      ) {
-        return
-      }
-      hide()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') hide()
-    }
-
-    document.addEventListener('pointerover', handlePointerOver)
-    document.addEventListener('pointerout', handlePointerOut)
-    document.addEventListener('focusin', handleFocusIn)
-    document.addEventListener('focusout', handleFocusOut)
-    document.addEventListener('click', hide, true)
-    document.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('resize', hide)
-    window.addEventListener('scroll', hide, true)
-    return () => {
-      if (showTimerRef.current !== null) window.clearTimeout(showTimerRef.current)
-      document.removeEventListener('pointerover', handlePointerOver)
-      document.removeEventListener('pointerout', handlePointerOut)
-      document.removeEventListener('focusin', handleFocusIn)
-      document.removeEventListener('focusout', handleFocusOut)
-      document.removeEventListener('click', hide, true)
-      document.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('resize', hide)
-      window.removeEventListener('scroll', hide, true)
-    }
-  }, [hide, schedule])
-
-  useLayoutEffect(() => {
-    if (!visible || !target || !tooltipRef.current) return
-
-    const triggerRect = target.button.getBoundingClientRect()
-    const tooltipRect = tooltipRef.current.getBoundingClientRect()
-    const preferredTop = triggerRect.bottom + TRIGGER_GAP_PX
-    const alternateTop = triggerRect.top - tooltipRect.height - TRIGGER_GAP_PX
-    const top =
-      preferredTop + tooltipRect.height <= window.innerHeight - VIEWPORT_PADDING_PX
-        ? preferredTop
-        : Math.max(VIEWPORT_PADDING_PX, alternateTop)
-    const centeredLeft = triggerRect.left + (triggerRect.width - tooltipRect.width) / 2
-    const left = Math.min(
-      Math.max(centeredLeft, VIEWPORT_PADDING_PX),
-      window.innerWidth - tooltipRect.width - VIEWPORT_PADDING_PX
-    )
-
-    setPosition({ left, top })
-  }, [target, visible])
+  const position = placement?.target === target ? placement?.style : undefined
 
   if (!visible || !target) return null
 
   return createPortal(
     <span
-      ref={tooltipRef}
+      ref={measureTooltip}
       role="tooltip"
       data-testid="global-icon-button-tooltip"
       style={position}

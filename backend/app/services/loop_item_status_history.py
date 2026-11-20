@@ -151,6 +151,7 @@ def write_status_change(
     trigger: str,
     by_user_id: int | None,
     automation_context: dict[str, Any] | None = None,
+    completion_owner_user_id: int | None = None,
 ) -> None:
     """Append one transition to ``metadata["status_history"]`` in place."""
     current = metadata.get(STATUS_HISTORY_KEY)
@@ -159,6 +160,19 @@ def write_status_change(
     # metadata content-equal to it, which SQLAlchemy then skips on flush.
     history = list(current) if isinstance(current, list) else []
     now = datetime.now(timezone.utc)
+    actor = automation_history_actor(automation_context)
+    # Snapshot the completing person rather than consulting a mutable assignee.
+    owner = (
+        by_user_id
+        if trigger in {"user_update", "create"} and automation_context is None
+        else None
+    )
+    if completion_owner_user_id is not None and completion_owner_user_id > 0:
+        owner = completion_owner_user_id
+    if to_status == "completed":
+        metadata["completion_owner_user_id"] = owner
+    else:
+        metadata.pop("completion_owner_user_id", None)
     history.append(
         {
             "from_status": from_status,
@@ -169,7 +183,8 @@ def write_status_change(
             "to_status_name": status_name(project, to_status) if to_status else "",
             "trigger": trigger,
             "by_user_id": by_user_id,
-            **automation_history_actor(automation_context),
+            **actor,
+            **({"completion_owner_user_id": owner} if to_status == "completed" else {}),
             "at": now.isoformat(),
         }
     )

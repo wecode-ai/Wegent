@@ -32,7 +32,7 @@ impl CodexAppServerClient {
     }
 }
 
-/// Native emits thread/closed before removing its pending-unload entry.
+/// Native teardown can retain the writer lease after thread/closed is emitted.
 /// Only its explicit pre-execution rejection permits resubmitting a resume.
 pub(super) async fn with_thread_resume_barrier<F, Fut>(
     method: &str,
@@ -52,6 +52,7 @@ where
     };
     let closing =
         format!("thread {thread_id} is closing; retry thread/resume after the thread is closed");
+    let writer_busy = format!("thread {thread_id} already has an active writer");
     let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
     with_rpc_timeout("thread/resume admission", timeout_seconds, async {
         let mut observed_closing = false;
@@ -62,7 +63,7 @@ where
                 ));
             }
             let result = request().await;
-            if result.as_ref().err() != Some(&closing) {
+            if !matches!(result.as_ref().err(), Some(error) if error == &closing || error == &writer_busy) {
                 return result;
             }
             if !observed_closing {
@@ -110,6 +111,23 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn resume_waits_for_the_native_writer_lease_to_be_released() {
+        let attempts = AtomicUsize::new(0);
+        let result =
+            with_thread_resume_barrier("thread/resume", &json!({"threadId":"thread-1"}), 1, || {
+                std::future::ready(if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err("thread thread-1 already has an active writer".to_owned())
+                } else {
+                    Ok(json!({"thread":{"id":"thread-1"}}))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["thread"]["id"], "thread-1");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn an_unfinished_native_unload_keeps_the_original_rpc_deadline() {
         let attempts = AtomicUsize::new(0);
         let error =
@@ -133,6 +151,16 @@ mod tests {
     #[tokio::test]
     async fn other_errors_and_operations_are_never_replayed() {
         for (method, params, error) in [
+            (
+                "thread/resume",
+                json!({"threadId":"thread-2"}),
+                "thread thread-1 already has an active writer",
+            ),
+            (
+                "turn/start",
+                json!({"threadId":"thread-1"}),
+                "thread thread-1 already has an active writer",
+            ),
             (
                 "thread/resume",
                 json!({"threadId":"thread-1"}),

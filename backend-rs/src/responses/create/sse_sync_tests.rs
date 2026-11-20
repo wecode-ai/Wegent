@@ -764,3 +764,39 @@ async fn parent_status_write_failure_rolls_back_and_does_not_deliver_completion(
     );
     assert_eq!(redis.count("DEL chat:task_streaming:"), 0);
 }
+
+/// A late consumer that finds the subtask already settled must not overwrite
+/// the committed status, but it still owns the cleanup of streaming keys it
+/// may have recreated after the local cancellation fallback.
+#[tokio::test]
+async fn an_already_settled_consumer_cleans_streaming_state() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::already_settled();
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: false,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let result = collect(&ctx, &url, &execution_request(), "req-test", Some(2)).await;
+
+    assert_eq!(result.unwrap_err(), "The execution was already settled");
+    assert!(
+        redis
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("DEL-MANY chat:streaming:424243"))
+    );
+    assert_eq!(redis.count("DEL chat:task_streaming:"), 0);
+}

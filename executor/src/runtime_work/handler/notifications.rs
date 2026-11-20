@@ -338,7 +338,7 @@ impl RuntimeWorkRpcHandler {
                         return;
                     }
                     self.persist_async_question_interaction(&local_task_id, &message);
-                    self.persist_stand_in_issue_reply(&local_task_id, &message);
+                    self.persist_public_issue_reply(&local_task_id, &message);
                     if codex_notification_requires_user_input(&message)
                         || message["method"] == "mcpServer/elicitation/request"
                         || message["method"] == super::super::mcp_elicitation::SETTLED_METHOD
@@ -350,29 +350,84 @@ impl RuntimeWorkRpcHandler {
                 }
                 if !route_nested {
                     self.record_background_terminal_notification(&local_task_id, &message);
+                    if message["method"] == "item/completed" {
+                        let item = &message["params"]["item"];
+                        let client_id = item["clientId"]
+                            .as_str()
+                            .or_else(|| item["client_id"].as_str());
+                        let display = client_id.and_then(|client_id| {
+                            self.store
+                                .read_task(&local_task_id, |link| {
+                                    link.runtime_handle["userMessagePresentations"]
+                                        .as_array()?
+                                        .iter()
+                                        .find(|entry| {
+                                            entry["clientUserMessageId"] == client_id
+                                                && entry["source"]["source"] == "connection_event"
+                                        })
+                                        .cloned()
+                                })
+                                .flatten()
+                        });
+                        if let Some(display) = display {
+                            message["params"]["weworkGuidanceDisplay"] = display;
+                        }
+                    }
                 }
-                let event_request = if route_nested {
-                    route_request
-                } else {
-                    self.request_for_codex_event(
-                        &local_task_id,
-                        &route_request,
-                        notification_turn_id.as_deref(),
-                    )
-                };
-                event_mapper
-                    .lock()
-                    .expect("thread event mapper lock should not be poisoned")
-                    .map(
-                        &self.event_tx,
-                        &self.device_id,
-                        &local_task_id,
-                        &event_request,
-                        message.into_value(),
-                    );
+                // The opening item can arrive before the new turn replaces
+                // the thread route. The admitted send already owns its input.
+                if route_nested || !self.is_opening_user_item(&local_task_id, &message) {
+                    let event_request = if route_nested {
+                        route_request
+                    } else {
+                        self.request_for_codex_event(
+                            &local_task_id,
+                            &route_request,
+                            notification_turn_id.as_deref(),
+                        )
+                    };
+                    event_mapper
+                        .lock()
+                        .expect("thread event mapper lock should not be poisoned")
+                        .map(
+                            &self.event_tx,
+                            &self.device_id,
+                            &local_task_id,
+                            &event_request,
+                            message.into_value(),
+                        );
+                }
             }
         }
         self.replay_codex_notifications(pending_replays);
+    }
+
+    fn is_opening_user_item(&self, task_id: &str, message: &CodexNotification) -> bool {
+        if message["method"] != "item/completed" {
+            return false;
+        }
+        let params = &message["params"];
+        let item = &params["item"];
+        if !is_root_codex_turn_event(params) || item_type(item) != "usermessage" {
+            return false;
+        }
+        let Some(id) = string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
+        else {
+            return false;
+        };
+        self.active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned")
+            .get(task_id)
+            .and_then(|execution| execution.request.as_ref())
+            .and_then(|request| {
+                request
+                    .extra
+                    .get("client_user_message_id")
+                    .or_else(|| request.extra.get("clientUserMessageId"))
+            })
+            .and_then(Value::as_str)
+            .is_some_and(|client_id| client_id.trim() == id)
     }
 
     fn publish_codex_account_event(&self, event: &str, message: &CodexNotification) {

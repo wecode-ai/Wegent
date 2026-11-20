@@ -8,10 +8,11 @@ import {
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const MARKER = 'WEWORK_GOAL_STATE_SYNC'
 
-export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
+export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let active = false
   let release
   let requests = 0
@@ -50,6 +51,16 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await waitForValue(
+        async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
+        snapshot =>
+          snapshot.marketplace?.defaultPluginNames?.length > 0 &&
+          snapshot.marketplace.defaultPluginNames.every(
+            name => snapshot.states[name]?.status === 'ready'
+          ),
+        'The initial model fixture requires the bundled plugins to finish preparing',
+        workbenchReadyTimeoutMs
+      )
       active = true
       let address
       const gates = runtimeTransportGates(control)

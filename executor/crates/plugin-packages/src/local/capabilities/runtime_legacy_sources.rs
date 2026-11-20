@@ -187,12 +187,16 @@ impl GlobalCapabilityStore {
         }
         // Old private installations have no archive receipt. Their independently
         // materialized, recorded native cache is the second ownership witness.
-        for (runtime, field) in self.plugin_runtime_targets(&historical) {
+        for (_, field) in self.plugin_runtime_targets(&historical) {
             let Some(old) = entry
                 .get("runtime")
                 .and_then(|value| value.get(field))
                 .and_then(Value::as_str)
                 .map(Path::new)
+            else {
+                continue;
+            };
+            let Some(runtime) = self.recorded_runtime_at_current_home(&historical, entry, field)
             else {
                 continue;
             };

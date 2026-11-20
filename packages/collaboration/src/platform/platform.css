@@ -90,6 +90,9 @@
 }
 
 .collaboration-platform-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 4px 10px 12px;
   font-size: 16px;
   font-weight: 600;
@@ -210,6 +213,15 @@
   align-items: center;
   margin-bottom: 8px;
   padding: 0 10px;
+}
+
+.collaboration-pinned-projects {
+  margin-bottom: 16px;
+}
+
+.collaboration-pinned-projects
+  .collaboration-workspace-project.active::before {
+  left: 3px;
 }
 
 .collaboration-workspace-section-title {

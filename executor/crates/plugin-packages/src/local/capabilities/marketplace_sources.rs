@@ -135,12 +135,30 @@ impl GlobalCapabilityStore {
                 let Some(spec) = source_spec(&requested.key, entry) else {
                     continue;
                 };
-                let runtime = if field == "claude_link" {
+                let retained_runtime = entry
+                    .get("runtime")
+                    .and_then(|value| value.get(field))
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    .filter(|path| cache_selection::is_retained(path));
+                let runtime = if field == "codex_link" && retained_runtime.is_some() {
+                    let Some(runtime) = self.recorded_runtime_at_current_home(&spec, entry, field)
+                    else {
+                        continue;
+                    };
+                    runtime
+                } else if field == "claude_link" {
                     self.plugin_runtime_link(&spec)
                 } else {
                     self.plugin_codex_link(&spec)
                 };
-                if !entry_owns_path(entry, &runtime, field) {
+                if entry
+                    .get("runtime")
+                    .and_then(|value| value.get(field))
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    != Some(runtime.as_path())
+                {
                     continue;
                 }
                 let owner = manifest

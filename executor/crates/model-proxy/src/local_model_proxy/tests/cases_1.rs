@@ -732,3 +732,54 @@ fn rate_limit_retry_delay_falls_back_to_configured_backoff_sequence() {
         Duration::from_secs(60)
     );
 }
+
+#[test]
+fn codex_external_context_without_tool_ids_stays_user_content() {
+    // The failed request carried these three context records immediately after
+    // an assistant reply. Only the preceding fixture tool has an actual call.
+    let context = [
+        r#"[{"providerId":"example/source"}]"#,
+        "Saved memories: []",
+        r#"{"items":[{"taskId":"fixture"}]}"#,
+    ];
+    let input = serde_json::to_vec(&json!({"input":[
+        {"type":"message","role":"user","content":"Test"},
+        {"type":"function_call","call_id":"fixture_call","name":"lookup","arguments":"{}"},
+        {"type":"function_call_output","call_id":"fixture_call","output":"fixture result"},
+        {"type":"message","role":"assistant","content":"Previous response."},
+        {"type":"function_call_output","call_id":"","output":context[0]},
+        {"type":"function_call_output","output":[{"type":"input_text","text":context[1]}]},
+        {"type":"function_call_output","call_id":"","output":context[2]},
+        {"type":"message","role":"user","content":"Next message."}
+    ]}))
+    .unwrap();
+    let prepare = |protocol| {
+        let (body, _, _) = prepare_request(protocol, false, None, &input).unwrap();
+        serde_json::from_slice::<Value>(&body).unwrap()
+    };
+
+    let chat = prepare("openai-chat-completions");
+    let messages = chat["messages"].as_array().unwrap();
+    assert_eq!(messages.iter().filter(|m| m["role"] == "tool").count(), 1);
+    assert_eq!(messages[2]["tool_call_id"], "fixture_call");
+    for (index, text) in context.into_iter().enumerate() {
+        assert_eq!(messages[index + 4], json!({"role":"user","content":text}));
+    }
+
+    let anthropic = prepare("anthropic-messages");
+    let messages = anthropic["messages"].as_array().unwrap();
+    let tool_results: Vec<_> = messages
+        .iter()
+        .flat_map(|m| m["content"].as_array().into_iter().flatten())
+        .filter(|block| block["type"] == "tool_result")
+        .collect();
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0]["tool_use_id"], "fixture_call");
+    for text in context {
+        assert!(messages
+            .iter()
+            .filter(|m| m["role"] == "user")
+            .flat_map(|m| m["content"].as_array().into_iter().flatten())
+            .any(|block| block["type"] == "text" && block["text"] == text));
+    }
+}

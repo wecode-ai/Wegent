@@ -19,6 +19,8 @@ the plugin needs cloud data, the developer signs in separately in the
 development instance. Exiting the main instance stops the development instance
 and its Core DSH, Executor, and plugin child processes.
 
+The development instance reuses the main instance’s prepared immutable bundled programs, including archive-hash-checked programs and Core plugin compositions published by content fingerprint. This avoids repeated extraction and composition. Component activation state, downloads, accounts, profiles and runtime data remain in the development instance’s own directory; deleting isolated data does not remove shared programs.
+
 ## Start a development instance
 
 1. Open the bundled **Wework Plugin Developer**. The Wework plugin is the outer

@@ -4,7 +4,6 @@ import { MessageHoverActions } from './MessageHoverActions'
 import { useMemo, useState } from 'react'
 import {
   Braces,
-  Bell,
   ChevronDown,
   ChevronUp,
   File as FileIcon,
@@ -17,6 +16,7 @@ import {
   MessageSquare,
   Package,
   PackageOpen,
+  Radio,
   Target,
 } from 'lucide-react'
 import type { Attachment } from '@wegent/chat-core/runtime'
@@ -179,7 +179,7 @@ export function UserMessage({
         data-testid="connection-event-message"
         className="flex w-full min-w-0 items-start gap-2 text-sm text-text-secondary"
       >
-        <Bell aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+        <Radio aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
         <span
           className="min-w-0 truncate"
           title={

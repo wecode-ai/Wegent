@@ -206,14 +206,70 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
 
+    // Inside the project's own Electron runtime host, `node` on PATH can be
+    // the host's Electron helper (or a shim execing it), which cannot run as a
+    // plain child process under the synthetic authority below. Resolve a real
+    // Node.js binary by probing candidates for an empty
+    // process.versions.electron (#4740). Keep the probe environment untouched:
+    // stripping ELECTRON_RUN_AS_NODE would boot a helper candidate as a full
+    // application.
+    async fn real_node_executable() -> PathBuf {
+        let mut directories: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        #[cfg(target_os = "macos")]
+        for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            directories.push(PathBuf::from(dir));
+        }
+        #[cfg(target_os = "linux")]
+        for dir in ["/usr/bin", "/usr/local/bin"] {
+            directories.push(PathBuf::from(dir));
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(program_files) = std::env::var_os("ProgramFiles") {
+            directories.push(PathBuf::from(program_files).join("nodejs"));
+        }
+        let names: &[&str] = if cfg!(windows) {
+            &["node.exe"]
+        } else {
+            &["node"]
+        };
+        for directory in directories {
+            for name in names {
+                let candidate = directory.join(name);
+                if !candidate.is_file() {
+                    continue;
+                }
+                let candidate = std::path::absolute(&candidate).unwrap_or(candidate);
+                let mut command = tokio::process::Command::new(&candidate);
+                command
+                    .args([
+                        "-p",
+                        "JSON.stringify([process.versions.electron ?? \"\", process.versions.node, process.execPath])",
+                    ])
+                    .kill_on_drop(true);
+                let output =
+                    match tokio::time::timeout(Duration::from_secs(10), command.output()).await {
+                        Ok(Ok(output)) if output.status.success() => output,
+                        _ => continue,
+                    };
+                let response: Option<Vec<String>> = serde_json::from_slice(&output.stdout).ok();
+                if let Some([electron, _node, executable]) = response.and_then(|value| {
+                    let mut iterator = value.into_iter();
+                    Some([iterator.next()?, iterator.next()?, iterator.next()?])
+                }) {
+                    if electron.is_empty() && !executable.is_empty() {
+                        return PathBuf::from(executable);
+                    }
+                }
+            }
+        }
+        panic!("a real Node.js executable is required for this test")
+    }
+
     #[tokio::test]
     async fn native_wait_preserves_the_parent_pipe_and_starts_node_with_only_reader_authority() {
         let root = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new("node")
-            .args(["-p", "process.execPath"])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
+        let node = real_node_executable().await;
         let entry = root.path().join("service.js");
         // A positive checkpoint requires the real child to remain alive while Native awaits it.
         std::fs::write(
@@ -233,7 +289,7 @@ mod tests {
         .unwrap();
         let delivery = Delivery {
             manifest: root.path().join("manifest.json"),
-            node: PathBuf::from(String::from_utf8(output.stdout).unwrap().trim()),
+            node,
             entry,
             providers: vec![],
         };

@@ -1,4 +1,4 @@
-import { CuaDriver } from '@trycua/cua-driver'
+import { CuaDriver, GetWindowStateInput, ListWindowsInput } from '@trycua/cua-driver'
 import {
   isDriverRequest,
   type DriverRequest,
@@ -69,11 +69,23 @@ async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }
   // the parent terminates this generation if the cancellation deadline expires.
   actions.set(request.id, {
     controller,
-    cancellable: request.method === 'listTools' || readOnlyTools.has(request.name),
+    cancellable:
+      request.method === 'listTools' ||
+      request.method === 'listWindows' ||
+      request.method === 'getWindowState' ||
+      readOnlyTools.has(request.name),
   })
   try {
     if (request.method === 'listTools')
       return await driver.listToolsJson({ signal: controller.signal })
+    if (request.method === 'listWindows')
+      return await driver.listWindows(ListWindowsInput.new(request.input), {
+        signal: controller.signal,
+      })
+    if (request.method === 'getWindowState')
+      return await driver.getWindowState(GetWindowStateInput.new(request.input), {
+        signal: controller.signal,
+      })
     return await driver.callTool(request.name, request.argumentsJson, { signal: controller.signal })
   } finally {
     actions.delete(request.id)

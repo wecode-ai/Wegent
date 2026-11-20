@@ -5,6 +5,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { CollaborationLocale } from '../i18n'
+import { templateMessages } from './messages'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import { builtinCollaborationTemplates } from './builtins'
 import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
@@ -85,14 +87,19 @@ function fixture(host?: ProjectAgentConfigurationHost) {
     automations: { list: vi.fn(async () => []), create: vi.fn() },
   }
   const applied = vi.fn()
-  const render = async (agentConfiguration = host, configure = true) => {
+  const render = async (
+    agentConfiguration = host,
+    configure = true,
+    locale: CollaborationLocale = 'zh-CN',
+    projectId = 'project'
+  ) => {
     await act(async () =>
       root.render(
         <ProjectTemplateApplyDialog
           api={api as unknown as SharedWorkspaceApi}
-          projectId="project"
+          projectId={projectId}
           document={document}
-          locale="zh-CN"
+          locale={locale}
           currentUserId={7}
           agentConfiguration={agentConfiguration}
           onClose={() => {}}
@@ -590,4 +597,84 @@ it('keeps an explicit non-default model when runtime configuration is collapsed 
       model: runnerModelIdentity(selectableModel),
     })
   }
+})
+
+it('keeps binding drafts while changing locale without reloading project prerequisites', async () => {
+  const { api, render } = fixture()
+  await render()
+  const name = container.querySelector<HTMLInputElement>('[data-testid^="template-group-name-"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      name,
+      'My edited group'
+    )
+    name.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await render(undefined, false, 'en')
+  expect(api.projects.get).toHaveBeenCalledTimes(1)
+  expect(api.members.list).toHaveBeenCalledTimes(1)
+  expect(
+    container.querySelector<HTMLInputElement>('[data-testid^="template-group-name-"]')?.value
+  ).toBe('My edited group')
+})
+
+it('does not load candidates for a project detached while its permission read was pending', async () => {
+  const { api, render, project } = fixture()
+  let resolve!: (value: typeof project) => void
+  const pending = new Promise<typeof project>(done => {
+    resolve = done
+  })
+  api.projects.get.mockReturnValueOnce(pending)
+  await render(undefined, false)
+  expect(api.members.list).not.toHaveBeenCalled()
+  await render(undefined, false, 'zh-CN', 'next-project')
+  expect(api.members.list).toHaveBeenCalledExactlyOnceWith('next-project')
+  await act(async () => resolve(project))
+  expect(api.members.list).toHaveBeenCalledTimes(1)
+})
+
+it('localizes denied management access without loading candidates or retrying implicitly', async () => {
+  const { api, render, project } = fixture()
+  api.projects.get.mockResolvedValue({ ...project, access_role: 'Viewer' })
+  await render(undefined, false)
+  await render(undefined, false, 'en')
+  expect(api.projects.get).toHaveBeenCalledTimes(1)
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    templateMessages.en.manageRequired
+  )
+  expect(api.members.list).not.toHaveBeenCalled()
+  expect(api.agents.list).not.toHaveBeenCalled()
+  expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+})
+
+it('does not apply the previous host environment while the new host catalog is pending', async () => {
+  const first = environmentHost()
+  const { render, api } = fixture(first)
+  await render()
+  const select = container.querySelector<HTMLSelectElement>(
+    '[data-testid="template-project-environment-select"]'
+  )!
+  await act(async () => {
+    select.value = '74'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  let resolve!: (value: CollaborationExecutionEnvironment[]) => void
+  const pending = new Promise<CollaborationExecutionEnvironment[]>(done => {
+    resolve = done
+  })
+  const second = { ...environmentHost(), listTemplateAgentEnvironments: vi.fn(() => pending) }
+  await render(second, false)
+  expect(
+    container.querySelector<HTMLSelectElement>(
+      '[data-testid="template-project-environment-select"]'
+    )?.disabled
+  ).toBe(true)
+  await click('template-bindings-apply')
+  expect(api.agents.create).toHaveBeenCalledWith(
+    'project',
+    expect.objectContaining({
+      executionPolicy: { mode: 'user_select' },
+    })
+  )
+  await act(async () => resolve([]))
 })

@@ -1,5 +1,6 @@
 import { Check, Folder, LayoutDashboard, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
 import { createPortal } from 'react-dom'
 import type { CloudProject } from '@/api/deliveries'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
@@ -84,19 +85,12 @@ export function ProjectSpacePickerMenu({
     visible.findIndex(entry => entry.key === activeKey)
   )
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
-    return () => {
-      window.cancelAnimationFrame(frame)
-    }
-  }, [triggerRef])
-
-  useEffect(() => {
-    // Follow user navigation, not project array refreshes from the workbench.
-    menuRef.current
-      ?.querySelector<HTMLElement>('[data-active="true"]')
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [activeKey, groupKey, order, query])
+  useFocusRequest(inputRef, triggerRef, { animationFrame: true })
+  useScrollRequest(
+    menuRef,
+    '[data-active="true"]',
+    JSON.stringify([activeKey, groupKey, order, query])
+  )
 
   const choose = (option: CloudProject) => {
     close()

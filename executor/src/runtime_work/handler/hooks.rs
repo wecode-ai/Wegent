@@ -28,12 +28,38 @@ pub(super) fn lifecycle_status(outcome: &crate::runner::ExecutionOutcome) -> &'s
     }
 }
 
+pub(super) fn hook_model_identity(request: &ExecutionRequest) -> (Option<String>, Option<String>) {
+    let config = &request.model_config;
+    (
+        string_field(config, "model_id"),
+        string_field(config, "model_provider"),
+    )
+}
+
+pub(super) fn resolved_codex_hook_request(
+    request: &ExecutionRequest,
+    model: Option<String>,
+    provider: Option<String>,
+) -> ExecutionRequest {
+    let mut request = request.clone();
+    // Match the legacy rollout Hook's turn_context.model, including proxy models.
+    // This copy is metadata only; it must never change the inference request.
+    if let Some(model) = model {
+        request.model_config["model_id"] = json!(model);
+    }
+    if let Some(provider) = provider {
+        request.model_config["model_provider"] = json!(provider);
+    }
+    request
+}
+
 fn lifecycle_input(
     request: &ExecutionRequest,
     runtime_task_id: &str,
     device_id: &str,
     runtime: &str,
 ) -> Option<LifecycleInput> {
+    let (model, model_provider) = hook_model_identity(request);
     Some(LifecycleInput {
         schema_version: 1,
         emitted_at_ms: 0,
@@ -52,8 +78,8 @@ fn lifecycle_input(
         cwd: PathBuf::from(request.cwd()?),
         session_id: None,
         turn_id: None,
-        model: string_field(&request.model_config, "model_id"),
-        model_provider: string_field(&request.model_config, "model_provider"),
+        model,
+        model_provider,
         permission_mode: "workspace-write".into(),
         hook_event_name: HookEventName::TurnStarted,
         status: "started".into(),
@@ -68,10 +94,21 @@ impl RuntimeWorkRpcHandler {
         runtime_task_id: &str,
         runtime: &str,
     ) -> Option<LifecycleHooks> {
-        Some(LifecycleHooks::new(
-            self.hook_service.clone(),
-            lifecycle_input(request, runtime_task_id, &self.device_id, runtime)?,
-        ))
+        let input = lifecycle_input(request, runtime_task_id, &self.device_id, runtime)?;
+        super::log_executor_event(
+            "runtime lifecycle hook context created",
+            &[
+                ("local_task_id", runtime_task_id.into()),
+                ("execution_id", input.execution_id.clone()),
+                ("runtime", runtime.into()),
+                ("model", input.model.clone().unwrap_or_default()),
+                (
+                    "model_provider",
+                    input.model_provider.clone().unwrap_or_default(),
+                ),
+            ],
+        );
+        Some(LifecycleHooks::new(self.hook_service.clone(), input))
     }
 
     pub(super) async fn create_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -182,6 +219,75 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_hook_uses_the_resolved_thread_model_and_provider() {
+        let request = ExecutionRequest {
+            model_config: json!({}),
+            ..Default::default()
+        };
+        let resolved = resolved_codex_hook_request(
+            &request,
+            Some("actual-native-model".into()),
+            Some("native-provider".into()),
+        );
+        assert_eq!(
+            hook_model_identity(&resolved),
+            (
+                Some("actual-native-model".into()),
+                Some("native-provider".into())
+            )
+        );
+        assert_eq!(request.model_config, json!({}));
+        for kind in [
+            "codex-official",
+            "codex-provider",
+            "cloud",
+            "model-interface",
+        ] {
+            let mut native = request.clone();
+            native.model_config["wework_model_kind"] = json!(kind);
+            let resolved = resolved_codex_hook_request(
+                &native,
+                Some("actual-native-model".into()),
+                Some("native-provider".into()),
+            );
+            assert_eq!(
+                hook_model_identity(&resolved).0.as_deref(),
+                Some("actual-native-model")
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_proxy_hook_matches_the_native_model_reported_by_legacy_rollouts() {
+        // The gateway resource is not the model recorded by Codex, and the
+        // authorized catalog may omit modelId.
+        let request = ExecutionRequest {
+            project_workspace_path: Some("/metadata-only-workspace".into()),
+            model_config: json!({"wework_model_kind":"cloud",
+                "model_id":"proxy-resource-label",
+                "codex_responses_compat_proxy":true,
+                "upstream_model_id":null, "upstream_model_provider":null}),
+            ..Default::default()
+        };
+        let original_config = request.model_config.clone();
+        let resolved = resolved_codex_hook_request(
+            &request,
+            Some("proxy-runtime-model".into()),
+            Some("openai".into()),
+        );
+        let input = lifecycle_input(&resolved, "local-task", "device", "Codex").unwrap();
+        assert_eq!(input.model.as_deref(), Some("proxy-runtime-model"));
+        assert_eq!(input.model_provider.as_deref(), Some("openai"));
+        assert_eq!(request.model_config, original_config);
+        // Missing native fields must not erase explicitly configured metadata.
+        let unchanged = resolved_codex_hook_request(&resolved, None, None);
+        assert_eq!(
+            hook_model_identity(&unchanged),
+            hook_model_identity(&resolved)
+        );
+    }
 
     #[test]
     fn lifecycle_metadata_preserves_identity_and_excludes_credentials() {

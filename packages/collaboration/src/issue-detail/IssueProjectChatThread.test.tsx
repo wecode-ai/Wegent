@@ -85,6 +85,7 @@ describe("shared Issue threads", () => {
             agentRole="manager"
             executionStatus={status}
             translate={translate}
+            onStopExecution={() => {}}
             onOpenAttachment={() => {}}
             onOpenUrl={() => {}}
           />,
@@ -93,6 +94,9 @@ describe("shared Issue threads", () => {
       expect(container.textContent).toContain(label);
       expect(container.textContent).not.toContain("正在规划任务");
       expect(container.querySelector(".animate-spin")).toBeNull();
+      expect(Boolean(container.querySelector('[data-testid="cloud-task-manager-cancel-root"]'))).toBe(
+        status !== "cancelled",
+      );
     },
   );
 
@@ -262,7 +266,7 @@ describe("shared Issue threads", () => {
     ).toBe("09-17 08:00");
   });
 
-  it("renders a manager assignment as a compact dispatch event", () => {
+  it("preserves the activity identity for a compact manager dispatch event", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -308,9 +312,14 @@ describe("shared Issue threads", () => {
     expect(
       container.querySelector('[data-testid="collaboration-chat-card-root"]'),
     ).not.toBeNull();
+    const activity = container.querySelector(
+      '[data-testid="cloud-task-activity-card-root"]',
+    );
+    expect(activity).not.toBeNull();
+    expect(activity?.contains(event)).toBe(true);
     expect(
-      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
-    ).toBeNull();
+      activity?.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
   });
 
   it("renders a manager answer inside the human reply thread", () => {
@@ -361,6 +370,39 @@ describe("shared Issue threads", () => {
         '[data-testid="collaboration-chat-card-root"]',
       ),
     ).toHaveLength(1);
+  });
+
+  it("renders completed manager output as an Issue comment", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              status: "completed",
+              content: "The manager reviewed the implementation.",
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_execution",
+              },
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const comment = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(comment?.textContent).toContain(
+      "The manager reviewed the implementation.",
+    );
+    expect(comment?.textContent).not.toContain("已完成本轮评估");
   });
 
   it("renders an optional manager status comment as comment content", () => {

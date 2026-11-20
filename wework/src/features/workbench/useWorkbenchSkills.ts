@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { SkillRef, UnifiedSkill } from '@/types/api'
 
 interface WorkbenchSkillApi {
@@ -32,41 +37,28 @@ export function useWorkbenchSkills({
   enabled = true,
   scopeKey = DEFAULT_SKILL_SCOPE_KEY,
 }: UseWorkbenchSkillsOptions) {
-  const [skills, setSkills] = useState<UnifiedSkill[]>([])
+  const catalog = useMemo(
+    () =>
+      createAsyncResource(
+        'workbench-skills',
+        async () => {
+          try {
+            return (await api.listSkills()).filter(skill => skill.visible !== false)
+          } catch (cause) {
+            throw cause instanceof Error ? cause : new Error('Failed to load skills')
+          }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api]
+  )
+  const query = useSyncExternalStore(
+    enabled ? catalog.subscribe : subscribeIdleResource,
+    catalog.getSnapshot,
+    getIdleResourceSnapshot
+  )
   const [selectedSkillsByScope, setSelectedSkillsByScope] = useState<Record<string, SkillRef[]>>({})
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
   const selectedSkills = selectedSkillsByScope[scopeKey] ?? EMPTY_SELECTED_SKILLS
-
-  useEffect(() => {
-    if (!enabled) return
-
-    let cancelled = false
-
-    async function loadSkills() {
-      setIsLoading(true)
-      setError(null)
-      try {
-        const response = await api.listSkills()
-        if (!cancelled) {
-          setSkills(response.filter(skill => skill.visible !== false))
-        }
-      } catch (nextError) {
-        if (!cancelled) {
-          setError(nextError instanceof Error ? nextError : new Error('Failed to load skills'))
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    loadSkills()
-    return () => {
-      cancelled = true
-    }
-  }, [api, enabled])
 
   const selectedSkillNames = useMemo(
     () => selectedSkills.map(skill => skill.name),
@@ -115,13 +107,13 @@ export function useWorkbenchSkills({
   )
 
   return {
-    skills: enabled ? skills : EMPTY_SKILLS,
+    skills: enabled ? (query.data ?? EMPTY_SKILLS) : EMPTY_SKILLS,
     selectedSkills,
     selectedSkillNames,
     setSelectedSkills,
     setSelectedSkillsForScope,
     toggleSkill,
-    isLoading: enabled && isLoading,
-    error: enabled ? error : null,
+    isLoading: enabled && (query.status === 'idle' || query.status === 'loading'),
+    error: enabled && query.status === 'error' ? (query.error as Error) : null,
   }
 }

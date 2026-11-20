@@ -4,11 +4,6 @@
 
 //! `GET /api/plugins/installed` handler (source
 //! `app/api/endpoints/installed_plugins.py::list_installed_plugins`).
-//!
-//! Re-opened 2026-10-11 for a fresh focused replay after the traffic-e2e
-//! upgrade: the engine reuses cached results while the target fingerprint is
-//! unchanged, so this note exists only to change that fingerprint. No
-//! behaviour change; the recorded responses already pass.
 use brz_json::raw_json;
 use brz_mysql::MysqlResult;
 #[derive(serde::Serialize)]
@@ -22,6 +17,16 @@ use super::kind_to_item;
 use super::list_installed_kinds;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+
+#[cfg(test)]
+#[path = "list_mysql_tests.rs"]
+mod mysql_tests;
+#[cfg(test)]
+#[path = "list_test_support.rs"]
+mod test_support;
+#[cfg(test)]
+#[path = "list_tests.rs"]
+mod tests;
 
 /// GET /api/plugins/installed: the plugins-installed free function, injecting
 /// the process-lifetime application state.
@@ -69,7 +74,13 @@ async fn list_installed<M>(
 where
     M: brz_mysql::Mysql,
 {
+    let start = std::time::Instant::now();
     let rows = list_installed_kinds(mysql, user_id).await?;
+    tracing::debug!(
+        item_count = rows.len(),
+        elapsed_ms = start.elapsed().as_secs_f64() * 1000.0,
+        "loaded installed plugins"
+    );
     let mut items: Vec<serde_json::Value> = rows.iter().filter_map(kind_to_item).collect();
     enrich_installed_list(mysql, &mut items, device_id).await?;
     Ok(InstalledPluginsResponse {

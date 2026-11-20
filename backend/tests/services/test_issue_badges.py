@@ -5,6 +5,7 @@
 
 import uuid
 
+from app.core.config import settings
 from app.models.delivery import CloudProject
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
@@ -24,9 +25,28 @@ MR = "https://gitlab.local/group/sub/app/-/merge_requests/7"
 def test_canonicalizes_links_and_rejects_credentials_and_invalid_numbers():
     assert extract_change_request_urls(
         f"[PR]({PR}/files#diff) {PR}. <{MR}?x=1> "
+        f"（{PR}）【{PR}】《{PR}》“{PR}”‘{PR}’ {PR}， {PR}： "
+        f"（{PR}）缺少 badge 《{PR}》后续说明 "
         "https://user:secret@github.com/org/app/pull/8 "
+        "https://github.com/org/app/pull/not-a-number "
+        "https://github.com/org/app/issues/9 "
         "https://github.com/org/app/pull/9007199254740992"
     ) == sorted([PR, MR])
+
+
+def test_canonicalization_flag_preserves_legacy_extraction(monkeypatch):
+    monkeypatch.setattr(
+        settings, "COLLAB_CHANGE_REQUEST_BADGE_CANONICALIZATION_V1", False
+    )
+
+    assert extract_change_request_urls(f"（{PR}）") == []
+    assert extract_change_request_urls(PR, canonicalize=True) == [PR]
+
+
+def test_github_urls_use_the_canonical_https_form():
+    assert extract_change_request_urls("http://github.com/org/app/pull/43") == [
+        "https://github.com/org/app/pull/43"
+    ]
 
 
 def test_generic_sources_are_preserved_when_a_content_source_changes():

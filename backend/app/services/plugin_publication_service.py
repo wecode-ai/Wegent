@@ -97,6 +97,10 @@ from app.services.plugin_publication_gitlab_service import (
     PluginPublicationGitLabVerificationError,
     plugin_publication_gitlab_service,
 )
+from app.services.plugin_publication_summaries import (
+    PublicationSummaryData,
+    load_summary_data,
+)
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -666,7 +670,7 @@ class PluginPublicationService:
             .all()
         )
         return PluginPublicationRequestListResponse(
-            items=[self._summary(db, row) for row in rows],
+            items=self._summaries(db, rows),
             total=total,
             page=page,
             limit=limit,
@@ -2097,13 +2101,19 @@ class PluginPublicationService:
             )
         return request, revision
 
-    def _summary(
-        self, db: Session, request: PluginPublicationRequest
+    def _summaries(
+        self, db: Session, requests: list[PluginPublicationRequest]
+    ) -> list[PluginPublicationRequestSummary]:
+        data = load_summary_data(db, requests)
+        return [self._summary_from_data(request, data) for request in requests]
+
+    def _summary_from_data(
+        self, request: PluginPublicationRequest, data: PublicationSummaryData
     ) -> PluginPublicationRequestSummary:
-        plugin = db.get(Plugin, request.source_plugin_id)
-        revision = self._current_revision(db, request)
-        submitter = db.get(User, request.submitter_user_id)
-        checks = self._checks(db, revision.id) if revision else []
+        plugin = data.plugins.get(request.source_plugin_id)
+        revision = data.revision(request)
+        submitter = data.users.get(request.submitter_user_id)
+        checks = data.checks.get(revision.id, []) if revision else []
         submitted_at = (
             request.submitted_at
             if unset_datetime(request.submitted_at) is not None
@@ -2146,7 +2156,7 @@ class PluginPublicationService:
         is_admin: bool = False,
         revision_number: int | None = None,
     ) -> PluginPublicationRequestDetail:
-        summary = self._summary(db, request)
+        summary = self._summaries(db, [request])[0]
         current_revision = self._current_revision(db, request)
         if not current_revision:
             raise HTTPException(

@@ -1,6 +1,26 @@
 use super::super::tests::{context, seed, EnvGuard};
 use super::*;
 
+#[test]
+fn connection_provider_discovery_exposes_details_only_for_the_selected_provider() {
+    let github = json!({"id": "github", "displayName": "GitHub", "resourceKinds": ["repository"],
+        "availability": {"status": "ready"}, "assistance": {"observe": ["Wait for checks"]}});
+    let catalog = json!({"items": [github, {"id": "gitlab"}]});
+    let summary = connection_event_provider_catalog(catalog.clone(), None).unwrap();
+    assert_eq!(summary["items"][0]["id"], "github");
+    assert!(summary["items"][0].get("assistance").is_none());
+    assert_eq!(summary["_meta"]["connectionEventProviderCatalog"], catalog);
+
+    let selected = connection_event_provider_catalog(catalog.clone(), Some("github")).unwrap();
+    assert_eq!(selected, json!({"items": [github]}));
+    assert_eq!(
+        connection_event_provider_catalog(catalog, Some("missing"))
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+}
+
 fn seed_claude(handler: &RuntimeWorkRpcHandler, task: &str) -> RuntimeTaskLink {
     let mut link = seed(handler, task);
     link.runtime = "claude_code".into();
@@ -21,7 +41,7 @@ fn event_receipts_validate_host_facts_and_do_not_restart_accepted_execution() {
     let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
     let event_key = "a".repeat(64);
     let second_event_key = "b".repeat(64);
-    workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+    event_store::transact(&handler.event_subscription_path(), |state| {
         state["observations"] =
             json!({"observed":{"events":[{"key":event_key,"sequence":1,"event":{"id":"already-delivered","at":"2026-11-15T00:00:01Z"}},{"key":second_event_key,"sequence":2,"event":{"id":"new-event","at":"2026-11-15T00:00:01Z"}}]}});
         state["operations"]["subscription"] = json!({"task_id":"task","observation_id":"observed","source":{"enabledAfter":"2026-11-15T00:00:00Z"}});
@@ -157,7 +177,7 @@ fn event_receipts_validate_host_facts_and_do_not_restart_accepted_execution() {
         "resource_event_keys".into(),
         json!([second_event_key, "c".repeat(64)]),
     );
-    workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+    event_store::transact(&handler.event_subscription_path(), |state| {
         state["observations"]["observed"]["events"]
             .as_array_mut()
             .unwrap()
@@ -243,7 +263,7 @@ fn observations_share_collection_and_isolate_provider_accounts() {
         assert_eq!(compacted["checkpoint"]["cursor"], 2);
         assert_eq!(compacted["events"].as_array().unwrap().len(), 1000);
         assert!(compacted["events"].as_array().unwrap().iter().all(|entry|entry["event"]["id"]!="revision"));
-        let persisted = workbench_control::journal::transact(&handler.event_subscription_path(), |state|Ok(state["operations"].clone())).unwrap();
+        let persisted = event_store::transact(&handler.event_subscription_path(), |state|Ok(state["operations"].clone())).unwrap();
         for id in ["first", "third"] {
             assert_eq!(persisted[id]["status"], "pending");
             assert_eq!(persisted[id]["events"][0]["id"], "revision");
@@ -319,14 +339,14 @@ fn delayed_native_goal_projections_cannot_cancel_a_newly_armed_wait() {
         for message in delayed {
             handler.sync_runtime_task_goal_from_notification("caller", &message);
             assert_eq!(handler.connection_goal_reconciliations.lock().unwrap().len(), 1);
-            assert_eq!(workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["wait"]["status"].clone())).unwrap(), "armed");
+            assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["wait"]["status"].clone())).unwrap(), "armed");
         }
         drop(admission);
         tokio::time::timeout(Duration::from_secs(2), async {
             while !handler.connection_goal_reconciliations.lock().unwrap().is_empty() { tokio::task::yield_now().await; }
         }).await.unwrap();
         assert_eq!(handler.read_event_goal("caller").await.unwrap()["status"], "blocked");
-        assert_eq!(workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["wait"]["status"].clone())).unwrap(), "armed");
+        assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["wait"]["status"].clone())).unwrap(), "armed");
     });
 }
 
@@ -357,7 +377,7 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
                 status => { handler.set_claude_goal(&link, &json!({"status":status})); },
             }
             handler.reconcile_connection_goal_waits("caller").await.unwrap();
-            assert_eq!(workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id]["status"].clone())).unwrap(), if retained {phase} else {"cancelled"}, "{phase}/{current}");
+            assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id]["status"].clone())).unwrap(), if retained {phase} else {"cancelled"}, "{phase}/{current}");
         }
         let mut link = handler.store.get_task("caller").unwrap();
         handler.set_claude_goal(&link, &initial);
@@ -367,7 +387,7 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
         link.thread_id = Some("missing-native-session".into());
         handler.store.upsert_task(link);
         assert!(handler.reconcile_connection_goal_waits("caller").await.is_err());
-        assert_eq!(workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["unavailable"]["status"].clone())).unwrap(), "armed");
+        assert_eq!(event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"]["unavailable"]["status"].clone())).unwrap(), "armed");
     });
 }
 
@@ -409,7 +429,7 @@ fn goal_wait_transactions_recover_without_resetting_usage_or_overriding_user_pau
         assert_eq!(active["status"],"active");
         assert_eq!(goal_identity(&active),identity);
         assert_eq!(active["tokensUsed"],123);
-        let recovered = workbench_control::journal::transact(&restarted.event_subscription_path(),|state| Ok(state["operations"]["goal-wait"].clone())).unwrap();
+        let recovered = event_store::transact(&restarted.event_subscription_path(),|state| Ok(state["operations"]["goal-wait"].clone())).unwrap();
         assert_eq!(recovered["status"],"delivered");
         restarted.set_claude_goal(&restarted.store.get_task("caller").unwrap(),&json!({"status":"blocked"}));
         restarted.poll_conversation_connection_events(true).await.unwrap();
@@ -489,7 +509,7 @@ fn event_goal_recovers_the_binding_before_collector_acceptance_is_saved() {
         let restarted=RuntimeWorkRpcHandler::new("control-test-device","/bin/false");
         restarted.admit_claude_event_goal("caller",&request).await.unwrap();
         assert_eq!(restarted.read_event_goal("caller").await.unwrap()["status"],"active");
-        let saved=workbench_control::journal::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
+        let saved=event_store::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
         assert_eq!(saved["status"],"delivered");
         assert_eq!(saved["native_event_phase"],"activated");
     });
@@ -545,14 +565,14 @@ fn subscriptions_collect_without_models_and_preserve_pending_events_across_resta
         let listed = handler.control_operation(&context("caller"),"list_connection_event_subscriptions",json!({})).await.unwrap();
         assert_eq!(listed["items"][0]["status"],"armed","Unrelated events must not wake the model");
         // Advance the source's due time instead of sleeping through a scheduler interval.
-        workbench_control::journal::transact(&handler.event_subscription_path(),|state| { state["observations"][first["subscription"]["observation_id"].as_str().unwrap()]["next_poll_at"]=json!(0); Ok(()) }).unwrap();
+        event_store::transact(&handler.event_subscription_path(),|state| { state["observations"][first["subscription"]["observation_id"].as_str().unwrap()]["next_poll_at"]=json!(0); Ok(()) }).unwrap();
         handler.poll_conversation_connection_events(true).await.unwrap();
         let id = handler.subscription_id("caller","document-v2");
-        let read_record = || workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
+        let read_record = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         let pending = read_record();
         assert_eq!(pending["status"],"pending");
         assert_eq!(pending["events"].as_array().unwrap().len(),1,"Duplicate provider events are delivered once");
-        let observation = workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["observations"][pending["observation_id"].as_str().unwrap()].clone())).unwrap();
+        let observation = event_store::transact(&handler.event_subscription_path(), |state| Ok(state["observations"][pending["observation_id"].as_str().unwrap()].clone())).unwrap();
         assert_eq!(observation["checkpoint"]["cursor"],12);
         let summary = handler.get_task(&json!({"taskId":"caller"})).unwrap();
         assert_eq!(summary["task"]["runtimeHandle"]["connectionEventSubscriptions"][0]["observed_events"],2);
@@ -560,10 +580,10 @@ fn subscriptions_collect_without_models_and_preserve_pending_events_across_resta
         assert!(pending.get("operation_id").is_none(),"A pending human question must not be answered or interrupted");
         let restored = RuntimeWorkRpcHandler::new("control-test-device","/bin/false");
         restored.store.update_task("caller", |link| link.interaction_status = Some("waitingForUserInput".into()));
-        workbench_control::journal::transact(&restored.event_subscription_path(),|state| { state["observations"][pending["observation_id"].as_str().unwrap()]["next_poll_at"]=json!(0); Ok(()) }).unwrap();
+        event_store::transact(&restored.event_subscription_path(),|state| { state["observations"][pending["observation_id"].as_str().unwrap()]["next_poll_at"]=json!(0); Ok(()) }).unwrap();
         restored.poll_conversation_connection_events(true).await.unwrap();
         assert_eq!(read_record()["events"],pending["events"]);
-        let retained = workbench_control::journal::transact(&restored.event_subscription_path(),|state| Ok(state["observations"][pending["observation_id"].as_str().unwrap()]["events"].clone())).unwrap();
+        let retained = event_store::transact(&restored.event_subscription_path(),|state| Ok(state["observations"][pending["observation_id"].as_str().unwrap()]["events"].clone())).unwrap();
         assert_eq!(retained.as_array().unwrap().len(),1000);
         assert!(!retained.as_array().unwrap().iter().any(|entry| entry["event"]["id"] == "event-11"));
         let again = RuntimeWorkRpcHandler::new("control-test-device","/bin/false");

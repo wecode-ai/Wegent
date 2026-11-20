@@ -20,5 +20,6 @@ pub mod item_response;
 pub(crate) mod loop_columns;
 pub mod loop_repository;
 
+mod assistant_participation;
 mod handler;
 pub(crate) mod issue_invitation;

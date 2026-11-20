@@ -31,6 +31,9 @@ class IssueAssignmentCreate(BaseModel):
 
 
 class IssueAssignmentResponse(BaseModel):
+    dispatch_receipt: dict | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     automation: dict[str, str] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )

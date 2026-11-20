@@ -1133,7 +1133,8 @@
   },
   "appPreview": {
     "button": "Preview",
-    "title": "App Preview"
+    "title": "App Preview",
+    "unavailable": "This app preview URL is unavailable."
   },
   "userSearch": {
     "searchFailed": "Search failed. Please try again.",

@@ -34,7 +34,7 @@ function interactionDraftStore(accountKey: string): InteractionDraftStore {
   const existing = interactionDraftStores.get(accountKey)
   if (existing) return existing
   const store = createInteractionDraftStore(accountKey)
-  store.activate()
+  store.subscribe(() => {})
   interactionDraftStores.set(accountKey, store)
   return store
 }

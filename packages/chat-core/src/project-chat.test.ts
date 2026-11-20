@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createProjectChatClient,
@@ -139,6 +139,260 @@ describe('createProjectChatClient', () => {
     expect(socket.off).toHaveBeenCalledTimes(3)
   })
 
+  it.each(['available', 'restricted'] as const)(
+    'resolves a room projection with the current viewer source access %s',
+    async (traceState) => {
+      const room: ProjectChatMessage = {
+        ...message,
+        traceRef: 'opaque',
+        traceState: 'restricted',
+        runtimeAddress: null,
+      }
+      const resolved: ProjectChatMessage = {
+        ...room,
+        traceState,
+        runtimeAddress:
+          traceState === 'available'
+            ? { deviceId: 'owned-device', taskId: 'private-task' }
+            : null,
+      }
+      socket.emit.mockImplementation((_event, payload, ack) => {
+        ack({
+          ok: true,
+          result: {
+            messages: payload.limit === 1 ? [resolved] : [],
+            latestSequence: 7,
+            currentUserId: '1',
+          },
+        })
+      })
+      const onMessage = vi.fn()
+      const client = createProjectChatClient({
+        socketBaseUrl: 'https://cloud.example.com',
+        socketPath: '/socket.io',
+        getToken: () => 'token',
+      })
+      await client.subscribe('project-1', undefined, 0, onMessage)
+      const receive = socket.on.mock.calls.find(
+        ([event]) => event === 'wework:project_chat:message:created',
+      )![1]
+      receive(room)
+      await vi.waitFor(() =>
+        expect(onMessage).toHaveBeenLastCalledWith(resolved),
+      )
+      expect(socket.emit).toHaveBeenLastCalledWith(
+        'wework:project_chat:subscribe',
+        {
+          projectId: 'project-1',
+          taskId: undefined,
+          messageId: 'message-7',
+          afterSequence: 6,
+          limit: 1,
+        },
+        expect.any(Function),
+      )
+      expect(room.runtimeAddress).toBeNull()
+    },
+  )
+
+  it.each(['created', 'chunk'] as const)(
+    'resolves the first persisted source from a %s event with newer history present',
+    async (event) => {
+      const room: ProjectChatMessage = {
+        ...message,
+        sequenceNumber: 1,
+        messageId: 'first',
+        type: 'agent_chunk',
+        traceRef: 'first-source',
+        traceState: 'restricted',
+        runtimeAddress: null,
+      }
+      const resolved: ProjectChatMessage = {
+        ...room,
+        traceState: 'available',
+        runtimeAddress: { deviceId: 'project-device', taskId: 'project-task' },
+      }
+      socket.emit.mockImplementation((_event, payload, ack) => {
+        ack({
+          ok: true,
+          result: {
+            messages: payload.messageId === 'first' ? [resolved] : [message],
+            latestSequence: 7,
+            currentUserId: '1',
+          },
+        })
+      })
+      const onMessage = vi.fn()
+      const onChunk = vi.fn()
+      const client = createProjectChatClient({
+        socketBaseUrl: 'https://cloud.example.com',
+        socketPath: '/socket.io',
+        getToken: () => 'token',
+      })
+      await client.subscribe('project-1', undefined, 0, onMessage, onChunk)
+      const receive = socket.on.mock.calls.find(
+        ([name]) =>
+          name ===
+          (event === 'created'
+            ? 'wework:project_chat:message:created'
+            : 'wework:project_chat:agent:chunk'),
+      )![1]
+      receive(room)
+      await vi.waitFor(() =>
+        expect(onMessage).toHaveBeenLastCalledWith(resolved),
+      )
+      expect(socket.emit).toHaveBeenLastCalledWith(
+        'wework:project_chat:subscribe',
+        expect.objectContaining({
+          messageId: 'first',
+          afterSequence: 0,
+          limit: 1,
+        }),
+        expect.any(Function),
+      )
+      if (event === 'chunk') {
+        const calls = socket.emit.mock.calls.length
+        receive({ ...room, content: 'next delta' })
+        expect(onChunk).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            content: 'next delta',
+            runtimeAddress: resolved.runtimeAddress,
+          }),
+        )
+        expect(socket.emit).toHaveBeenCalledTimes(calls)
+      }
+    },
+  )
+
+  it('keeps newer streamed content when the source lookup returns an older row', async () => {
+    let resolve: ((ack: unknown) => void) | undefined
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      if (payload.limit === 1) resolve = ack
+      else
+        ack({
+          ok: true,
+          result: { messages: [], latestSequence: 0, currentUserId: '1' },
+        })
+    })
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+    const onMessage = vi.fn()
+    await client.subscribe('project-1', undefined, 0, onMessage, vi.fn())
+    const created = socket.on.mock.calls.find(
+      ([event]) => event === 'wework:project_chat:message:created',
+    )![1]
+    const chunk = socket.on.mock.calls.find(
+      ([event]) => event === 'wework:project_chat:agent:chunk',
+    )![1]
+    const room = {
+      ...message,
+      traceRef: 'opaque',
+      traceState: 'restricted',
+      runtimeAddress: null,
+    }
+    created(room)
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
+    chunk({ ...room, content: 'newer ', status: 'streaming' })
+    chunk({ ...room, content: 'streamed content', status: 'streaming' })
+    resolve!({
+      ok: true,
+      result: {
+        messages: [
+          {
+            ...room,
+            content: 'older persisted content',
+            traceState: 'available',
+            runtimeAddress: { deviceId: 'device', taskId: 'run' },
+          },
+        ],
+        latestSequence: 7,
+        currentUserId: '1',
+      },
+    })
+    await vi.waitFor(() =>
+      expect(onMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          content: `${room.content}newer streamed content`,
+          status: 'streaming',
+          traceState: 'available',
+          runtimeAddress: { deviceId: 'device', taskId: 'run' },
+        }),
+      ),
+    )
+  })
+
+  it.each(['unsubscribe', 'newer-message', 'newer-subscription'])(
+    'discards late source reads after %s',
+    async (interruption) => {
+      let resolve: ((ack: unknown) => void) | undefined
+      socket.emit.mockImplementation((_event, payload, ack) => {
+        if (payload.limit === 1) resolve = ack
+        else
+          ack?.({
+            ok: true,
+            result: {
+              messages: [],
+              latestSequence: 0,
+              currentUserId: '1',
+            },
+          })
+      })
+      const client = createProjectChatClient({
+        socketBaseUrl: 'https://cloud.example.com',
+        socketPath: '/socket.io',
+        getToken: () => 'token',
+      })
+      const onMessage = vi.fn()
+      const subscription = await client.subscribe(
+        'project-1',
+        undefined,
+        0,
+        onMessage,
+      )
+      const receive = socket.on.mock.calls.find(
+        ([event]) => event === 'wework:project_chat:message:created',
+      )![1]
+      receive({ ...message, traceRef: 'opaque', traceState: 'restricted' })
+      await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
+      if (interruption === 'newer-message')
+        receive({ ...message, status: 'failed' })
+      else subscription.unsubscribe()
+      const replacement =
+        interruption === 'newer-subscription'
+          ? await client.subscribe('project-1', undefined, 0, vi.fn())
+          : undefined
+      const calls = onMessage.mock.calls.length
+      resolve!({
+        ok: true,
+        result: {
+          messages: [
+            { ...message, runtimeAddress: { deviceId: 'old', taskId: 'old' } },
+          ],
+          latestSequence: 7,
+          currentUserId: '1',
+        },
+      })
+      await vi.waitFor(() =>
+        expect(
+          socket.emit.mock.calls.filter(
+            ([event]) => event === 'wework:project_chat:unsubscribe',
+          ),
+        ).toHaveLength(
+          interruption === 'unsubscribe'
+            ? 2
+            : interruption === 'newer-subscription'
+              ? 1
+              : 0,
+        ),
+      )
+      expect(onMessage).toHaveBeenCalledTimes(calls)
+      replacement?.unsubscribe()
+    },
+  )
+
   it('sends text over the socket with an idempotency key', async () => {
     socket.emit.mockImplementation((event, payload, ack) => {
       expect(event).toBe('wework:project_chat:message:send')
@@ -164,6 +418,27 @@ describe('createProjectChatClient', () => {
         text: 'hello',
       }),
     ).resolves.toEqual(message)
+  })
+
+  it('rejects assistant provenance on the unverified room transport', async () => {
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(
+      client.send({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        clientMessageId: 'client-1',
+        text: 'hello',
+        assistantSource: { deviceId: 'device', taskId: 'task' },
+      }),
+    ).rejects.toThrow(
+      'Assistant publication provenance requires the activity transport',
+    )
+    expect(socket.emit).not.toHaveBeenCalled()
   })
 
   it('subscribes to loop-item invalidation events on the authenticated user socket', async () => {
@@ -373,7 +648,7 @@ describe('createProjectChatClient', () => {
 
   it('continues the native Wegent Task bound to a board reply', async () => {
     socket.emit.mockImplementation((event, payload, ack) => {
-      expect(event).toBe('wework:project_chat:wegent:continue')
+      expect(event).toBe('wework:project_chat:comment:execute')
       expect(payload).toEqual({
         projectId: 'project-1',
         taskId: 'task-1',
@@ -381,7 +656,7 @@ describe('createProjectChatClient', () => {
         agentId: '12',
         attachmentIds: [9],
       })
-      ack({ ok: true, result: message })
+      ack({ ok: true, result: [{ ...message, agentId: '12' }] })
     })
     const client = createProjectChatClient({
       socketBaseUrl: 'https://cloud.example.com',
@@ -397,7 +672,7 @@ describe('createProjectChatClient', () => {
         agentId: '12',
         attachmentIds: [9],
       }),
-    ).resolves.toEqual(message)
+    ).resolves.toEqual({ ...message, agentId: '12' })
   })
 })
 

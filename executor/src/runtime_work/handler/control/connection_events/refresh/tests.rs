@@ -45,11 +45,11 @@ fn refresh_while_registration_is_uncertain_survives_restart_and_is_submitted_aft
         let restarted=RuntimeWorkRpcHandler::new("control-test-device","/bin/false");
         *restarted.backend_connection.lock().unwrap()=Some(connection);
         restarted.poll_conversation_connection_events(true).await.unwrap();
-        let pending=workbench_control::journal::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
+        let pending=event_store::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(pending["cloud_refresh_pending"],true,"A lost refresh acknowledgement must retain the retry intent");
         restarted.poll_conversation_connection_events(true).await.unwrap();
         restarted.poll_conversation_connection_events(true).await.unwrap();
-        let record=workbench_control::journal::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
+        let record=event_store::transact(&restarted.event_subscription_path(),|state|Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(record["status"],"armed"); assert_eq!(record["cloud_refresh_pending"],false); assert_eq!(record["refresh_pending"],true);
         assert_eq!(calls.lock().unwrap().iter().map(|call|call["action"].as_str().unwrap()).collect::<Vec<_>>(),vec!["attach","attach","refresh","refresh"]);
         assert!(restarted.command_journal.lock().unwrap().is_empty());
@@ -99,7 +99,7 @@ fn desktop_refresh_reuses_collection_and_queues_cloud_refresh_without_model_work
                 record["cloud_subscription"] = json!({"id":"cloud-subscription","owner_id":7});
             }
             handler.save_event_subscription(&id,&record).unwrap();
-            workbench_control::journal::transact(&handler.event_subscription_path(),|state| {
+            event_store::transact(&handler.event_subscription_path(),|state| {
                 state["observations"]["observed"] = json!({"source":source,"checkpoint":{"cursor":4},"sequence":0,"events":[]});
                 if task=="gap-task" { state["observations"]["observed"]["sequence"] = json!(3); state["observations"]["observed"]["events"] = json!([{"sequence":3,"key":"old","event":{"id":"old","at":"2026-11-15T00:00:01Z"}}]); }
                 Ok(())
@@ -152,8 +152,11 @@ fn desktop_cancellation_is_exact_durable_and_does_not_resume_goals_or_models() {
         assert_eq!(link.goal_execution_status.as_deref(), Some("waitingForEvent"));
         assert!(handler.command_journal.lock().unwrap().is_empty());
         let restarted = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
-        workbench_control::journal::transact(&restarted.event_subscription_path(), |state| {
-            assert!(state["operations"].as_object().unwrap().values().all(|record| record["status"] == "cancelled"));
+        event_store::transact(&restarted.event_subscription_path(), |state| {
+            for status in ["preparing", "armed", "pending", "resuming_goal", "error", "needs_attention"] {
+                let id = restarted.subscription_id("task", status);
+                assert_eq!(state["operations"][&id]["status"], "cancelled");
+            }
             Ok(())
         }).unwrap();
     });

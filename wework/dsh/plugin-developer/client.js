@@ -2,7 +2,8 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-wework-plugin-developer',
   factory: require => {
     const React = require('react')
-    const { createElement, useCallback, useEffect, useState } = React
+    const { createElement, useMemo, useState, useSyncExternalStore } = React
+    const subscribeIdle = () => () => {}
 
     async function invoke(capability, params = {}) {
       const response = await fetch('/wework/electron-host/v1/invoke', {
@@ -242,78 +243,99 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function createPluginDebugSession(sourceRoot) {
+      let snapshot = { session: null, error: '', busy: '' }
+      let revision = 0
+      let cursor = 0
+      let timer
+      const listeners = new Set()
+      const active = owner => owner === revision && listeners.size > 0
+      const publish = patch => {
+        snapshot = { ...snapshot, ...patch }
+        listeners.forEach(listener => listener())
+      }
+      const refresh = async owner => {
+        try {
+          const sessions = await invoke('pluginDevelopment.list')
+          if (active(owner))
+            publish({
+              session: sessions.find(candidate => candidate.sourceRoot === sourceRoot) || null,
+              error: '',
+            })
+        } catch (reason) {
+          if (active(owner))
+            publish({ error: reason instanceof Error ? reason.message : String(reason) })
+        }
+      }
+      const poll = async owner => {
+        if (!active(owner)) return
+        try {
+          const batch = await invoke('desktop.events', { after: cursor })
+          if (!active(owner)) return
+          cursor = batch.latestSequence
+          if (batch.historyLost) await refresh(owner)
+          else
+            for (const event of batch.events) {
+              if (
+                event.type === 'plugin-development.state' &&
+                event.payload?.sourceRoot === sourceRoot
+              )
+                publish({ session: event.payload, error: '' })
+            }
+        } catch (reason) {
+          if (active(owner))
+            publish({ error: reason instanceof Error ? reason.message : String(reason) })
+        }
+        if (active(owner)) timer = window.setTimeout(() => void poll(owner), 500)
+      }
+      return {
+        getSnapshot: () => snapshot,
+        subscribe(listener) {
+          listeners.add(listener)
+          if (listeners.size === 1) {
+            const owner = ++revision
+            cursor = 0
+            void refresh(owner).then(() => poll(owner))
+          }
+          return () => {
+            listeners.delete(listener)
+            if (!listeners.size) {
+              revision++
+              window.clearTimeout(timer)
+              snapshot = { ...snapshot, busy: '' }
+            }
+          }
+        },
+        async run(name, capability, params = {}) {
+          const owner = revision
+          if (!active(owner)) return
+          publish({ busy: name, error: '' })
+          try {
+            await invoke(capability, params)
+            if (active(owner)) await refresh(owner)
+          } catch (reason) {
+            if (active(owner))
+              publish({ error: reason instanceof Error ? reason.message : String(reason) })
+          } finally {
+            if (active(owner)) publish({ busy: '' })
+          }
+        },
+      }
+    }
+
     function PluginDebugPanel({ scope, t, visible }) {
-      const [session, setSession] = useState(null)
-      const [error, setError] = useState('')
-      const [busy, setBusy] = useState('')
       const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
       const [eventFilter, setEventFilter] = useState('all')
       const [moreOpen, setMoreOpen] = useState(false)
       const [stopConfirmationOpen, setStopConfirmationOpen] = useState(false)
       const sourceRoot = scope?.cwd || ''
-
-      const refresh = useCallback(async () => {
-        try {
-          const sessions = await invoke('pluginDevelopment.list')
-          setSession(sessions.find(candidate => candidate.sourceRoot === sourceRoot) || null)
-          setError('')
-        } catch (reason) {
-          setError(reason instanceof Error ? reason.message : String(reason))
-        }
-      }, [sourceRoot])
-
-      useEffect(() => {
-        if (!visible) return
-        let active = true
-        let cursor = 0
-        let timer = 0
-
-        const pollEvents = async () => {
-          try {
-            const batch = await invoke('desktop.events', { after: cursor })
-            if (!active) return
-            cursor = batch.latestSequence
-            if (batch.historyLost) {
-              await refresh()
-            } else {
-              for (const event of batch.events) {
-                if (
-                  event.type === 'plugin-development.state' &&
-                  event.payload?.sourceRoot === sourceRoot
-                ) {
-                  setSession(event.payload)
-                  setError('')
-                }
-              }
-            }
-          } catch (reason) {
-            if (active) setError(reason instanceof Error ? reason.message : String(reason))
-          }
-          if (active) timer = window.setTimeout(pollEvents, 500)
-        }
-
-        void refresh().then(pollEvents)
-        return () => {
-          active = false
-          window.clearTimeout(timer)
-        }
-      }, [refresh, visible])
-
-      const run = useCallback(
-        async (name, capability, params = {}) => {
-          setBusy(name)
-          setError('')
-          try {
-            await invoke(capability, params)
-            await refresh()
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : String(reason))
-          } finally {
-            setBusy('')
-          }
-        },
-        [refresh]
+      const source = useMemo(() => createPluginDebugSession(sourceRoot), [sourceRoot])
+      const { session, error, busy } = useSyncExternalStore(
+        visible ? source.subscribe : subscribeIdle,
+        source.getSnapshot,
+        source.getSnapshot
       )
+      const run = source.run
 
       if (!visible) return null
       const currentSession = session

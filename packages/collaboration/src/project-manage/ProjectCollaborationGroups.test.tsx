@@ -410,3 +410,26 @@ it('ignores A post-save reload already in flight when B becomes active', async (
   })
   expect(view.props!.groups.map(value => value.id)).toEqual(['b-group'])
 })
+
+it('accepts updated agent props without restarting member or group reads', async () => {
+  const api = apiFor()
+  await render(api)
+  const updated = { ...agent, name: 'Updated agent' }
+  await act(async () =>
+    root!.render(
+      <ProjectCollaborationGroups
+        api={api}
+        projectId="project-1"
+        workspaceId="workspace-1"
+        members={[{ ...member, user_name: 'Seed changed' }]}
+        agents={[updated]}
+        locale="en"
+        canManage
+      />
+    )
+  )
+  expect(view.props!.agents).toEqual([updated])
+  expect(view.props!.members).toEqual([member])
+  expect(api.projects.listCollaborationGroups).toHaveBeenCalledOnce()
+  expect(api.members.list).toHaveBeenCalledOnce()
+})

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationExecutionEnvironment } from '../types'
@@ -18,6 +18,7 @@ function createList(load: () => Promise<Environment[]>) {
   let snapshot: Snapshot = { items: undefined, refreshing: false, error: null }
   let pending: Promise<void> | undefined
   let revision = 0
+  let refreshKey: string | undefined
   const listeners = new Set<() => void>()
   const publish = (next: Snapshot) => {
     snapshot = next
@@ -31,8 +32,9 @@ function createList(load: () => Promise<Environment[]>) {
         listeners.delete(listener)
       }
     },
-    refresh() {
-      if (pending) return pending
+    refresh(key?: string) {
+      if (pending && key === refreshKey) return pending
+      refreshKey = key
       const current = ++revision
       publish({ ...snapshot, refreshing: true, error: null })
       pending = Promise.resolve()
@@ -54,7 +56,11 @@ function createList(load: () => Promise<Environment[]>) {
       // Successful mutations supersede an older list response, including an in-flight refresh.
       revision++
       pending = undefined
-      publish({ items: change(snapshot.items ?? []), refreshing: false, error: null })
+      publish({
+        items: change(snapshot.items ?? []),
+        refreshing: false,
+        error: null,
+      })
     },
   }
 }
@@ -93,17 +99,24 @@ export function useExecutionEnvironmentList(
   api: SharedWorkspaceApi,
   source: Source,
   id: string,
-  enabled = true
+  enabled = true,
+  refreshKey?: string
 ) {
   const list = useMemo(() => listFor(api, source, id), [api, source, id])
-  const snapshot = useSyncExternalStore(list.subscribe, list.getSnapshot, list.getSnapshot)
-  useEffect(() => {
-    if (enabled) void list.refresh()
-  }, [list, enabled])
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const unsubscribe = list.subscribe(listener)
+      if (enabled) void list.refresh(refreshKey)
+      return unsubscribe
+    },
+    [list, enabled, refreshKey]
+  )
+  const snapshot = useSyncExternalStore(subscribe, list.getSnapshot, list.getSnapshot)
+  const refresh = useCallback(() => list.refresh(refreshKey), [list, refreshKey])
   return {
     ...snapshot,
     loading: enabled && snapshot.items === undefined && !snapshot.error,
-    refresh: list.refresh,
+    refresh,
     update: list.update,
   }
 }

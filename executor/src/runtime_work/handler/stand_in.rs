@@ -5,6 +5,15 @@ use super::*;
 use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
+fn scheduler_interval(variable: &str, default: Duration) -> Duration {
+    std::env::var(variable)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
 pub(super) fn personal_task_claimed(issue: &Value) -> bool {
     let marker = issue
         .get("personal_task_assignment_at")
@@ -173,6 +182,8 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user_id}"));
+        let _git_settings = git_settings.lock().await;
         let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
         let _guard = gate.lock().await;
         let previous = store
@@ -374,9 +385,17 @@ impl RuntimeWorkRpcHandler {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        let poll_interval = scheduler_interval(
+            "WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS",
+            Duration::from_secs(5),
+        );
+        let maintenance_interval = scheduler_interval(
+            "WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS",
+            Duration::from_secs(60),
+        );
         let path = self.task_store_path.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = tokio::time::interval(maintenance_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // Leave startup and foreground restoration ahead of maintenance.
             interval.tick().await;
@@ -402,7 +421,7 @@ impl RuntimeWorkRpcHandler {
         });
         let receipt_handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -426,7 +445,7 @@ impl RuntimeWorkRpcHandler {
         });
         let handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -437,7 +456,7 @@ impl RuntimeWorkRpcHandler {
         });
         let handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;

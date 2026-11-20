@@ -166,16 +166,24 @@ pub async fn setup_chat_session(
         // `prepare_execution_session`'s `get_task_with_access_check`
         // (`lifecycle.py:287`) re-reads the resumed Task on the request
         // session; its row is what the pending CRD rewrite flushes.
-        let row = store
-            .get_active_task_owned_on(&mut *transaction, continuation.task_id, input.owner_user_id)
-            .await
-            .map_err(internal)?
-            .ok_or_else(|| {
-                FastApiError::detail(
-                    brz_http_server::StatusCode::NOT_FOUND,
-                    format!("Task {} not found", continuation.task_id),
-                )
-            })?;
+        let task_id = continuation.task_id;
+        let owner_user_id = input.owner_user_id;
+        let row = if continuation.is_subscription {
+            store
+                .get_active_states_task_owned_on(&mut *transaction, task_id, owner_user_id)
+                .await
+        } else {
+            store
+                .get_active_task_owned_on(&mut *transaction, task_id, owner_user_id)
+                .await
+        }
+        .map_err(internal)?
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::NOT_FOUND,
+                format!("Task {task_id} not found"),
+            )
+        })?;
         let mut task_json = task_column::<brz_mysql::Json<serde_json::Value>>(&row, "json")
             .map(|json| json.0)
             .unwrap_or(serde_json::Value::Null);

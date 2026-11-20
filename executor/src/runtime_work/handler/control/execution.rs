@@ -90,7 +90,17 @@ impl RuntimeWorkRpcHandler {
         link: RuntimeTaskLink,
         args: Value,
     ) -> Result<Value, AppIpcError> {
-        self.control_continue_on_device(context, &self.device_id, link, args)
+        self.control_continue_on_device(context, &self.device_id, link, args, false)
+            .await
+    }
+
+    pub(super) async fn control_continue_from_event(
+        &self,
+        context: &ControlContext,
+        link: RuntimeTaskLink,
+        args: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.control_continue_on_device(context, &self.device_id, link, args, true)
             .await
     }
 
@@ -100,6 +110,7 @@ impl RuntimeWorkRpcHandler {
         device: &str,
         link: RuntimeTaskLink,
         args: Value,
+        from_event: bool,
     ) -> Result<Value, AppIpcError> {
         let gate = self.task_send_gate(&format!("control:{device}:{}", link.local_task_id));
         let _guard = gate.lock().await;
@@ -141,7 +152,7 @@ impl RuntimeWorkRpcHandler {
             let team_id = link.runtime_handle["wegentTeam"]["id"]
                 .as_u64()
                 .filter(|id| *id > 0);
-            if cloud_bound(&link) || team_id.is_some() {
+            if !from_event && (cloud_bound(&link) || team_id.is_some()) {
                 intent["origin"] = link.runtime_handle["origin"].clone();
                 intent["cloudProjectId"] = link.runtime_handle["cloudProjectId"]
                     .as_str()
@@ -187,6 +198,8 @@ impl RuntimeWorkRpcHandler {
                 "deviceId":device,"taskId":link.local_task_id,"workspacePath":link.workspace_path,
                 "runtimeHandle":{"wegentTeam":link.runtime_handle["wegentTeam"]}},
                 "message":message,"clientUserMessageId":operation_id,"modelSelection":payload["modelSelection"],"queueIfBusy":payload["queueIfBusy"]})).await
+        } else if from_event {
+            self.send_message_from_event(payload).await
         } else {
             self.send_message(payload).await
         };

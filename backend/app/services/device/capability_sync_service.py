@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -28,6 +27,10 @@ from app.services.device.capability_payloads import (
     DeviceCapabilityResolutionError,
 )
 from app.services.device.capability_sync_rpc import call_capability_sync
+from app.services.device.plugin_sync_io import (
+    await_plugin_sync_device,
+    run_plugin_sync_db,
+)
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
     supports_plugin_sync_v2,
@@ -239,21 +242,32 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         mode: str = "replace",
         timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
         include_plugins: bool = True,
+        versioned: bool | None = None,
+        capture_plugin_revisions: Callable[[Session], dict[int, int]] | None = None,
     ) -> DeviceCapabilitySyncResult:
         """Sync a fresh snapshot and correct changes made during the round trip."""
 
-        versioned = include_plugins and await self.supports_plugin_delta(
-            user_id, device_id
-        )
+        if versioned is None:
+            versioned = include_plugins and await self.supports_plugin_delta(
+                user_id, device_id
+            )
 
         def build(snapshot_db: Session) -> dict[str, Any]:
-            return self.build_desired_capabilities(
+            revisions = (
+                capture_plugin_revisions(snapshot_db)
+                if capture_plugin_revisions
+                else None
+            )
+            payload = self.build_desired_capabilities(
                 snapshot_db,
                 user_id=user_id,
                 mode=mode,
                 device_id=device_id,
                 include_plugins=include_plugins,
             )
+            if revisions is not None:
+                payload["_receipt_revisions"] = revisions
+            return payload
 
         def load_payload() -> dict[str, Any]:
             if versioned:
@@ -283,7 +297,12 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         return supports_plugin_sync_v2(route.online_info.get("runtime_features"))
 
     async def sync_plugin_change(
-        self, *, user_id: int, device_id: str, installed_plugin_ids: list[int]
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        installed_plugin_ids: list[int],
+        versioned: bool | None = None,
     ) -> DeviceCapabilitySyncResult:
         from app.services.device.plugin_change_sync import sync_plugin_change
 
@@ -292,6 +311,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
             user_id=user_id,
             device_id=device_id,
             installed_plugin_ids=installed_plugin_ids,
+            versioned=versioned,
         )
 
     async def sync_latest_device_capabilities(
@@ -303,7 +323,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
     ) -> DeviceCapabilitySyncResult:
         """Dispatch desired state until the acknowledged snapshot is still current."""
-        payload = await asyncio.to_thread(load_payload)
+        payload = await run_plugin_sync_db(load_payload)
         result: DeviceCapabilitySyncResult | None = None
         for attempt in range(1, DESIRED_STATE_SYNC_ATTEMPTS + 1):
             from app.services.device.plugin_change_sync import dispatch_snapshot
@@ -319,15 +339,18 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 return result
 
             try:
-                latest = await asyncio.to_thread(load_payload)
+                latest = await run_plugin_sync_db(load_payload)
             except PluginWriteError:
                 # A concurrent plugin writer holds the account lease and will
                 # deliver its own newer snapshot, so the acknowledged snapshot
                 # stands; the deferred write is reported when this response is
                 # recorded.
                 return result
-            if capability_snapshot(latest) == capability_snapshot(payload) and not any(
-                item.status == "superseded" for item in result.plugins
+            if (
+                capability_snapshot(latest) == capability_snapshot(payload)
+                and latest.get("_receipt_revisions")
+                == payload.get("_receipt_revisions")
+                and not any(item.status == "superseded" for item in result.plugins)
             ):
                 return result
             logger.warning(
@@ -543,13 +566,14 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 error="Device plugin sync capability changed; retry synchronization",
             )
         dispatch_payload = {**payload, "device_id": route.runtime_device_id}
+        dispatch_payload.pop("_receipt_revisions", None)
         started = time.monotonic()
         if payload.get("plugin_sync"):
             from app.services.device.plugin_sync_protocol import (
                 register_plugin_snapshot_intent,
             )
 
-            await asyncio.to_thread(
+            await run_plugin_sync_db(
                 register_plugin_snapshot_intent,
                 self._session_factory,
                 user_id=user_id,
@@ -570,7 +594,8 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 [item.get("name") for item in dispatch_payload.get("plugins") or []],
                 [item.get("name") for item in dispatch_payload.get("mcps") or []],
             )
-            response = await call_capability_sync(
+            response = await await_plugin_sync_device(
+                call_capability_sync,
                 get_sio(),
                 user_id=user_id,
                 route=route,

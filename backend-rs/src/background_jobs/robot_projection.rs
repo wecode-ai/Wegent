@@ -76,10 +76,57 @@ pub(super) async fn linked(
             return Ok(Some(message));
         }
     }
+    let managed: Option<Message> = tx.fetch_optional(
+        format!("SELECT * FROM project_chat_messages WHERE message_id=? AND project_id=? AND task_id=? AND {LIVE}"),
+        (format!("managed-execution-{}", row.id), row.cloud_project_id.as_str(), row.loop_item_id.as_str()),
+    ).await?;
+    if managed.is_some() {
+        return Ok(managed);
+    }
     let messages:Vec<Message>=tx.fetch_all(format!("SELECT * FROM project_chat_messages WHERE project_id=? AND task_id=? AND {LIVE} ORDER BY id DESC LIMIT 20"),(row.cloud_project_id.as_str(),row.loop_item_id.as_str())).await?;
     Ok(messages
         .into_iter()
         .find(|message| message.metadata.0["execution_id"].as_i64() == Some(row.id)))
+}
+
+/// Ordinary assignments do not have a comment or automation activity to reuse.
+/// The caller holds the execution lock and commits this node with its Task binding.
+pub(super) async fn ensure_managed_activity(
+    tx: &mut impl MysqlTransaction,
+    row: &Execution,
+) -> MysqlResult<Message> {
+    if let Some(message) = linked(tx, row).await? {
+        return Ok(message);
+    }
+    use crate::socketio::project_chat_messages::{InsertMessage, insert_message_on};
+    let message_id = format!("managed-execution-{}", row.id);
+    let agent: Option<(String,)> = tx.fetch_optional("SELECT title FROM loop_items WHERE id=? AND cloud_project_id=? AND resource_type='chat_agent'",(row.agent_id.as_str(),row.cloud_project_id.as_str())).await?;
+    let context = row.context();
+    let trigger = context["comment_trigger_message_id"]
+        .as_str()
+        .unwrap_or_default();
+    let id = insert_message_on(tx, &InsertMessage {
+        message_id: &message_id,
+        client_message_id: &message_id,
+        project_id: &row.cloud_project_id,
+        task_id: &row.loop_item_id,
+        sender_type: "agent",
+        sender_id: &row.agent_id,
+        sender_name: agent.as_ref().map(|(title,)| title.as_str()).unwrap_or_default(),
+        message_type: "agent_status",
+        content: "",
+        metadata: json!({"execution_id": row.id, "executor_type": "project_robot", "run_status": "running", "run_id": notifications::uuid()}),
+        trigger_message_id: trigger,
+        reply_to_message_id: trigger,
+        thread_root_message_id: trigger,
+        agent_id: &row.agent_id,
+        runtime_device_id: "",
+        runtime_task_id: "",
+        runtime_activity_key: "",
+        status: "streaming",
+    }).await?;
+    tx.fetch_one("SELECT * FROM project_chat_messages WHERE id=?", (id,))
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -136,7 +183,10 @@ pub(super) async fn terminal_on(
     Ok(effects)
 }
 
-async fn save_message(tx: &mut impl MysqlTransaction, message: &Message) -> MysqlResult<()> {
+pub(super) async fn save_message(
+    tx: &mut impl MysqlTransaction,
+    message: &Message,
+) -> MysqlResult<()> {
     tx.execute("UPDATE project_chat_messages SET content=?,status=?,message_type=?,metadata=?,updated_at=? WHERE id=?",(message.content.as_str(),message.status.as_str(),message.message_type.as_str(),Json(&message.metadata.0),message.updated_at,message.id)).await?;
     Ok(())
 }
@@ -308,4 +358,76 @@ pub(super) async fn repair_terminal(state: &AppState) -> Result<usize> {
         repaired += 1;
     }
     Ok(repaired)
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+
+    pub(crate) async fn verify_managed_activity(
+        mysql: &brz_mysql::MysqlService,
+    ) -> anyhow::Result<()> {
+        let mut row = Execution {
+            id: 9901,
+            loop_item_id: "managed-activity-issue".into(),
+            cloud_project_id: "project-1".into(),
+            executor_owner_user_id: 7,
+            assigner_user_id: 7,
+            agent_id: "managed-activity-agent".into(),
+            team_id: 74,
+            automation_run_id: String::new(),
+            execution_environment: "wegent".into(),
+            execution_device_id: String::new(),
+            runtime_device_id: String::new(),
+            runtime_task_id: String::new(),
+            status: "queued".into(),
+            approval_status: String::new(),
+            execution_payload: "{}".into(),
+            error_message: String::new(),
+            execution_note: String::new(),
+            version: 1,
+            start_requested_at: None,
+            completed_at: None,
+        };
+        let message = mysql
+            .with_transaction(async |tx| {
+                let first = ensure_managed_activity(tx, &row).await?;
+                let repeated = ensure_managed_activity(tx, &row).await?;
+                assert_eq!(first.message_id, repeated.message_id);
+                assert_eq!(first.metadata.0["execution_id"], 9901);
+                assert_eq!(first.agent_id, row.agent_id);
+                assert_eq!(first.message_type, "agent_status");
+                assert_eq!(first.status, "streaming");
+                for index in 0..21 {
+                    tx.execute(
+                        "INSERT INTO project_chat_messages(message_id,project_id,task_id,content,metadata,status) VALUES(?,?,?,'',JSON_OBJECT(),'sent')",
+                        (format!("managed-later-{index}"),row.cloud_project_id.as_str(),row.loop_item_id.as_str()),
+                    ).await?;
+                }
+                assert_eq!(
+                    linked(tx, &row).await?.unwrap().message_id,
+                    first.message_id,
+                    "Terminal projection must find activities outside the recent-message window"
+                );
+                Ok(first)
+            })
+            .await?;
+        row.execution_payload =
+            json!({"origin_context":{"comment_trigger_message_id":"managed-followup"}}).to_string();
+        mysql
+            .execute(
+                "UPDATE project_chat_messages SET trigger_message_id='managed-followup' WHERE id=?",
+                (message.id,),
+            )
+            .await?;
+        row.id = 9902;
+        let continuation = mysql
+            .with_transaction(async |tx| ensure_managed_activity(tx, &row).await)
+            .await?;
+        assert_eq!(
+            continuation.message_id, message.message_id,
+            "An existing reply must not acquire a second activity node"
+        );
+        Ok(())
+    }
 }

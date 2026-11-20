@@ -40,7 +40,7 @@ interface Props {
 
 export function TaskListView(props: Props) {
   const { t } = useTranslation('collaborationExp')
-  useSidebarRelativeTimeRefresh(props.rows.length > 0)
+  const nowMs = useSidebarRelativeTimeRefresh(props.rows.length > 0)
   const groups = [...new Set(props.rows.map(row => row.status))]
   return (
     <section className="experience-task-list" data-testid="collaboration-exp-tasks">
@@ -84,6 +84,7 @@ export function TaskListView(props: Props) {
           )}
         {props.mode === 'projects' ? (
           <ProjectList
+            nowMs={nowMs}
             projects={props.projects.filter(
               project => !props.filters.projectKey || project.key === props.filters.projectKey
             )}
@@ -102,6 +103,7 @@ export function TaskListView(props: Props) {
                 </h2>
                 {rows.map(row => (
                   <TaskRow
+                    nowMs={nowMs}
                     key={row.key}
                     row={row}
                     selected={props.selectedKey === row.key}
@@ -130,11 +132,13 @@ export function TaskListView(props: Props) {
 }
 
 function TaskRow({
+  nowMs,
   row,
   selected,
   onSelect,
   onOpenProject,
 }: {
+  nowMs: number
   row: ExperienceTaskRow
   selected: boolean
   onSelect(row: ExperienceTaskRow): void
@@ -184,7 +188,7 @@ function TaskRow({
             </span>
           )}
           <time dateTime={row.updatedAt} title={row.updatedAt}>
-            {formatRelativeSidebarTime(row.updatedAt)}
+            {formatRelativeSidebarTime(row.updatedAt, nowMs)}
           </time>
         </span>
       </div>

@@ -960,3 +960,6 @@ fn reconciled_candidate_returns_the_real_linked_activity() {
     let text = reconciled_message(json!({"execution_id": "41"}));
     assert!(!raw_execution_id_matches(&text, 41));
 }
+
+#[path = "source_contract_tests.rs"]
+mod source_contract_tests;

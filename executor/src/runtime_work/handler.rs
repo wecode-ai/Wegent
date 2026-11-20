@@ -124,6 +124,7 @@ mod active_text;
 mod active_transcript;
 mod archives;
 mod assignment_receipts;
+mod assignment_runtime_states;
 mod async_questions;
 mod automatic_turns;
 mod automation_rpc;
@@ -131,6 +132,7 @@ mod background_terminals;
 mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
+pub(crate) use codex_accounts::read_codex_auth_status;
 mod codex_config;
 mod collection;
 mod command_items;
@@ -220,6 +222,7 @@ mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
+mod workspace_read;
 mod workspaces;
 
 use super::{
@@ -259,8 +262,9 @@ use super::{
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         clear_transcript_snapshot_messages, completed_transcript_messages,
         merge_assistant_transcript_message, set_runtime_handle_messages,
-        set_transcript_snapshot_messages, transcript_snapshot_messages,
-        transcript_snapshot_pagination, user_message_presentations, visit_transcript_blocks_mut,
+        set_transcript_snapshot_messages, transcript_snapshot_message_refs,
+        transcript_snapshot_messages, transcript_snapshot_pagination, user_message_presentations,
+        visit_transcript_blocks_mut,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{normalized_user_request_content, notification_item, transcript_messages},
@@ -564,6 +568,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     connection_goal_reconciliations: Arc<Mutex<HashMap<String, u64>>>,
+    connection_observation_activations: Arc<tokio::sync::RwLock<()>>,
     restore_startup_semaphore: Arc<Semaphore>,
     command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
@@ -603,9 +608,11 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    stand_in_intake_workers: Arc<Mutex<stand_in_processing::StandInIntakeWorkers>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     cloud_connection_observations: Arc<AtomicBool>,
-    connection_scheduler_started: Arc<AtomicBool>,
+    connection_dispatcher_started: Arc<AtomicBool>,
+    connection_subscribers: Arc<Mutex<stand_in_ingress::ConnectionSubscribers>>,
     connection_observation_wakeup: Arc<tokio::sync::Notify>,
 }
 
@@ -961,6 +968,7 @@ impl RuntimeWorkRpcHandler {
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
             connection_goal_reconciliations: Arc::new(Mutex::new(HashMap::new())),
+            connection_observation_activations: Arc::new(tokio::sync::RwLock::new(())),
             command_journal: Arc::new(Mutex::new(command_journal)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
@@ -1001,9 +1009,11 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection,
+            stand_in_intake_workers: Arc::new(Mutex::new(Default::default())),
             backend_device_route,
             cloud_connection_observations: Arc::new(AtomicBool::new(false)),
-            connection_scheduler_started: Arc::new(AtomicBool::new(false)),
+            connection_dispatcher_started: Arc::new(AtomicBool::new(false)),
+            connection_subscribers: Arc::new(Mutex::new(Default::default())),
             connection_observation_wakeup: Arc::new(tokio::sync::Notify::new()),
         };
         for (local_task_id, turn) in handler
@@ -1105,7 +1115,7 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
-        handler.start_connection_scheduler();
+        handler.start_connection_dispatcher();
         if has_backend {
             handler.start_backend_services();
         }
@@ -1131,13 +1141,12 @@ impl RuntimeWorkRpcHandler {
     fn start_backend_services(&self) {
         crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
-        self.start_connection_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();
         for link in self.local_task_links(false) {
             self.sync_issue_human_requests(&link.local_task_id);
-            self.sync_stand_in_issue_replies(&link.local_task_id);
+            self.sync_public_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
     }

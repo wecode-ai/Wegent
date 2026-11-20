@@ -172,6 +172,45 @@ async fn identified_text_and_block_updates_share_the_streaming_index() {
 
 #[tokio::test]
 #[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn settled_consumer_cleanup_preserves_a_newer_turn_marker() {
+    with_fixture(async |fixture| {
+        let redis = &fixture.redis;
+        session::add_text_content(redis, fixture.subtask_id, "old partial")
+            .await
+            .unwrap();
+        session::set_task_streaming_status(
+            redis,
+            fixture.task_id,
+            fixture.subtask_id + 1,
+            7,
+            "owner",
+        )
+        .await
+        .unwrap();
+        let newer = fixture.raw().await;
+        session::cleanup_settled_streaming_state(redis, fixture.subtask_id, fixture.task_id)
+            .await
+            .unwrap();
+        assert_eq!(fixture.raw().await, newer);
+        assert!(
+            session::get_streaming_content(redis, fixture.subtask_id)
+                .await
+                .is_none()
+        );
+
+        session::set_task_streaming_status(redis, fixture.task_id, fixture.subtask_id, 7, "owner")
+            .await
+            .unwrap();
+        session::cleanup_settled_streaming_state(redis, fixture.subtask_id, fixture.task_id)
+            .await
+            .unwrap();
+        assert!(fixture.raw().await.is_none());
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
 async fn response_cancel_registration_preserves_intent_until_atomic_owner_cleanup() {
     with_fixture(async |fixture| {
         use crate::responses::stream_state::{register_stream, unregister_stream};

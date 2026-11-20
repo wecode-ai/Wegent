@@ -6,9 +6,13 @@ mod mysql_tests;
 mod session;
 mod state;
 
+use crate::plugins_installed::write_coordination::{PluginWriteLease, complete_plugin_write};
 use crate::{http_compat::FastApiError, state::AppState};
 use brz_http_server::{HttpResponse, StatusCode};
-use brz_mysql::{MysqlError, MysqlIsolationLevel, MysqlResult, MysqlTransactionOptions};
+use brz_mysql::{
+    MysqlError, MysqlIsolationLevel, MysqlResult, MysqlService, MysqlTransactionOptions,
+};
+use brz_redis::RedisService;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -82,73 +86,89 @@ async fn exchange(
                 .header("cache-control", "no-store")
                 .expect("static header"));
         }
-        let targets = app
-            .mysql
-            .with_transaction(async |tx| state::write_targets(tx, &principal, &body.data).await)
-            .await
-            .map_err(safe_error)?;
-        let lease =
-            crate::plugins_installed::write_coordination::PluginWriteLease::acquire_installed(
-                &app.mysql,
-                app.redis.as_ref(),
-                principal.user_id,
-                Some(&targets),
+        let mysql = app.mysql.clone();
+        let redis = app.redis.clone();
+        let notify = super::notifications::changes_credentials(&action);
+        complete_plugin_write(async move {
+            write_exchange(
+                &mysql,
+                redis.as_ref(),
+                &principal,
+                &body.operation,
+                &body.data,
+                notify,
             )
             .await
-            .map_err(safe_error)?;
-        let mut timed_out = false;
-        let outcome = async {
-            lease.ensure_policy(&app.mysql).await?;
-            tokio::time::timeout_at(
-                lease.deadline,
-                app.mysql.with_transaction_options(
-                    MysqlTransactionOptions::default()
-                        .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
-                    async |tx| {
-                        crate::plugin_account_auth::connections::coordinate_owner(
-                            tx,
-                            &lease,
-                            principal.user_id,
-                        )
-                        .await
-                        .map_err(credentials::failure)?;
-                        let policy = lease.read_revision(tx).await?;
-                        let current_targets =
-                            state::write_targets(tx, &principal, &body.data).await?;
-                        if current_targets != targets {
-                            return Err(fail("plugin_auth_revision_conflict"));
-                        }
-                        let revision = lease.read_plugin_revisions(tx).await?;
-                        let mut result =
-                            state::exchange(tx, &principal, &body.operation, &body.data).await?;
-                        lease.commit_plugin_revisions(tx, revision).await?;
-                        lease.validate_policy_revision(tx, policy).await?;
-                        result["success"] = json!(true);
-                        Ok(result)
-                    },
-                ),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                timed_out = true;
-                Err(fail("plugin_auth_exchange_failed"))
-            })
-        }
-        .await;
-        // Cancellation can queue a rollback. Keep the lease until its TTL when
-        // the transaction outcome is uncertain, just like the Socket broker.
-        if !timed_out && matches!(&outcome, Ok(_) | Err(MysqlError::InvalidQuery { .. })) {
-            lease.release().await;
-        }
-        let value = outcome.map_err(safe_error)?;
-        if super::notifications::changes_credentials(&action) {
-            super::notifications::publish(app, principal.user_id, &targets).await;
-        }
-        value
+        })
+        .await
+        .map_err(safe_error)?
     };
     Ok(HttpResponse::new(value)
         .header("cache-control", "no-store")
         .expect("static header"))
+}
+
+async fn write_exchange(
+    mysql: &MysqlService,
+    redis: Option<&RedisService>,
+    principal: &session::Principal,
+    operation: &str,
+    data: &Value,
+    notify: bool,
+) -> MysqlResult<Value> {
+    let targets = mysql
+        .with_transaction(async |tx| state::write_targets(tx, principal, data).await)
+        .await?;
+    let lease =
+        PluginWriteLease::acquire_installed(mysql, redis, principal.user_id, Some(&targets))
+            .await?;
+    let mut timed_out = false;
+    let outcome = async {
+        lease.ensure_policy(mysql).await?;
+        tokio::time::timeout_at(
+            lease.deadline,
+            mysql.with_transaction_options(
+                MysqlTransactionOptions::default()
+                    .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                async |tx| {
+                    crate::plugin_account_auth::connections::coordinate_owner(
+                        tx,
+                        &lease,
+                        principal.user_id,
+                    )
+                    .await
+                    .map_err(credentials::failure)?;
+                    let policy = lease.read_revision(tx).await?;
+                    let current_targets = state::write_targets(tx, principal, data).await?;
+                    if current_targets != targets {
+                        return Err(fail("plugin_auth_revision_conflict"));
+                    }
+                    let revision = lease.read_plugin_revisions(tx).await?;
+                    let mut result = state::exchange(tx, principal, operation, data).await?;
+                    lease.commit_plugin_revisions(tx, revision).await?;
+                    lease.validate_policy_revision(tx, policy).await?;
+                    result["success"] = json!(true);
+                    Ok(result)
+                },
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            timed_out = true;
+            Err(fail("plugin_auth_exchange_failed"))
+        })
+    }
+    .await;
+    // Cancellation can queue a rollback. Keep the lease until its TTL when
+    // the transaction outcome is uncertain, just like the Socket broker.
+    if !timed_out && matches!(&outcome, Ok(_) | Err(MysqlError::InvalidQuery { .. })) {
+        lease.release().await;
+    }
+    let value = outcome?;
+    if notify {
+        super::notifications::publish(redis, principal.user_id, &targets).await;
+    }
+    Ok(value)
 }
 
 fn read_only(operation: &str, data: &Value) -> bool {

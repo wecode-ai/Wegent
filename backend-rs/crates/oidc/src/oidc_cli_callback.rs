@@ -508,9 +508,26 @@ fn error_page(message: &str) -> Html {
     let mut html =
         String::with_capacity(ERROR_PAGE_PREFIX.len() + message.len() + ERROR_PAGE_SUFFIX.len());
     html.push_str(ERROR_PAGE_PREFIX);
-    html.push_str(message);
+    let escaped_message = html_escape(message);
+    html.push_str(&escaped_message);
     html.push_str(ERROR_PAGE_SUFFIX);
     Html(html)
+}
+
+/// Escape text before inserting it into the error page's HTML body.
+fn html_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#x27;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 /// The application's `validation_exception_handler` body
@@ -614,6 +631,17 @@ mod tests {
             page.0.len(),
             ERROR_PAGE_PREFIX.len() + "boom".len() + ERROR_PAGE_SUFFIX.len()
         );
+    }
+
+    #[test]
+    fn error_page_escapes_untrusted_html() {
+        let page = error_page(r#"<script>alert("token")</script>"#);
+
+        assert!(
+            page.0
+                .contains(r#"<p>&lt;script&gt;alert(&quot;token&quot;)&lt;/script&gt;</p>"#)
+        );
+        assert!(!page.0.contains(r#"<script>alert("token")</script>"#));
     }
 
     #[test]

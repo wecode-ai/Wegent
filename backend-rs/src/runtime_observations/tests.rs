@@ -820,3 +820,30 @@ fn sharing_a_source_does_not_retarget_its_account_capabilities_to_another_device
         json!({"kind":"device","deviceId":"device"})
     );
 }
+
+#[test]
+fn attaching_during_collection_delivers_retained_completion_once_without_old_history() {
+    let mut state = state::empty();
+    run(&mut state, attach("existing", "wait"), 0);
+    let lease = run(&mut state, json!({"action":"claim"}), 1);
+    run(
+        &mut state,
+        commit_input(
+            &lease,
+            json!({"id":"completed","eventType":"document.updated","at":"2026-11-15T00:00:01Z"}),
+        ),
+        2,
+    );
+    let input = attach("new-consumer", "wait");
+    let first = run(&mut state, input.clone(), 3);
+    assert_eq!(first["subscription"]["status"], "pending");
+    let delivery = &state["deliveries"][first["subscription"]["deliveryId"].as_str().unwrap()];
+    assert_eq!(delivery["events"][0]["id"], "completed");
+    assert_eq!(delivery["events"].as_array().unwrap().len(), 1);
+    let count = state["deliveries"].as_object().unwrap().len();
+    assert_eq!(run(&mut state, input, 4), first);
+    assert_eq!(state["deliveries"].as_object().unwrap().len(), count);
+    let mut later = attach("later", "wait");
+    later["subscription"]["source"]["enabledAfter"] = json!("2026-11-15T00:00:02Z");
+    assert_eq!(run(&mut state, later, 5)["subscription"]["status"], "armed");
+}

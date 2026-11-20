@@ -24,6 +24,7 @@ from app.services.device.runtime_route import (
 )
 from app.services.device_service import device_service
 from app.services.plugin_package_storage import plugin_package_storage
+from app.services.plugin_write_errors import PluginWriteError
 from tests.api.test_plugin_reconciliation_auth import credential, reconcile_request
 from tests.api.test_plugin_write_operations import plugin_requests as plugin_requests
 
@@ -174,10 +175,17 @@ def test_cloud_socket_uniqueness_ignores_devices_outside_active_owner_scope(
     reconcile.assert_awaited_once_with(context.user_id, CLOUD_NAME)
 
 
-@pytest.mark.parametrize("auth_kind", ["jwt", "api_key"])
-@pytest.mark.parametrize("target", [CLOUD_NAME, CLOUD_SOCKET])
+@pytest.mark.parametrize(
+    "auth_kind,target,record_conflicts",
+    [
+        ("jwt", CLOUD_NAME, 0),
+        ("jwt", CLOUD_SOCKET, 3),
+        ("api_key", CLOUD_NAME, 0),
+        ("api_key", CLOUD_SOCKET, 0),
+    ],
+)
 def test_registered_cloud_socket_reconciles_and_persists_logical_plugin_state(
-    cloud_reconciliation, monkeypatch, auth_kind, target
+    cloud_reconciliation, monkeypatch, auth_kind, target, record_conflicts
 ):
     context, _ = cloud_reconciliation
     context.seed_update()
@@ -266,6 +274,20 @@ def test_registered_cloud_socket_reconciles_and_persists_logical_plugin_state(
             ],
         }
 
+    installation_service = plugin_reconciliation.plugin_device_installation_service
+    record = installation_service._record_device_sync_result
+    remaining_conflicts = record_conflicts
+
+    def record_after_conflicts(*args, **kwargs):
+        nonlocal remaining_conflicts
+        if remaining_conflicts:
+            remaining_conflicts -= 1
+            raise PluginWriteError("plugin_write_conflict")
+        return record(*args, **kwargs)
+
+    monkeypatch.setattr(
+        installation_service, "_record_device_sync_result", record_after_conflicts
+    )
     rpc = AsyncMock(side_effect=acknowledge)
     monkeypatch.setattr(
         capability_sync_service, "get_sio", lambda: SimpleNamespace(call=rpc)

@@ -269,9 +269,30 @@ fn attach(state: &mut Value, input: &Value, now: i64) -> Result<Value> {
         &input["initialCheckpoint"],
         now,
     )?;
-    state["subscriptions"][&id] = json!({"id":id,"subscriptionKey":subscription["subscription_key"],"waitForEvent":wait_for_event,"intent":intent,"activation":subscription["source"],"observationId":observation,"afterSequence":state["observations"][&observation]["sequence"],"status":"armed"});
+    let after_sequence = wegent_protocol::connection_events::activation_sequence(
+        &subscription["source"],
+        &state["observations"][&observation],
+        event_time,
+    );
+    state["subscriptions"][&id] = json!({"id":id,"subscriptionKey":subscription["subscription_key"],"waitForEvent":wait_for_event,"intent":intent,"activation":subscription["source"],"observationId":observation,"afterSequence":after_sequence,"status":"armed"});
     if let Some(request) = request_intent {
         state["subscriptions"][&id]["requestIntent"] = request.clone();
+    }
+    let retained = state["observations"][&observation]["events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let matching: Vec<_> = retained
+        .iter()
+        .filter(|entry| {
+            entry["sequence"].as_u64().unwrap_or_default() > after_sequence
+                && matches_activation(&subscription["source"], &entry["event"], event_time)
+                && matches_event(&filter, &entry["event"])
+        })
+        .collect();
+    if !matching.is_empty() {
+        let (delivery_id, delivery) = pending_delivery(&mut state["subscriptions"][&id], &matching);
+        state["deliveries"][delivery_id] = delivery;
     }
     Ok(json!({"subscriptionId":id,"subscription":state["subscriptions"][&id]}))
 }
@@ -514,21 +535,28 @@ fn commit(state: &mut Value, input: &Value, now: i64) -> Result<Value> {
         if matching.is_empty() {
             continue;
         }
-        let delivery_id = hash(&json!([
-            subscription["id"],
-            matching
-                .iter()
-                .map(|entry| &entry["key"])
-                .collect::<Vec<_>>()
-        ]));
-        subscription["status"] = json!("pending");
-        subscription["deliveryId"] = json!(delivery_id);
-        deliveries.push((delivery_id.clone(),json!({"id":delivery_id,"subscriptionId":subscription["id"],"intent":subscription["intent"],"source":subscription["activation"],"events":matching.iter().map(|entry|&entry["event"]).collect::<Vec<_>>(),"eventKeys":matching.iter().map(|entry|&entry["key"]).collect::<Vec<_>>(),"status":"pending"})));
+        deliveries.push(pending_delivery(subscription, &matching));
     }
     for (id, delivery) in deliveries {
         state["deliveries"][id] = delivery;
     }
     Ok(receipt)
+}
+
+fn pending_delivery(subscription: &mut Value, matching: &[&Value]) -> (String, Value) {
+    let delivery_id = hash(&json!([
+        subscription["id"],
+        matching
+            .iter()
+            .map(|entry| &entry["key"])
+            .collect::<Vec<_>>()
+    ]));
+    subscription["status"] = json!("pending");
+    subscription["deliveryId"] = json!(delivery_id);
+    (
+        delivery_id.clone(),
+        json!({"id":delivery_id,"subscriptionId":subscription["id"],"intent":subscription["intent"],"source":subscription["activation"],"events":matching.iter().map(|entry|&entry["event"]).collect::<Vec<_>>(),"eventKeys":matching.iter().map(|entry|&entry["key"]).collect::<Vec<_>>(),"status":"pending"}),
+    )
 }
 
 fn claim_delivery(state: &mut Value, now: i64) -> Result<Value> {

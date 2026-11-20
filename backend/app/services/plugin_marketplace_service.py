@@ -35,7 +35,6 @@ from app.models.plugin_marketplace import (
     PluginUpstream,
     is_featured_rank,
     unset_datetime,
-    unset_id,
     unset_str,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -49,7 +48,6 @@ from app.schemas.installed_plugin import (
     PluginAccessUpdateRequest,
     PluginCopyResponse,
     PluginDeleteImpactResponse,
-    PluginDeviceInstallationItem,
     PluginMarketplaceItem,
     PluginMarketplaceListResponse,
     PluginReleaseItem,
@@ -68,9 +66,12 @@ from app.services.marketplace_submission_upload import (
 )
 from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_device_identity import (
-    coalesce_plugin_device_rows,
-    plugin_device_id,
     plugin_device_rows,
+)
+from app.services.plugin_installation_views import (
+    device_has_materialized_release,
+    device_installation_item,
+    enrich_plugin_installations,
 )
 from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_marketplace_identity import (
@@ -322,72 +323,7 @@ class PluginMarketplaceService:
         *,
         device_id: str | None = None,
     ) -> InstalledPluginListResponse:
-        installed_by_id = {
-            int(item.metadata["labels"]["id"]): item
-            for item in response.items
-            if str((item.metadata.get("labels") or {}).get("id", "")).isdigit()
-        }
-        device_rows = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id.in_(installed_by_id.keys())
-            )
-            .order_by(PluginDeviceInstallation.device_id)
-            .all()
-            if installed_by_id
-            else []
-        )
-        coalesced_rows = coalesce_plugin_device_rows(db, device_rows)
-        for (_, canonical_id), row in coalesced_rows.items():
-            item = installed_by_id.get(row.installed_kind_id)
-            if not item:
-                continue
-            item.status.devices.append(
-                PluginDeviceInstallationItem(
-                    deviceId=(
-                        device_id
-                        if device_id
-                        and plugin_device_id(db, row.user_id, device_id) == canonical_id
-                        else canonical_id
-                    ),
-                    desiredReleaseId=row.desired_release_id,
-                    actualReleaseId=unset_id(row.actual_release_id),
-                    state=row.state,
-                    errorCode=unset_str(row.error_code),
-                    errorMessage=unset_str(row.error_message),
-                    attemptCount=row.attempt_count,
-                    lastSyncAt=unset_datetime(row.last_sync_at),
-                    updatedAt=row.updated_at,
-                )
-            )
-        rows_by_install = {
-            installed_id: row
-            for (installed_id, canonical_id), row in coalesced_rows.items()
-            if device_id
-            and plugin_device_id(db, row.user_id, device_id) == canonical_id
-        }
-        for item in response.items:
-            plugin_id = item.spec.pluginId
-            if not plugin_id:
-                continue
-            installed_id = self._installed_item_id(item)
-            if device_id and installed_id:
-                device_row = rows_by_install.get(installed_id)
-                if not self._device_has_materialized_release(device_row):
-                    item.spec.installState = (
-                        "failed"
-                        if device_row and device_row.state == "failed"
-                        else "not_installed"
-                    )
-                    continue
-                if device_row.actual_release_id != item.spec.releaseId:
-                    item.spec.installState = "update_available"
-                    continue
-                item.spec.installState = "installed"
-            plugin = db.get(Plugin, plugin_id)
-            if plugin and plugin.latest_release_id != item.spec.releaseId:
-                item.spec.installState = "update_available"
-        return response
+        return enrich_plugin_installations(db, response, device_id=device_id)
 
     def list_plugins(
         self,
@@ -2121,7 +2057,7 @@ class PluginMarketplaceService:
         installed_for_device = bool(
             installed
             and installed.is_active
-            and (not device_id or self._device_has_materialized_release(device_row))
+            and (not device_id or device_has_materialized_release(device_row))
         )
         source_provider = self._source_provider(plugin)
         scan_report = release.scan_report_json or {}
@@ -2183,7 +2119,7 @@ class PluginMarketplaceService:
                 )
             ),
             currentDeviceInstallation=(
-                self._device_installation_item(device_row).model_copy(
+                device_installation_item(device_row).model_copy(
                     update={"deviceId": device_id or device_row.device_id}
                 )
                 if device_row and installed and installed.is_active
@@ -2233,10 +2169,6 @@ class PluginMarketplaceService:
             self._resolved_interface_cache.popitem(last=False)
         return resolved or None
 
-    def _installed_item_id(self, item: InstalledPlugin) -> int | None:
-        value = (item.metadata.get("labels") or {}).get("id")
-        return int(value) if str(value).isdigit() else None
-
     def _device_installation(
         self,
         db: Session,
@@ -2248,26 +2180,6 @@ class PluginMarketplaceService:
             return None
         return plugin_device_rows(db, installed.user_id, device_id).get(
             installed_kind_id
-        )
-
-    def _device_has_materialized_release(
-        self, row: PluginDeviceInstallation | None
-    ) -> bool:
-        return bool(row and row.actual_release_id)
-
-    def _device_installation_item(
-        self, row: PluginDeviceInstallation
-    ) -> PluginDeviceInstallationItem:
-        return PluginDeviceInstallationItem(
-            deviceId=row.device_id,
-            desiredReleaseId=row.desired_release_id,
-            actualReleaseId=unset_id(row.actual_release_id),
-            state=row.state,
-            errorCode=unset_str(row.error_code),
-            errorMessage=unset_str(row.error_message),
-            attemptCount=row.attempt_count,
-            lastSyncAt=unset_datetime(row.last_sync_at),
-            updatedAt=row.updated_at,
         )
 
     def _installed_payload(self, plugin: Plugin, release: PluginRelease) -> dict:

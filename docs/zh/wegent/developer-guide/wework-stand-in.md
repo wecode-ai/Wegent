@@ -401,3 +401,11 @@ AI 先读取配置与提供方目录，再通过 `connect_source` 实际发现�
 
 新增桌面覆盖组合到原助理档案检查点，保留原场景的全部断言，共用构建、启动和
 模型协议 fixture；不添加独立 CI 作业。画面与运行日志留在测试产物中，不提交仓库。
+
+## Issue 分配唤醒诊断
+
+按 Issue ID 和 assignment ID 关联 Python 的 `Stand-in Issue wakeup staged`、Rust Backend 的 `Stand-in Issue event page served`、Executor 的 `issue_event_queued` 与 `Stand-in Issue event cursor saved`。Executor 入队记录中的 `intentId` 可继续关联 `stand-in dispatch reconciliation`；`assignment_already_handled` 表示当前分配此前已接管。
+
+`staged` 只表示调用方事务内已尝试写入，不代表事务提交；`allocated_sequence` 是本次分配的序号，重复事件可能保留原序号。后端返回事件页才证明该事件可被查询，Executor 入队后才推进本地游标。日志仅记录标识和状态，不记录 Issue 正文或凭据。
+
+当前 Python 创建流程在 `notify_assignee=false` 时也会跳过唤醒事件，并记录 `reason=notify_assignee_false`。接口测试覆盖这一差异；Executor 协议集成测试使用模拟 Backend 事件页和真实本地持久化，验证入队、游标及重复拉取。此诊断不改变接管策略，也不能单独证明某条历史 Issue 命中了该条件。

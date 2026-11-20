@@ -1,0 +1,48 @@
+name: Wework Bombadil exploration
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base ref for merge-base feature selection (checkout ref is the PR branch)
+        required: true
+        default: origin/main
+      seconds:
+        description: Exploration seconds per selected suite (1–600)
+        required: true
+        default: '30'
+permissions:
+  contents: read
+concurrency:
+  group: wework-bombadil-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  explore:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-node-workspace
+      - uses: ./.github/actions/setup-rust-cache
+        with:
+          manifest-path: executor/Cargo.toml
+      - name: Preview changed feature coverage
+        env:
+          BOMBADIL_BASE: ${{ inputs.base }}
+          BOMBADIL_SECONDS: ${{ inputs.seconds }}
+        run: pnpm --filter wework ai:verify bombadil --base "$BOMBADIL_BASE" --seconds "$BOMBADIL_SECONDS" --plan true
+      - name: Download pinned Bombadil
+        run: |
+          curl --fail --location --output "$RUNNER_TEMP/bombadil" https://github.com/antithesishq/bombadil/releases/download/v0.7.10/bombadil-aarch64-darwin
+          printf '%s  %s\n' 3d7866e2e8356390a0f2560853e3c775839f8c8ff648c9552c0105f7f78d1d72 "$RUNNER_TEMP/bombadil" | shasum -a 256 --check
+          chmod +x "$RUNNER_TEMP/bombadil"
+      - name: Explore changed features in isolated Electron
+        env:
+          BOMBADIL_BASE: ${{ inputs.base }}
+          BOMBADIL_SECONDS: ${{ inputs.seconds }}
+        run: BOMBADIL_BIN="$RUNNER_TEMP/bombadil" pnpm --filter wework ai:verify bombadil --base "$BOMBADIL_BASE" --seconds "$BOMBADIL_SECONDS"
+      - name: Publish credential-free summary
+        if: always()
+        run: |
+          find wework/test-results/bombadil -name summary.json -exec cat {} \; >> "$GITHUB_STEP_SUMMARY"

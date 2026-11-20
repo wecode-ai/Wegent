@@ -302,6 +302,14 @@ describe('resolveOptionalBoolean', () => {
 })
 
 describe('validateStartOptions', () => {
+  test('accepts an explicit boolean for startup video recording', () => {
+    expect(() => validateStartOptions({ record: 'true' })).not.toThrow()
+    expect(() => validateStartOptions({ record: 'false' })).not.toThrow()
+    expect(() => validateStartOptions({ record: 'yes' })).toThrow(
+      '--record must be "true" or "false"'
+    )
+  })
+
   test('accepts the Electron start options', () => {
     expect(() =>
       validateStartOptions({

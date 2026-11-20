@@ -1,7 +1,16 @@
+import { useDocumentEvent } from '../dom-events'
+import { createIssueBoardCardPreview } from './issueBoardCardPreview'
 import { useIssueBoardCardDrag } from './useIssueBoardCardDrag'
 import { useCollaborationPortalTheme } from '../theme'
 import * as Popover from '@radix-ui/react-popover'
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 import { Archive, ArrowUpRight, Ellipsis, X } from 'lucide-react'
 import { CollaborationIssueCard, type CollaborationIssueCardProps } from './CollaborationIssueCard'
 import { IssueCardGoalSummary } from './IssueCardTaskSummary'
@@ -81,47 +90,42 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuContainerRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!menuOpen) return
-    const closeMenu = (event: MouseEvent) => {
+  useDocumentEvent(
+    'mousedown',
+    event => {
       if (!menuContainerRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', closeMenu)
-    return () => document.removeEventListener('mousedown', closeMenu)
-  }, [menuOpen])
-  const [localPreviewOpen, setLocalPreviewOpen] = useState(false)
-  const requestedPreviewOpen = previewPinned ?? localPreviewOpen
-  const setPreviewOpen = useCallback(
-    (open: boolean) => {
-      setLocalPreviewOpen(open)
-      onPreviewPinnedChange?.(open)
     },
-    [onPreviewPinnedChange]
+    { enabled: menuOpen }
   )
+  const [preview] = useState(createIssueBoardCardPreview)
+  const setPreviewOpen = preview.setOpen
   const popupRef = useRef<HTMLDivElement>(null)
   const cardContainerRef = useRef<HTMLDivElement>(null)
-  const markReadRef = useRef(onMarkRead)
-  useEffect(() => {
-    markReadRef.current = onMarkRead
-  }, [onMarkRead])
   const hasProgress =
     item.can_view_detail !== false && progressTaskBindings.length > 0 && Boolean(renderTaskSummary)
   const previewAvailable = hasProgress && !previewDisabled && !drag.boardDragging && !dragging
-  const previewOpen = previewAvailable && requestedPreviewOpen
   const canOpenItem = item.can_view_detail !== false
   const openItem = canOpenItem ? onOpen : undefined
   const activateCard = previewAvailable ? () => setPreviewOpen(true) : openItem
-  if (!previewAvailable && localPreviewOpen) setLocalPreviewOpen(false)
-  useEffect(() => {
-    if (!previewAvailable && previewPinned) onPreviewPinnedChange?.(false)
-  }, [previewAvailable, previewPinned, onPreviewPinnedChange])
-  const canMarkRead = Boolean(onMarkRead)
   const isUnread = unread ?? Boolean(item.is_unread)
-  useEffect(() => {
-    if (!previewOpen || !isUnread || !canMarkRead) return
-    const timer = window.setTimeout(() => markReadRef.current?.(), 3000)
-    return () => window.clearTimeout(timer)
-  }, [isUnread, canMarkRead, previewOpen])
+  const subscribePreview = useCallback(
+    (listener: () => void) =>
+      preview.subscribe(listener, {
+        itemId: item.id,
+        available: previewAvailable,
+        pinned: previewPinned,
+        unread: isUnread,
+        onPinnedChange: onPreviewPinnedChange,
+        onMarkRead,
+      }),
+    [preview, item.id, previewAvailable, previewPinned, isUnread, onPreviewPinnedChange, onMarkRead]
+  )
+  const observedPreviewOpen = useSyncExternalStore(
+    subscribePreview,
+    preview.getSnapshot,
+    preview.getSnapshot
+  )
+  const previewOpen = previewAvailable && observedPreviewOpen
   const card = (
     <CollaborationIssueCard
       item={item}

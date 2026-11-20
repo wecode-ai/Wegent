@@ -1,5 +1,5 @@
 import type { CloudLoopItem } from '@/api/deliveries'
-import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
+import type { IssueAssignmentReceiptState } from './issueAssignmentReceiptObservation'
 
 export function issueAssignmentRevision(item: Pick<CloudLoopItem, 'assignment_history'>) {
   // Status edits do not create assignments. Include every assignment event so

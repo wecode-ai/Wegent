@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormHTMLAttributes, type ReactNode } from 'react'
+import { useWindowEvent } from '../dom-events'
+import { useRef, useState, type FormHTMLAttributes, type ReactNode } from 'react'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import styles from './ProjectChatComposer.module.css'
 
@@ -34,14 +35,13 @@ export function ProjectChatComposerSurface({
 }) {
   const formRef = useRef<HTMLElement>(null)
   const [shortComposerExpanded, setShortComposerExpanded] = useState(false)
-  useEffect(() => {
-    if (!shortComposerExpanded) return
-    const outside = (event: MouseEvent) => {
+  useWindowEvent(
+    'click',
+    event => {
       if (!formRef.current?.contains(event.target as Node)) setShortComposerExpanded(false)
-    }
-    window.addEventListener('click', outside, true)
-    return () => window.removeEventListener('click', outside, true)
-  }, [shortComposerExpanded])
+    },
+    { enabled: shortComposerExpanded, capture: true }
+  )
   const surfaceClassName = cn(
     'relative z-10 flex w-full flex-col bg-background transition-colors',
     presentation === 'configuration'

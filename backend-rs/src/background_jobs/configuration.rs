@@ -1,4 +1,4 @@
-//! Application defaults for native jobs without enabling migrated Python job families.
+//! Native jobs enabled independently of migrated Python job families.
 use super::{BackgroundJobsClient, config::BackgroundJobsConfig};
 
 pub(crate) fn client_from_env() -> anyhow::Result<BackgroundJobsClient> {
@@ -19,6 +19,10 @@ fn application_defaults(
         configuration
             .job_allowlist
             .insert(super::device::RETENTION_JOB.to_owned());
+        configuration.job_allowlist.extend([
+            super::robot::managed_jobs::SCAN.to_owned(),
+            super::robot::managed_jobs::EXECUTE.to_owned(),
+        ]);
     }
     configuration
 }
@@ -36,10 +40,15 @@ mod tests {
         }
     }
     #[test]
-    fn enables_only_native_retention_by_default_and_preserves_explicit_deployment_controls() {
+    fn enables_native_jobs_by_default_and_preserves_explicit_deployment_controls() {
         assert_eq!(
             application_defaults(configuration(), false).job_allowlist,
-            [super::super::device::RETENTION_JOB.to_owned()].into()
+            [
+                super::super::device::RETENTION_JOB.to_owned(),
+                super::super::robot::managed_jobs::SCAN.to_owned(),
+                super::super::robot::managed_jobs::EXECUTE.to_owned(),
+            ]
+            .into()
         );
         assert!(
             application_defaults(configuration(), true)

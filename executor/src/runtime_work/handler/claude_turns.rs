@@ -425,6 +425,11 @@ impl RuntimeWorkRpcHandler {
                 hooks.started(&local_task_id, &request.subtask_id);
             }
             let outcome = match authorization {
+                Err(message) if message == CODEX_APP_SERVER_TURN_CANCELLED => {
+                    ExecutionOutcome::Cancelled {
+                        message: "cancelled".to_owned(),
+                    }
+                }
                 Err(message) => ExecutionOutcome::Failed { message },
                 Ok(()) => tokio::select! {
                 _ = cancel_rx => ExecutionOutcome::Cancelled {

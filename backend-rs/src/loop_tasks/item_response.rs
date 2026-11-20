@@ -11,6 +11,7 @@
 //! project-role permissions (`issue_permissions` / `can_view_item`), the
 //! metadata-derived history and AI projections, and the newest execution
 //! overlay (`loop_item_execution_service.latest_for_item`).
+use brz_mysql::FromMysqlRow;
 use chrono::{Local, NaiveDateTime};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -24,6 +25,7 @@ use super::loop_repository::{
 };
 use crate::auth::SessionUser;
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess};
+use crate::sql_support::StatementArg;
 use crate::state::AppState;
 
 /// The `LoopItemResponse` body (`app.schemas.delivery.LoopItemResponse`):
@@ -278,6 +280,28 @@ pub async fn response_values(
         String::new()
     };
 
+    let mut assignment_history = json_array(metadata.assignment_history.as_ref());
+    let mut status_history = json_array(metadata.status_history.as_ref());
+    let actor_ids = assignment_history
+        .iter()
+        .chain(status_history.iter())
+        .filter_map(|row| row.get("by_user_id").and_then(Value::as_i64))
+        .chain(assignment_history.iter().filter_map(|row| {
+            (row.get("to_type").and_then(Value::as_str) == Some("user"))
+                .then(|| row.get("to_id").and_then(Value::as_str))
+                .flatten()
+                .and_then(|id| id.parse::<i64>().ok())
+        }))
+        .chain(item.created_by_user_id.map(i64::from))
+        .filter(|id| *id > 0)
+        .collect::<std::collections::BTreeSet<_>>();
+    let actor_names = user_names(state, &actor_ids).await?;
+    enrich_history_names(&mut assignment_history, &actor_names);
+    enrich_history_names(&mut status_history, &actor_names);
+    let created_by_user_name = item
+        .created_by_user_id
+        .and_then(|id| actor_names.get(&i64::from(id)).cloned());
+
     let human_task_binding =
         super::human_task_binding::human_task_binding(state, item, current_user.id, project)
             .await?;
@@ -309,8 +333,8 @@ pub async fn response_values(
         execution_attempt_no: overlay.attempt_no,
         execution_last_event_seq: overlay.last_event_seq,
         can_approve: overlay.can_approve,
-        assignment_history: json_array(metadata.assignment_history.as_ref()),
-        status_history: json_array(metadata.status_history.as_ref()),
+        assignment_history,
+        status_history,
         approval: overlay
             .approval
             .or_else(|| json_object(metadata.approval.as_ref())),
@@ -334,7 +358,7 @@ pub async fn response_values(
         milestone_id: metadata.milestone_id.clone(),
         tags: normalize_tags(metadata.tags.as_ref()),
         created_by_user_id: i64::from(item.created_by_user_id.unwrap_or(0)),
-        created_by_user_name: None,
+        created_by_user_name,
         can_view_detail,
         security_level,
         can_edit: permissions.edit_content,
@@ -745,6 +769,65 @@ fn normalize_tags(value: Option<&Value>) -> Vec<String> {
 }
 
 /// A metadata value that is a JSON array, cloned; otherwise empty.
+#[derive(FromMysqlRow)]
+struct UserNameRow {
+    id: i64,
+    user_name: String,
+}
+
+async fn user_names(
+    state: &AppState,
+    ids: &std::collections::BTreeSet<i64>,
+) -> Result<std::collections::HashMap<i64, String>, HttpError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let args = ids
+        .iter()
+        .copied()
+        .map(StatementArg::Int)
+        .collect::<Vec<_>>();
+    let rows: Vec<UserNameRow> = state
+        .mysql
+        .fetch_all(
+            format!("SELECT id, user_name FROM users WHERE id IN ({placeholders})"),
+            args,
+        )
+        .await
+        .map_err(HttpError::internal)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.id, row.user_name))
+        .collect())
+}
+
+fn enrich_history_names(rows: &mut [Value], names: &std::collections::HashMap<i64, String>) {
+    for row in rows {
+        let Some(name) = row
+            .get("by_user_id")
+            .and_then(Value::as_i64)
+            .and_then(|id| names.get(&id))
+        else {
+            continue;
+        };
+        row["by_user_name"] = json!(name);
+        if row.get("to_type").and_then(Value::as_str) == Some("user")
+            && row
+                .get("to_name")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+            && let Some(target_name) = row
+                .get("to_id")
+                .and_then(Value::as_str)
+                .and_then(|id| id.parse::<i64>().ok())
+                .and_then(|id| names.get(&id))
+        {
+            row["to_name"] = json!(target_name);
+        }
+    }
+}
+
 fn json_array(value: Option<&Value>) -> Vec<Value> {
     match value {
         Some(Value::Array(items)) => items.clone(),

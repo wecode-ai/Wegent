@@ -1,7 +1,10 @@
-export async function waitForTerminalStatus(methods, exportTaskId) {
+import { setTimeout } from 'node:timers/promises'
+
+export async function waitForTerminalStatus(methods, exportTaskId, signal) {
   for (;;) {
+    signal.throwIfAborted()
     const status = await methods.status({ exportTaskId })
-    if (!['writing', 'finalizing'].includes(status.state)) return status
-    await new Promise(resolve => setTimeout(resolve, 10))
+    if (['completed', 'failed', 'cancelled'].includes(status.state)) return status
+    await setTimeout(10, undefined, { signal })
   }
 }

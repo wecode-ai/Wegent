@@ -1,6 +1,26 @@
 //! Local executions own a persisted activity card and a runtime task binding.
 use super::*;
 
+type RuntimeCommentContext = (String, Option<String>, String, Option<String>);
+
+fn pending_runtime_comment_context(
+    connection: &Connection,
+    runtime_task_id: &str,
+) -> Result<Option<RuntimeCommentContext>, TaskRuntimeError> {
+    Ok(connection
+        .query_row(
+            "SELECT task_id, json_extract(metadata, '$.dispatch_role'), message_id,
+                    json_extract(metadata, '$.automation_run_id')
+             FROM loop_item_comments
+             WHERE deleted_at IS NULL AND status IN ('pending','streaming')
+               AND json_extract(metadata,'$.runtime_address.taskId')=?1
+             ORDER BY id DESC LIMIT 1",
+            params![runtime_task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?)
+}
+
 pub(super) fn create_local_execution(
     connection: &Connection,
     item_id: &str,
@@ -353,26 +373,11 @@ impl LocalTaskStore {
         content: &str,
     ) -> Result<(), TaskRuntimeError> {
         let mut connection = self.connection()?;
+        if pending_runtime_comment_context(&connection, runtime_task_id)?.is_none() {
+            return Ok(());
+        }
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let comment_context = transaction
-            .query_row(
-                "SELECT task_id, json_extract(metadata, '$.dispatch_role'), message_id,
-                        json_extract(metadata, '$.automation_run_id')
-                 FROM loop_item_comments
-                 WHERE deleted_at IS NULL AND status IN ('pending','streaming')
-                   AND json_extract(metadata,'$.runtime_address.taskId')=?1
-                 ORDER BY id DESC LIMIT 1",
-                params![runtime_task_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                    ))
-                },
-            )
-            .optional()?;
+        let comment_context = pending_runtime_comment_context(&transaction, runtime_task_id)?;
         transaction.execute(
             "UPDATE loop_item_comments SET content=?1,status=?2,updated_at=?3
              WHERE id=(SELECT id FROM loop_item_comments

@@ -1,33 +1,100 @@
+import { useLayoutEffect, useRef, useState } from 'react'
+import type { IssueReferenceResult, IssueReferenceLookup } from './resolveIssueReference'
 import { Cloud, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { columns } from './todoShared'
 import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
-import { emptyTaskSearchFilters, searchTasks } from './taskSearch'
+import { emptyTaskSearchFilters, matchesIssueReference, searchTasks } from './taskSearch'
 
 interface GlobalTodoSearchProps {
+  lookupScope?: unknown
+  referenceOnly?: boolean
   projects: LocatedProjectSpace[]
   projectItems: Record<string, CloudLoopItem[]>
   projectMembers: Record<string, CloudProjectMember[]>
   query: string
   onQueryChange: (query: string) => void
   onClose: () => void
+  onResolveReference?: (reference: string) => Promise<IssueReferenceLookup>
   onSelectProject: (project: LocatedProjectSpace) => void
   onSelectItem: (project: LocatedProjectSpace, item: CloudLoopItem) => void
 }
 
 export function GlobalTodoSearch({
+  lookupScope,
+  referenceOnly = false,
   projects,
   projectItems,
   projectMembers,
   query,
   onQueryChange,
   onClose,
+  onResolveReference,
   onSelectProject,
   onSelectItem,
 }: GlobalTodoSearchProps) {
   const { t } = useTranslation('common')
-  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const [lookup, setLookup] = useState<{
+    query: string
+    scope: unknown
+    busy: boolean
+    error?: string
+    matches?: IssueReferenceResult[]
+  }>({ query, scope: lookupScope, busy: false })
+  if (lookup.query !== query || lookup.scope !== lookupScope) {
+    setLookup({ query, scope: lookupScope, busy: false })
+  }
+  const revision = useRef(0)
+  // Invalidate during commit before native input can submit a lookup.
+  useLayoutEffect(() => {
+    revision.current += 1
+    return () => {
+      revision.current += 1
+    }
+  }, [query, lookupScope])
+  const trimmedQuery = query.trim()
+  const fullReference = /^.+-\d+$/u.test(trimmedQuery)
+    ? trimmedQuery.replace(/[a-z]/g, letter => letter.toUpperCase())
+    : null
+  const currentLookup = lookup?.query === query && lookup.scope === lookupScope ? lookup : null
+  async function openReference() {
+    if (!fullReference || !onResolveReference || currentLookup?.busy) return
+    const requestRevision = revision.current
+    setLookup({ query, scope: lookupScope, busy: true })
+    try {
+      const { matches, failures } = await onResolveReference(fullReference)
+      if (revision.current !== requestRevision) return
+      if (
+        failures.length === 0 &&
+        matches.length === 1 &&
+        matches[0].item.can_view_detail !== false
+      ) {
+        onSelectItem(matches[0].project, matches[0].item)
+      }
+      const error =
+        failures.length > 0
+          ? failures
+              .map(
+                failure =>
+                  `${t(failure.location === 'local' ? 'workbench.global_search_source_local' : 'workbench.global_search_source_cloud')}: ${failure.message}`
+              )
+              .join('; ')
+          : matches.length === 0
+            ? t('workbench.global_search_reference_missing')
+            : undefined
+      setLookup({ query, scope: lookupScope, busy: false, matches, error })
+    } catch (error) {
+      if (revision.current !== requestRevision) return
+      setLookup({
+        query,
+        scope: lookupScope,
+        busy: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+  const normalizedQuery = trimmedQuery.toLocaleLowerCase()
   const matchingProjects = normalizedQuery
     ? projects.filter(project =>
         `${project.name} ${project.project_key} ${project.description}`
@@ -41,12 +108,17 @@ export function GlobalTodoSearch({
           projectItems[projectKey(project)] ?? [],
           normalizedQuery,
           emptyTaskSearchFilters,
-          projectMembers[projectKey(project)] ?? []
+          projectMembers[projectKey(project)] ?? [],
+          undefined,
+          project.project_key
         )
           .slice(0, 20)
           .map(result => ({ ...result, project }))
       )
     : []
+  const exactResults = taskResults.filter(({ item, project }) =>
+    matchesIssueReference(item, normalizedQuery, project.project_key)
+  )
 
   return (
     <div
@@ -62,9 +134,41 @@ export function GlobalTodoSearch({
             data-testid="cloud-global-search-input"
             value={query}
             onChange={event => onQueryChange(event.target.value)}
-            placeholder={t('workbench.global_search_placeholder')}
+            onKeyDown={event => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+              if (fullReference && onResolveReference) {
+                event.preventDefault()
+                void openReference()
+                return
+              }
+              if (exactResults.length !== 1) return
+              const { item, project } = exactResults[0]
+              if (item.can_view_detail === false) return
+              event.preventDefault()
+              onSelectItem(project, item)
+            }}
+            placeholder={t(
+              referenceOnly
+                ? 'workbench.global_search_reference_placeholder'
+                : 'workbench.global_search_placeholder'
+            )}
             className="h-full min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-text-muted"
           />
+          {fullReference && onResolveReference && (
+            <button
+              type="button"
+              data-testid="cloud-global-search-open-issue"
+              disabled={currentLookup?.busy}
+              onClick={() => void openReference()}
+              className="shrink-0 rounded-lg px-3 py-1 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {t(
+                currentLookup?.busy
+                  ? 'workbench.global_search_opening_issue'
+                  : 'workbench.global_search_open_issue'
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -76,9 +180,35 @@ export function GlobalTodoSearch({
           </button>
         </div>
         <div className="max-h-[560px] overflow-y-auto p-2">
-          {!normalizedQuery ? (
+          {currentLookup?.error && (
+            <p role="alert" className="px-3 py-2 text-sm text-text-muted">
+              {t('workbench.global_search_lookup_failed')} {currentLookup.error}
+            </p>
+          )}
+          {currentLookup?.matches?.map(({ project, item }) => (
+            <button
+              key={projectKey(project)}
+              type="button"
+              data-testid={`cloud-global-search-direct-${projectKey(project)}`}
+              disabled={item.can_view_detail === false}
+              onClick={() => onSelectItem(project, item)}
+              className="flex w-full gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
+            >
+              {t(
+                project.location === 'local'
+                  ? 'workbench.global_search_source_local'
+                  : 'workbench.global_search_source_cloud'
+              )}{' '}
+              · {project.name} · {item.id} · {item.title}
+            </button>
+          ))}
+          {!normalizedQuery || referenceOnly ? (
             <p className="px-4 py-12 text-center text-sm text-text-muted">
-              {t('workbench.global_search_hint')}
+              {t(
+                referenceOnly
+                  ? 'workbench.global_search_reference_hint'
+                  : 'workbench.global_search_hint'
+              )}
             </p>
           ) : matchingProjects.length === 0 && taskResults.length === 0 ? (
             <p className="px-4 py-12 text-center text-sm text-text-muted">
@@ -122,7 +252,7 @@ export function GlobalTodoSearch({
                       className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted/60 disabled:cursor-default disabled:opacity-60"
                     >
                       <span className="w-40 shrink-0 truncate font-mono text-xs leading-5 text-text-muted">
-                        {item.id}
+                        {project.project_key}-{item.sequence_number}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm leading-5">{item.title}</span>

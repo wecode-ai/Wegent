@@ -2,9 +2,11 @@ import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
   resolveWorkbenchCodexHome,
   resolveWorkbenchPaths,
+  resolveWorkbenchUserData,
 } from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore, sameReleasePath } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
@@ -19,24 +21,24 @@ import {
   type AfterStopMetadata,
 } from './runtime/release-after-stop.js'
 
-type ReleaseMetadata = AfterStopMetadata & { version?: string; weworkExecutorNamespace?: string }
+type ReleaseMetadata = AfterStopMetadata & {
+  version?: string
+  weworkExecutorNamespace?: string
+}
+
+export let releaseActivationPending = false
 
 export async function routeRelease(
   metadata: ReleaseMetadata,
   forwardedArguments: () => string[],
   failStartup: (error: unknown) => void
 ): Promise<boolean> {
-  if (!app.isPackaged) return true
-  const dataDirectory =
-    process.env.WEWORK_USER_DATA_DIR?.trim() ||
-    join(
-      resolveWorkbenchPaths({
-        environment: process.env,
-        metadata,
-        homeDirectory: app.getPath('home'),
-      }).desktop,
-      'user-data'
-    )
+  if (!isEffectivePackagedApplication(app.isPackaged, process.env)) return true
+  const dataDirectory = resolveWorkbenchUserData({
+    environment: process.env,
+    metadata,
+    homeDirectory: app.getPath('home'),
+  })
   const root = join(dataDirectory, 'releases')
   const release = await acquireReleaseStartup(
     root,
@@ -188,6 +190,7 @@ async function routeSelectedRelease(
     process.env.WEWORK_COMPONENT_DATA_DIRECTORY =
       active.componentDataDirectory ?? store.slot(active.id)
     const activation = await store.activation()
+    releaseActivationPending = Boolean(activation)
     const live = currentCoreProfile(dataDirectory)
     const { lstat } = await import('node:fs/promises')
     const usesOriginalProfile =

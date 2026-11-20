@@ -15,6 +15,17 @@ async function temporaryDirectory() {
 }
 
 describe('process lock', () => {
+  test('a nonblocking owner exits without waiting for the existing owner', async () => {
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'maintenance.lock')
+    const release = await acquireProcessLock(path)
+    try {
+      expect(await acquireProcessLock(path, { wait: false })).toBe(null)
+    } finally {
+      await release()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   test('serializes concurrent owners', async () => {
     const directory = await temporaryDirectory()
     const lockPath = join(directory, 'prepare.lock')

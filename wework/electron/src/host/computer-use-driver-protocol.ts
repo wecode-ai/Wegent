@@ -1,14 +1,26 @@
-import type { ToolResult } from '@trycua/cua-driver'
+import type {
+  GetWindowStateInput,
+  ListWindowsInput,
+  ListWindowsOutput,
+  ToolResult,
+  WindowStateOutput,
+} from '@trycua/cua-driver'
 
 export type DriverRequest =
   | { id: number; method: 'start' }
   | { id: number; method: 'listTools' }
+  | { id: number; method: 'listWindows'; input: ListWindowsInput }
+  | { id: number; method: 'getWindowState'; input: GetWindowStateInput }
   | { id: number; method: 'shutdown' }
   | { id: number; method: 'callTool'; name: string; argumentsJson: string }
   | { id: number; method: 'abort' }
 
 export type DriverResponse =
-  | { id: number; ok: true; result?: string | ToolResult }
+  | {
+      id: number
+      ok: true
+      result?: string | ToolResult | ListWindowsOutput | WindowStateOutput
+    }
   | { id: number; ok: false; error: string }
 
 /** Ignore unrelated Node IPC frames before they can enter the native dispatcher. */
@@ -23,6 +35,11 @@ export function isDriverRequest(value: unknown): value is DriverRequest {
     case 'shutdown':
     case 'abort':
       return true
+    case 'listWindows':
+    case 'getWindowState':
+      return (
+        Boolean(request.input) && typeof request.input === 'object' && !Array.isArray(request.input)
+      )
     case 'callTool':
       return typeof request.name === 'string' && typeof request.argumentsJson === 'string'
     default:

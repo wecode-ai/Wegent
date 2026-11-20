@@ -8,6 +8,8 @@ Local install, uninstall, update and reconciliation use authenticated account HT
 
 Plugin leases have a 180-second TTL. See [plugin write coordination](../../wework/developer-guide/plugin-write-coordination.md) for first-account metadata initialization boundaries and rollout requirements. This design does not guarantee unique first creation across lease expiry.
 
+Personal local plugin uninstall revokes configuration, drains in-flight native cache refresh through `plugin/list` with `forceRefetch`, and only then removes the cache. The sequence shares the host gate with catalog RPCs so background copies using an old configuration snapshot cannot recreate the cache after success. Offline uninstall never starts Codex, requires no idle conversations, and restarts no active conversation. Active connection dependencies still block uninstall by the complete plugin identity.
+
 ## State ownership
 
 `InstalledPlugin/default` remains authoritative account intent. No new tables, migrations, independent operation records, snapshot history or receipt ledger are created. There are no records in a `plugin-local-sync` namespace.

@@ -14,11 +14,23 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
+from app.core.security import (
+    get_current_user,
+    get_current_user_jwt_apikey_tasktoken,
+    oauth2_scheme_optional,
+)
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -575,7 +587,11 @@ def enqueue_execution_batch(
         from app.services.collaboration_round_assignment import assign_round_owner
 
         assign_round_owner(
-            db, item=item, assignments=assignment_activity, user_id=current_user.id
+            db,
+            item=item,
+            assignments=assignment_activity,
+            user_id=current_user.id,
+            manager=manager,
         )
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
@@ -613,6 +629,19 @@ def enqueue_execution_batch(
         should_push_assignment = True
     db.commit()
     if should_push_assignment and assignment_message is not None:
+        logger.info(
+            "Collaboration round recorded project=%s issue=%s execution=%s "
+            "round=%s manager_task=%s assignments=%s execution_status=%s "
+            "execution_sync_state=%s",
+            project_id,
+            values.loop_item_id,
+            manager_execution.id,
+            values.round_id,
+            values.manager_runtime_task_id,
+            len(assignment_activity),
+            manager_execution.status,
+            manager_execution.sync_state,
+        )
         db.refresh(assignment_message)
         push_project_chat_message(
             project_chat_service.to_view(assignment_message, db=db).model_dump(
@@ -630,28 +659,65 @@ def enqueue_execution_batch(
 def report_collaboration_assignment_status(
     project_id: int,
     values: LoopItemExecutionManagerStatus | LoopItemExecutionAssignmentStatus,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    session_token: str | None = Depends(oauth2_scheme_optional),
 ) -> dict[str, object]:
     """Bind collaboration sessions and record progress; Executor owns the round."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
-    if isinstance(values, LoopItemExecutionManagerStatus):
-        from app.services.collaboration_manager_activity import (
-            project_collaboration_manager_activity,
-        )
+    runtime_profiles = None
+    try:
+        if isinstance(values, LoopItemExecutionManagerStatus):
+            from app.services.collaboration_manager_activity import (
+                project_collaboration_manager_activity,
+            )
 
-        message, changed = project_collaboration_manager_activity(
-            db, project_id=project_id, user_id=current_user.id, values=values
+            if values.refresh_runtime_profiles and (
+                not session_token
+                or get_current_user(token=session_token, db=db).id != current_user.id
+            ):
+                raise HTTPException(403, "Runtime profiles require the owner's session")
+            message, changed, runtime_profiles = project_collaboration_manager_activity(
+                db, project_id=project_id, user_id=current_user.id, values=values
+            )
+        else:
+            message, changed = project_collaboration_member_activity(
+                db, project_id=project_id, values=values
+            )
+    except HTTPException as exc:
+        logger.warning(
+            "Collaboration activity rejected project=%s issue=%s dispatch=%s "
+            "round=%s runtime_task=%s http_status=%s reason=%s",
+            project_id,
+            values.loop_item_id,
+            values.dispatch_id,
+            values.round_id,
+            values.runtime_task_id,
+            exc.status_code,
+            exc.detail,
         )
-    else:
-        message, changed = project_collaboration_member_activity(
-            db, project_id=project_id, values=values
-        )
+        raise
     view = project_chat_service.to_view(message, db=db).model_dump(by_alias=True)
     if changed:
+        logger.info(
+            "Collaboration activity recorded project=%s issue=%s dispatch=%s "
+            "round=%s runtime_task=%s activity_type=%s activity_status=%s",
+            project_id,
+            values.loop_item_id,
+            values.dispatch_id,
+            values.round_id,
+            values.runtime_task_id,
+            (message.metadata_json or {}).get("activity_type"),
+            message.status,
+        )
         push_project_chat_message(view)
-    return {"message": view, "changed": changed}
+    result: dict[str, object] = {"message": view, "changed": changed}
+    if runtime_profiles is not None:
+        response.headers["Cache-Control"] = "no-store"
+        result["runtime_profiles"] = runtime_profiles
+    return result
 
 
 @router.post("/{project_id}/executions/manager-decision")

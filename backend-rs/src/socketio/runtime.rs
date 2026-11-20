@@ -583,6 +583,12 @@ impl SocketRuntime {
         })
     }
 
+    /// Installs test emitter handles without starting production workers.
+    #[cfg(test)]
+    pub(crate) fn install_emitters(&self, emitters: Arc<SocketEmitters>) {
+        assert!(self.emitters.set(emitters).is_ok());
+    }
+
     /// Installs the callback registry the adapter sink registers accepted
     /// calls in. Production wires it during [`SocketRuntime::install`].
     #[cfg(test)]

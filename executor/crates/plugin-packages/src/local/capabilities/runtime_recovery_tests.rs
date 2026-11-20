@@ -37,7 +37,7 @@ impl CapabilityPackageProvider for Packages {
 pub(super) fn archive(name: &str) -> Vec<u8> {
     archive_payload(name, "plugin capability")
 }
-fn archive_payload(name: &str, content: &str) -> Vec<u8> {
+pub(super) fn archive_payload(name: &str, content: &str) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (path, body) in [
         (

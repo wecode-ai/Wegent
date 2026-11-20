@@ -2,7 +2,7 @@ import {
   readRuntimeThreadConversation,
   synchronizeRuntimeConversation,
 } from './runtimeConversationSynchronization'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { stripAppBasePath } from '@/config/runtime'
@@ -75,6 +75,8 @@ interface UseWorkbenchRuntimeTasksOptions {
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: RefreshWorkLists
   setComposerErrorForScope: (scopeKey: string, error: string | null) => void
+  getCurrentRuntimeTask(): RuntimeTaskAddress | null
+  isHeld(): boolean
   canNavigate?: () => boolean
 }
 
@@ -88,32 +90,21 @@ export function useWorkbenchRuntimeTasks({
   markRuntimeTasksArchived,
   refreshWorkLists,
   setComposerErrorForScope,
+  getCurrentRuntimeTask,
+  isHeld,
   canNavigate = () => true,
 }: UseWorkbenchRuntimeTasksOptions) {
   const { t } = useTranslation('common')
   const openedRuntimeTaskKeysRef = useRef<Set<string>>(new Set())
-  const currentRuntimeTaskRef = useRef<RuntimeTaskAddress | null>(null)
   const openGeneration = useRef(0)
-  useEffect(
-    () => () => {
-      openGeneration.current += 1
-    },
-    [ownershipKey]
-  )
-
-  useEffect(() => {
-    currentRuntimeTaskRef.current = state.currentRuntimeTask
-  }, [state.currentRuntimeTask])
-
   const openRuntimeTaskView = useCallback(
     (
       address: RuntimeTaskAddress,
       project: ProjectWithTasks | null,
       options?: { markOpened?: boolean; navigate?: boolean }
     ) => {
-      const reopeningCurrentTask = isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)
-      const openedAddress = mergeRuntimeTaskAddresses(currentRuntimeTaskRef.current, address)
-      currentRuntimeTaskRef.current = openedAddress
+      const reopeningCurrentTask = isSameRuntimeTaskIdentity(getCurrentRuntimeTask(), address)
+      const openedAddress = mergeRuntimeTaskAddresses(getCurrentRuntimeTask(), address)
       if (options?.markOpened !== false) {
         openedRuntimeTaskKeysRef.current.add(getRuntimeTaskRouteKey(openedAddress))
       }
@@ -131,21 +122,16 @@ export function useWorkbenchRuntimeTasks({
         navigateTo(buildRuntimeTaskRoute(openedAddress))
       }
     },
-    [canNavigate, dispatch]
+    [canNavigate, dispatch, getCurrentRuntimeTask]
   )
 
   const isCurrentRuntimeTask = useCallback(
-    (address: RuntimeTaskAddress) =>
-      isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address),
-    []
+    (address: RuntimeTaskAddress) => isSameRuntimeTaskIdentity(getCurrentRuntimeTask(), address),
+    [getCurrentRuntimeTask]
   )
 
   const reconcileCurrentRuntimeTaskAddress = useCallback(
     (previousAddress: RuntimeTaskAddress, address: RuntimeTaskAddress) => {
-      currentRuntimeTaskRef.current = mergeRuntimeTaskAddresses(
-        currentRuntimeTaskRef.current,
-        address
-      )
       dispatch({
         type: 'runtime_task_address_reconciled',
         previousAddress,
@@ -158,7 +144,6 @@ export function useWorkbenchRuntimeTasks({
   const clearCurrentRuntimeTaskView = useCallback(
     (navigate = true) => {
       openGeneration.current += 1
-      currentRuntimeTaskRef.current = null
       dispatch({ type: 'current_task_cleared' })
       if (navigate) navigateTo('/')
     },
@@ -177,9 +162,13 @@ export function useWorkbenchRuntimeTasks({
           : executorClient.runtime.getRuntimeTranscript(request)
       return threadOnly
         ? readRuntimeThreadConversation(read, address, requestOptions)
-        : synchronizeRuntimeConversation(read, address, { ...requestOptions, isolated })
+        : synchronizeRuntimeConversation(read, address, {
+            ...requestOptions,
+            isolated,
+            authorityScope: lifecycleStore.notificationScope,
+          })
     },
-    [executorClient]
+    [executorClient, lifecycleStore]
   )
 
   const searchRuntimeTranscriptForPane = useCallback(
@@ -245,6 +234,7 @@ export function useWorkbenchRuntimeTasks({
           window.location.search
         )
         return (
+          isHeld() &&
           generation === openGeneration.current &&
           isCurrentRuntimeTask(address) &&
           Boolean(route && isSameRuntimeTaskIdentity(address, route))
@@ -272,6 +262,7 @@ export function useWorkbenchRuntimeTasks({
     [
       dispatch,
       isCurrentRuntimeTask,
+      isHeld,
       lifecycleStore,
       openRuntimeTaskView,
       services.standInApi,
@@ -284,9 +275,7 @@ export function useWorkbenchRuntimeTasks({
 
   const clearCurrentRuntimeTaskIfArchived = useCallback(
     (addresses: RuntimeTaskAddress[]) => {
-      if (
-        !addresses.some(address => isSameRuntimeTaskAddress(currentRuntimeTaskRef.current, address))
-      ) {
+      if (!addresses.some(address => isSameRuntimeTaskAddress(getCurrentRuntimeTask(), address))) {
         return
       }
       const activeRoute = parseRuntimeTaskRoute(
@@ -298,7 +287,7 @@ export function useWorkbenchRuntimeTasks({
       )
       clearCurrentRuntimeTaskView(shouldNavigateHome)
     },
-    [clearCurrentRuntimeTaskView]
+    [clearCurrentRuntimeTaskView, getCurrentRuntimeTask]
   )
 
   const archiveRuntimeConversations = useCallback(
@@ -383,6 +372,7 @@ export function useWorkbenchRuntimeTasks({
       markRuntimeTasksArchived,
       refreshWorkLists,
       state.runtimeWork,
+      t,
     ]
   )
 

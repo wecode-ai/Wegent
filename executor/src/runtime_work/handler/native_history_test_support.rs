@@ -56,6 +56,11 @@ pub(in crate::runtime_work::handler) fn install_native_history(
     for (method, response) in [
         ("initialize", json!({"userAgent":"test"})),
         ("thread_list", json!({"data":[],"nextCursor":null})),
+        ("thread_unsubscribe", json!({"status":"notLoaded"})),
+        (
+            "thread_resume",
+            json!({"thread":{"id":handler.local_task_link("task-1").and_then(|link| link.thread_id).unwrap_or_else(|| "thread-1".into()),"modelProvider":"~"}}),
+        ),
         (
             "thread_read",
             json!({"thread":{"id":"thread-1","cwd":"/tmp/project","historyMode":"paginated"}}),

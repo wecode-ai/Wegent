@@ -361,6 +361,15 @@ path = "/api/attachments/task/:task_id/all"
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/loop-items/:item_id/tasks"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assistant-participations"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/loop-items/:item_id/assistant-participations/:participation_id"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items/:item_id/assistant-participations/backfill"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/loop-items/:item_id/attachments"
@@ -1040,6 +1049,27 @@ path = "/api/v1/me/project-coordinator-bindings"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-projects/:project_id/collaboration-groups" # app/api/endpoints/project_automations.py:39
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-roster"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics/evidence"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-metrics/me"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-dispatches"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/assistant-participations/backfill"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/v1/cloud-work-items/my-work" # app/api/endpoints/deliveries.py:194

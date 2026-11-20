@@ -204,6 +204,10 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if read["thread"]["status"]["type"] == "notLoaded" {
+            // Passive discovery must not compete with the running task for its thread writer.
+            if payload["method"] == "discover" && self.is_active_local_task(&link.local_task_id) {
+                return Ok(Value::Null);
+            }
             self.resume_codex_thread_for_action(&link, &thread_id)
                 .await
                 .map_err(|_| app_error("Cannot restore the source MCP App session"))?;
@@ -782,7 +786,7 @@ while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   [ -n "$id" ] || continue
   case "$line" in
-    *'"method":"thread/read"'*) result='{{"thread":{{"id":"00000000-0000-0000-0000-000000000001","status":{{"type":"notLoaded"}},"turns":[{{"items":[{{"id":"call","type":"mcpToolCall","server":"counter","tool":"show","mcpAppResourceUri":"ui://app"}}]}}]}}}}';;
+    *'"method":"thread/read"'*) result='{{"thread":{{"id":"00000000-0000-0000-0000-000000000001","status":{{"type":"notLoaded"}},"turns":[{{"items":[{{"id":"call","type":"mcpToolCall","server":"counter","tool":"show","mcpAppResourceUri":"ui://app"}},{{"id":"ordinary","type":"mcpToolCall","server":"counter","tool":"plain"}}]}}]}}}}';;
     *'"method":"mcpServerStatus/list"'*) result='{{"data":[{{"name":"counter","tools":{{"show":{{"name":"show"}}}}}}]}}';;
     *'"method":"mcpServer/resource/read"'*) result='{{"contents":[{{"uri":"ui://app","mimeType":"text/html;profile=mcp-app","text":"<p>Ready</p>"}}]}}';;
     *) result='{{}}';;
@@ -797,6 +801,15 @@ done
                     root.path().join("project").display().to_string(), "App".into());
                 task.runtime_handle = json!({"threadId":"00000000-0000-0000-0000-000000000001"});
                 handler.upsert_local_task(task);
+                let (cancel, _cancelled) = tokio::sync::oneshot::channel();
+                let (_stopped, stopped) = tokio::sync::oneshot::channel();
+                let execution = handler.start_local_task_execution("task".into(), cancel, stopped);
+                let discovered = handler.mcp_app_request(json!({
+                    "taskId":"task", "callId":"ordinary", "method":"discover"
+                })).await.unwrap();
+                assert!(discovered.is_null());
+                assert!(!fs::read_to_string(&log).unwrap().contains("thread/resume"));
+                assert!(handler.finish_local_task_execution("task", execution));
                 let result = handler.mcp_app_request(json!({"taskId":"task","callId":"call"}))
                     .await.unwrap();
                 assert_eq!(result["resource"]["contents"][0]["text"], "<p>Ready</p>");

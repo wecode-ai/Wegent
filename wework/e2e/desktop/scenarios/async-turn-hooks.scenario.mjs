@@ -226,7 +226,9 @@ console.log('HOOK_WRITES_COMPLETE')
               new_session: true,
               bot: [{ shell_type: 'Codex' }],
               model_config: {
-                model_id: model.local_model_id,
+                // The Git case exercises the native thread's default model;
+                // lifecycle metadata must not depend on a request override.
+                ...(name === 'git' ? {} : { model_id: model.local_model_id }),
                 model_provider: model.provider,
                 runtime_config: { codex: { use_user_config: true, configured: true } },
               },

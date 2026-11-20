@@ -9,20 +9,35 @@ import { expect, test } from 'vitest'
 
 const execute = promisify(execFile)
 
-test('prebuilt desktop wire client runs without workspace dependencies', async () => {
+test('prebuilt desktop wire client runs without workspace dependencies', async ({
+  onTestFailed,
+}) => {
+  const startedAt = performance.now()
+  let stage = 'create temporary checkout'
+  let cleaningUp = false
+  onTestFailed(() => {
+    console.error('Desktop wire client test failed', {
+      stage,
+      cleaningUp,
+      elapsedMs: Math.round(performance.now() - startedAt),
+    })
+  })
   const weworkDir = resolve(import.meta.dirname, '../..')
   const directory = await mkdtemp(join(tmpdir(), 'wework-e2e-client-'))
   try {
     const bundleDir = join(directory, 'e2e-client')
+    stage = 'bundle desktop clients'
     await execute(process.execPath, [
       join(weworkDir, 'scripts/build-desktop-e2e-client.mjs'),
       bundleDir,
     ])
+    stage = 'copy isolated runtime files'
     await cp(join(weworkDir, 'e2e/desktop'), join(directory, 'wework/e2e/desktop'), {
       recursive: true,
     })
     // CI reads these runtime files from its checkout without installing workspace packages.
     for (const runtimePath of [
+      '.github/scripts/node-async-resource-diagnostics.mjs',
       'wework/electron/src/runtime/release-preparation-progress.mjs',
       'wework/scripts/ai-verify-devtools.mjs',
       'wework/scripts/lib/extract-runtime-archive.mjs',
@@ -33,6 +48,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     ]) {
       await cp(resolve(weworkDir, '..', runtimePath), join(directory, runtimePath))
     }
+    stage = 'run isolated WebSocket handshake'
     const { stdout } = await execute(
       process.execPath,
       [
@@ -85,6 +101,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     )
     expect(stdout).toContain('isolated-client-passed')
   } finally {
+    cleaningUp = true
     await rm(directory, { recursive: true, force: true })
   }
 }, 15_000)

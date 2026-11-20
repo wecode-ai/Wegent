@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode, type RefObject } from 'react'
+import { memo, useMemo, type ReactNode, type Ref, type RefObject } from 'react'
 import { Boxes, RefreshCw } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
@@ -21,7 +21,7 @@ import type { PluginMarketplaceRowAction, PluginMarketplaceRowLabels } from './P
 import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
 import { MarketplaceCardGrid } from './MarketplaceCardGrid'
 import { Button } from '@/components/ui/button'
-import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
+import type { OpenAiPluginCatalogError } from '@/features/plugins/useOpenAiPluginCatalog'
 
 export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   hasMarketplace,
@@ -71,7 +71,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   localMarketplaceTabs: MarketplaceOption[]
   query: string
   searchInputRef: RefObject<MarketplaceSearchInputHandle | null>
-  scrollRef: RefObject<HTMLDivElement | null>
+  scrollRef: Ref<HTMLDivElement>
   installedStrip: ReactNode
   showInstalledStrip: boolean
   pluginMarketplaceState: {
@@ -83,7 +83,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isMarketplaceRefreshing: boolean
   isMarketplaceSearchUpdating: boolean
   isOpenAiOfficialViewLoading: boolean
-  openAiCatalogError?: ReturnType<typeof remoteCatalogErrorKind> | null
+  openAiCatalogError?: OpenAiPluginCatalogError | null
   isOpenAiCatalogRefreshing?: boolean
   normalizedQuery: string
   visibleMarketplaceItems: PluginMarketplaceItem[]

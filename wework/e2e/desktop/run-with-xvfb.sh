@@ -58,6 +58,7 @@ while [ ! -s "$xvfb_root/display" ]; do
   fi
   if [ "$xvfb_attempt" -ge 100 ]; then
     printf '%s\n' 'Xvfb did not publish its display within 5 seconds' >&2
+    ps -o pid,ppid,stat,wchan:32,comm -p "$xvfb_pid" --ppid "$xvfb_pid" >&2 || :
     exit 1
   fi
   xvfb_attempt=$((xvfb_attempt + 1))

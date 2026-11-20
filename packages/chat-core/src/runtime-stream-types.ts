@@ -112,6 +112,7 @@ export interface ChatBlockUpdatedPayload {
   blockId: string;
   content?: string;
   contentDelta?: string;
+  contentOffset?: number;
   toolOutput?: unknown;
   toolOutputDelta?: string;
   toolOutputTruncated?: boolean;
@@ -157,6 +158,7 @@ export interface RuntimeGuidanceAppliedPayload {
   guidanceId: string;
   clientGuidanceId?: string;
   message: string;
+  source?: import("./workbench-message-reducer").MessageSource;
   appliedAtMs: number;
 }
 

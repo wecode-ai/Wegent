@@ -32,18 +32,6 @@ impl Drop for ThreadActionActivity {
 }
 
 impl CodexAppServerClient {
-    /// Goal activation can request inference before its mutation RPC returns.
-    pub(crate) async fn bind_thread_model_route(
-        &self,
-        request: &ExecutionRequest,
-        thread_id: &str,
-    ) -> Result<Option<Arc<LocalProxyRegistration>>, String> {
-        ensure_codex_mcp_endpoints().await?;
-        let launch = build_codex_launch_config(request)?;
-        bind_local_proxy_thread(&launch, thread_id)?;
-        Ok(launch.local_proxy_registration)
-    }
-
     /// Model-consuming actions must apply their profile even when a thread is already loaded.
     pub(crate) async fn resume_thread_for_model_action(
         &self,

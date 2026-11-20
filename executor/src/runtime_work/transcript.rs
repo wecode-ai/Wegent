@@ -219,12 +219,19 @@ fn project_transcript_checked(
             options,
         )
         .project(checkpoint)?;
+        let error_type = turn.get("error").and_then(crate::agents::codex_error_type);
+        for message in &mut messages[message_start..] {
+            if message["role"] == "assistant" && message["status"] == "failed" {
+                message["errorType"] = json!(error_type);
+            }
+        }
         let mut normalized = json!({
             "id": stable_indexed_id(turn, "turn", turn_index),
             "status": turn_assistant_status(turn),
             "startedAt": turn_started_at(turn),
             "completedAt": turn_completed_at(turn, turn_started_at(turn)),
             "error": turn_error_message(turn),
+            "errorType": error_type,
             "position": turn.get("position"),
         });
         normalized["items"] = Value::Array(items);

@@ -91,3 +91,60 @@ fn final_merge_condition_keeps_progress_quiet_in_ordinary_and_goal_waits() {
         assert_eq!(state["operations"]["wait"], pending);
     }
 }
+
+#[test]
+fn github_merge_wait_captures_either_check_failure_or_conflict_once() {
+    let topic = "https://github.com/org/repo/pull/1";
+    let args = json!({"git_wait":"merge",
+        "source":{"providerId":"@wegent/dsh-connection-git/github","name":"org/repo",
+            "profile":"[\"https://github.com\",\"7\"]","kind":"repository",
+            "monitoredObjects":[{"entityKind":"change_request","number":1}]}});
+    let filter = conditions::resolve(&args).unwrap();
+    validate_filter(&filter).unwrap();
+    let event = |id, topic, event_type, payload| {
+        json!({
+            "id":id,"at":"2026-11-15T00:00:01Z","topicId":topic,
+            "external":{"eventType":event_type,"payload":payload}
+        })
+    };
+    let failure = event(
+        "shard-failed",
+        topic,
+        "tracked.checks",
+        json!({"status":"completed","conclusion":"failure"}),
+    );
+    let conflict = event(
+        "merge-conflict",
+        topic,
+        "tracked.status",
+        json!({"mergeable":"CONFLICTING","statusCheckRollup":{"state":"PENDING"}}),
+    );
+    let other = event(
+        "other-conflict",
+        "https://github.com/org/repo/pull/2",
+        "tracked.status",
+        json!({"mergeable":"CONFLICTING"}),
+    );
+    for (first, second) in [(&failure, &conflict), (&conflict, &failure)] {
+        let mut state = json!({"operations":{"wait":{"observation_id":"shared","status":"armed",
+            "source":{"observeCurrentStatus":true,"enabledAfter":"2026-11-15T00:00:00Z"},
+            "after_sequence":0,"initial_sequence":0,"match":filter}}});
+        assert!(!capture_consumers(
+            &mut state,
+            "shared",
+            &observation(1, other.clone())
+        ));
+        assert!(capture_consumers(
+            &mut state,
+            "shared",
+            &observation(2, first.clone())
+        ));
+        assert_eq!(state["operations"]["wait"]["events"], json!([first]));
+        state["operations"]["wait"]["status"] = json!("delivered");
+        assert!(!capture_consumers(
+            &mut state,
+            "shared",
+            &observation(3, second.clone())
+        ));
+    }
+}

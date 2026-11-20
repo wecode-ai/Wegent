@@ -15,20 +15,19 @@ use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tracing::Instrument;
 
 use crate::json_compat::{python_str, python_strip, python_truthy};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 use crate::plugins_marketplace::db::{
     InstalledKindRow, KIND_COLUMNS, NamespaceRow, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
-    RELEASE_COLUMNS, ResourceMemberRow, UserRepository,
+    ResourceMemberRow, UserRepository,
 };
 use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 
 use super::auth;
 use super::write_coordination::{
-    PluginWriteLease, business_revision, coordination_error, http_error,
+    PluginWriteLease, business_revision, complete_plugin_write, coordination_error, http_error,
 };
 use crate::http_compat::FastApiError;
 
@@ -96,25 +95,11 @@ async fn auto_update_installed_plugins(
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
     let resolvers = state.entity_resolvers.clone();
-    complete_auto_update(async move {
+    complete_plugin_write(async move {
         auto_update_batch(&mysql, redis.as_ref(), &resolvers, user.id).await
     })
     .await
     .map_err(http_error)
-}
-
-pub(super) async fn complete_auto_update<T, F>(operation: F) -> MysqlResult<T>
-where
-    T: Send + 'static,
-    F: std::future::Future<Output = MysqlResult<T>> + Send + 'static,
-{
-    // Client cancellation must not drop the transaction before its lease is released.
-    // The operation retains its existing acquisition, transaction and release bounds.
-    tokio::spawn(operation.in_current_span())
-        .await
-        .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
-            reason: "plugin auto-update task failed".into(),
-        })?
 }
 
 /// Discover candidates without preventing authentication or installation.
@@ -149,27 +134,6 @@ where
     mysql
         .fetch_all(
             format!("SELECT {PLUGIN_COLUMNS} FROM plugins WHERE plugins.id IN ({placeholders})"),
-            ids.to_vec(),
-        )
-        .await
-}
-
-/// `db.query(PluginRelease).filter(PluginRelease.id.in_(release_ids))` — the
-/// source does not filter by status here; readiness is checked per candidate.
-async fn list_releases_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<PluginReleaseRow>>
-where
-    M: Mysql,
-{
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders = vec!["?"; ids.len()].join(", ");
-    mysql
-        .fetch_all(
-            format!(
-                "SELECT {RELEASE_COLUMNS} FROM plugin_releases WHERE plugin_releases.id IN \
-                 ({placeholders})"
-            ),
             ids.to_vec(),
         )
         .await
@@ -394,11 +358,12 @@ where
             release_ids.push(plugin.latest_release_id);
         }
     }
-    let releases_by_id: HashMap<i64, PluginReleaseRow> = list_releases_by_ids(mysql, &release_ids)
-        .await?
-        .into_iter()
-        .map(|release| (release.id, release))
-        .collect();
+    let releases_by_id: HashMap<i64, PluginReleaseRow> =
+        crate::plugins_marketplace::db::list_release_rows_by_ids_on(&mut &*mysql, &release_ids)
+            .await?
+            .into_iter()
+            .map(|release| (release.id, release))
+            .collect();
 
     let catalog_plugin_ids: Vec<i64> = plugins_by_id.keys().copied().collect();
     let grants_by_plugin_id =

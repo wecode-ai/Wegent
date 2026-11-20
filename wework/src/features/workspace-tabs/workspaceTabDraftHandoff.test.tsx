@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { Activity, useEffect, useState } from 'react'
+import { Activity, useCallback, useState } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { useWorkspaceTabDraftInput } from '@/features/workbench/useWorkspaceTabDraftInput'
@@ -34,11 +34,14 @@ function stage(id: string, values: Record<string, string>) {
 function DraftOwner({ id }: { id: string }) {
   const draft = useWorkspaceTabDraftInput(id)
   const [count, setCount] = useState(0)
-  useEffect(() => {
-    mounted(id)
-  }, [id])
+  const observeMount = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element) mounted(id)
+    },
+    [id]
+  )
   return (
-    <div>
+    <div ref={observeMount}>
       <input
         data-testid={`draft-${id}`}
         value={draft.inputs['blank:0'] ?? ''}

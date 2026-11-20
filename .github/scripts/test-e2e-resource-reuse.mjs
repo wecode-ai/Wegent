@@ -237,7 +237,7 @@ const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
 
-test("Executor preparation overlaps the frontend build but consumes only a verified successful producer", () => {
+test("Platform E2E preparation overlaps builds and consumes successful same-run producers", () => {
   const parsed = spawnSync(
     "ruby",
     [
@@ -253,7 +253,6 @@ test("Executor preparation overlaps the frontend build but consumes only a verif
   const jobs = JSON.parse(parsed.stdout);
   const executor = jobs["executor-e2e-tests"];
   assert.deepEqual(executor.needs, [
-    "build-backend-rs-e2e-runtime",
     "build-executor-e2e-runtime",
     "prepare-platform-e2e-image",
   ]);
@@ -286,6 +285,34 @@ test("Executor preparation overlaps the frontend build but consumes only a verif
   ]) {
     assert(steps.indexOf(name) > steps.indexOf(download.name), name);
   }
+  const backend = jobs["build-backend-rs-e2e-runtime"];
+  for (const [consumer, firstUse] of [
+    [jobs["e2e-tests"], "Run attachment storage E2E on shared services"],
+    [executor, "Start backend server"],
+  ]) {
+    assert.ok(!consumer.needs.includes("build-backend-rs-e2e-runtime"));
+    const names = consumer.steps.map((step) => step.name);
+    const migration = names.indexOf("Run database migrations");
+    const backendDownload = names.indexOf("Download Backend Rust E2E runtime");
+    assert.ok(
+      migration >= 0 &&
+        migration < backendDownload &&
+        backendDownload < names.indexOf(firstUse),
+    );
+    const env = consumer.steps[backendDownload].env;
+    assert.equal(env.ACTIONS_ARTIFACT_JOB, backend.name);
+    assert.equal(
+      env.ACTIONS_ARTIFACT_HEAD_SHA,
+      download.env.ACTIONS_ARTIFACT_HEAD_SHA,
+    );
+    assert.equal(
+      Number(env.ACTIONS_ARTIFACT_WAIT_SECONDS),
+      backend["timeout-minutes"] * 60,
+    );
+  }
+  assert(
+    jobs["platform-e2e-summary"].needs.includes("build-backend-rs-e2e-runtime"),
+  );
   assert(jobs["platform-e2e-summary"].needs.includes("build-frontend-e2e"));
 });
 
@@ -384,7 +411,7 @@ fs.writeFileSync('.coverage', 'guard coverage')
   }
 });
 
-test("the existing macOS runner exports verified runtimes after its real checkpoints", () => {
+test("the macOS runner exports complete runtimes after checkpoints on complete builds", () => {
   const parsed = spawnSync(
     "ruby",
     [
@@ -403,7 +430,18 @@ test("the existing macOS runner exports verified runtimes after its real checkpo
     (step) => step.name === "Describe verified native macOS runtimes",
   );
   assert(describe);
-  assert.equal(describe.if, undefined);
+  assert.equal(
+    job.env.MACOS_COMPLETE_BUILD,
+    "${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}",
+  );
+  const build = job.steps.find(
+    (step) => step.uses === "./.github/actions/build-wework-macos-e2e",
+  );
+  assert.equal(
+    build.with["include-backend"],
+    "${{ env.MACOS_COMPLETE_BUILD }}",
+  );
+  assert.equal(describe.if, "env.MACOS_COMPLETE_BUILD == 'true'");
   assert.equal(describe["continue-on-error"], undefined);
   assert.equal(describe.env.RUNTIME_TARGET, "darwin-arm64");
   assert.equal(
@@ -432,7 +470,7 @@ test("the existing macOS runner exports verified runtimes after its real checkpo
   ]) {
     const upload = job.steps.find((step) => step.name === name);
     assert(job.steps.indexOf(upload) > job.steps.indexOf(describe));
-    assert.equal(upload.if, undefined);
+    assert.equal(upload.if, describe.if);
     assert.equal(upload["continue-on-error"], undefined);
     assert.equal(upload.with.name, artifact);
     assert.equal(upload.with["if-no-files-found"], "error");
@@ -633,7 +671,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
   assert.equal(
     pnpm.if,
-    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
+    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')",
   );
   assert(
     steps.some(

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -18,9 +18,7 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getRuntimeConfig } from '@/config/runtime'
 import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
-import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
-import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -144,13 +142,6 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const isDesktop = isElectronRuntime()
   const pluginReference = parsePluginDetailRoute(routeSearch)
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
-
-  useEffect(() => {
-    track('plugin_center_opened', { surface: 'catalog' })
-    if (!isElectronRuntime()) return
-    const timeoutId = window.setTimeout(() => prefetchPluginsWorkspace(), 400)
-    return () => window.clearTimeout(timeoutId)
-  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -305,6 +296,7 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
             cloudMarketplaceAvailable={true}
             cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
             cloudToken={cloudConnection.token}
+            cloudUserId={cloudConnection.user?.id}
             sidebarCollapsed={sidebarCollapsed && !isMobile}
             topBarLeftActions={
               !isMobile && sidebarCollapsed && !isDesktop ? (

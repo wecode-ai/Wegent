@@ -33,7 +33,12 @@ async fn require_cloud_project_role_runs_the_source_access_query() {
     assert!(sql.contains("resource_members.entity_id = '3060'"));
     assert!(sql.contains("AND resource_members.resource_id = 1712605396200092385"));
     assert!(sql.contains("AND loop_items.id = '1712605396200092385'"));
-    assert!(sql.contains("UNION ALL SELECT loop_items.id AS project_id"));
+    assert!(sql.contains("UNION ALL SELECT CAST(loop_items.id AS BINARY) AS project_id"));
+    assert_eq!(
+        sql.matches("CAST(resource_members.resource_id AS BINARY) AS project_id")
+            .count(),
+        2
+    );
     assert!(!sql.contains("loop_items.created_by_user_id = 3060"));
     assert!(sql.contains("kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true"));
     assert!(sql.contains(

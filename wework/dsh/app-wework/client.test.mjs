@@ -13,11 +13,13 @@ import { apply as applyConversationExport } from '../conversation-export/index.j
 async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let registration
+  const chunks = new Map()
   const listeners = new Map()
   const hostWindow = {
     __ModuleLoader__: {
       load(value) {
-        registration = value
+        if (value.chunk) chunks.set(value.chunk, value)
+        else registration = value
       },
     },
     addEventListener(name, listener) {
@@ -27,7 +29,7 @@ async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
       if (listeners.get(name) === listener) listeners.delete(name)
     },
   }
-  vm.runInNewContext(source, {
+  const sandbox = {
     Error,
     Object,
     Promise,
@@ -36,12 +38,17 @@ async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
     console,
     setTimeout: setTimeoutImpl,
     window: hostWindow,
-  })
+  }
+  vm.runInNewContext(source, sandbox)
   assert.ok(registration)
+  const backendChunk = await readFile(
+    new URL('./client.backend-request.js', import.meta.url),
+    'utf8'
+  )
+  vm.runInNewContext(backendChunk, sandbox)
 
-  const effects = []
-  const refs = []
-  const exports = registration.factory(specifier => {
+  const mountRefs = []
+  const requireClient = specifier => {
     if (specifier === 'react-dom') {
       return {
         createPortal(node, container, key) {
@@ -53,22 +60,36 @@ async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
     return {
       Fragment: Symbol('Fragment'),
       createElement(type, props, ...children) {
+        if (typeof props?.ref === 'function') mountRefs.push(props.ref)
         return { type, props: { ...props, children } }
       },
-      useEffect(effect) {
-        effects.push(effect)
-      },
-      useRef(value) {
-        const ref = { current: value }
-        refs.push(ref)
-        return ref
+      useCallback(callback) {
+        return callback
       },
       useState(value) {
         return [value, () => {}]
       },
     }
-  })
-  return { effects, exports, hostWindow, listeners, refs }
+  }
+  const chunkExports = new Map()
+  requireClient.async = async specifier => {
+    const fileName = specifier.slice(2)
+    if (!/^client\.[A-Za-z0-9][A-Za-z0-9._-]*\.js$/.test(fileName))
+      throw new Error(`Unexpected chunk: ${specifier}`)
+    if (chunkExports.has(fileName)) return chunkExports.get(fileName)
+    const registration = chunks.get(fileName)
+    if (!registration) throw new Error(`Missing chunk registration: ${fileName}`)
+    const exports = registration.factory(requireClient)
+    chunkExports.set(fileName, exports)
+    return exports
+  }
+  const exports = registration.factory(requireClient)
+  return {
+    exports,
+    hostWindow,
+    listeners,
+    mountRoot: (container = {}) => mountRefs.at(-1)(container),
+  }
 }
 
 test('registers Wework as the DSH root application', async () => {
@@ -195,7 +216,7 @@ test('projects native DSH sidebar slot entries into Wework containers', async ()
       return { name, props, options }
     },
   })
-  const cleanup = client.effects[0]()
+  const cleanup = client.mountRoot()
   assert.deepEqual(
     JSON.parse(
       JSON.stringify(client.hostWindow.__WEWORK_DSH_UI__.getEntries('wework.workspace.sidebar.tab'))
@@ -345,7 +366,7 @@ test('projects native DSH workspace tab entries into Wework surfaces', async () 
     entry => entry.options.name === 'wework.internal.workspace'
   ).component
   Root({ renderSlot: () => null })
-  const cleanup = client.effects[0]()
+  const cleanup = client.mountRoot()
   assert.equal(
     JSON.stringify(client.hostWindow.__WEWORK_DSH_UI__.getEntries('wework.workspace.tab')),
     JSON.stringify([{ id: 'dashboard', label: 'Dashboard', order: 5 }])
@@ -555,78 +576,82 @@ test('does not retry a plugin backend request after its transport loses the resp
   runtime.dispose()
 })
 
-test('does not duplicate a conversation export write after its response is lost', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-backend-retry-'))
-  const destination = join(root, 'conversation.zip')
-  let registration
-  const cleanups = []
-  applyConversationExport({
-    effect(factory) {
-      cleanups.push(factory())
-    },
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
+test(
+  'does not duplicate a conversation export write after its response is lost',
+  { timeout: 30_000 },
+  async t => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-backend-retry-'))
+    const destination = join(root, 'conversation.zip')
+    let registration
+    const cleanups = []
+    applyConversationExport({
+      effect(factory) {
+        cleanups.push(factory())
       },
-    },
-  })
-  const { exportTaskId } = await registration.methods.start({
-    path: destination,
-    archive: true,
-    documentName: 'conversation.md',
-    assetCount: 1,
-  })
-  const calls = new Map()
-  const client = await loadClient()
-  const runtime = client.exports.createExtensionRuntime({
-    fetch: async (_path, options) => {
-      const request = JSON.parse(options.body)
-      const count = (calls.get(request.method) ?? 0) + 1
-      calls.set(request.method, count)
-      const result = await registration.methods[request.method](request.params)
-      if (count === 1) throw new TypeError('Response lost after the handler wrote the export')
-      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { ok: true, result }
+      weworkPluginRuntime: {
+        register(_owner, value) {
+          registration = value
         },
-      }
-    },
-  })
-  const backend = runtime.service.backend.scope('conversation-export')
+      },
+    })
+    const { exportTaskId } = await registration.methods.start({
+      path: destination,
+      archive: true,
+      documentName: 'conversation.md',
+      assetCount: 1,
+    })
+    const calls = new Map()
+    const client = await loadClient()
+    const runtime = client.exports.createExtensionRuntime({
+      fetch: async (_path, options) => {
+        const request = JSON.parse(options.body)
+        const count = (calls.get(request.method) ?? 0) + 1
+        calls.set(request.method, count)
+        const result = await registration.methods[request.method](request.params)
+        if (count === 1) throw new TypeError('Response lost after the handler wrote the export')
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { ok: true, result }
+          },
+        }
+      },
+    })
+    const backend = runtime.service.backend.scope('conversation-export')
 
-  await assert.rejects(
-    backend.request('append', { exportTaskId, content: 'hello\\n' }),
-    /Plugin backend is unreachable/
-  )
-  await assert.rejects(
-    backend.request('appendAsset', {
-      exportTaskId,
-      archivePath: 'attachments/hello.txt',
-      contentBase64: Buffer.from('hello\\n').toString('base64'),
-    }),
-    /Plugin backend is unreachable/
-  )
-  assert.deepEqual(
-    [...calls],
-    [
-      ['append', 1],
-      ['appendAsset', 1],
-    ]
-  )
+    await assert.rejects(
+      backend.request('append', { exportTaskId, content: 'hello\\n' }),
+      /Plugin backend is unreachable/
+    )
+    await assert.rejects(
+      backend.request('appendAsset', {
+        exportTaskId,
+        archivePath: 'attachments/hello.txt',
+        contentBase64: Buffer.from('hello\\n').toString('base64'),
+      }),
+      /Plugin backend is unreachable/
+    )
+    assert.deepEqual(
+      [...calls],
+      [
+        ['append', 1],
+        ['appendAsset', 1],
+      ]
+    )
 
-  await registration.methods.finish({ exportTaskId })
-  const status = await waitForTerminalStatus(registration.methods, exportTaskId)
-  const archive = await JSZip.loadAsync(await readFile(destination))
-  assert.equal(status.state, 'completed')
-  assert.equal(await archive.file('conversation.md').async('string'), 'hello\\n')
-  assert.equal(await archive.file('attachments/hello.txt').async('string'), 'hello\\n')
+    await registration.methods.finish({ exportTaskId })
+    const status = await waitForTerminalStatus(registration.methods, exportTaskId, t.signal)
+    const archive = await JSZip.loadAsync(await readFile(destination))
+    assert.equal(status.state, 'completed')
+    assert.equal(await archive.file('conversation.md').async('string'), 'hello\\n')
+    assert.equal(await archive.file('attachments/hello.txt').async('string'), 'hello\\n')
 
-  runtime.dispose()
-  for (const cleanup of cleanups) cleanup()
-  await rm(root, { recursive: true, force: true })
-})
+    runtime.dispose()
+    for (const cleanup of cleanups) cleanup()
+    await rm(root, { recursive: true, force: true })
+  }
+)
 
 test('does not send a delayed retry after the extension runtime is disposed', async () => {
   let resolveDelay
@@ -1026,8 +1051,7 @@ test('mounts the Wework bundle with the active DSH context', async () => {
   const element = Root({ renderSlot: () => null })
   const appRoot = element.props.children[0]
   assert.equal(appRoot.props['data-testid'], 'wework-dsh-root')
-  appRoot.props.ref.current = container
-  const cleanup = client.effects[0]()
+  const cleanup = client.mountRoot(container)
   await Promise.resolve()
   cleanup()
   assert.deepEqual(disposeCalls, ['disposed'])
@@ -1041,9 +1065,8 @@ test('waits for the Wework application bundle when it loads after DSH plugins', 
   context.slots.entriesOfSlot = () => []
   context.slots.subscribe = () => () => {}
   const Root = client.exports.createWeworkRoot(context, client.hostWindow)
-  const element = Root({ renderSlot: () => null })
-  element.props.children[0].props.ref.current = container
-  const cleanup = client.effects[0]()
+  Root({ renderSlot: () => null })
+  const cleanup = client.mountRoot(container)
 
   assert.equal(client.listeners.has(client.exports.APP_RUNTIME_READY_EVENT), true)
   client.hostWindow.__WEWORK_APP_RUNTIME__ = {

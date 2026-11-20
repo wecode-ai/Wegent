@@ -117,6 +117,8 @@ If MCP tools failed to start or their connection was interrupted, sending anothe
 
 The `codex MCP startup status` log records the process generation, conversation, server, startup status, and redacted error. `codex MCP startup recovery` records the servers that triggered recovery. Preserve these records if the problem persists.
 
+MCP tool approvals have their own deadline. The tool execution timeout starts after approval, when the tool is called. At the approval deadline, the local executor sends a cancellation to Codex even if the current turn did not receive the request. Use the request and turn IDs in the `codex native MCP elicitation expired` log to identify the cancellation.
+
 ### Unable to connect to the model service
 
 When the local model proxy cannot send a request to the model service, the conversation shows **Unable to connect to the model service** and includes the complete failed endpoint directly in the error card. `Failed to send a request` means that the client did not receive a usable HTTP response. Check the current network, VPN, proxy, and DNS settings. For an internal endpoint, also confirm that the device is connected to the corporate network or VPN.

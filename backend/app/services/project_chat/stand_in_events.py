@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.models.delivery import LoopNode, StandInIssueInbox
 from app.services.device.identity import lock_device_owner
 from shared.telemetry.decorators import trace_sync
+
+logger = logging.getLogger(__name__)
 
 
 @trace_sync("stand_in.issue_wakeup", tracer_name="backend.project_chat")
@@ -53,6 +56,17 @@ def enqueue_issue_wakeup(db: Session, *, user_id: int, payload: dict) -> None:
             "sort_order": sequence,
             "metadata": payload,
         },
+    )
+    logger.info(
+        "Stand-in Issue wakeup staged user_id=%s event_id=%s project_id=%s "
+        "issue_id=%s assignment_id=%s comment_id=%s allocated_sequence=%s",
+        user_id,
+        event_id,
+        payload.get("projectId"),
+        payload.get("itemId"),
+        payload.get("assignmentId"),
+        payload.get("commentId"),
+        sequence,
     )
 
 

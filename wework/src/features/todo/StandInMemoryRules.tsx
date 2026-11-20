@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { dequal } from 'dequal'
 import type { StandInExecutorApi, StandInMemoryRule, StandInMemoryScope } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
@@ -26,56 +27,54 @@ export function StandInMemoryRules({
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const [retry, setRetry] = useState(0)
   const scopeKey = fixedScope ? JSON.stringify(fixedScope) : undefined
   const owner = useMemo(
-    () => ({ api, userId, deviceId, scopeKey }),
+    () =>
+      createAsyncResource(
+        JSON.stringify(['stand-in-memory-rules', userId, deviceId, scopeKey]),
+        async () => {
+          const rows = await api.memoryRules(userId, deviceId)
+          const items = rows.filter(row =>
+            row.kind === 'legacy_fingerprint'
+              ? !scopeKey
+              : scopeKey
+                ? dequal(row.scope, JSON.parse(scopeKey))
+                : row.scope.kind !== 'project_coordinator'
+          )
+          return { items }
+        },
+        { refreshOnSubscribe: true }
+      ),
     [api, userId, deviceId, scopeKey]
   )
-  const [state, setState] = useState<{
+  const version = useMemo(() => ({ refreshKey }), [refreshKey])
+  const subscribe = useCallback(
+    (listener: () => void) => owner.subscribe(listener, version),
+    [owner, version]
+  )
+  const snapshot = useSyncExternalStore(
+    open ? subscribe : subscribeIdleResource,
+    owner.getSnapshot,
+    owner.getSnapshot
+  )
+  const [mutationError, setMutationError] = useState<{
     owner: object
-    items: StandInMemoryRule[] | null
-    error: string | null
-    loading: boolean
-  }>({ owner, items: null, error: null, loading: false })
+    receipt: typeof snapshot.data
+    text: string
+  } | null>(null)
+  const current = {
+    items: snapshot.data?.items ?? null,
+    loading: snapshot.status === 'idle' || snapshot.status === 'loading',
+    error:
+      snapshot.status === 'error'
+        ? getStandInErrorMessage(snapshot.error)
+        : mutationError?.owner === owner && mutationError.receipt === snapshot.data
+          ? mutationError.text
+          : null,
+  }
   const [deleting, setDeleting] = useState<{ owner: object; row: StandInMemoryRule } | null>(null)
   const [notice, setNotice] = useState<{ owner: object; text: string } | null>(null)
-  const current = state.owner === owner ? state : null
   const selected = deleting?.owner === owner ? deleting.row : null
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    setState(previous => ({
-      owner,
-      items: previous.owner === owner ? previous.items : null,
-      error: null,
-      loading: true,
-    }))
-    api
-      .memoryRules(userId, deviceId)
-      .then(rows => {
-        if (!active) return
-        const items = rows.filter(row =>
-          row.kind === 'legacy_fingerprint'
-            ? !scopeKey
-            : scopeKey
-              ? dequal(row.scope, JSON.parse(scopeKey))
-              : row.scope.kind !== 'project_coordinator'
-        )
-        setState({ owner, items, error: null, loading: false })
-      })
-      .catch(error => {
-        if (active)
-          setState(previous => ({
-            ...previous,
-            error: getStandInErrorMessage(error),
-            loading: false,
-          }))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, userId, deviceId, scopeKey, owner, open, retry, refreshKey])
 
   const remove = async (row: StandInMemoryRule) => {
     onBusyChange(true)
@@ -86,16 +85,12 @@ export function StandInMemoryRules({
       } else {
         await api.deleteMemoryRule(userId, deviceId, row.id, row.version)
       }
-      setState(previous =>
-        previous.owner === owner
-          ? {
-              ...previous,
-              items: previous.items?.filter(item => item.id !== row.id) ?? [],
-              error: null,
-            }
-          : previous
-      )
-      setDeleting(null)
+      if (!owner.hasSubscribers()) return
+      owner.update(previous => ({
+        items: previous?.items.filter(item => item.id !== row.id) ?? [],
+      }))
+      setMutationError(previous => (previous?.owner === owner ? null : previous))
+      setDeleting(previous => (previous?.owner === owner ? null : previous))
       setNotice({
         owner,
         text: t(
@@ -105,9 +100,13 @@ export function StandInMemoryRules({
         ),
       })
     } catch (error) {
-      setState(previous =>
-        previous.owner === owner ? { ...previous, error: getStandInErrorMessage(error) } : previous
-      )
+      if (owner.hasSubscribers()) {
+        setMutationError({
+          owner,
+          receipt: owner.getSnapshot().data,
+          text: getStandInErrorMessage(error),
+        })
+      }
     } finally {
       onBusyChange(false)
     }
@@ -139,7 +138,8 @@ export function StandInMemoryRules({
                 data-testid="stand-in-memory-rules-retry"
                 onClick={() => {
                   setDeleting(null)
-                  setRetry(value => value + 1)
+                  setMutationError(null)
+                  void owner.reload()
                 }}
               >
                 {t('standIn.reload')}

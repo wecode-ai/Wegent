@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from 'react'
+import { useWorkspaceMemberCatalog } from './useWorkspaceMemberCatalog'
 import {
   Bot,
   Cloud,
@@ -14,32 +15,28 @@ import {
   UserRound,
   UsersRound,
   X,
-} from "lucide-react";
-import type { CollaborationTranslate } from "../i18n";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+} from 'lucide-react'
+import type { CollaborationTranslate } from '../i18n'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationExecutionEnvironment,
   CollaborationGroup,
   CollaborationOwnedAgent,
   CollaborationProject,
   CollaborationWorkspace,
-  CollaborationWorkspaceMember,
-} from "../types";
-import type {
-  CollaborationDomain,
-  CollaborationPlatformHostAdapter,
-} from "./types";
-import type { DeviceCatalogState } from "./useDeviceCatalog";
-import { DeviceCatalogFeedback } from "./DeviceCatalogFeedback";
-import { ResourceBindingDialog } from "./ResourceBindingDialog";
-import { DeviceLastSeen, useDeviceLastSeenClock } from "./DeviceLastSeen";
-import { DeviceDeleteDialog } from "./DeviceDeleteDialog";
-import { Tooltip } from "../issue-detail/Tooltip";
+} from '../types'
+import type { CollaborationDomain, CollaborationPlatformHostAdapter } from './types'
+import type { DeviceCatalogState } from './useDeviceCatalog'
+import { DeviceCatalogFeedback } from './DeviceCatalogFeedback'
+import { ResourceBindingDialog } from './ResourceBindingDialog'
+import { DeviceLastSeen, useDeviceLastSeenClock } from './DeviceLastSeen'
+import { DeviceDeleteDialog } from './DeviceDeleteDialog'
+import { Tooltip } from '../issue-detail/Tooltip'
 import {
   ResourceDestinationDialog,
   type ResourceDestinationOption,
-} from "./ResourceDestinationDialog";
-import type { PlatformMessages } from "./platformMessages";
+} from './ResourceDestinationDialog'
+import type { PlatformMessages } from './platformMessages'
 import {
   runtimeLabel,
   resourceCatalogCopy,
@@ -48,7 +45,7 @@ import {
   type ResourceCatalogKind,
   type ResourceScope,
   type ResourceSource,
-} from "./resourceCatalogModel";
+} from './resourceCatalogModel'
 
 export function ResourceCatalogPage({
   api,
@@ -78,191 +75,142 @@ export function ResourceCatalogPage({
   onManageResource,
   preferences,
 }: {
-  api: SharedWorkspaceApi;
-  preferences?: ReactNode;
-  domain: CollaborationDomain;
-  kind: ResourceCatalogKind;
-  cloudAccess: CollaborationPlatformHostAdapter["cloudAccess"];
-  agents: CollaborationOwnedAgent[];
-  groups: CollaborationGroup[];
-  environments: CollaborationExecutionEnvironment[];
-  deviceCatalog?: DeviceCatalogState;
-  translate: CollaborationTranslate;
-  canCreateDevice: boolean;
-  workspaces: CollaborationWorkspace[];
-  projects: CollaborationProject[];
-  ownerOptions: CollaborationPlatformHostAdapter["workspaceOwnerOptions"];
-  messages: PlatformMessages;
+  api: SharedWorkspaceApi
+  preferences?: ReactNode
+  domain: CollaborationDomain
+  kind: ResourceCatalogKind
+  cloudAccess: CollaborationPlatformHostAdapter['cloudAccess']
+  agents: CollaborationOwnedAgent[]
+  groups: CollaborationGroup[]
+  environments: CollaborationExecutionEnvironment[]
+  deviceCatalog?: DeviceCatalogState
+  translate: CollaborationTranslate
+  canCreateDevice: boolean
+  workspaces: CollaborationWorkspace[]
+  projects: CollaborationProject[]
+  ownerOptions: CollaborationPlatformHostAdapter['workspaceOwnerOptions']
+  messages: PlatformMessages
   onAddToWorkspace(
     workspaceId: string,
     kind: ResourceCatalogKind,
-    resourceId: string,
-  ): Promise<void>;
-  onCreateAgent(
-    ownerOptions: Array<{ namespace: string; label: string }>,
-  ): void;
-  onCreateDevice(source: ResourceSource, workspaceId?: string): void;
-  onCreateLocalAgent(): void;
-  onCreateTeam(workspaceId: string): void;
-  onDeleteAgent(agent: CollaborationOwnedAgent): Promise<void>;
-  onDeleteTeam(group: CollaborationGroup): Promise<void>;
-  onDeleteDevice?(device: CollaborationExecutionEnvironment): Promise<void>;
-  currentUserId?: number;
-  locale: string;
-  onManageResource(
-    kind: ResourceCatalogKind,
-    resourceId?: string,
-    source?: ResourceSource,
-  ): void;
+    resourceId: string
+  ): Promise<void>
+  onCreateAgent(ownerOptions: Array<{ namespace: string; label: string }>): void
+  onCreateDevice(source: ResourceSource, workspaceId?: string): void
+  onCreateLocalAgent(): void
+  onCreateTeam(workspaceId: string): void
+  onDeleteAgent(agent: CollaborationOwnedAgent): Promise<void>
+  onDeleteTeam(group: CollaborationGroup): Promise<void>
+  onDeleteDevice?(device: CollaborationExecutionEnvironment): Promise<void>
+  currentUserId?: number
+  locale: string
+  onManageResource(kind: ResourceCatalogKind, resourceId?: string, source?: ResourceSource): void
 }) {
-  const [workspaceMembers, setWorkspaceMembers] = useState<
-    Record<string, CollaborationWorkspaceMember[]>
-  >({});
-  useEffect(() => {
-    let active = true;
-    if (kind !== "teams" || !api.workspaces) return;
-    void Promise.all(
-      workspaces.map(
-        async (workspace) =>
-          [
-            workspace.id,
-            await api.workspaces!.listMembers(workspace.id),
-          ] as const,
-      ),
-    )
-      .then((entries) => {
-        if (active) setWorkspaceMembers(Object.fromEntries(entries));
-      })
-      .catch(() => {
-        if (active) setWorkspaceMembers({});
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, kind, workspaces]);
-  const participantName = (
-    member: CollaborationGroup["leader"],
-    workspaceId: string,
-  ) => {
-    if (member.kind === "agent") {
+  const workspaceMembers = useWorkspaceMemberCatalog(api, workspaces, kind === 'teams')
+  const participantName = (member: CollaborationGroup['leader'], workspaceId: string) => {
+    if (member.kind === 'agent') {
       const agent = agents.find(
-        (candidate) =>
+        candidate =>
           candidate.id === member.id ||
-          String(candidate.team_id ?? "") === member.id ||
-          candidate.agent_id === member.id,
-      );
-      return agent?.name ?? messages.agent;
+          String(candidate.team_id ?? '') === member.id ||
+          candidate.agent_id === member.id
+      )
+      return agent?.name ?? messages.agent
     }
     return (
-      workspaceMembers[workspaceId]?.find(
-        (person) => String(person.user_id) === member.id,
-      )?.user_name ?? messages.human
-    );
-  };
-  const [scope, setScope] = useState<ResourceScope>("all");
-  const [query, setQuery] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [bindingResourceId, setBindingResourceId] = useState<string | null>(
-    null,
-  );
-  const [deletingAgent, setDeletingAgent] =
-    useState<CollaborationOwnedAgent | null>(null);
-  const [deletingTeam, setDeletingTeam] = useState<CollaborationGroup | null>(
-    null,
-  );
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deletingDevice, setDeletingDevice] =
-    useState<CollaborationExecutionEnvironment | null>(null);
-  const now = useDeviceLastSeenClock(kind === "devices");
+      workspaceMembers[workspaceId]?.find(person => String(person.user_id) === member.id)
+        ?.user_name ?? messages.human
+    )
+  }
+  const [scope, setScope] = useState<ResourceScope>('all')
+  const [query, setQuery] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [bindingResourceId, setBindingResourceId] = useState<string | null>(null)
+  const [deletingAgent, setDeletingAgent] = useState<CollaborationOwnedAgent | null>(null)
+  const [deletingTeam, setDeletingTeam] = useState<CollaborationGroup | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deletingDevice, setDeletingDevice] = useState<CollaborationExecutionEnvironment | null>(
+    null
+  )
+  const now = useDeviceLastSeenClock(kind === 'devices')
   const workspaceLocations = useMemo(
-    () =>
-      new Map(
-        workspaces.map((workspace) => [workspace.id, workspace.location]),
-      ),
-    [workspaces],
-  );
-  const localWorkspace =
-    workspaces.find((workspace) => workspace.location === "local") ?? null;
-  const cloudWorkspaces = workspaces.filter(
-    (workspace) => workspace.location === "cloud",
-  );
+    () => new Map(workspaces.map(workspace => [workspace.id, workspace.location])),
+    [workspaces]
+  )
+  const localWorkspace = workspaces.find(workspace => workspace.location === 'local') ?? null
+  const cloudWorkspaces = workspaces.filter(workspace => workspace.location === 'cloud')
   const cloudGroupWorkspaces = cloudWorkspaces.filter(
-    (workspace) => workspace.namespace !== "default",
-  );
+    workspace => workspace.namespace !== 'default'
+  )
   const resourceOwners = Array.from(
     new Map([
-      ["default", { namespace: "default", label: messages.cloudPersonal }],
+      ['default', { namespace: 'default', label: messages.cloudPersonal }],
       ...cloudGroupWorkspaces.map(
-        (workspace) =>
-          [
-            workspace.namespace,
-            { namespace: workspace.namespace, label: workspace.name },
-          ] as const,
+        workspace =>
+          [workspace.namespace, { namespace: workspace.namespace, label: workspace.name }] as const
       ),
       ...(ownerOptions ?? [])
-        .filter((owner) => owner.namespace !== "default")
-        .map((owner) => [owner.namespace, owner] as const),
-    ]).values(),
-  );
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const createOptions: ResourceDestinationOption[] = [];
-  if (domain === "cloud" && cloudAccess && !cloudAccess.authenticated) {
+        .filter(owner => owner.namespace !== 'default')
+        .map(owner => [owner.namespace, owner] as const),
+    ]).values()
+  )
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const createOptions: ResourceDestinationOption[] = []
+  if (domain === 'cloud' && cloudAccess && !cloudAccess.authenticated) {
     createOptions.push({
-      id: "cloud-login",
+      id: 'cloud-login',
       testId: `collaboration-${kind}-create-cloud-login`,
       label: messages.loginForCloud,
       description: messages.loginForCloudHint,
       icon: <Cloud aria-hidden="true" />,
       onSelect: cloudAccess.requestLogin,
-    });
-  } else if (domain === "cloud" && kind === "devices") {
+    })
+  } else if (domain === 'cloud' && kind === 'devices') {
     createOptions.push({
-      id: "default",
-      testId: "collaboration-devices-create-cloud-personal",
+      id: 'default',
+      testId: 'collaboration-devices-create-cloud-personal',
       label: messages.cloudPersonal,
       description: messages.cloudPersonalHint,
       icon: <UserRound aria-hidden="true" />,
-      onSelect: () => onCreateDevice("cloud"),
-    });
+      onSelect: () => onCreateDevice('cloud'),
+    })
     if (cloudGroupWorkspaces.length) {
       createOptions.push({
-        id: "cloud-groups",
-        testId: "collaboration-devices-create-cloud-groups",
+        id: 'cloud-groups',
+        testId: 'collaboration-devices-create-cloud-groups',
         label: messages.cloudGroups,
         description: messages.cloudGroupsHint,
         icon: <UsersRound aria-hidden="true" />,
-        children: cloudGroupWorkspaces.map((workspace) => ({
+        children: cloudGroupWorkspaces.map(workspace => ({
           id: workspace.id,
           testId: `collaboration-devices-create-workspace-${workspace.id}`,
           label: workspace.name,
           description: messages.cloudTeamHint,
           icon: <UsersRound aria-hidden="true" />,
-          onSelect: () => onCreateDevice("cloud", workspace.id),
+          onSelect: () => onCreateDevice('cloud', workspace.id),
         })),
-      });
+      })
     }
-  } else if (domain === "cloud" && kind === "agents") {
+  } else if (domain === 'cloud' && kind === 'agents') {
     createOptions.push({
-      id: "cloud",
-      testId: "collaboration-agents-create-cloud",
+      id: 'cloud',
+      testId: 'collaboration-agents-create-cloud',
       label: messages.cloudResources,
       description: messages.cloudResourcesHint,
       icon: <Cloud aria-hidden="true" />,
       onSelect: () => onCreateAgent(resourceOwners),
-    });
-  } else if (domain === "cloud") {
-    const ownerDestinationOptions = resourceOwners.map((owner) => {
-      const personal = owner.namespace === "default";
-      const workspace = cloudWorkspaces.find(
-        (candidate) => candidate.namespace === owner.namespace,
-      );
-      const disabled = kind === "teams" && !workspace;
+    })
+  } else if (domain === 'cloud') {
+    const ownerDestinationOptions = resourceOwners.map(owner => {
+      const personal = owner.namespace === 'default'
+      const workspace = cloudWorkspaces.find(candidate => candidate.namespace === owner.namespace)
+      const disabled = kind === 'teams' && !workspace
       return {
         id: owner.namespace,
         testId: personal
           ? `collaboration-${kind}-create-cloud-personal`
-          : kind === "teams" && workspace
+          : kind === 'teams' && workspace
             ? `collaboration-teams-create-workspace-${workspace.id}`
             : `collaboration-${kind}-create-owner-${owner.namespace}`,
         label: owner.label,
@@ -271,123 +219,105 @@ export function ResourceCatalogPage({
           : personal
             ? messages.cloudPersonalHint
             : messages.cloudTeamHint,
-        icon: personal ? (
-          <UserRound aria-hidden="true" />
-        ) : (
-          <UsersRound aria-hidden="true" />
-        ),
+        icon: personal ? <UserRound aria-hidden="true" /> : <UsersRound aria-hidden="true" />,
         disabled,
         onSelect: () => {
-          if (kind === "teams" && workspace) onCreateTeam(workspace.id);
+          if (kind === 'teams' && workspace) onCreateTeam(workspace.id)
         },
-      };
-    });
-    const personalOwner = ownerDestinationOptions.find(
-      (option) => option.id === "default",
-    );
-    if (personalOwner) createOptions.push(personalOwner);
-    const groupOwners = ownerDestinationOptions.filter(
-      (option) => option.id !== "default",
-    );
+      }
+    })
+    const personalOwner = ownerDestinationOptions.find(option => option.id === 'default')
+    if (personalOwner) createOptions.push(personalOwner)
+    const groupOwners = ownerDestinationOptions.filter(option => option.id !== 'default')
     if (groupOwners.length) {
       createOptions.push({
-        id: "cloud-groups",
+        id: 'cloud-groups',
         testId: `collaboration-${kind}-create-cloud-groups`,
         label: messages.cloudGroups,
         description: messages.cloudGroupsHint,
         icon: <UsersRound aria-hidden="true" />,
         children: groupOwners,
-      });
+      })
     }
   }
-  useEffect(() => {
-    setScope("all");
-    setQuery("");
-    setCreateOpen(false);
-    setBindingResourceId(null);
-    setDeletingAgent(null);
-    setDeletingTeam(null);
-    setDeletingDevice(null);
-    setDeleteError(null);
-  }, [domain, kind]);
-  const pageCopy = resourceCatalogCopy(kind, messages);
+  const [navigationScope, setNavigationScope] = useState({ domain, kind })
+  if (navigationScope.domain !== domain || navigationScope.kind !== kind) {
+    setNavigationScope({ domain, kind })
+    setScope('all')
+    setQuery('')
+    setCreateOpen(false)
+    setBindingResourceId(null)
+    setDeletingAgent(null)
+    setDeletingTeam(null)
+    setDeletingDevice(null)
+    setDeleteError(null)
+  }
+  const pageCopy = resourceCatalogCopy(kind, messages)
 
-  const agentRows = agents.map((agent) => {
+  const agentRows = agents.map(agent => {
     return {
       id: agent.id,
       name: agent.name,
-      source: agent.location ?? ("cloud" as const),
-      scope:
-        agent.owner_type === "user" ? ("mine" as const) : ("shared" as const),
+      source: agent.location ?? ('cloud' as const),
+      scope: agent.owner_type === 'user' ? ('mine' as const) : ('shared' as const),
       owner: agent.owner_name,
-      ownership: "",
-      detail: "",
-      access:
-        agent.owner_type === "workspace"
-          ? messages.currentWorkspace
-          : messages.personalOwner,
-      leader: "",
-      participants: [] as CollaborationGroup["members"],
-      leaderKind: "agent",
+      ownership: '',
+      detail: '',
+      access: agent.owner_type === 'workspace' ? messages.currentWorkspace : messages.personalOwner,
+      leader: '',
+      participants: [] as CollaborationGroup['members'],
+      leaderKind: 'agent',
       tools: [] as string[],
       updatedAt: agent.status,
       status:
-        agent.status === "unchecked"
+        agent.status === 'unchecked'
           ? messages.selectable
-          : agent.status === "available"
+          : agent.status === 'available'
             ? messages.available
             : messages.unavailable,
       statusTone: agent.status,
       workspaceNames:
-        agent.owner_type === "workspace"
+        agent.owner_type === 'workspace'
           ? workspaces
-              .filter((workspace) => workspace.id === agent.owner_id)
-              .map((workspace) => workspace.name)
+              .filter(workspace => workspace.id === agent.owner_id)
+              .map(workspace => workspace.name)
           : [],
-    };
-  });
-  const teamRows = groups.map((group) => {
+    }
+  })
+  const teamRows = groups.map(group => {
     const owningProject =
-      group.owner_type === "project"
-        ? projects.find((project) => project.id === group.owner_id)
-        : null;
+      group.owner_type === 'project'
+        ? projects.find(project => project.id === group.owner_id)
+        : null
     const owningWorkspace =
       workspaces.find(
-        (workspace) =>
+        workspace =>
           workspace.id === group.workspace_id ||
-          (group.owner_type === "workspace" && workspace.id === group.owner_id),
+          (group.owner_type === 'workspace' && workspace.id === group.owner_id)
       ) ??
       (owningProject?.workspace_id
-        ? workspaces.find(
-            (workspace) => workspace.id === owningProject.workspace_id,
-          )
-        : null);
+        ? workspaces.find(workspace => workspace.id === owningProject.workspace_id)
+        : null)
     const participants = Array.from(
       new Map(
-        [group.leader, ...group.members].map((member) => [
-          `${member.kind}:${member.id}`,
-          member,
-        ]),
-      ).values(),
-    );
+        [group.leader, ...group.members].map(member => [`${member.kind}:${member.id}`, member])
+      ).values()
+    )
     return {
       id: group.id,
       name: group.name,
       source:
         owningWorkspace?.location ??
         workspaceLocations.get(group.workspace_id) ??
-        ("cloud" as const),
-      scope: "shared" as const,
+        ('cloud' as const),
+      scope: 'shared' as const,
       owner: owningProject?.name ?? owningWorkspace?.name ?? group.owner_id,
       ownership:
-        group.owner_type === "project"
-          ? messages.projectOwnership.replace(
-              "{{name}}",
-              owningProject?.name ?? group.owner_id,
-            )
+        group.owner_type === 'project'
+          ? messages.projectOwnership.replace('{{name}}', owningProject?.name ?? group.owner_id)
           : messages.workspaceOwnership.replace(
-              "{{name}}",
-              owningWorkspace?.name ?? group.owner_id,
+              '{{name}}',
+              owningWorkspace?.name ?? group.owner_id
             ),
       detail: `${participants.length} ${messages.memberCount}`,
       access: messages.currentWorkspace,
@@ -397,109 +327,89 @@ export function ResourceCatalogPage({
       tools: [] as string[],
       updatedAt: group.updated_at,
       status: messages.available,
-      statusTone: "available",
+      statusTone: 'available',
       workspaceNames: owningWorkspace ? [owningWorkspace.name] : [],
-    };
-  });
-  const deviceRows = environments.map((environment) => ({
+    }
+  })
+  const deviceRows = environments.map(environment => ({
     id: environment.id,
     name: environment.name,
-    source:
-      environment.is_current_device === true
-        ? ("local" as const)
-        : ("cloud" as const),
-    scope:
-      environment.owner_type === "user"
-        ? ("mine" as const)
-        : ("shared" as const),
+    source: environment.is_current_device === true ? ('local' as const) : ('cloud' as const),
+    scope: environment.owner_type === 'user' ? ('mine' as const) : ('shared' as const),
     owner: environment.owner_name,
-    ownership: "",
-    detail: `${environment.device_id != null ? `#${environment.device_id} · ` : ""}${environment.coding_tools.length} ${messages.toolCount}`,
+    ownership: '',
+    detail: `${environment.device_id != null ? `#${environment.device_id} · ` : ''}${environment.coding_tools.length} ${messages.toolCount}`,
     access:
-      environment.owner_type === "workspace"
-        ? messages.currentWorkspace
-        : messages.personalOwner,
-    leader: "",
-    participants: [] as CollaborationGroup["members"],
-    leaderKind: "agent",
+      environment.owner_type === 'workspace' ? messages.currentWorkspace : messages.personalOwner,
+    leader: '',
+    participants: [] as CollaborationGroup['members'],
+    leaderKind: 'agent',
     tools: environment.coding_tools,
     updatedAt: environment.updated_at,
     status:
-      environment.status === "online"
+      environment.status === 'online'
         ? messages.online
-        : environment.status === "provisioning"
+        : environment.status === 'provisioning'
           ? messages.provisioning
-          : environment.status === "error"
+          : environment.status === 'error'
             ? messages.errorStatus
             : messages.offline,
     statusTone: environment.status,
     workspaceCount:
-      environment.workspace_ids?.length ??
-      (environment.owner_type === "workspace" ? 1 : 0),
+      environment.workspace_ids?.length ?? (environment.owner_type === 'workspace' ? 1 : 0),
     workspaceNames: workspaces
-      .filter((workspace) =>
-        environment.owner_type === "workspace"
+      .filter(workspace =>
+        environment.owner_type === 'workspace'
           ? workspace.id === environment.owner_id
-          : environment.workspace_ids?.includes(workspace.id),
+          : environment.workspace_ids?.includes(workspace.id)
       )
-      .map((workspace) => workspace.name),
-  }));
-  const rows =
-    kind === "agents" ? agentRows : kind === "teams" ? teamRows : deviceRows;
+      .map(workspace => workspace.name),
+  }))
+  const rows = kind === 'agents' ? agentRows : kind === 'teams' ? teamRows : deviceRows
   const visibleRows = rows.filter(
-    (row) =>
-      (kind !== "devices" || row.statusTone === "online") &&
-      (scope === "all" || row.scope === scope) &&
+    row =>
+      (kind !== 'devices' || row.statusTone === 'online') &&
+      (scope === 'all' || row.scope === scope) &&
       (!normalizedQuery ||
-        `${row.name} ${row.owner} ${row.workspaceNames.join(" ")}`
+        `${row.name} ${row.owner} ${row.workspaceNames.join(' ')}`
           .toLocaleLowerCase()
-          .includes(normalizedQuery)),
-  );
-  const PageIcon =
-    kind === "agents" ? Bot : kind === "teams" ? UsersRound : Monitor;
-  const rowsInSource =
-    kind === "devices"
-      ? rows.filter((row) => row.statusTone === "online")
-      : rows;
+          .includes(normalizedQuery))
+  )
+  const PageIcon = kind === 'agents' ? Bot : kind === 'teams' ? UsersRound : Monitor
+  const rowsInSource = kind === 'devices' ? rows.filter(row => row.statusTone === 'online') : rows
   const scopeCounts = {
     all: rowsInSource.length,
-    mine: rowsInSource.filter((row) => row.scope === "mine").length,
-    shared: rowsInSource.filter((row) => row.scope === "shared").length,
-  };
-  const bindingRow = rows.find((row) => row.id === bindingResourceId) ?? null;
+    mine: rowsInSource.filter(row => row.scope === 'mine').length,
+    shared: rowsInSource.filter(row => row.scope === 'shared').length,
+  }
+  const bindingRow = rows.find(row => row.id === bindingResourceId) ?? null
   const formatCount = (template: string, count: number) =>
-    template.replace("{{count}}", String(count));
+    template.replace('{{count}}', String(count))
   const workspaceUsage = (row: (typeof rows)[number]) =>
-    row.source === "local"
+    row.source === 'local'
       ? messages.localSpaces
-      : (
-            "workspaceCount" in row
-              ? row.workspaceCount
-              : row.workspaceNames.length
-          )
+      : ('workspaceCount' in row ? row.workspaceCount : row.workspaceNames.length)
         ? formatCount(
             messages.addedToSpaceCount,
-            "workspaceCount" in row
-              ? row.workspaceCount
-              : row.workspaceNames.length,
+            'workspaceCount' in row ? row.workspaceCount : row.workspaceNames.length
           )
-        : messages.notAddedToSpace;
+        : messages.notAddedToSpace
   const startCreate = () => {
-    if (domain === "local") {
-      if (kind === "agents") onCreateLocalAgent();
-      if (kind === "teams" && localWorkspace) onCreateTeam(localWorkspace.id);
-      return;
+    if (domain === 'local') {
+      if (kind === 'agents') onCreateLocalAgent()
+      if (kind === 'teams' && localWorkspace) onCreateTeam(localWorkspace.id)
+      return
     }
-    if (kind === "agents" && (!cloudAccess || cloudAccess.authenticated)) {
-      onCreateAgent(resourceOwners);
-      return;
+    if (kind === 'agents' && (!cloudAccess || cloudAccess.authenticated)) {
+      onCreateAgent(resourceOwners)
+      return
     }
-    setCreateOpen(true);
-  };
+    setCreateOpen(true)
+  }
   const canCreate =
-    domain === "local"
-      ? kind !== "devices" && Boolean(localWorkspace)
-      : kind !== "devices" || canCreateDevice;
+    domain === 'local'
+      ? kind !== 'devices' && Boolean(localWorkspace)
+      : kind !== 'devices' || canCreateDevice
 
   return (
     <div
@@ -515,7 +425,7 @@ export function ResourceCatalogPage({
             <h1>{pageCopy.title}</h1>
             <em>
               {deviceCatalog && !deviceCatalog.complete && !rowsInSource.length
-                ? "—"
+                ? '—'
                 : rowsInSource.length}
             </em>
           </span>
@@ -549,23 +459,23 @@ export function ResourceCatalogPage({
             role="group"
             aria-label={messages.resourceSource}
           >
-            {(["all", "mine", "shared"] as const).map((candidate) => (
+            {(['all', 'mine', 'shared'] as const).map(candidate => (
               <button
                 type="button"
-                className={scope === candidate ? "active" : undefined}
+                className={scope === candidate ? 'active' : undefined}
                 aria-pressed={scope === candidate}
                 data-testid={`collaboration-${kind}-scope-${candidate}`}
                 key={candidate}
                 onClick={() => setScope(candidate)}
               >
-                {candidate === "all"
+                {candidate === 'all'
                   ? messages.allSources
-                  : candidate === "mine"
+                  : candidate === 'mine'
                     ? messages.createdByMe
                     : messages.teamShared}
                 <em>
                   {deviceCatalog && !deviceCatalog.complete && !rows.length
-                    ? "—"
+                    ? '—'
                     : scopeCounts[candidate]}
                 </em>
               </button>
@@ -578,7 +488,7 @@ export function ResourceCatalogPage({
             data-testid={`collaboration-${kind}-search`}
             placeholder={pageCopy.search}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={event => setQuery(event.target.value)}
           />
         </label>
       </div>
@@ -590,12 +500,12 @@ export function ResourceCatalogPage({
         {visibleRows.length ? (
           <div className="collaboration-resource-catalog-list-header">
             <span>{pageCopy.title}</span>
-            {kind === "agents" ? (
+            {kind === 'agents' ? (
               <>
                 <span>{messages.runStatus}</span>
                 <span>{messages.usedBySpaces}</span>
               </>
-            ) : kind === "teams" ? (
+            ) : kind === 'teams' ? (
               <>
                 <span>{messages.leader}</span>
                 <span>{messages.memberCount}</span>
@@ -614,16 +524,16 @@ export function ResourceCatalogPage({
           </div>
         ) : null}
         {visibleRows.length ? (
-          visibleRows.map((row) => (
+          visibleRows.map(row => (
             <article
               data-source={row.source}
               data-testid={`collaboration-${kind}-row-${row.id}`}
               key={row.id}
             >
               <span className="collaboration-resource-row-icon">
-                {kind === "agents" ? (
+                {kind === 'agents' ? (
                   <Bot aria-hidden="true" />
-                ) : kind === "teams" ? (
+                ) : kind === 'teams' ? (
                   <UsersRound aria-hidden="true" />
                 ) : (
                   <Monitor aria-hidden="true" />
@@ -633,29 +543,27 @@ export function ResourceCatalogPage({
                 <strong>{row.name}</strong>
                 {row.detail ? <small>{row.detail}</small> : null}
               </span>
-              {kind === "agents" ? (
+              {kind === 'agents' ? (
                 <>
                   <span
                     className="collaboration-resource-row-status"
                     data-tone={row.statusTone}
                     title={
-                      row.statusTone === "unchecked"
+                      row.statusTone === 'unchecked'
                         ? messages.agentUncheckedHint
-                        : row.statusTone === "available"
+                        : row.statusTone === 'available'
                           ? messages.agentAvailableHint
                           : messages.agentUnavailableHint
                     }
                   >
                     {row.status}
                   </span>
-                  <span className="collaboration-resource-row-detail">
-                    {workspaceUsage(row)}
-                  </span>
+                  <span className="collaboration-resource-row-detail">{workspaceUsage(row)}</span>
                 </>
-              ) : kind === "teams" ? (
+              ) : kind === 'teams' ? (
                 <>
                   <span className="collaboration-resource-row-leader">
-                    {row.leaderKind === "human" ? (
+                    {row.leaderKind === 'human' ? (
                       <UserRound aria-hidden="true" />
                     ) : (
                       <Bot aria-hidden="true" />
@@ -663,29 +571,22 @@ export function ResourceCatalogPage({
                     <span title={row.leader}>{row.leader}</span>
                   </span>
                   <span className="collaboration-resource-row-members">
-                    {row.participants.slice(0, 3).map((member) => {
+                    {row.participants.slice(0, 3).map(member => {
                       const label = participantName(
                         member,
-                        groups.find((group) => group.id === row.id)!
-                          .workspace_id,
-                      );
+                        groups.find(group => group.id === row.id)!.workspace_id
+                      )
                       return (
-                        <span
-                          key={`${member.kind}:${member.id}`}
-                          title={label}
-                          aria-label={label}
-                        >
-                          {member.kind === "human" ? (
+                        <span key={`${member.kind}:${member.id}`} title={label} aria-label={label}>
+                          {member.kind === 'human' ? (
                             <UserRound aria-hidden="true" />
                           ) : (
                             <Bot aria-hidden="true" />
                           )}
                         </span>
-                      );
+                      )
                     })}
-                    {row.participants.length > 3 ? (
-                      <em>+{row.participants.length - 3}</em>
-                    ) : null}
+                    {row.participants.length > 3 ? <em>+{row.participants.length - 3}</em> : null}
                   </span>
                   <span
                     className="collaboration-resource-row-ownership"
@@ -694,45 +595,34 @@ export function ResourceCatalogPage({
                   >
                     {row.ownership}
                   </span>
-                  <span className="collaboration-resource-row-detail">
-                    {workspaceUsage(row)}
-                  </span>
+                  <span className="collaboration-resource-row-detail">{workspaceUsage(row)}</span>
                 </>
               ) : (
                 <>
-                  <span
-                    className="collaboration-resource-row-status"
-                    data-tone={row.statusTone}
-                  >
+                  <span className="collaboration-resource-row-status" data-tone={row.statusTone}>
                     {row.status}
                   </span>
                   <DeviceLastSeen
-                    device={
-                      environments.find((device) => device.id === row.id)!
-                    }
+                    device={environments.find(device => device.id === row.id)!}
                     locale={locale}
                     messages={messages}
                     now={now}
                   />
                   <span className="collaboration-resource-row-tools">
-                    {row.tools.slice(0, 3).map((tool) => (
+                    {row.tools.slice(0, 3).map(tool => (
                       <em key={tool}>{runtimeLabel(tool)}</em>
                     ))}
-                    {row.tools.length > 3 ? (
-                      <em>+{row.tools.length - 3}</em>
-                    ) : null}
+                    {row.tools.length > 3 ? <em>+{row.tools.length - 3}</em> : null}
                   </span>
-                  <span className="collaboration-resource-row-detail">
-                    {workspaceUsage(row)}
-                  </span>
+                  <span className="collaboration-resource-row-detail">{workspaceUsage(row)}</span>
                 </>
               )}
               <span className="collaboration-resource-row-actions">
-                {kind === "devices" &&
+                {kind === 'devices' &&
                 onDeleteDevice &&
                 canDeleteOfflineDevice(
-                  environments.find((device) => device.id === row.id)!,
-                  currentUserId,
+                  environments.find(device => device.id === row.id)!,
+                  currentUserId
                 ) ? (
                   <Tooltip label={messages.deleteDevice}>
                     <button
@@ -741,22 +631,20 @@ export function ResourceCatalogPage({
                       aria-label={messages.deleteDevice}
                       data-testid={`collaboration-devices-delete-${row.id}`}
                       onClick={() =>
-                        setDeletingDevice(
-                          environments.find((device) => device.id === row.id)!,
-                        )
+                        setDeletingDevice(environments.find(device => device.id === row.id)!)
                       }
                     >
                       <Trash2 aria-hidden="true" />
                     </button>
                   </Tooltip>
                 ) : null}
-                {kind !== "teams" && row.source === "cloud" ? (
+                {kind !== 'teams' && row.source === 'cloud' ? (
                   <button
                     type="button"
                     className="collaboration-resource-bind-button"
                     data-testid={`collaboration-${kind}-bind-${row.id}`}
                     onClick={() => {
-                      setBindingResourceId(row.id);
+                      setBindingResourceId(row.id)
                     }}
                   >
                     {messages.addToSpace}
@@ -774,9 +662,8 @@ export function ResourceCatalogPage({
                     <Settings aria-hidden="true" />
                   </button>
                 }
-                {kind === "agents" &&
-                agents.find((agent) => agent.id === row.id)?.deletable !==
-                  false ? (
+                {kind === 'agents' &&
+                agents.find(agent => agent.id === row.id)?.deletable !== false ? (
                   <button
                     type="button"
                     className="collaboration-resource-settings-button"
@@ -784,15 +671,13 @@ export function ResourceCatalogPage({
                     title={messages.deleteAgent}
                     data-testid={`collaboration-agents-delete-${row.id}`}
                     onClick={() => {
-                      setDeleteError(null);
-                      setDeletingAgent(
-                        agents.find((agent) => agent.id === row.id) ?? null,
-                      );
+                      setDeleteError(null)
+                      setDeletingAgent(agents.find(agent => agent.id === row.id) ?? null)
                     }}
                   >
                     <Trash2 aria-hidden="true" />
                   </button>
-                ) : kind === "teams" ? (
+                ) : kind === 'teams' ? (
                   <button
                     type="button"
                     className="collaboration-resource-settings-button collaboration-resource-delete-button"
@@ -800,10 +685,8 @@ export function ResourceCatalogPage({
                     title={messages.deleteTeam}
                     data-testid={`collaboration-teams-delete-${row.id}`}
                     onClick={() => {
-                      setDeleteError(null);
-                      setDeletingTeam(
-                        groups.find((group) => group.id === row.id) ?? null,
-                      );
+                      setDeleteError(null)
+                      setDeletingTeam(groups.find(group => group.id === row.id) ?? null)
                     }}
                   >
                     <Trash2 aria-hidden="true" />
@@ -816,13 +699,13 @@ export function ResourceCatalogPage({
           <div className="collaboration-resource-catalog-empty">
             <PageIcon aria-hidden="true" />
             <strong>
-              {kind === "devices"
-                ? translate("todo.device_catalog_empty", "尚未添加设备")
-                : domain === "local"
-                  ? kind === "agents"
+              {kind === 'devices'
+                ? translate('todo.device_catalog_empty', '尚未添加设备')
+                : domain === 'local'
+                  ? kind === 'agents'
                     ? messages.noLocalAgents
                     : messages.noLocalTeams
-                  : kind === "agents"
+                  : kind === 'agents'
                     ? messages.noCloudAgents
                     : messages.noCloudTeams}
             </strong>
@@ -845,9 +728,7 @@ export function ResourceCatalogPage({
           kind={kind}
           messages={messages}
           onClose={() => setBindingResourceId(null)}
-          onBind={(workspaceId) =>
-            onAddToWorkspace(workspaceId, kind, bindingRow.id)
-          }
+          onBind={workspaceId => onAddToWorkspace(workspaceId, kind, bindingRow.id)}
         />
       ) : null}
       {deletingDevice && onDeleteDevice ? (
@@ -855,14 +736,11 @@ export function ResourceCatalogPage({
           device={deletingDevice}
           protectedRegistration={
             !environments.some(
-              (device) =>
-                device.id === deletingDevice.id &&
-                !isDeviceDeletionProtected(device),
+              device => device.id === deletingDevice.id && !isDeviceDeletionProtected(device)
             )
           }
           workspaceNames={
-            deviceRows.find((row) => row.id === deletingDevice.id)
-              ?.workspaceNames ?? []
+            deviceRows.find(row => row.id === deletingDevice.id)?.workspaceNames ?? []
           }
           locale={locale}
           messages={messages}
@@ -874,10 +752,10 @@ export function ResourceCatalogPage({
         <div
           className="collaboration-resource-dialog-backdrop"
           role="presentation"
-          onMouseDown={(event) => {
+          onMouseDown={event => {
             if (event.target === event.currentTarget && !deleteBusy) {
-              setDeletingAgent(null);
-              setDeleteError(null);
+              setDeletingAgent(null)
+              setDeleteError(null)
             }
           }}
         >
@@ -890,9 +768,7 @@ export function ResourceCatalogPage({
           >
             <header>
               <div>
-                <h2 id="collaboration-delete-agent-title">
-                  {messages.deleteAgent}
-                </h2>
+                <h2 id="collaboration-delete-agent-title">{messages.deleteAgent}</h2>
                 <p>
                   <strong>{deletingAgent.name}</strong>
                   <br />
@@ -927,12 +803,12 @@ export function ResourceCatalogPage({
                 data-testid="collaboration-delete-agent-confirm"
                 disabled={deleteBusy}
                 onClick={() => {
-                  setDeleteBusy(true);
-                  setDeleteError(null);
+                  setDeleteBusy(true)
+                  setDeleteError(null)
                   void onDeleteAgent(deletingAgent)
                     .then(() => setDeletingAgent(null))
                     .catch(() => setDeleteError(messages.deleteFailed))
-                    .finally(() => setDeleteBusy(false));
+                    .finally(() => setDeleteBusy(false))
                 }}
               >
                 {deleteBusy ? messages.deleting : messages.deleteAgent}
@@ -945,10 +821,10 @@ export function ResourceCatalogPage({
         <div
           className="collaboration-resource-dialog-backdrop"
           role="presentation"
-          onMouseDown={(event) => {
+          onMouseDown={event => {
             if (event.target === event.currentTarget && !deleteBusy) {
-              setDeletingTeam(null);
-              setDeleteError(null);
+              setDeletingTeam(null)
+              setDeleteError(null)
             }
           }}
         >
@@ -961,9 +837,7 @@ export function ResourceCatalogPage({
           >
             <header>
               <div>
-                <h2 id="collaboration-delete-team-title">
-                  {messages.deleteTeam}
-                </h2>
+                <h2 id="collaboration-delete-team-title">{messages.deleteTeam}</h2>
                 <p>
                   <strong>{deletingTeam.name}</strong>
                   <br />
@@ -998,12 +872,12 @@ export function ResourceCatalogPage({
                 data-testid="collaboration-delete-team-confirm"
                 disabled={deleteBusy}
                 onClick={() => {
-                  setDeleteBusy(true);
-                  setDeleteError(null);
+                  setDeleteBusy(true)
+                  setDeleteError(null)
                   void onDeleteTeam(deletingTeam)
                     .then(() => setDeletingTeam(null))
                     .catch(() => setDeleteError(messages.deleteFailed))
-                    .finally(() => setDeleteBusy(false));
+                    .finally(() => setDeleteBusy(false))
                 }}
               >
                 {deleteBusy ? messages.deleting : messages.deleteTeam}
@@ -1013,5 +887,5 @@ export function ResourceCatalogPage({
         </div>
       ) : null}
     </div>
-  );
+  )
 }

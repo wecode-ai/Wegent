@@ -1,3 +1,4 @@
+use super::record_rows::enrich_comment_actor;
 use super::*;
 
 impl LocalTaskStore {
@@ -139,11 +140,74 @@ impl LocalTaskStore {
                 return Ok(result);
             }
         }
-        let comment = insert_comment(&transaction, create, "completed")?;
+        let mut create = create.clone();
+        if let Some(metadata) = create.metadata.as_object_mut() {
+            metadata.remove("assistant_publication");
+        }
+        let comment = insert_comment(&transaction, &create, "completed")?;
         if let Some(receipt) = receipt {
             receipt.record(&transaction, &comment)?;
         }
         transaction.commit()?;
+        Ok(comment)
+    }
+
+    pub fn publish_assistant_comment(
+        &self,
+        create: &LocalCommentCreate,
+        device: &str,
+        task: &str,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        if !create
+            .client_message_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Assistant publication requires a client message identity".into(),
+            ));
+        }
+        let mut connection = self.connection()?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let binding =
+            get_binding_by_kind(&tx, device, task, false)?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let issue =
+            get_item_from(&tx, &create.task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        // Native IPC runs as device owner 0; a connected account keeps its
+        // actual author identity without gaining access to another owner's binding.
+        if binding.cloud_project_id != create.project_id
+            || binding.loop_item_id.as_deref() != Some(create.task_id.as_str())
+            || issue.cloud_project_id.as_deref() != Some(create.project_id.as_str())
+            || create.sender_type != "user"
+            || (binding.task_user_id != 0 && create.sender_id != binding.task_user_id.to_string())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Assistant publication source does not match its owner and Issue".into(),
+            ));
+        }
+        let publication = json!({"verified":true,"published_by":"human","binding_id":binding.id,"device_id":device,"task_id":task,"runtime_owner_user_id":binding.task_user_id});
+        let existing = tx.query_row(
+            "SELECT message_id FROM loop_item_comments WHERE project_id=?1 AND task_id=?2 AND sender_type='user' AND sender_id=?3 AND client_message_id=?4 AND deleted_at IS NULL",
+            params![create.project_id, create.task_id, create.sender_id, create.client_message_id], |row| row.get::<_,String>(0),
+        ).optional()?;
+        if let Some(id) = existing {
+            let comment = comment_row(&tx, &id)?;
+            if comment.content != create.content
+                || comment.metadata["assistant_publication"] != publication
+            {
+                return Err(TaskRuntimeError::Invalid(
+                    "Publication identity has different content or source".into(),
+                ));
+            }
+            return Ok(comment);
+        }
+        let mut create = create.clone();
+        if !create.metadata.is_object() {
+            create.metadata = json!({});
+        }
+        create.metadata["assistant_publication"] = publication;
+        let comment = insert_comment(&tx, &create, "completed")?;
+        tx.commit()?;
         Ok(comment)
     }
 
@@ -327,13 +391,155 @@ fn read_comment_rows(
         }
         Ok(comment)
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    let mut comments = rows.collect::<Result<Vec<_>, _>>()?;
+    for comment in &mut comments {
+        enrich_comment_actor(connection, comment)?;
+    }
+    Ok(comments)
 }
 
 #[cfg(test)]
 mod stand_in_reply_tests {
     use super::super::runner_routing_tests::setup;
     use super::*;
+
+    #[test]
+    fn assistant_publication_validates_source_and_persists_provenance_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Room"})).unwrap())
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Issue"})).unwrap(),
+            )
+            .unwrap();
+        store
+            .bind_task(
+                &project.id,
+                Some(&issue.id),
+                None,
+                serde_json::from_value(json!({"deviceId":"mac","taskId":"private"})).unwrap(),
+                None,
+            )
+            .unwrap();
+        let mut input: LocalCommentCreate = serde_json::from_value(json!({"project_id":project.id,"task_id":issue.id,"client_message_id":"once","sender_type":"user","sender_id":"0","sender_name":"Owner","content":"Published summary","metadata":{}})).unwrap();
+        for identity in [None, Some("".into()), Some("  ".into())] {
+            let mut invalid = input.clone();
+            invalid.client_message_id = identity;
+            assert!(store
+                .publish_assistant_comment(&invalid, "mac", "private")
+                .is_err());
+        }
+        assert!(store
+            .publish_assistant_comment(&input, "mac", "foreign")
+            .is_err());
+        assert!(store
+            .list_comments(&project.id, &issue.id, 0)
+            .unwrap()
+            .is_empty());
+        let published = store
+            .publish_assistant_comment(&input, "mac", "private")
+            .unwrap();
+        assert_eq!(published.generation_source, "ai");
+        assert_eq!(published.publication_source, "human");
+        assert_eq!(published.confirmation_state, "authorized");
+        let mut signed_in = input.clone();
+        signed_in.client_message_id = Some("signed-in".into());
+        signed_in.sender_id = "86".into();
+        let signed_in = store
+            .publish_assistant_comment(&signed_in, "mac", "private")
+            .unwrap();
+        assert_eq!(signed_in.actor_user_id.as_deref(), Some("86"));
+        assert_eq!(signed_in.runtime_owner_user_id.as_deref(), Some("0"));
+        assert_eq!(signed_in.generation_source, "ai");
+        store.connection().unwrap().execute("UPDATE loop_items SET task_user_id=7 WHERE resource_type='execution' AND device_id='mac' AND task_id='private'", []).unwrap();
+        let mut foreign = input.clone();
+        foreign.sender_id = "86".into();
+        assert!(store
+            .publish_assistant_comment(&foreign, "mac", "private")
+            .is_err());
+        store.connection().unwrap().execute("UPDATE loop_items SET task_user_id=0 WHERE resource_type='execution' AND device_id='mac' AND task_id='private'", []).unwrap();
+        assert_eq!(
+            store
+                .publish_assistant_comment(&input, "mac", "private")
+                .unwrap()
+                .message_id,
+            published.message_id
+        );
+        input.content = "Changed summary".into();
+        assert!(store
+            .publish_assistant_comment(&input, "mac", "private")
+            .is_err());
+        input.client_message_id = Some("forged".into());
+        input.metadata = json!({"assistant_publication":{"verified":true}});
+        let ordinary = store.create_comment(&input).unwrap();
+        assert_eq!(ordinary.generation_source, "human");
+        assert_eq!(ordinary.confirmation_state, "not_required");
+        assert_eq!(
+            store
+                .list_comments(&project.id, &issue.id, 0)
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn agent_runtime_owner_is_independent_from_its_trigger_actor() {
+        for owner in [Some(0), Some(7), None] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+            let project = store
+                .create_project(serde_json::from_value(json!({"name":"Room"})).unwrap())
+                .unwrap();
+            let issue = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":"Issue"})).unwrap(),
+                )
+                .unwrap();
+            let agent = store
+                .create_chat_agent(
+                    &project.id,
+                    serde_json::from_value(json!({"name":"Shared agent"})).unwrap(),
+                )
+                .unwrap();
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_items SET created_by_user_id=?1 WHERE id=?2",
+                    params![owner, agent.id],
+                )
+                .unwrap();
+            let trigger = store.create_comment(&serde_json::from_value(json!({"project_id":project.id,"task_id":issue.id,"sender_type":"user","sender_id":"8","sender_name":"Trigger author","content":"Run","metadata":{}})).unwrap()).unwrap();
+            let reply = store
+                .start_runtime_comment(&LocalRuntimeCommentStart {
+                    project_id: &project.id,
+                    task_id: &issue.id,
+                    agent_id: &agent.id,
+                    trigger_message_id: &trigger.message_id,
+                    runtime_device_id: "device",
+                    runtime_task_id: "private",
+                    prompt: None,
+                    model: None,
+                })
+                .unwrap();
+            let listed = store.list_comments(&project.id, &issue.id, 0).unwrap();
+            let reply = listed
+                .iter()
+                .find(|row| row.message_id == reply.message_id)
+                .unwrap();
+            assert_eq!(reply.actor_user_id.as_deref(), Some("8"));
+            assert_eq!(
+                reply.runtime_owner_user_id.as_deref(),
+                owner.map(|id| id.to_string()).as_deref()
+            );
+        }
+    }
 
     #[test]
     fn comment_pages_reject_unbounded_or_invalid_ranges() {
@@ -511,6 +717,7 @@ mod stand_in_reply_tests {
             .unwrap();
         assert!(result.sequence_number > first.sequence_number);
         assert_eq!(first.sender_type, "agent");
+        assert_eq!(first.actor_user_id.as_deref(), Some("7"));
         assert_eq!(first.metadata["execution_dispatch"], "comment_only");
         assert!(store
             .publish_stand_in_reply("mac", "conversation", 7, &origin, "first", "Changed")

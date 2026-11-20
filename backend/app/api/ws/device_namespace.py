@@ -140,6 +140,7 @@ from app.services.plugin_device_installation_service import (
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_write_coordination import configure_plugin_session
 from app.services.plugin_write_errors import PluginWriteError
+from app.services.project_chat.message_provenance import shared_project_chat_message
 from app.services.project_chat.service import project_chat_service
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
@@ -3177,7 +3178,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 )
                 await get_sio().emit(
                     PROJECT_CHAT_CREATED_EVENT,
-                    message,
+                    shared_project_chat_message(message),
                     room=project_chat_room(
                         project_id, str(project_task_id) if project_task_id else None
                     ),
@@ -3304,7 +3305,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
             await get_sio().emit(
                 event_name,
-                message,
+                shared_project_chat_message(message),
                 room=project_chat_room(project_id, str(task_id) if task_id else None),
                 namespace=WEWORK_RUNTIME_NAMESPACE,
             )

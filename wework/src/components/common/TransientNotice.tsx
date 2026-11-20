@@ -1,4 +1,6 @@
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useMemo, useSyncExternalStore, type RefObject } from 'react'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import { createTransientNoticeExpiration } from './transientNoticeExpiration'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
@@ -11,11 +13,6 @@ interface TransientNoticeProps {
   action?: { label: string; testId: string; onClick: () => void; pending: boolean }
 }
 
-interface HorizontalPlacement {
-  left: number
-  maxWidth: number
-}
-
 const NOTICE_VIEWPORT_GUTTER = 16
 
 export function TransientNotice({
@@ -26,44 +23,32 @@ export function TransientNotice({
   visible = true,
   action,
 }: TransientNoticeProps) {
-  const [horizontalPlacement, setHorizontalPlacement] = useState<HorizontalPlacement | null>(null)
-
-  useEffect(() => {
-    if (!message || action) return
-
-    const timeout = window.setTimeout(onClear, 2200)
-    return () => window.clearTimeout(timeout)
-  }, [action, message, onClear])
-
-  useLayoutEffect(() => {
-    if (!message || !horizontalAnchorRef || !visible) return
-    const anchor = horizontalAnchorRef.current
-    if (!anchor) return
-
-    const updatePlacement = () => {
-      const rect = anchor.getBoundingClientRect()
-      setHorizontalPlacement({
-        left: rect.left + rect.width / 2,
-        maxWidth: Math.max(0, rect.width - NOTICE_VIEWPORT_GUTTER * 2),
-      })
-    }
-    updatePlacement()
-
-    const resizeObserver =
-      typeof ResizeObserver === 'function' ? new ResizeObserver(updatePlacement) : null
-    resizeObserver?.observe(anchor)
-    window.addEventListener('resize', updatePlacement)
-    window.addEventListener('scroll', updatePlacement, true)
-    return () => {
-      resizeObserver?.disconnect()
-      window.removeEventListener('resize', updatePlacement)
-      window.removeEventListener('scroll', updatePlacement, true)
-    }
-  }, [horizontalAnchorRef, message, visible])
-
-  if (!message || !visible) {
-    return null
-  }
+  const interactive = Boolean(action)
+  const expiration = useMemo(
+    () => createTransientNoticeExpiration(message, onClear, interactive),
+    [message, onClear, interactive]
+  )
+  const expired = useSyncExternalStore(
+    expiration.subscribe,
+    expiration.getSnapshot,
+    expiration.getSnapshot
+  )
+  const targets = useMemo(
+    () => (horizontalAnchorRef ? [horizontalAnchorRef] : []),
+    [horizontalAnchorRef]
+  )
+  const geometry = useElementGeometry(
+    targets,
+    Boolean(message && visible && !expired && horizontalAnchorRef)
+  )
+  const anchor = geometry?.elements[0]
+  const horizontalPlacement = anchor
+    ? {
+        left: anchor.left + anchor.width / 2,
+        maxWidth: Math.max(0, anchor.width - NOTICE_VIEWPORT_GUTTER * 2),
+      }
+    : null
+  if (!message || !visible || expired) return null
 
   const notice = (
     <div

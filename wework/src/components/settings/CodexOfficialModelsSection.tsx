@@ -1,5 +1,6 @@
 import { AlertCircle, ChevronDown, Loader2, Pencil, RefreshCw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
 
 import {
@@ -230,6 +231,31 @@ function CodexCatalogEditorDialog({
   )
 }
 
+function createCatalogResource(slugKey: string) {
+  const slugs = JSON.parse(slugKey) as string[]
+  const query = createAsyncResource('codex/catalog-overrides', async () => {
+    const entries = slugs.length ? await getLocalCodexModelCatalogOverrides(slugs) : []
+    return new Map(entries.map(entry => [entry.slug, entry]))
+  })
+  return { ...query, pending: new Set<string>() }
+}
+function initialCatalogOperations(resource: ReturnType<typeof createCatalogResource>) {
+  return {
+    resource,
+    editingCatalog: null as {
+      model: CodexOfficialModel
+      catalog: CodexModelCatalogOverride
+    } | null,
+    savingCatalog: false,
+    catalogEditorError: null as string | null,
+    pendingCatalogRestart: null as string | null,
+    catalogRestartConfirmation: null as string | null,
+    restartingCatalog: false,
+    catalogError: null as string | null,
+  }
+}
+const EMPTY_CATALOG = new Map<string, CodexModelCatalogOverride>()
+
 export function CodexOfficialModelsSection({
   modelList,
   loading,
@@ -245,44 +271,42 @@ export function CodexOfficialModelsSection({
   const models = useMemo(() => modelList?.models ?? [], [modelList])
   const providers = useMemo(() => modelList?.providers ?? [], [modelList])
   const [expandedProviderIds, setExpandedProviderIds] = useState<Set<string>>(() => new Set())
-  const [catalogModels, setCatalogModels] = useState<Map<string, CodexModelCatalogOverride>>(
-    () => new Map()
-  )
-  const [catalogLoading, setCatalogLoading] = useState(false)
-  const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [editingCatalog, setEditingCatalog] = useState<{
-    model: CodexOfficialModel
-    catalog: CodexModelCatalogOverride
-  } | null>(null)
-  const [savingCatalog, setSavingCatalog] = useState(false)
-  const [catalogEditorError, setCatalogEditorError] = useState<string | null>(null)
-  const [pendingCatalogRestart, setPendingCatalogRestart] = useState<string | null>(null)
-  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState<string | null>(null)
-  const [restartingCatalog, setRestartingCatalog] = useState(false)
-  const modelSlugs = useMemo(() => models.map(model => model.modelId).sort(), [models])
-
-  const loadCatalogModels = useCallback(async () => {
-    if (modelSlugs.length === 0) {
-      setCatalogModels(new Map())
-      setCatalogError(null)
-      return
-    }
-    setCatalogLoading(true)
-    setCatalogError(null)
+  const slugKey = JSON.stringify([...new Set(models.map(model => model.modelId))].sort())
+  const resource = useMemo(() => createCatalogResource(slugKey), [slugKey])
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const catalogModels = snapshot.data ?? EMPTY_CATALOG
+  const catalogLoading = !snapshot.settled
+  const [operations, setOperations] = useState(() => initialCatalogOperations(resource))
+  if (operations.resource !== resource) setOperations(initialCatalogOperations(resource))
+  const {
+    editingCatalog,
+    savingCatalog,
+    catalogEditorError,
+    pendingCatalogRestart,
+    catalogRestartConfirmation,
+    restartingCatalog,
+  } = operations
+  const catalogError =
+    operations.catalogError ??
+    (snapshot.status === 'error'
+      ? getErrorMessage(snapshot.error, t('workbench.codex_catalog_load_failed'))
+      : null)
+  const patchOperations = (patch: Partial<typeof operations>) => {
+    setOperations(current => (current.resource === resource ? { ...current, ...patch } : current))
+  }
+  const loadCatalogModels = () =>
+    resource.hasSubscribers() ? resource.reload() : Promise.resolve()
+  const refreshCatalog = async () => {
+    patchOperations({ catalogError: null })
     try {
-      const entries = await getLocalCodexModelCatalogOverrides(modelSlugs)
-      setCatalogModels(new Map(entries.map(entry => [entry.slug, entry])))
-    } catch (loadError) {
-      setCatalogModels(new Map())
-      setCatalogError(getErrorMessage(loadError, t('workbench.codex_catalog_load_failed')))
-    } finally {
-      setCatalogLoading(false)
+      await onRefresh()
+      await loadCatalogModels()
+    } catch (cause) {
+      patchOperations({
+        catalogError: getErrorMessage(cause, t('workbench.codex_catalog_load_failed')),
+      })
     }
-  }, [modelSlugs, t])
-
-  useEffect(() => {
-    void Promise.resolve().then(loadCatalogModels)
-  }, [loadCatalogModels])
+  }
 
   const toggleProvider = useCallback((providerId: string) => {
     setExpandedProviderIds(current => {
@@ -301,14 +325,13 @@ export function CodexOfficialModelsSection({
       restarted: boolean
       requiresConfirmation: boolean
     }>('runtime.codex.app_server.restart', { ifIdle: true })
+    if (!resource.hasSubscribers()) return false
     if (restart.restarted) {
-      setPendingCatalogRestart(null)
-      setCatalogRestartConfirmation(null)
+      patchOperations({ pendingCatalogRestart: null, catalogRestartConfirmation: null })
       await onRefresh()
       return true
     } else if (restart.requiresConfirmation) {
-      setPendingCatalogRestart(slug)
-      setCatalogRestartConfirmation(slug)
+      patchOperations({ pendingCatalogRestart: slug, catalogRestartConfirmation: slug })
       return false
     } else {
       throw new Error(t('workbench.local_model_catalog_restart_failed'))
@@ -316,51 +339,69 @@ export function CodexOfficialModelsSection({
   }
 
   const saveCatalog = async (entry: LocalModelCatalogEntry) => {
-    if (!editingCatalog) return
-    setSavingCatalog(true)
-    setCatalogEditorError(null)
+    if (!editingCatalog || resource.pending.has('save')) return
+    resource.pending.add('save')
+    patchOperations({ savingCatalog: true, catalogEditorError: null })
     try {
       await saveLocalCodexModelCatalogOverride(editingCatalog.catalog.slug, entry)
+      if (!resource.hasSubscribers()) return
       const slug = editingCatalog.catalog.slug
       const applied = await restartAfterCatalogChange(slug)
       await loadCatalogModels()
       if (applied) {
-        setEditingCatalog(null)
+        patchOperations({ editingCatalog: null })
       }
     } catch (saveError) {
-      setCatalogEditorError(getErrorMessage(saveError, t('workbench.codex_catalog_save_failed')))
+      patchOperations({
+        catalogEditorError: getErrorMessage(saveError, t('workbench.codex_catalog_save_failed')),
+      })
     } finally {
-      setSavingCatalog(false)
+      resource.pending.delete('save')
+      patchOperations({ savingCatalog: false })
     }
   }
 
   const restoreCatalog = async (slug: string) => {
-    setCatalogError(null)
+    const key = `restore:${slug}`
+    if (resource.pending.has(key)) return
+    resource.pending.add(key)
+    patchOperations({ catalogError: null })
     try {
       await deleteLocalCodexModelCatalogOverride(slug)
+      if (!resource.hasSubscribers()) return
       await restartAfterCatalogChange(slug)
       await loadCatalogModels()
     } catch (restoreError) {
-      setCatalogError(getErrorMessage(restoreError, t('workbench.codex_catalog_restore_failed')))
+      patchOperations({
+        catalogError: getErrorMessage(restoreError, t('workbench.codex_catalog_restore_failed')),
+      })
+    } finally {
+      resource.pending.delete(key)
     }
   }
 
   const confirmCatalogRestart = async () => {
-    setRestartingCatalog(true)
-    setCatalogError(null)
+    if (resource.pending.has('restart')) return
+    resource.pending.add('restart')
+    patchOperations({ restartingCatalog: true, catalogError: null })
     try {
       await requestLocalExecutor('runtime.codex.app_server.restart', { force: true })
-      setPendingCatalogRestart(null)
-      setCatalogRestartConfirmation(null)
+      if (!resource.hasSubscribers()) return
+      patchOperations({ pendingCatalogRestart: null })
+      patchOperations({ catalogRestartConfirmation: null })
       await onRefresh()
       await loadCatalogModels()
-      setEditingCatalog(null)
+      patchOperations({ editingCatalog: null })
     } catch (restartError) {
-      setCatalogError(
-        getErrorMessage(restartError, t('workbench.local_model_catalog_restart_failed'))
-      )
+      patchOperations({
+        catalogError: getErrorMessage(
+          restartError,
+          t('workbench.local_model_catalog_restart_failed')
+        ),
+      })
     } finally {
-      setRestartingCatalog(false)
+      resource.pending.delete('restart')
+      patchOperations({ restartingCatalog: false })
     }
   }
 
@@ -385,7 +426,7 @@ export function CodexOfficialModelsSection({
         <button
           type="button"
           data-testid="codex-official-models-refresh-button"
-          onClick={onRefresh}
+          onClick={() => void refreshCatalog()}
           disabled={loading}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={t('workbench.runtime_config_refresh')}
@@ -528,8 +569,10 @@ export function CodexOfficialModelsSection({
                                 data-testid={`codex-catalog-edit-${provider.id}-${model.modelId}`}
                                 onClick={() => {
                                   if (!catalog) return
-                                  setCatalogEditorError(null)
-                                  setEditingCatalog({ model, catalog })
+                                  patchOperations({
+                                    catalogEditorError: null,
+                                    editingCatalog: { model, catalog },
+                                  })
                                 }}
                                 disabled={!catalog || catalogLoading}
                                 title={
@@ -571,8 +614,7 @@ export function CodexOfficialModelsSection({
           saving={savingCatalog}
           error={catalogEditorError}
           onClose={() => {
-            setCatalogEditorError(null)
-            setEditingCatalog(null)
+            patchOperations({ catalogEditorError: null, editingCatalog: null })
           }}
           onSave={entry => void saveCatalog(entry)}
         />
@@ -580,7 +622,7 @@ export function CodexOfficialModelsSection({
       {catalogRestartConfirmation && (
         <LocalModelCatalogRestartDialog
           restarting={restartingCatalog}
-          onLater={() => setCatalogRestartConfirmation(null)}
+          onLater={() => patchOperations({ catalogRestartConfirmation: null })}
           onRestart={() => void confirmCatalogRestart()}
         />
       )}

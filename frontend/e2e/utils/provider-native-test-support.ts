@@ -282,6 +282,58 @@ export async function clearToolScenario(
   )
 }
 
+/** Configure a matching model response whose completion is held until the test releases it. */
+export async function configureHeldStreamResponse(
+  request: APIRequestContext,
+  matchText: string,
+  responseContent: string
+): Promise<() => Promise<void>> {
+  const response = await request.post(
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/stream-rules`,
+    { data: { matchText, responseContent, holdDone: true } }
+  )
+  expect(response.status(), await response.text()).toBe(200)
+  return async () => {
+    const deleted = await request.delete(
+      `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/stream-rules?matchText=${encodeURIComponent(matchText)}`
+    )
+    expect([200, 404]).toContain(deleted.status())
+  }
+}
+
+export async function waitForHeldStreamResponse(
+  request: APIRequestContext,
+  matchText: string
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(
+          `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/stream-rules`
+        )
+        if (!response.ok()) return 0
+        const rules = (await response.json()) as Array<{
+          matchText?: string
+          pendingResponses?: number
+        }>
+        return rules.find(rule => rule.matchText === matchText)?.pendingResponses ?? 0
+      },
+      { timeout: 60_000, message: `Held model response did not arrive: ${matchText}` }
+    )
+    .toBeGreaterThan(0)
+}
+
+export async function releaseHeldStreamResponse(
+  request: APIRequestContext,
+  matchText: string
+): Promise<void> {
+  const response = await request.post(
+    `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/stream-rules/release`,
+    { data: { matchText } }
+  )
+  expect(response.status(), await response.text()).toBe(200)
+}
+
 export async function resetMockMcp(request: APIRequestContext): Promise<void> {
   const response = await request.post(
     `${executorRequestMockUrl(request, PROVIDER_NATIVE_MOCK_URL)}/mcp-control/reset`

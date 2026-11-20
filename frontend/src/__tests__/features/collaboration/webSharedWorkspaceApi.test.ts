@@ -20,6 +20,28 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it('exposes milestone capability and preserves versioned CRUD at the web boundary', async () => {
+    const client = createClient()
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const milestone = { title: 'Release', description: '', state: 'open' as const, due_on: null }
+    client.get.mockResolvedValue([{ id: 'm/1', ...milestone, version: 2 }])
+    await expect(api.milestones!.list('project/1')).resolves.toEqual([
+      { id: 'm/1', ...milestone, version: 2 },
+    ])
+    await api.milestones!.create('project/1', milestone)
+    await api.milestones!.update('project/1', 'm/1', { ...milestone, version: 2 })
+    client.delete.mockRejectedValue(new Error('Version conflict'))
+    await expect(api.milestones!.remove('project/1', 'm/1', 2)).rejects.toThrow('Version conflict')
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/milestones')
+    expect(client.post).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/milestones', milestone)
+    expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/milestones/m%2F1', {
+      ...milestone,
+      version: 2,
+    })
+    expect(client.delete).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1/milestones/m%2F1', {
+      version: 2,
+    })
+  })
   it('bypasses browser caching so newer board snapshots can overtake pending reads', async () => {
     const client = createClient()
     client.get.mockResolvedValue({ items: [], members: [], agents: [], task_bindings: [] })

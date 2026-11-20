@@ -23,6 +23,14 @@ async fn new_install_id_can_replace_its_retained_marketplace_source_from_another
             let installed = handler.apply_sync(request.clone()).await.unwrap();
             assert_eq!(installed["success"], true, "{installed}");
             let old = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
+            let old_trees = ["codex_link", "claude_link"]
+                .into_iter()
+                .filter_map(|field| {
+                    old["runtime"][field]
+                        .as_str()
+                        .map(|path| (field, tree_fingerprint(Path::new(path)).unwrap()))
+                })
+                .collect::<BTreeMap<_, _>>();
             let removed = handler
                 .apply_sync(json!({"scope":"plugins","plugins":[]}))
                 .await
@@ -61,12 +69,31 @@ async fn new_install_id_can_replace_its_retained_marketplace_source_from_another
                     .join(store.marketplace_plugin_name(&spec, claude));
                 assert_eq!(fs::read_link(source).unwrap(), runtime);
                 assert!(runtime.join(".codex-plugin/plugin.json").is_file());
-                let old_runtime = old["runtime"][field].as_str().unwrap();
+                let old_runtime = Path::new(old["runtime"][field].as_str().unwrap());
+                let retained = if field == "codex_link" && old_version == "2.0" {
+                    assert!(!old_runtime.exists());
+                    let archives = manifest["plugin_runtime_owners"]
+                        .as_object()
+                        .unwrap()
+                        .iter()
+                        .filter(|(path, owner)| {
+                            owner.as_str() == Some("demo@wegent")
+                                && cache_selection::is_retained(Path::new(path))
+                                && cache_selection::archived_version(Path::new(path))
+                                    == Some(old_version)
+                        })
+                        .map(|(path, _)| PathBuf::from(path))
+                        .collect::<Vec<_>>();
+                    assert_eq!(archives.len(), 1);
+                    archives[0].clone()
+                } else {
+                    old_runtime.to_owned()
+                };
                 assert_eq!(
-                    manifest["plugin_runtime_owners"][old_runtime],
+                    manifest["plugin_runtime_owners"][retained.to_string_lossy().as_ref()],
                     "demo@wegent"
                 );
-                assert!(Path::new(old_runtime).is_dir());
+                assert_eq!(tree_fingerprint(&retained).unwrap(), old_trees[field]);
             }
         }
     }

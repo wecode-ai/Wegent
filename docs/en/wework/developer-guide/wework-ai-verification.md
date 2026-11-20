@@ -149,6 +149,21 @@ The desktop CI `workspace-tabs` checkpoint covers detaching a fixed tab and rest
 
 An AI should start with `snapshot` to confirm the route and available `data-testid` values, make the smallest required interaction, and use `wait-for` plus `snapshot` or `text` to verify the result. Always call `stop` when finished. On failure, keep the session directory and inspect `app.log`.
 
+## Record verification video
+
+To keep a video of the verification steps, put FFmpeg with `libx264` on PATH. Use `start --record true` to begin recording when the main window is ready. The first frame is captured before the session path is returned. For an existing session, use `record-start` to begin a clip and `record-stop` to finish it. You can start another clip as needed.
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` saves the video and prints its path. If recording is still active, `stop` saves the video before closing the session and prints the video path. Each clip is a separate MP4 in its session directory under `wework/test-results/ai-verify/`. If frame capture fails mid-recording, the recorder finalizes the frames already captured and reports the saved path with the error.
+
+Recording samples the isolated Electron main window at five frames per second, including across page reloads, without macOS Screen Recording permission. It excludes OS dialogs, native menus, separate windows, and audio. Keep the video with the assertion results and review the footage for sensitive information before sharing it. Keep recordings and session files out of Git.
+
 ## General DevTools access and performance analysis
 
 Isolated verification instances expose authenticated CDP through the Electron main process. Commands remain available while the renderer is paused at a breakpoint. Ordinary application instances do not register this endpoint. Enumerate targets and substitute a returned `id` for `ID`:
@@ -206,3 +221,15 @@ The diff preview uses Pierre virtualization. Keep line callbacks, render options
 Define workbench memoized callbacks in independent Hook lexical scopes instead of the Provider's large render scope. Otherwise callbacks whose dependencies change at different rates can retain historical task, lifecycle and work-list snapshots through their shared closures. `workbenchCallbackLifetime.test.tsx` triggers real GC through Inspector, uses weak references to verify snapshot collection and guards against defining `useCallback` directly in the Provider again.
 
 Interpret CPU samples, HTML parsing duration and process memory separately. Heap object sizes do not equal Activity Monitor process memory; one heap snapshot establishes retaining paths, not a memory growth rate. Keep analysis files local and never commit user traces or heap snapshots.
+
+## PR-scoped Bombadil exploration
+
+Use Bombadil 0.7.10 on macOS ARM64 or Linux and set BOMBADIL_BIN to its executable. Preview selection with `pnpm --filter wework ai:verify bombadil --base origin/main --plan true`. Run the same command without --plan, with `--seconds 30`, or explicitly select `--suite appearance` or `--suite workbench`. Obtain the binary from https://github.com/antithesishq/bombadil/releases/tag/v0.7.10.
+
+The base plan uses committed merge-base-to-HEAD paths, including deletions and both sides of renames. Uncommitted work requires an explicit suite. The map in scripts/ai-verify-bombadil.mjs selects appearance changes, workbench/chat/tab changes, and both suites for shared UI or host changes. Unmapped Wework/packages paths are reported as coverage gaps and prevent automatic execution from claiming a pass. Extend the specification and map for new features. Selection is candidate coverage, not correctness evidence.
+
+Each suite owns a fresh real Electron and Executor session. Only explicit Bombadil startup opens an ephemeral loopback debugger; existing Executor Homes and ambiguous page targets are rejected. Setup dismisses the isolated privacy prompt and establishes the feature prerequisites. Suites run serially with a 1–600 second budget each; success, failure and timeout clean up the session. Model execution and cloud authentication are not exercised.
+
+Results under wework/test-results/bombadil/<timestamp>/ include summary.json, logs and native traces. Failed checks, cleanup failures and zero-action runs cannot pass. Traces can contain screenshots and page content: keep them local, do not commit them, and never upload session.json, credentials or the entire ai-verify directory. Any CI integration needs a bounded budget. Exploration does not replace deterministic regression, permission or release verification.
+
+The Wework Bombadil exploration GitHub Actions workflow is manual-only. Select the PR branch and provide the base ref (origin/main by default) and seconds per suite. Ordinary PRs gain no automatic exploration. The workflow verifies the pinned download SHA-256 and publishes only summary.json to the step summary, never raw traces or authentication directories.

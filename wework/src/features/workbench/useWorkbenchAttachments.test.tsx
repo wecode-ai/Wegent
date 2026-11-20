@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { createLocalAttachmentApi } from '@/api/local/localAttachments'
 import { rememberNativeFilePath } from '@/desktop/nativeFilePaths'
@@ -168,4 +168,122 @@ test('tracks concurrent failures of the same filename independently in each scop
 
   expect(result.current.errors.get('same.pdf')).toBe('first scope failure')
   expect(result.current.stateByScope.second.errors.get('same.pdf')).toBe('second scope failure')
+})
+
+test('admits every selected file before upload and retains the submitted files across draft reset', async () => {
+  const { localRuntimeAttachments, resolvePreparingAttachments } =
+    await import('@/lib/runtime-attachments')
+  let finish!: (attachment: Attachment) => void
+  const upload = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<Attachment>(resolve => {
+          finish = resolve
+        })
+    )
+    .mockResolvedValueOnce({
+      ...attachment,
+      id: -43,
+      filename: 'second.png',
+      local_path: '/draft/second.png',
+    })
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({ scopeKey: 'chat', uploadAttachment: upload })
+  )
+  let selecting!: Promise<void>
+  let accepted!: Attachment[]
+  act(() => {
+    selecting = result.current.handleFileSelect([
+      new File(['first'], 'first.png', { type: 'image/png' }),
+      new File(['second'], 'second.png', { type: 'image/png' }),
+    ])
+    accepted = result.current.captureAttachmentsForScope('chat')
+    result.current.resetAttachments()
+  })
+  expect(accepted.map(file => file.filename)).toEqual(['first.png', 'second.png'])
+  let delivered = false
+  const preparing = resolvePreparingAttachments(localRuntimeAttachments(accepted)).then(files => {
+    delivered = true
+    return files
+  })
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(delivered).toBe(false)
+  act(() =>
+    result.current.addExistingAttachment({ ...attachment, id: -44, filename: 'new-draft.pdf' })
+  )
+  await act(async () => {
+    finish({ ...attachment, filename: 'first.png', local_path: '/draft/first.png' })
+    await selecting
+  })
+  expect((await preparing).map(file => file.local_path)).toEqual([
+    '/draft/first.png',
+    '/draft/second.png',
+  ])
+  expect(result.current.attachments.map(file => file.filename)).toEqual(['new-draft.pdf'])
+  expect(result.current.uploadingFiles.size).toBe(0)
+})
+
+test('fails the accepted attachment preparation when upload fails instead of delivering text alone', async () => {
+  const { resolvePreparingAttachments } = await import('@/lib/runtime-attachments')
+  let fail!: (error: Error) => void
+  const upload = vi.fn(
+    () =>
+      new Promise<Attachment>((_, reject) => {
+        fail = reject
+      })
+  )
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({ scopeKey: 'chat', uploadAttachment: upload })
+  )
+  let selecting!: Promise<void>
+  let accepted!: Attachment[]
+  act(() => {
+    selecting = result.current.handleFileSelect(new File(['image'], 'failed.png'))
+    accepted = result.current.captureAttachmentsForScope('chat')
+    result.current.resetAttachments()
+  })
+  const preparing = expect(resolvePreparingAttachments(accepted)).rejects.toThrow('disk full')
+  await act(async () => {
+    fail(new Error('disk full'))
+    await selecting
+    await preparing
+  })
+  expect(result.current.attachments).toEqual([])
+  upload.mockResolvedValueOnce({ ...attachment, id: -43, filename: 'recovered.png' })
+  act(() => result.current.addExistingAttachment(accepted[0]))
+  await waitFor(() => expect(result.current.attachments.map(file => file.id)).toEqual([-43]))
+  expect(upload).toHaveBeenCalledTimes(2)
+})
+
+test('does not capture a cleared draft upload when a newer message is submitted', async () => {
+  let finish!: (value: Attachment) => void
+  const upload = vi.fn(
+    () =>
+      new Promise<Attachment>(resolve => {
+        finish = resolve
+      })
+  )
+  const remove = vi.fn().mockResolvedValue(undefined)
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({
+      scopeKey: 'chat',
+      uploadAttachment: upload,
+      deleteAttachment: remove,
+    })
+  )
+  let selecting!: Promise<void>
+  act(() => {
+    selecting = result.current.handleFileSelect(new File(['image'], 'cleared.png'))
+    result.current.resetAttachments()
+  })
+  expect(result.current.captureAttachmentsForScope('chat')).toEqual([])
+  await act(async () => {
+    finish({ ...attachment, id: 42 })
+    await selecting
+  })
+  expect(remove).toHaveBeenCalledWith(42)
+  expect(result.current.attachments).toEqual([])
 })

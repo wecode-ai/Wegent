@@ -10,6 +10,9 @@ async fn copied_sources_reinstall_after_repeated_uninstalled_home_relocation() {
         let destination = tempfile::tempdir().unwrap();
         let mut current = fixture._root.path().to_path_buf();
         for name in ["first", "second"] {
+            let baseline = store(&current, codex_only).manifest.load().unwrap()[RECEIPTS]
+                ["demo@wegent"]
+                .clone();
             let moved = destination.path().join(name);
             fs::rename(&current, &moved).unwrap();
             let reopened = store(&moved, codex_only);
@@ -19,9 +22,14 @@ async fn copied_sources_reinstall_after_repeated_uninstalled_home_relocation() {
             let manifest = reopened.manifest.load().unwrap();
             assert!(manifest["plugins"].as_object().unwrap().is_empty());
             let receipt = &manifest[RECEIPTS]["demo@wegent"];
-            for entry in [receipt, &receipt["previous"]] {
+            for (entry, before) in [receipt, &receipt["previous"]]
+                .into_iter()
+                .zip([&baseline, &baseline["previous"]])
+            {
                 let spec = checked_spec("demo@wegent", entry).unwrap();
-                for (path, field) in reopened.plugin_runtime_targets(&spec) {
+                for (_, field) in reopened.plugin_runtime_targets(&spec) {
+                    let old = Path::new(before["runtime"][field].as_str().unwrap());
+                    let path = moved.join(old.strip_prefix(&current).unwrap());
                     assert_eq!(entry["runtime"][field], json!(path));
                     assert_eq!(
                         manifest["plugin_runtime_owners"][path.to_string_lossy().as_ref()],
@@ -84,13 +92,15 @@ fn use_previous_sources(fixture: &Fixture) -> Value {
     let previous = &manifest[RECEIPTS]["demo@wegent"]["previous"];
     assert_eq!(previous["version"], "0.9.12");
     let spec = checked_spec("demo@wegent", previous).unwrap();
-    for ((runtime, _), source) in fixture
+    for ((_, field), source) in fixture
         .store
         .plugin_runtime_targets(&spec)
         .iter()
         .zip(&fixture.sources)
     {
         remove_existing_path(source).unwrap();
+        let runtime = Path::new(previous["runtime"][*field].as_str().unwrap());
+        assert!(runtime.starts_with(fixture._root.path()));
         copy_dir_recursive(runtime, source).unwrap();
         assert!(fixture
             .store

@@ -21,6 +21,7 @@ use tokio::{
 use super::backend::runtime_rpc_encoding::encode_app_ipc_response;
 use super::event_stream::{event_sequence, ExecutorEventHub};
 mod connection_read_scope;
+mod project_listing;
 mod read_requests;
 use crate::{
     agents::resolve_codex_binary,
@@ -75,7 +76,8 @@ use crate::{
     version::get_version,
 };
 use read_requests::{
-    is_cancellable_read, wait_for_cancellation, ConnectionReadRequests, HistoryReadAdmission,
+    new_connection_read_admission, new_history_read_admission, wait_for_cancellation,
+    ConnectionReadRequests, ReadAdmission,
 };
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
@@ -196,57 +198,6 @@ enum LocalEndpointRole {
     Client,
     Owner,
 }
-const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
-import hashlib
-import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-def iso_mtime(path_stat):
-    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
-
-
-configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
-if configured_home:
-    codex_home = Path(configured_home)
-else:
-    executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
-    workbench = os.environ.get("WEGENT_WORKBENCH_HOME", "").strip()
-    base = Path(executor_home).expanduser() if executor_home else (Path(workbench) if workbench else Path.home() / ".wegent/workbench") / "executor"
-    codex_home = base / "codex"
-target = codex_home / "auth.json"
-result = {
-    "runtime": "codex",
-    "target_path": str(target),
-    "exists": target.exists(),
-    "updated_at": None,
-    "sha256": None,
-    "size_bytes": None,
-    "error": None,
-}
-
-if target.exists() and target.is_file():
-    try:
-        target_stat = target.stat()
-        digest = hashlib.sha256()
-        with target.open("rb") as auth_file:
-            for chunk in iter(lambda: auth_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        result.update(
-            {
-                "updated_at": iso_mtime(target_stat),
-                "sha256": digest.hexdigest(),
-                "size_bytes": target_stat.st_size,
-            }
-        )
-    except OSError as exc:
-        result["error"] = str(exc)
-
-print(json.dumps(result, ensure_ascii=False))
-"#;
-
 pub use wegent_execution_contracts::ipc::{
     AppIpcError, BackendConnectionHandler, RuntimeWorkHandler,
 };
@@ -359,7 +310,9 @@ pub struct AppIpcServer {
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
-    history_read_admission: Arc<HistoryReadAdmission>,
+    project_listing: Arc<Mutex<()>>,
+    history_read_admission: Arc<ReadAdmission>,
+    connection_read_admission: Arc<ReadAdmission>,
     connection_read_only: bool,
     connection_provider_declarations: Arc<Vec<Value>>,
 }
@@ -378,7 +331,9 @@ impl Default for AppIpcServer {
             event_tx,
             event_hub,
             bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
-            history_read_admission: Arc::new(HistoryReadAdmission::default()),
+            project_listing: Arc::new(Mutex::new(())),
+            history_read_admission: new_history_read_admission(),
+            connection_read_admission: new_connection_read_admission(),
             connection_read_only: false,
             connection_provider_declarations: Arc::new(Vec::new()),
         }
@@ -940,6 +895,10 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
+        if method == "projects.list" {
+            return project_listing::list(self.project_listing.clone()).await;
+        }
+
         if method.starts_with("milestones.")
             || method.starts_with("projects.")
             || method.starts_with("external_projects.")
@@ -1064,7 +1023,8 @@ impl AppIpcServer {
                 "compressed_responses": true,
                 "event_resume": true,
                 "request_cancellation": true,
-                "request_cancellation_methods": read_requests::CANCELLABLE_READ_METHODS,
+                "request_cancellation_methods": read_requests::cancellable_read_methods()
+                    .collect::<Vec<_>>(),
             },
         });
         if self.connection_read_only {
@@ -1074,8 +1034,7 @@ impl AppIpcServer {
             description["features"]["events"] = json!(false);
             description["features"]["event_resume"] = json!(false);
             description["features"]["request_cancellation_methods"] =
-                json!(read_requests::CANCELLABLE_READ_METHODS
-                    .iter()
+                json!(read_requests::cancellable_read_methods()
                     .filter(|method| connection_read_scope::METHODS.contains(method))
                     .collect::<Vec<_>>());
         }
@@ -1320,7 +1279,10 @@ impl AppIpcServer {
         let mut events = self.event_hub.subscribe_live();
         let mut frame = Vec::new();
         let mut bulk_backpressure_reported = false;
-        let read_requests = ConnectionReadRequests::new(self.history_read_admission.clone());
+        let read_requests = ConnectionReadRequests::new(
+            self.history_read_admission.clone(),
+            self.connection_read_admission.clone(),
+        );
         loop {
             frame.clear();
             tokio::select! {
@@ -1350,8 +1312,12 @@ impl AppIpcServer {
                     if read_requests.handle_cancel(&request_line) {
                         continue;
                     }
-                    let (request_id, method, command_key) =
-                        app_ipc_request_metadata(&request_line);
+                    let AppIpcRequestMetadata {
+                        request_id,
+                        method,
+                        command_key,
+                        admissible,
+                    } = app_ipc_request_metadata(&request_line);
                     if matches!(command_key.as_deref(), Some("home_dir" | "ls_dirs")) {
                         log_app_ipc_request(
                             "app IPC request received",
@@ -1362,11 +1328,10 @@ impl AppIpcServer {
                             None,
                         );
                     }
-                    let admission = if is_cancellable_read(method.as_deref()) {
-                        request_id.as_deref().map(|id| read_requests.admit(id))
-                    } else {
-                        None
-                    };
+                    let admission = request_id
+                        .as_deref()
+                        .filter(|_| admissible)
+                        .and_then(|id| read_requests.admit(method.as_deref(), id));
                     let (mut read_guard, mut cancellation) = match admission {
                         Some(Ok((guard, receiver))) => (Some(guard), Some(receiver)),
                         Some(Err(error)) => {
@@ -1836,8 +1801,7 @@ impl AppIpcServer {
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
-        if let Some((result, post_processor)) =
-            handle_builtin_device_command(command_key, &params).await
+        if let Some((result, post_processor)) = handle_builtin_device_command(command_key, &params)
         {
             return serde_json::to_value(apply_post_processor(result, post_processor))
                 .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
@@ -2082,15 +2046,7 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
-    let runtime = if method == "projects.list" {
-        wegent_runtime_logging::project_index_diagnostics::trace(
-            "projects_list.init",
-            TaskRuntime::from_env,
-        )
-    } else {
-        TaskRuntime::from_env()
-    }
-    .map_err(task_runtime_error)?;
+    let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
     match method {
         "dws.auth_status" => serialize_task_value(
             runtime
@@ -2108,11 +2064,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
-        "projects.list" => serialize_task_value(
-            runtime
-                .list_collaboration_projects()
-                .map_err(task_runtime_error)?,
-        ),
         "projects.create" => {
             let input = serde_json::from_value::<ProjectCreate>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -2696,6 +2647,17 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "todos.comment.create" => {
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
             serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
+        }
+        "todos.comment.publish_assistant" => {
+            let create = task_input::<LocalCommentCreate>(&params, "comment")?;
+            let device = required_task_string(&params, "device_id")?;
+            let task = required_task_string(&params, "runtime_task_id")?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .publish_assistant_comment(&create, device, task)
+                    .map_err(task_runtime_error)?,
+            )
         }
         "todos.comment.agent.start" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -3314,12 +3276,12 @@ fn task_runtime_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcErr
     AppIpcError::new(code, error.to_string())
 }
 
-#[cfg(windows)]
-async fn handle_builtin_device_command(
+fn handle_builtin_device_command(
     command_key: &str,
     params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
     match command_key {
+        #[cfg(windows)]
         "mkdir_p" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3335,6 +3297,7 @@ async fn handle_builtin_device_command(
                 None,
             ))
         }
+        #[cfg(windows)]
         "path_exists" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3343,62 +3306,10 @@ async fn handle_builtin_device_command(
                 None,
             ))
         }
-        "runtime_auth_status" => {
-            let codex_home = crate::agents::wework_codex_home();
-            let target = codex_home.join("auth.json");
-            let mut result = json!({
-                "runtime": "codex",
-                "target_path": target.display().to_string(),
-                "exists": target.exists() && target.is_file(),
-                "updated_at": Value::Null,
-                "sha256": Value::Null,
-                "size_bytes": Value::Null,
-                "error": Value::Null,
-            });
-            if target.exists() && target.is_file() {
-                match std::fs::metadata(&target) {
-                    Ok(metadata) => {
-                        if let Ok(updated_at) = metadata.modified() {
-                            let datetime = chrono::DateTime::<chrono::Utc>::from(updated_at);
-                            result["updated_at"] = Value::String(datetime.to_rfc3339());
-                        }
-                        result["size_bytes"] = Value::Number(metadata.len().into());
-                        match std::fs::read(&target) {
-                            Ok(content) => {
-                                use sha2::{Digest, Sha256};
-                                let hash = Sha256::digest(&content);
-                                result["sha256"] = Value::String(format!("{hash:x}"));
-                            }
-                            Err(error) => {
-                                result["error"] = Value::String(error.to_string());
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        result["error"] = Value::String(error.to_string());
-                    }
-                }
-            }
-            Some((
-                CommandResult::ok(result.to_string()),
-                Some(PostProcessor::Json),
-            ))
-        }
-        "git_is_worktree" => {
-            let args = string_list(params.get("args")).ok()?;
-            let path = args.first()?;
-            Some((git_worktree_probe_result(path), None))
-        }
-        _ => None,
-    }
-}
-
-#[cfg(not(windows))]
-async fn handle_builtin_device_command(
-    command_key: &str,
-    params: &Value,
-) -> Option<(CommandResult, Option<PostProcessor>)> {
-    match command_key {
+        "runtime_auth_status" => Some((
+            CommandResult::ok(crate::runtime_work::read_codex_auth_status().to_string()),
+            Some(PostProcessor::Json),
+        )),
         "git_is_worktree" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3546,7 +3457,15 @@ pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
     )
 }
 
-fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>, Option<String>) {
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AppIpcRequestMetadata {
+    request_id: Option<String>,
+    method: Option<String>,
+    command_key: Option<String>,
+    admissible: bool,
+}
+
+fn app_ipc_request_metadata(line: &str) -> AppIpcRequestMetadata {
     match serde_json::from_str::<Value>(line) {
         Ok(Value::Object(message)) => {
             let request_id = message
@@ -3557,6 +3476,7 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>, Opti
             let method = message
                 .get("method")
                 .and_then(Value::as_str)
+                .map(str::trim)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned);
             let command_key = message
@@ -3566,9 +3486,16 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>, Opti
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned);
-            (request_id, method, command_key)
+            let admissible = message.get("type").and_then(Value::as_str) == Some("request")
+                && message.get("params").map_or(true, Value::is_object);
+            AppIpcRequestMetadata {
+                request_id,
+                method,
+                command_key,
+                admissible,
+            }
         }
-        _ => (None, None, None),
+        _ => AppIpcRequestMetadata::default(),
     }
 }
 
@@ -3674,11 +3601,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "ls -a -p",
             &["ls", "-a", "-p"],
             Some(PostProcessor::DirectoryList),
-        )),
-        "runtime_auth_status" => Some(command_definition(
-            "python3 -c <runtime_auth_status>",
-            &["python3", "-c", RUNTIME_AUTH_STATUS_SCRIPT],
-            Some(PostProcessor::Json),
         )),
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),
@@ -4116,8 +4038,8 @@ mod tests {
 
     use super::{
         app_ipc_request_metadata, app_ipc_request_timeout_seconds, is_bulk_app_ipc_event,
-        local_app_command, AppIpcServer, BlockingSingleFlight, APP_IPC_RENDERER_METHODS,
-        APP_IPC_REQUEST_TIMEOUT_SECONDS,
+        local_app_command, AppIpcRequestMetadata, AppIpcServer, BlockingSingleFlight,
+        APP_IPC_RENDERER_METHODS, APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
     use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 
@@ -4201,11 +4123,12 @@ mod tests {
 
         assert_eq!(
             app_ipc_request_metadata(&line),
-            (
-                Some("request-1".to_owned()),
-                Some("device.execute_command".to_owned()),
-                Some("workspace_read_file_chunk".to_owned())
-            )
+            AppIpcRequestMetadata {
+                request_id: Some("request-1".to_owned()),
+                method: Some("device.execute_command".to_owned()),
+                command_key: Some("workspace_read_file_chunk".to_owned()),
+                admissible: false,
+            }
         );
     }
 

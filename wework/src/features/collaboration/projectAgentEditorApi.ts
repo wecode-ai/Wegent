@@ -4,6 +4,11 @@ import { projectChatAgentFromRecord } from '@/api/local/localDelivery'
 import type { RunnerCatalogApi } from './useAgentRouting'
 import type { ProjectChatAgentEditorApi } from '@/features/todo/ProjectChatAgentEditor'
 
+const editorApis = new WeakMap<
+  SharedWorkspaceApi['agents'],
+  WeakMap<RunnerCatalogApi, ProjectChatAgentEditorApi>
+>()
+
 function editorAgent(agent: WorkspaceProjectAgent) {
   // The shared API accepts both wire and renderer field names. Normalize only
   // the definition's top-level fields; policies and MCP keys remain untouched.
@@ -30,7 +35,15 @@ export function createProjectAgentEditorApi(
   agents: SharedWorkspaceApi['agents'],
   catalog: RunnerCatalogApi
 ): ProjectChatAgentEditorApi {
-  return {
+  let catalogs = editorApis.get(agents)
+  if (!catalogs) {
+    catalogs = new WeakMap()
+    editorApis.set(agents, catalogs)
+  }
+  const existing = catalogs.get(catalog)
+  if (existing) return existing
+  // Labels and host reconstruction do not change the backing service authority.
+  const editor: ProjectChatAgentEditorApi = {
     listEnvironments: projectId => catalog.listEnvironments(projectId),
     listNativeModels: (environment, projectId) => catalog.listNativeModels(environment, projectId),
     listModels: () => catalog.listModels(),
@@ -56,4 +69,6 @@ export function createProjectAgentEditorApi(
       return editorAgent(await agents.update(projectId, agentId, definition))
     },
   }
+  catalogs.set(catalog, editor)
+  return editor
 }

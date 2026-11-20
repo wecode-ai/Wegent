@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
+import { findNestedString, requestContainsSkillLocator } from '../modules/desktop-server.mjs'
 import {
   refreshPluginInventory,
   verifyPluginEnabledState,
@@ -76,10 +76,6 @@ export async function createDesktopScenario({
   const evidence = []
   const publishedReleases = new Map()
   const userHomeFor = release => join(homePath, `legacy-${release.version}`)
-  const rootFor = release =>
-    namespace
-      ? join(userHomeFor(release), '.wework/apps', namespace)
-      : join(userHomeFor(release), '.wework')
   const workbenchFor = release => join(userHomeFor(release), '.wegent/workbench')
   const desktopFor = release => join(workbenchFor(release), 'wework', namespace || 'default')
   const environment = release => ({
@@ -139,7 +135,9 @@ export async function createDesktopScenario({
   }
 
   async function seed(release) {
-    const root = rootFor(release)
+    // Exercise plugin-format migration in the Home both binaries explicitly use.
+    // Desktop startup no longer relocates the historical installer's Home.
+    const root = desktopFor(release)
     await mkdir(join(root, 'codex'), { recursive: true })
     await copyFile(seedConfig, join(root, 'codex/config.toml'))
     const userSkill = join(userHomeFor(release), 'personal-skill/SKILL.md')
@@ -153,14 +151,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -172,23 +162,47 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
-    try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
-        await pluginApi(
+    // Pin the account before the historical executor connects so it cannot
+    // materialize a newer release left by an earlier baseline.
+    for (const [role, original] of Object.entries(delivered.packages)) {
+      const fixture = await publish(original)
+      let installed = await accountPlugin(cloud, fixture.slug)
+      if (!installed) {
+        const result = await pluginApi(
           cloud,
-          `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
+          `/plugins/marketplace/${fixture.pluginId}/install?release_id=${fixture.releaseId}`,
           'POST'
         )
-        fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
-        fixtures[role] = fixture
+        installed = result.plugin
+      }
+      assert.ok(installed, 'The historical plugin installation is missing')
+      fixture.installedId = Number(installed.metadata.labels.id)
+      if (installed.spec.releaseId !== fixture.releaseId) {
+        await update(fixture, null, { releaseId: fixture.releaseId })
+      }
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
+      const desired = await accountPlugin(cloud, fixture.slug)
+      assert.equal(desired.spec.releaseId, fixture.releaseId)
+      assert.equal(desired.spec.version, fixture.version)
+      fixtures[role] = fixture
+    }
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
+    })
+    try {
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
       }
       let observedState
       const original = await until(
@@ -507,9 +521,34 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
+        const discovered = requestContainsSkillLocator(body, active.skillPath, active.skillName)
+        if (!discovered) {
+          const catalog =
+            findNestedString(body, text => text.includes('### Available skills')) ?? ''
+          await writeFile(
+            join(resultDir, 'legacy-skill-discovery-failure.json'),
+            JSON.stringify(
+              {
+                sourceVersion: current.release.version,
+                expectedPath: active.skillPath,
+                catalogLines: catalog
+                  .split(/\r?\n/u)
+                  .filter(
+                    line =>
+                      /^- `[^`]+` = `[^`]+`$/u.test(line.trim()) ||
+                      (line.includes('(file:') && line.includes(`:${active.skillName}:`))
+                  ),
+              },
+              null,
+              2
+            )
+          ).catch(error =>
+            console.error('Legacy skill discovery diagnostics failed:', error.message)
+          )
+        }
         assert.ok(
-          requestContainsSkillLocator(body, active.skillPath, active.skillName),
-          'Codex did not discover the historical plugin in its migrated native runtime'
+          discovered,
+          `Codex did not discover the historical plugin in its migrated native runtime: ${active.skillPath}`
         )
         events = shellCommandResponse(body, active.id, active.command, workspacePath)
       } else events = [assistantMessage('Legacy plugin migration fixture ready')]
