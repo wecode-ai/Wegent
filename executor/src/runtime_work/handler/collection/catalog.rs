@@ -127,10 +127,10 @@ impl RuntimeWorkRpcHandler {
         &self,
         archived: bool,
         matches_task: impl Fn(&RuntimeTaskLink) -> bool,
-    ) -> Vec<RuntimeTaskLink> {
+    ) -> (Vec<RuntimeTaskLink>, usize) {
         let started_at = Instant::now();
         let mut links = Vec::new();
-        self.merge_local_task_links(
+        let summary_count = self.merge_local_task_links(
             archived,
             matches_task,
             &mut links,
@@ -138,7 +138,7 @@ impl RuntimeWorkRpcHandler {
             &HashSet::new(),
             started_at,
         );
-        links
+        (links, summary_count)
     }
 
     fn merge_local_task_links(
@@ -149,18 +149,18 @@ impl RuntimeWorkRpcHandler {
         discovered_thread_ids: &HashSet<String>,
         discovered_local_task_ids: &HashSet<String>,
         started_at: Instant,
-    ) {
+    ) -> usize {
         let stage_started_at = Instant::now();
-        for mut link in self.store.list_filtered_task_summaries(true, |link| {
-            (link.status == "archived") == archived && matches_task(link)
-        }) {
+        let summaries = self.store.list_filtered_task_summaries(true, |link| {
+            (link.status == "archived") == archived
+                && !link.ephemeral
+                && (link.runtime_handle["origin"]["type"] != "stand_in_coordinator"
+                    || link.interaction_status.is_some())
+                && matches_task(link)
+        });
+        let summary_count = summaries.len();
+        for mut link in summaries {
             if self.archived_link_is_deleted(&link) {
-                continue;
-            }
-            if link.ephemeral
-                || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
-                    && link.interaction_status.is_none())
-            {
                 continue;
             }
             if is_cached_codex_link_hidden(&link, discovered_thread_ids) {
@@ -189,6 +189,7 @@ impl RuntimeWorkRpcHandler {
             stage_started_at,
             &[("links", links.len().to_string())],
         );
+        summary_count
     }
 
     async fn read_codex_catalog(&self, archived: bool, limit: Option<usize>) -> (Vec<Value>, bool) {

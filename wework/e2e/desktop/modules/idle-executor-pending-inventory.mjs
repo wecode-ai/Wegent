@@ -25,9 +25,10 @@ export async function verifyPendingInventoryProjection(control, { executorHome, 
     ['inventory-waiting', 'waitingForUserInput', false],
     ['inventory-reply', 'awaitingUserReply', false],
     ['inventory-archived', 'awaitingUserReply', true],
+    ['inventory-ephemeral', 'awaitingUserReply', false, true],
   ]
   index.tasks = Object.fromEntries(
-    entries.map(([id, status, archived]) => [
+    entries.map(([id, status, archived, ephemeral = false]) => [
       id,
       {
         local_task_id: id,
@@ -35,6 +36,7 @@ export async function verifyPendingInventoryProjection(control, { executorHome, 
         workspace_path: workspacePath,
         runtime: 'codex',
         archived,
+        ephemeral,
         interaction_status: status,
       },
     ])

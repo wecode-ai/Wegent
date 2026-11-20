@@ -120,7 +120,7 @@ mod coordination_arrangements;
 #[path = "stand_in_telemetry.rs"]
 pub mod stand_in_telemetry;
 
-const LOCAL_SCHEMA_VERSION: i64 = 12;
+const LOCAL_SCHEMA_VERSION: i64 = 11;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -190,6 +190,7 @@ impl LocalTaskStore {
         if schema_is_current(&connection)?
             && default_work_item_project_is_current(&connection)?
             && stand_in_history_index::schema_is_current(&connection)?
+            && schema::runtime_query_indexes_are_current(&connection)?
         {
             return Ok(Self {
                 connection: Arc::new(Mutex::new(connection)),

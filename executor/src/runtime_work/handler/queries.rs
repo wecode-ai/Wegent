@@ -145,20 +145,19 @@ impl RuntimeWorkRpcHandler {
             )
         };
         let stage_started_at = Instant::now();
-        let (collected_links, catalog_complete) = if prefer_cached {
-            (
-                self.collect_cached_links(false, |link| !pending_only || awaits_user(link)),
-                false,
-            )
+        let (collected_links, catalog_complete, candidate_count) = if prefer_cached {
+            let (links, count) =
+                self.collect_cached_links(false, |link| !pending_only || awaits_user(link));
+            (links, false, Some(count))
         } else {
-            self.collect_query_links(false).await
+            let (links, complete) = self.collect_query_links(false).await;
+            (links, complete, None)
         };
-        let candidate_count = collected_links.len();
         log_runtime_work_list_diagnostic(
             "links_collected",
             started_at,
             stage_started_at,
-            &[("links", candidate_count.to_string())],
+            &[("links", collected_links.len().to_string())],
         );
         let stage_started_at = Instant::now();
         let links = if pending_only {
@@ -199,7 +198,10 @@ impl RuntimeWorkRpcHandler {
                 ("workspaces", workspaces.len().to_string()),
                 ("tasks", task_count.to_string()),
                 ("pending_only", pending_only.to_string()),
-                ("candidate_tasks", candidate_count.to_string()),
+                (
+                    "candidate_tasks",
+                    candidate_count.map_or_else(|| "n/a".to_owned(), |count| count.to_string()),
+                ),
             ],
         );
         // Pending decisions are framework-owned state, not a provider discovery request.
