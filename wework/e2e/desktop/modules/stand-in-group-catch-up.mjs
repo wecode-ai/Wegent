@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 
@@ -53,10 +53,20 @@ export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, p
       .run(JSON.stringify({ after: staleStart, cursor: '0', windowMinutes: 5 }), row.id).changes,
     1
   )
+  await storyUntil(
+    () =>
+      readFile(join(root, 'group-catch-up-requested'), 'utf8').catch(error => {
+        if (error.code !== 'ENOENT') throw error
+        return null
+      }),
+    start => start === staleStart,
+    20_000,
+    'The collector must send the persisted stale window to the DingTalk fixture'
+  )
   const recovered = await storyUntil(
     source,
     value => value?.state.error?.code === 'request_timeout',
-    25_000,
+    20_000,
     'The real collector must time out the stale group query'
   )
   assert.equal(recovered.state.checkpoint.windowMinutes, 1)
@@ -79,7 +89,7 @@ export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, p
   await storyUntil(
     () => ({ message: message.get(userId, messageId).count, error: source()?.state.error }),
     value => value.message === 1 && !value.error,
-    12_000,
+    22_000,
     'The fresh group message must reach durable intake after skipping stale backlog'
   )
 }

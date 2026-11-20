@@ -18,6 +18,22 @@ describe('createHttpClient', () => {
     vi.unstubAllGlobals()
   })
 
+  test('reports an absent cloud task binding without warning or changing the error', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      fetchMock.mockImplementation(async () => new Response('{}', { status: 404 }))
+      const client = createHttpClient({ baseUrl: '/api' })
+      await expect(
+        createDeliveryApi(client).findCloudContextForTask({ deviceId: 'device', taskId: 'task' })
+      ).rejects.toMatchObject({ status: 404 })
+      expect(warn).not.toHaveBeenCalled()
+      await expect(client.get('/unavailable')).rejects.toMatchObject({ status: 404 })
+      expect(warn).toHaveBeenCalledOnce()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   test('replays a missing runner selection once without duplicate aliases', async () => {
     const selection = { execution_policy: { mode: 'project_pool' as const } }
     const unregister = registerRunnerSelectionHandler(async () => selection)
