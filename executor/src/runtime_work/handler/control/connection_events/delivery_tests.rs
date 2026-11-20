@@ -181,21 +181,24 @@ async fn verify_preexisting_pr_failure_delivery() {
         .await
         .unwrap();
     assert_eq!(subscribed["subscription"]["status"], "armed");
-    assert_eq!(subscribed["conflict_subscription"]["status"], "armed");
-    assert_eq!(
-        subscribed["subscription"]["observation_id"],
-        subscribed["conflict_subscription"]["observation_id"],
-    );
+    assert!(subscribed.get("conflict_subscription").is_none());
+    let observer_source = request["source"].clone();
     let replay = handler
         .control_operation(&context("caller"), "subscribe_connection_events", request)
         .await
         .unwrap();
-    for field in ["subscription", "conflict_subscription"] {
-        assert_eq!(
-            replay[field]["subscription_key"],
-            subscribed[field]["subscription_key"]
-        );
-    }
+    assert_eq!(replay, subscribed);
+    let observed = handler
+        .connection_observer_operation(
+            "start",
+            json!({"consumerKey":"pr-ui","generation":"1","source":observer_source}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        observed["observation"]["id"],
+        subscribed["subscription"]["observation_id"]
+    );
 
     handler
         .poll_conversation_connection_events(true)
@@ -214,18 +217,12 @@ async fn verify_preexisting_pr_failure_delivery() {
         .await
         .unwrap();
     let items = subscriptions["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2, "{subscriptions}");
-    for (field, status) in [
-        ("subscription", "delivered"),
-        ("conflict_subscription", "armed"),
-    ] {
-        assert!(
-            items.iter().any(|item| item["subscription_key"]
-                == subscribed[field]["subscription_key"]
-                && item["status"] == status),
-            "{subscriptions}"
-        );
-    }
+    assert_eq!(items.len(), 1, "{subscriptions}");
+    assert_eq!(
+        items[0]["subscription_key"],
+        subscribed["subscription"]["subscription_key"]
+    );
+    assert_eq!(items[0]["status"], "delivered");
     let requests_path = root.path().join("requests.jsonl");
     let starts = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -346,11 +343,7 @@ fn merge_subscription_replaces_legacy_heads_and_reuses_the_pr_wait() {
                 &handler.event_subscription_path(), event_store::Scope::Task("caller"),
                 |state| Ok(state["operations"].clone()),
             ).unwrap();
-            assert_eq!(states.as_object().unwrap().len(), 7);
-            let old_conflict_key = first["conflict_subscription"]["subscription_key"].as_str().unwrap();
-            let new_conflict_key = updated["conflict_subscription"]["subscription_key"].as_str().unwrap();
-            assert_eq!(states[&handler.subscription_id("caller", old_conflict_key)]["status"], "cancelled");
-            assert_eq!(states[&handler.subscription_id("caller", new_conflict_key)]["status"], "armed");
+            assert_eq!(states.as_object().unwrap().len(), 5);
             let first_key = first["subscription"]["subscription_key"].as_str().unwrap();
             assert_eq!(states[&handler.subscription_id("caller", first_key)]["status"], "cancelled");
             for key in ["legacy-a", "legacy-b"] {

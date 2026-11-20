@@ -397,6 +397,7 @@ export function useDesktopPaneContext({
     getDraftEditVersion,
     runtimeWork,
     runtimeTaskSummary: contextSnapshot.runtimeTaskSummary,
+    connectionEventSubscriptions: contextSnapshot.connectionEventSubscriptions,
     currentRuntimeConversationSource,
     currentProjectSpaceRuntimeTask,
     runtimeTaskTitle,

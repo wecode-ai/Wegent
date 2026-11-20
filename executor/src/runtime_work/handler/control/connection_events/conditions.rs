@@ -81,6 +81,23 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
                 ]
             });
         }
+        if github && preset == "merge" {
+            filter
+                .as_object_mut()
+                .unwrap()
+                .remove("/external/eventType");
+            let alternatives = alternatives.as_array_mut().unwrap();
+            for alternative in alternatives.iter_mut() {
+                alternative["/external/eventType"] = json!("tracked.status");
+            }
+            alternatives.extend(
+                ["failure", "timed_out", "action_required", "startup_failure"].map(|conclusion| {
+                    json!({"/external/eventType":"tracked.checks",
+                        "/external/payload/status":"completed",
+                        "/external/payload/conclusion":conclusion})
+                }),
+            );
+        }
         filter["$any"] = alternatives;
     }
     Ok(filter)
@@ -95,72 +112,6 @@ fn conflict_alternative(alternative: &Value) -> bool {
     GITHUB_CONFLICT_FIELDS
         .iter()
         .any(|field| alternative.get(field).is_some())
-}
-
-/// Two consumers of the same PR observation have independent delivery receipts.
-pub(super) fn split_github_merge(args: &Value, filter: &mut Value) -> Option<Value> {
-    if args["git_wait"] != "merge"
-        || args["source"]["providerId"] != "@wegent/dsh-connection-git/github"
-    {
-        return None;
-    }
-    split_merge_predicate(filter)
-}
-
-fn split_merge_predicate(filter: &mut Value) -> Option<Value> {
-    let alternatives = filter["$any"].as_array()?;
-    if filter["/external/eventType"] != "tracked.status"
-        || !alternatives.iter().any(conflict_alternative)
-        || !alternatives.iter().any(|value| {
-            value
-                .get("/external/payload/statusCheckRollup/state")
-                .is_some()
-        })
-    {
-        return None;
-    }
-    let mut conflict = filter.clone();
-    conflict["$any"]
-        .as_array_mut()
-        .unwrap()
-        .retain(conflict_alternative);
-    let mut checks: Vec<_> = filter["$any"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|alternative| !conflict_alternative(alternative))
-        .cloned()
-        .collect();
-    for alternative in &mut checks {
-        alternative["/external/eventType"] = json!("tracked.status");
-    }
-    // A check run can finish before GitHub updates the aggregate PR checks.
-    checks.extend(
-        ["failure", "timed_out", "action_required", "startup_failure"].map(|conclusion| {
-            json!({"/external/eventType":"tracked.checks",
-            "/external/payload/status":"completed",
-            "/external/payload/conclusion":conclusion})
-        }),
-    );
-    *filter = json!({"/topicId":filter["/topicId"],"$any":checks});
-    Some(conflict)
-}
-
-/// Identify the split predicates after cloud recovery without session-local state.
-pub(super) fn is_independent_github_merge_wait(record: &Value) -> bool {
-    if record["source"]["observeCurrentStatus"] != true
-        || record["source"]["providerId"] != "@wegent/dsh-connection-git/github"
-    {
-        return false;
-    }
-    record["match"]["$any"]
-        .as_array()
-        .is_some_and(|alternatives| {
-            alternatives.iter().all(conflict_alternative)
-                || alternatives
-                    .iter()
-                    .any(|value| value["/external/eventType"] == "tracked.checks")
-        })
 }
 
 pub(super) fn same_merge_wait(record: &Value, intent: &Value, session: &Value) -> bool {
@@ -195,10 +146,40 @@ fn merge_filter_for_intent(filter: &Value, intent: &Value) -> Value {
         fields.remove("/external/payload/headRefOid");
         fields.remove("/external/payload/sha");
     }
-    if intent["source"]["providerId"] == "@wegent/dsh-connection-git/github"
-        && filter != intent["match"]
+    if intent["source"]["providerId"] != "@wegent/dsh-connection-git/github" {
+        return filter;
+    }
+
+    // Match only the exact historical merge predicates when replacing old waits.
+    let Some(alternatives) = intent["match"]["$any"].as_array() else {
+        return filter;
+    };
+    let status: Vec<_> = alternatives
+        .iter()
+        .filter(|alternative| alternative["/external/eventType"] == "tracked.status")
+        .map(|alternative| {
+            let mut alternative = alternative.as_object().unwrap().clone();
+            alternative.remove("/external/eventType");
+            Value::Object(alternative)
+        })
+        .collect();
+    let conflicts: Vec<_> = status
+        .iter()
+        .filter(|alternative| conflict_alternative(alternative))
+        .cloned()
+        .collect();
+    let checks: Vec<_> = alternatives
+        .iter()
+        .filter(|alternative| !conflict_alternative(alternative))
+        .cloned()
+        .collect();
+    let topic = &intent["match"]["/topicId"];
+    if filter == json!({"/topicId":topic,"/external/eventType":"tracked.status","$any":status})
+        || filter
+            == json!({"/topicId":topic,"/external/eventType":"tracked.status","$any":conflicts})
+        || filter == json!({"/topicId":topic,"$any":checks})
     {
-        split_merge_predicate(&mut filter);
+        return intent["match"].clone();
     }
     filter
 }

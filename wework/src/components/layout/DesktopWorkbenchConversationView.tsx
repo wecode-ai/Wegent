@@ -81,6 +81,7 @@ export function DesktopWorkbenchConversationView({
     pendingSupervisorConfig,
     currentRuntimeConversationSource,
     eventSubscriptionScope,
+    connectionEventSubscriptions,
     cancelCurrentEventSubscription,
     eventCancellationUnsupported,
     activeDeviceUnavailable,
@@ -409,10 +410,7 @@ export function DesktopWorkbenchConversationView({
                                     eventCancellationUnavailable={
                                       activeDeviceUnavailable || !deviceApi
                                     }
-                                    subscriptions={
-                                      currentRuntimeConversationSource?.runtimeHandle
-                                        ?.connectionEventSubscriptions
-                                    }
+                                    subscriptions={connectionEventSubscriptions}
                                     interactionStatus={runtimeTaskSummary?.interactionStatus}
                                     onEditGoal={paneSession.editCurrentGoal}
                                     onPauseGoal={pauseCurrentGoal}
@@ -535,10 +533,7 @@ export function DesktopWorkbenchConversationView({
                                     eventCancellationUnavailable={
                                       activeDeviceUnavailable || !deviceApi
                                     }
-                                    eventSubscriptions={
-                                      currentRuntimeConversationSource?.runtimeHandle
-                                        ?.connectionEventSubscriptions
-                                    }
+                                    eventSubscriptions={connectionEventSubscriptions}
                                     interactionStatus={runtimeTaskSummary?.interactionStatus}
                                     taskPlan={paneSession.taskPlan}
                                     goalDraftActive={paneSession.goalDraftActive}
@@ -831,10 +826,7 @@ export function DesktopWorkbenchConversationView({
                       onCancelEventSubscription={cancelCurrentEventSubscription}
                       eventCancellationUnsupported={eventCancellationUnsupported}
                       eventCancellationUnavailable={activeDeviceUnavailable || !deviceApi}
-                      eventSubscriptions={
-                        currentRuntimeConversationSource?.runtimeHandle
-                          ?.connectionEventSubscriptions
-                      }
+                      eventSubscriptions={connectionEventSubscriptions}
                       interactionStatus={runtimeTaskSummary?.interactionStatus}
                       taskPlan={paneSession.taskPlan}
                       goalDraftActive={paneSession.goalDraftActive}

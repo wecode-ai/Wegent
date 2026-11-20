@@ -615,6 +615,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           assert.ok(changeRequestContext.includes(JSON.stringify([PR])))
           assert.ok(changeRequestContext.includes('subscribe_connection_events'))
           assert.ok(changeRequestContext.includes('exact head SHA'))
+          assert.match(changeRequestContext, /single merge wait for CI results and conflicts/)
+          assert.match(changeRequestContext, /git_wait:merge/)
           followUpRequests += 1
           events = [assistantMessage('WEWORK_CONTROL_ORIGINAL_RESUMED'), responseCompleted(id)]
         } else if (serialized.includes(SOURCE)) {

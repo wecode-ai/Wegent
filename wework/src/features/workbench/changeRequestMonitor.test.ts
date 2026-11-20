@@ -317,6 +317,7 @@ describe('ChangeRequestMonitor', () => {
                           url: 'https://github.com/org/repo/pull/1',
                           state: 'OPEN',
                           title: 'Shared observation',
+                          headRefName: 'fix/status',
                         },
                       },
                     ],
@@ -341,6 +342,27 @@ describe('ChangeRequestMonitor', () => {
       ],
     } as unknown as RuntimeWorkListResponse
   }
+
+  it('uses an active PR observation for a workspace branch before any UI lookup', async () => {
+    const executeCommand = vi.fn<DeviceCommandApi['executeCommand']>()
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(observationWork(), devices)
+    const target = {
+      deviceId: 'local-device',
+      workspacePath: '/work/repo',
+      remoteUrl: 'git@github.com:org/repo.git',
+      taskId: 'task',
+      branch: 'fix/status',
+    }
+    const stop = monitor.register(target)
+    try {
+      await monitor.refresh()
+      expect(monitor.getSnapshot(target)?.changeRequest?.title).toBe('Shared observation')
+      expect(executeCommand).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
+  })
 
   it('keeps simultaneous task projections separate while sharing PR observation facts', async () => {
     const executeCommand = vi.fn<DeviceCommandApi['executeCommand']>()
