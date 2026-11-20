@@ -22,7 +22,7 @@ vi.mock('./settings-cloud-api', () => ({
   createSettingsDeviceApi: () => ({ getMetrics }),
 }))
 
-test('preserves device readings across inventory updates and clears them when the cloud scope changes', async () => {
+test('keeps readings during inventory updates, refreshes after reconnect, and isolates cloud scopes', async () => {
   const device: DeviceInfo = {
     id: 1,
     device_id: 'cloud-device',
@@ -35,6 +35,7 @@ test('preserves device readings across inventory updates and clears them when th
   const nextMetrics = Promise.withResolvers<CloudDeviceMetricsResponse>()
   getMetrics
     .mockResolvedValueOnce({ cpu_usage: 24, memory_usage: 36, disk_usage: 67 })
+    .mockResolvedValueOnce({ cpu_usage: 30, memory_usage: 36, disk_usage: 67 })
     .mockReturnValueOnce(nextMetrics.promise)
   const deviceSection = (entry: DeviceInfo) => (
     <DeviceSection title="Devices" devices={[entry]} icon={Cloud} onChanged={vi.fn()} />
@@ -47,6 +48,11 @@ test('preserves device readings across inventory updates and clears them when th
   await act(async () => view.rerender(deviceSection(updatedDevice)))
   expect(cpu).toHaveTextContent('24%')
   expect(getMetrics).toHaveBeenCalledOnce()
+
+  view.rerender(deviceSection({ ...updatedDevice, status: 'offline' }))
+  expect(cpu).toHaveTextContent('-')
+  view.rerender(deviceSection(updatedDevice))
+  await waitFor(() => expect(cpu).toHaveTextContent('30%'))
 
   cloud.connection = { ...cloud.connection, serviceKey: 'account-2' }
   view.rerender(deviceSection(updatedDevice))

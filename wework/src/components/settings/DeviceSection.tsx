@@ -372,6 +372,7 @@ function DeviceCard({
           return createSettingsDeviceApi({ apiBaseUrl, isConnected, token }).getMetrics(deviceId)
         },
         {
+          refreshOnSubscribe: true,
           refreshIntervalMs: 30_000,
           failure(error) {
             console.error('Failed to load device metrics:', error)
