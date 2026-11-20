@@ -302,20 +302,45 @@ export function RequestUserInputCard({
             })
           }
         }}
-        onDraftAttachmentsChange={attachments => {
-          props.onDraftAttachmentsChange?.(attachments)
+        onDraftAttachmentsChange={(attachments, change) => {
+          props.onDraftAttachmentsChange?.(attachments, change)
           if (!store || !address) return
-          for (const [id, files] of Object.entries(attachments)) {
-            const target = requestUserInputQuestionTarget(props.payload, id)
-            store.update(questionDiscussionKey(address, target.payload), current => ({
+          const target = requestUserInputQuestionTarget(props.payload, change.questionId)
+          const previousById = new Map(change.previous.map(file => [file.id, file] as const))
+          const nextIds = new Set(change.next.map(file => file.id))
+          const removedIds = new Set(
+            change.previous.filter(file => !nextIds.has(file.id)).map(file => file.id)
+          )
+          const added = change.next.filter(file => !previousById.has(file.id))
+          const changedById = new Map(
+            change.next
+              .filter(
+                file =>
+                  previousById.has(file.id) &&
+                  JSON.stringify(previousById.get(file.id)) !== JSON.stringify(file)
+              )
+              .map(file => [file.id, file] as const)
+          )
+          store.update(questionDiscussionKey(address, target.payload), current => {
+            const retained = (current?.attachments?.[target.questionId] ?? [])
+              .filter(file => !removedIds.has(file.id))
+              .map(file =>
+                changedById.has(file.id) &&
+                JSON.stringify(file) === JSON.stringify(previousById.get(file.id))
+                  ? changedById.get(file.id)!
+                  : file
+              )
+            const retainedIds = new Set(retained.map(file => file.id))
+            const files = [...retained, ...added.filter(file => !retainedIds.has(file.id))]
+            return {
               ...current,
               source: address,
               payload: current?.payload ?? target.payload,
               address: current?.address ?? null,
               answers: current?.answers ?? {},
               attachments: { ...current?.attachments, [target.questionId]: files },
-            }))
-          }
+            }
+          })
         }}
         payload={
           canDiscuss && !isImplementationPlanRequestUserInput(payload)

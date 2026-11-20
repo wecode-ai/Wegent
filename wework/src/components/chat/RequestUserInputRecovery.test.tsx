@@ -1,5 +1,5 @@
 import '@/i18n'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, RequestUserInputPayload } from '@/types/api'
@@ -188,6 +188,152 @@ describe('question answer recovery', () => {
     )
   })
 
+  test('shares option and attachment edits between retained cards for one request', async () => {
+    const send = vi.fn().mockResolvedValue(false)
+    let finishSlow!: (attachment: Attachment) => void
+    let nextFileId = 0
+    const question = {
+      ...payload,
+      questions: [
+        { id: 'details', question: 'Details?', options: [{ label: 'A' }, { label: 'B' }] },
+        { id: 'scope', question: 'Scope?', is_other: true },
+      ],
+    }
+    function Harness() {
+      const [sessions, setSessions] = useState<Record<string, QuestionDiscussionSession>>({})
+      const store: QuestionDiscussionStore = {
+        accountKey: 'test',
+        sessions,
+        panelRequest: null,
+        update: (key, update) =>
+          setSessions(current => ({ ...current, [key]: update(current[key]) })),
+        requestPanel: vi.fn(),
+        consumePanelRequest: vi.fn(),
+        create: vi.fn(),
+      }
+      const composerServices = {
+        uploadAttachment: async (input: File) => {
+          if (input.name === 'slow.txt')
+            return new Promise<Attachment>(resolve => {
+              finishSlow = resolve
+            })
+          return {
+            ...file,
+            id: ++nextFileId,
+            filename: input.name,
+            local_path: `/tmp/${input.name}`,
+          }
+        },
+        renderAttachments: ({
+          state,
+          remove,
+        }: {
+          state: { attachments: Attachment[] }
+          remove(id: number): void
+        }) =>
+          state.attachments.map(item => (
+            <button key={item.id} onClick={() => remove(item.id)}>
+              Remove {item.filename}
+            </button>
+          )),
+      }
+      return (
+        <QuestionDiscussionContext.Provider value={{ open: vi.fn() }}>
+          <QuestionDiscussionStoreContext.Provider value={store}>
+            <RequestUserInputCard
+              payload={question}
+              onSubmit={vi.fn()}
+              source={{ deviceId: 'device', taskId: 'task' }}
+              composerServices={composerServices}
+            />
+            <RequestUserInputCard
+              payload={question}
+              onSubmit={send}
+              source={{ deviceId: 'device', taskId: 'task' }}
+              composerServices={composerServices}
+            />
+          </QuestionDiscussionStoreContext.Provider>
+        </QuestionDiscussionContext.Provider>
+      )
+    }
+    render(<Harness />)
+    const [editor, retained] = screen.getAllByTestId('request-user-input-card')
+    setComposerValue(
+      within(retained).getByTestId('request-user-input-custom-scope'),
+      'Retained text'
+    )
+    fireEvent.click(within(editor).getByTestId('request-user-input-option-details-1'))
+    const senderInput = within(editor).getByTestId('request-user-input-custom-scope')
+    fireEvent.paste(senderInput, {
+      clipboardData: {
+        files: [new File(['brief'], 'brief.txt')],
+        types: ['Files'],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => expect(within(retained).getByText('Remove brief.txt')).toBeVisible())
+    expect(within(editor).getByTestId('request-user-input-custom-scope')).toBe(senderInput)
+    expect(within(retained).getByTestId('request-user-input-custom-scope')).toHaveValue(
+      'Retained text'
+    )
+    fireEvent.click(within(retained).getByTestId('request-user-input-submit-button'))
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: {
+            details: { answers: ['B'] },
+            scope: {
+              answers: ['Retained text'],
+              attachments: [
+                expect.objectContaining({ filename: 'brief.txt', text_content: 'brief' }),
+              ],
+            },
+          },
+        })
+      )
+    )
+    send.mockClear()
+    const retainedInput = within(retained).getByTestId('request-user-input-custom-scope')
+    const pasteFile = (target: Element, filename: string) =>
+      fireEvent.paste(target, {
+        clipboardData: {
+          files: [new File([filename], filename)],
+          types: ['Files'],
+          getData: () => '',
+        },
+      })
+    pasteFile(retainedInput, 'slow.txt')
+    pasteFile(senderInput, 'fast.txt')
+    await waitFor(() => expect(within(editor).getByText('Remove fast.txt')).toBeVisible())
+    expect(within(retained).getByTestId('request-user-input-custom-scope')).toBe(retainedInput)
+    fireEvent.click(within(editor).getByText('Remove brief.txt'))
+    await act(async () =>
+      finishSlow({ ...file, id: ++nextFileId, filename: 'slow.txt', local_path: '/tmp/slow.txt' })
+    )
+    await waitFor(() => {
+      expect(within(retained).getByText('Remove fast.txt')).toBeVisible()
+      expect(within(retained).getByText('Remove slow.txt')).toBeVisible()
+      expect(within(retained).queryByText('Remove brief.txt')).not.toBeInTheDocument()
+    })
+    fireEvent.click(within(retained).getByTestId('request-user-input-submit-button'))
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: {
+            details: { answers: ['B'] },
+            scope: {
+              answers: ['Retained text'],
+              attachments: [
+                expect.objectContaining({ filename: 'fast.txt' }),
+                expect.objectContaining({ filename: 'slow.txt' }),
+              ],
+            },
+          },
+        })
+      )
+    )
+  })
+
   test('attachment-only plan feedback selects feedback instead of implementing', async () => {
     const send = vi.fn().mockResolvedValue(false)
     render(
@@ -322,10 +468,13 @@ describe('question answer recovery', () => {
       finish.get('other.txt')!(other)
     })
     await waitFor(() =>
-      expect(drafts).toHaveBeenLastCalledWith({
-        details: [expect.objectContaining({ ...file, text_content: 'brief' })],
-        other: [expect.objectContaining({ ...other, text_content: 'other' })],
-      })
+      expect(drafts).toHaveBeenLastCalledWith(
+        {
+          details: [expect.objectContaining({ ...file, text_content: 'brief' })],
+          other: [expect.objectContaining({ ...other, text_content: 'other' })],
+        },
+        expect.objectContaining({ questionId: 'other' })
+      )
     )
   })
 

@@ -43,7 +43,10 @@ export interface RequestUserInputCardProps {
   draftOptionAnswers?: Record<string, string>
   onDraftOptionAnswersChange?: (answers: Record<string, string>) => void
   draftAttachments?: Record<string, Attachment[]>
-  onDraftAttachmentsChange?: (attachments: Record<string, Attachment[]>) => void
+  onDraftAttachmentsChange?: (
+    attachments: Record<string, Attachment[]>,
+    change: { questionId: string; previous: Attachment[]; next: Attachment[] },
+  ) => void
   composerServices?: RequestUserInputComposerServices
   allowSkip?: boolean
   onSubmit?: (
@@ -142,6 +145,22 @@ function RequestUserInputForm({
   )
   const answerAttachmentsRef = useRef(answerAttachments)
   const draftOptionsRef = useRef(draftOptionAnswers ?? {})
+  const optionDraftSignature = JSON.stringify(draftOptionAnswers ?? {})
+  const [previousOptionDraftSignature, setPreviousOptionDraftSignature] =
+    useState(optionDraftSignature)
+  const [processedAttachmentDrafts, setProcessedAttachmentDrafts] = useState<
+    Record<string, string>
+  >(() =>
+    Object.fromEntries(
+      Object.entries(draftAttachments ?? {}).map(([id, files]) => [
+        id,
+        JSON.stringify(files),
+      ]),
+    ),
+  )
+  const [attachmentEditorRevisions, setAttachmentEditorRevisions] = useState<
+    Record<string, number>
+  >({})
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(
     () =>
       Object.keys(draftOptionAnswers ?? {})[0] ??
@@ -174,6 +193,74 @@ function RequestUserInputForm({
         )),
   )
   const [previousDrafts, setPreviousDrafts] = useState(draftAnswers)
+  if (previousOptionDraftSignature !== optionDraftSignature) {
+    setPreviousOptionDraftSignature(optionDraftSignature)
+    const nextOptions = draftOptionAnswers ?? {}
+    const changedIds = new Set([
+      ...Object.keys(draftOptionsRef.current),
+      ...Object.keys(nextOptions),
+    ])
+    for (const id of changedIds) {
+      if (draftOptionsRef.current[id] === nextOptions[id]) continue
+      setLocalAnswers((current) => {
+        const next = { ...current }
+        if (id in nextOptions) next[id] = nextOptions[id]
+        else delete next[id]
+        return next
+      })
+      if (questions.find((question) => question.id === id)?.allowCustom)
+        setCustomModes((current) => ({
+          ...current,
+          [id]: !(id in nextOptions),
+        }))
+    }
+    draftOptionsRef.current = nextOptions
+  }
+  const nextAttachments = draftAttachments ?? {}
+  const attachmentDraftIds = new Set([
+    ...Object.keys(processedAttachmentDrafts),
+    ...Object.keys(nextAttachments),
+  ])
+  const settledAttachmentIds = [...attachmentDraftIds].filter(
+    (id) =>
+      inputReadiness[id] !== false &&
+      processedAttachmentDrafts[id] !== JSON.stringify(nextAttachments[id] ?? []),
+  )
+  if (settledAttachmentIds.length) {
+    const local = { ...answerAttachmentsRef.current }
+    const changedIds = settledAttachmentIds.filter(
+      (id) =>
+        JSON.stringify(local[id] ?? []) !== JSON.stringify(nextAttachments[id] ?? []),
+    )
+    setProcessedAttachmentDrafts((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        settledAttachmentIds.map((id) => [
+          id,
+          JSON.stringify(nextAttachments[id] ?? []),
+        ]),
+      ),
+    }))
+    for (const id of changedIds) local[id] = nextAttachments[id] ?? []
+    if (changedIds.length) {
+      answerAttachmentsRef.current = local
+      setAnswerAttachments(local)
+      setAttachmentEditorRevisions((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          changedIds.map((id) => [id, (current[id] ?? 0) + 1]),
+        ),
+      }))
+      setCustomModes((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          changedIds
+            .filter((id) => nextAttachments[id]?.length)
+            .map((id) => [id, true]),
+        ),
+      }))
+    }
+  }
   if (previousDrafts !== draftAnswers) {
     setPreviousDrafts(draftAnswers)
     const changes = Object.entries(draftAnswers ?? {}).filter(
@@ -557,6 +644,7 @@ function RequestUserInputForm({
                       <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                     </span>
                     <RequestUserInputAnswerEditor
+                      key={`${question.id}-${attachmentEditorRevisions[question.id] ?? 0}`}
                       questionId={question.id}
                       labelId={`${formId}-${questionIndex}`}
                       value={
@@ -596,7 +684,11 @@ function RequestUserInputForm({
                         setAnswerAttachments(next)
                         if (attachments.length)
                           selectCustomQuestion(question.id)
-                        onDraftAttachmentsChange?.(next)
+                        onDraftAttachmentsChange?.(next, {
+                          questionId: question.id,
+                          previous: current[question.id] ?? [],
+                          next: attachments,
+                        })
                       }}
                       onReadyChange={(ready) =>
                         setInputReadiness((current) =>
