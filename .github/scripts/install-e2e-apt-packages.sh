@@ -8,5 +8,9 @@ source "$script_dir/lib/apt-packages.sh"
 privileged=()
 if ((EUID != 0)); then privileged=(sudo); fi
 
-run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update
-run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "$@"
+apt_options=(
+  -o Acquire::ForceIPv4=true
+  -o Acquire::Retries=3
+)
+run_apt_with_diagnostics "${privileged[@]}" apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update
+run_apt_with_diagnostics "${privileged[@]}" apt-get "${apt_options[@]}" install --yes --no-install-recommends "$@"

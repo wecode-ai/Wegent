@@ -337,9 +337,17 @@ export async function createDesktopScenario({
     )
   }
 
+  async function refreshRuntimePlugin(control, fixture) {
+    await openPlugin(control, fixture)
+    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
+  }
+
   async function invoke(control, fixture) {
     const { version } = fixture
     const record = await waitRuntime(fixture, version)
+    // A restarted renderer advertises Codex skills after reconciling the live
+    // plugin inventory. Wait for that write before submitting the model turn.
+    await refreshRuntimePlugin(control, fixture)
     await verifyDeliveredFiles(fixture, record.runtime.codex_link)
     const id = `legacy-business-${Date.now()}`
     active = {

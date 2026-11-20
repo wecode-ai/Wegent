@@ -71,7 +71,6 @@ vi.mock('./runtime/release-diagnostics.js', () => ({ recordReleaseDiagnostic: vi
 vi.mock('./runtime/release-handoff.js', () => ({
   releaseBridgeUserData: startup.bridgeHandoff,
 }))
-
 vi.mock('node:fs/promises', () => ({
   readFile: async () => JSON.stringify(startup.metadata),
   realpath: async (path: string) =>
@@ -272,6 +271,20 @@ test('a native launcher failure opens recovery without loading release records o
     expect(startup.main).not.toHaveBeenCalled()
     expect(process.env.WEWORK_STARTUP_RECOVERY).toBeUndefined()
   } finally {
+    diagnostic.mockRestore()
+  }
+})
+
+test('installation preparation failures exit non-zero without opening recovery', async () => {
+  vi.stubEnv('WEWORK_STARTUP_RECOVERY', 'Selected program is unavailable')
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  process.argv.push('--wework-prepare-installation')
+  try {
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.exit).toHaveBeenCalledWith(1))
+    expect(startup.showRecovery).not.toHaveBeenCalled()
+  } finally {
+    process.argv.pop()
     diagnostic.mockRestore()
   }
 })

@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+import { runJsonResultProcess } from './json-result-process.mjs'
 
 // The workbench-mode checkpoint runs this against the delivered runtime in CI.
 export async function verifyMissingDesktopUserData({ resources, environment, root }) {
   await mkdir(root, { recursive: true })
   const script = join(root, 'missing-user-data.mjs')
+  const resultFile = join(root, 'result.json')
   await writeFile(
     script,
     `
@@ -43,20 +43,24 @@ export async function verifyMissingDesktopUserData({ resources, environment, roo
       assert.equal(fs.readlinkSync(legacy), userData);
       app.releaseSingleInstanceLock();
       assert.equal(initializeWorkbenchDesktopData(app, userData, {}), true);
-      process.stdout.write(JSON.stringify({ recoveredBeforeReady: true, retainedData: true,
-        createdMissingDirectory: true, restarted: true }), () => app.exit(0));
+      fs.writeFileSync(input.resultFile, JSON.stringify({ recoveredBeforeReady: true,
+        retainedData: true, createdMissingDirectory: true, restarted: true }));
+      app.exit(0);
     } catch (error) { console.error(error.stack); app.exit(1); }
     `
   )
   const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
   const childEnvironment = { ...environment }
   delete childEnvironment.ELECTRON_RUN_AS_NODE
-  const { stdout } = await promisify(execFile)(
-    require('electron'),
-    [script, JSON.stringify({ resources, root }), ...resolveElectronLaunchArguments()],
-    { env: childEnvironment, timeout: 30_000, maxBuffer: 1024 * 1024 }
-  )
-  const evidence = JSON.parse(stdout)
+  const evidence = await runJsonResultProcess({
+    executable: require('electron'),
+    scriptPath: script,
+    input: { resources, root },
+    launchArguments: resolveElectronLaunchArguments(),
+    environment: childEnvironment,
+    timeout: 30_000,
+    resultFile,
+  })
   assert.equal(evidence.recoveredBeforeReady, true)
   await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
   return evidence

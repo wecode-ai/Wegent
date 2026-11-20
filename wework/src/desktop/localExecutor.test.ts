@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { getLocalRuntimeSourceIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
@@ -48,6 +49,16 @@ vi.mock('@/api/dsh/executorTransport', async importOriginal => ({
 const describeDshExecutorMock = vi.mocked(describeDshExecutor)
 const requestDshExecutorMock = vi.mocked(requestDshExecutor)
 const subscribeDshExecutorEventsMock = vi.mocked(subscribeDshExecutorEvents)
+
+function hybridRuntimeWorkApi() {
+  return createHybridWorkbenchServices({
+    apiBaseUrl: 'https://backend.example.com/api',
+    socketBaseUrl: 'https://backend.example.com',
+    socketPath: '/socket.io',
+    token: 'synthetic-test-token',
+    user: { id: 1, user_name: 'Test user', email: 'test@example.com' },
+  }).runtimeWorkApi!
+}
 
 describe('localExecutor', () => {
   beforeEach(() => {
@@ -416,6 +427,41 @@ describe('localExecutor', () => {
     await rejected
   })
 
+  test('validates the native owner only at the local IPC inventory boundary in hybrid mode', async () => {
+    const work = await hybridRuntimeWorkApi().listRuntimeWork()
+
+    expect(describeDshExecutorMock).toHaveBeenCalledTimes(2)
+    expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.list', {})
+    expect(getLocalRuntimeSourceIdentity(work)).toEqual({
+      deviceId: 'electron-device',
+      runtimeInstanceId: 'electron-runtime',
+      provenance: 'local-ipc',
+    })
+    expect(getLocalRuntimeSourceIdentity({ ...work })).toBeUndefined()
+    expect(getLocalRuntimeSourceIdentity(JSON.parse(JSON.stringify(work)))).toBeUndefined()
+  })
+
+  test('rejects a hybrid inventory snapshot if its native owner changes or cannot be verified', async () => {
+    const api = hybridRuntimeWorkApi()
+    const describe = describeDshExecutorMock.getMockImplementation()!
+    describeDshExecutorMock.mockImplementationOnce(describe).mockImplementationOnce(async () => ({
+      ...(await describe()),
+      runtime_instance_id: 'replacement-runtime',
+    }))
+
+    await expect(api.listRuntimeWork()).rejects.toThrow('local-sidebar-runtime-changed')
+
+    describeDshExecutorMock
+      .mockImplementationOnce(describe)
+      .mockRejectedValueOnce(
+        new DshExecutorTransportError('protocol_mismatch', 'Invalid local identity')
+      )
+    await expect(api.listRuntimeWork()).rejects.toThrow('Invalid local identity')
+
+    const recovered = await api.listRuntimeWork()
+    expect(getLocalRuntimeSourceIdentity(recovered)?.runtimeInstanceId).toBe('electron-runtime')
+  })
+
   test.each(['raw', 'normalized'])(
     'binds explicit local APP %s readback to the canonical IPC owner and preserves remote ownership',
     async format => {
@@ -554,6 +600,7 @@ describe('localExecutor', () => {
     const api = createRuntimeWorkApiFromIpc(request, async () => 'remote-default')
     const work = await api.listRuntimeWork({ deviceId: 'remote-alias' })
     expect(work.projects[0].deviceWorkspaces[0].deviceId).toBe('remote-alias')
+    expect(getLocalRuntimeSourceIdentity(work)).toBeUndefined()
     expect(getLocalRuntimeSourceIdentity(work.projects[0].project)).toBeUndefined()
     expect(request).toHaveBeenCalledExactlyOnceWith('runtime.tasks.list', {}, 'remote-alias')
   })

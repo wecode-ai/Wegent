@@ -127,6 +127,24 @@ describe('desktop E2E result retention', () => {
     for (const name of diagnostics) await expectExists(join(resultDirectory, name))
   })
 
+  test('retains scenario-owned failure diagnostics through cleanup', async () => {
+    const resultRoot = await temporaryRoot()
+    const resultDirectory = join(resultRoot, '2026-11-17T10-58-55-363Z-123')
+    const failureDirectory = join(resultDirectory, 'async-hooks-failure')
+    await createDirectoryWithFile(failureDirectory)
+
+    await compactDesktopE2EResult(resultDirectory)
+    await execFileAsync(gitBash(), [
+      resolve(
+        import.meta.dirname,
+        '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+      ).replaceAll('\\', '/'),
+      resultRoot.replaceAll('\\', '/'),
+    ])
+
+    await expectExists(join(failureDirectory, 'payload'))
+  })
+
   test('retains Rust gateway logs after checkpoint cleanup', async () => {
     const resultDirectory = join(await temporaryRoot(), '2026-09-02T00-00-00-000Z-124')
     const logsDirectory = join(resultDirectory, 'backend-rs-logs')

@@ -283,6 +283,9 @@ test('balancing never multiplies expensive conditional preparation from the orig
   ]) {
     const step = steps.find(step => step.name === name)
     assert.ok(step, name)
+    if (name === 'Install Electron for native startup and schema verification') {
+      assert.match(step.run, /node wework\/scripts\/prepare-electron\.mjs/)
+    }
     const triggers = [...step.if.matchAll(/contains\(matrix.segments, '([^']+)'\)/g)].map(
       match => match[1]
     )

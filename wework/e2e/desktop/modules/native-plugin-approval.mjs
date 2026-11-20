@@ -4,11 +4,17 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
+export const NATIVE_PLUGIN_DECISION_TIMEOUT_MS = 12_000
+const WINDOWS_NATIVE_PLUGIN_DECISION_TIMEOUT_MS = 40_000
 const TITLES = [
   'Confirm Core plugin installation',
   'Confirm Core plugin update',
+  'Install this Core plugin?',
+  'Update this Core plugin?',
   'Core 插件安装确认',
   'Core 插件更新确认',
+  '允许安装此 Core 插件吗？',
+  '允许更新此 Core 插件吗？',
 ]
 let decisionSequence = 0
 
@@ -29,7 +35,14 @@ export async function withNativePluginDecision(control, operation, { allow = tru
 }
 
 export async function clickNativeDecision(pid, allow, signal, evidenceDirectory, decision = {}) {
-  const options = { timeout: 12_000, signal, encoding: 'utf8' }
+  const options = {
+    timeout:
+      process.platform === 'win32'
+        ? WINDOWS_NATIVE_PLUGIN_DECISION_TIMEOUT_MS
+        : NATIVE_PLUGIN_DECISION_TIMEOUT_MS,
+    signal,
+    encoding: 'utf8',
+  }
   if (process.platform === 'darwin') {
     await clickMacosNativeDecision(
       pid,
@@ -92,7 +105,7 @@ public static class NativePluginPointer {
 '@
 
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
-$deadline = [DateTime]::UtcNow.AddSeconds(10)
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
 $iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
   $iteration += 1

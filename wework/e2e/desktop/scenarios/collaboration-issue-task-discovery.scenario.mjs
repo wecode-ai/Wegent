@@ -128,6 +128,10 @@ export function createDesktopScenario({
     await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
       enabled: true,
     })
+    // Keep the Issue assistance task on the deterministic Responses model so
+    // the scenario can observe the real Codex request instead of a cloud
+    // provider's Anthropic side path.
+    await selectE2EModel(control, undefined, undefined, panel)
     await control.command('press', composer, { key: 'Enter' })
     await control.command(
       'waitFor',

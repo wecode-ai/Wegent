@@ -6,10 +6,20 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
-import { prepareHarnessRuntimeRoots, resolveDesktopCodexBinary } from './desktop-build-flows.mjs'
+import {
+  prepareHarnessRuntimeRoots,
+  preservesMacBundleIdentifier,
+  resolveDesktopCodexBinary,
+} from './desktop-build-flows.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
 
 const execute = promisify(execFile)
+
+test('regression clones preserve the delivered bundle identity for signature comparison', () => {
+  assert.equal(preservesMacBundleIdentifier({}), false)
+  assert.equal(preservesMacBundleIdentifier({ WEWORK_E2E_PRESERVE_BUNDLE_IDENTIFIER: '1' }), true)
+  assert.equal(preservesMacBundleIdentifier({ WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1' }), true)
+})
 
 test('resolves the per-run coding CLI instead of inheriting another run configuration', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-codex-selection-'))

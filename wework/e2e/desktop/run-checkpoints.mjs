@@ -228,6 +228,7 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
       WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
+      WEWORK_E2E_PRESERVE_BUNDLE_IDENTIFIER: pair.from.fixture ? '1' : '0',
     }
   }
   const [build, codexBinary] = await Promise.all([

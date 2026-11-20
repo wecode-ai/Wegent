@@ -125,8 +125,10 @@ const desktopStorageReady = (async () => {
   try {
     await initializeDesktopLocalStoragePersistence()
     applyAppearance(readStoredAppearance())
+    // Native credential authorization can wait for a user decision. Keep it
+    // off the window reveal path; model state publishes when it becomes ready.
     void initializeProviderModelConfiguration().catch(error => {
-      console.error('[Wework] Failed to initialize model configuration:', error)
+      console.error('[Wework] Provider model configuration failed:', error)
     })
     logRendererStartupStep('renderer-storage-initialize', 'completed')
     return null

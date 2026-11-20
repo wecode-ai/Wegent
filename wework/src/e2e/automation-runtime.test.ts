@@ -132,6 +132,7 @@ describe('Electron desktop E2E automation', () => {
         width: 1040,
         height: 760,
         maximized: maximized ?? false,
+        windowLabel: 'main',
       })
       expect(results).toContainEqual(
         expect.objectContaining({ ok: true, value: JSON.stringify(previous) })

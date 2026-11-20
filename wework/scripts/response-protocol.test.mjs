@@ -673,6 +673,26 @@ describe('delegated task completion model routing', () => {
     expect(JSON.parse(nextCall.arguments)).toEqual({ taskId: 'child-1' })
   })
 
+  test('retries a failed Code Mode read on the resumed native conversation', () => {
+    const body = callback('first')
+    const firstCall = toolCall(delegatedTaskResultEvents(body))
+    body.input.push({
+      type: 'function_call_output',
+      call_id: firstCall.call_id,
+      output: 'Script failed\nWall time 0.1 seconds\nOutput:\nMCP catalog is still starting',
+    })
+
+    const retryCall = toolCall(delegatedTaskResultEvents(body))
+    expect(retryCall.call_id).toBe(`${firstCall.call_id}-retry-1`)
+    body.input.push(
+      output(retryCall.call_id, {
+        taskId: 'child-1',
+        messages: [{ role: 'assistant', content: 'THE_ACTUAL_CHILD_RESULT' }],
+      })
+    )
+    expect(JSON.stringify(delegatedTaskResultEvents(body))).toContain('THE_ACTUAL_CHILD_RESULT')
+  })
+
   test('rejects an incorrect child transcript or a completed task without an answer', () => {
     for (const history of [
       { taskId: 'other-child', messages: [] },

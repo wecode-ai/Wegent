@@ -731,7 +731,7 @@ test("Linux native probes restore verified Electron downloads before the officia
     "true",
   );
   assert(
-    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
+    steps[installIndex].run.includes("node wework/scripts/prepare-electron.mjs"),
   );
 });
 

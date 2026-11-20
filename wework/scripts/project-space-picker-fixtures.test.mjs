@@ -2,7 +2,19 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { createProjectSpacePickerRegression } from '../e2e/desktop/modules/project-space-picker.mjs'
+import {
+  createPickerSession,
+  createProjectSpacePickerRegression,
+} from '../e2e/desktop/modules/project-space-picker.mjs'
+
+const MENU = '[data-testid="work-item-context-menu"]'
+const SEARCH = '[data-testid="project-space-picker-search"]'
+const SORT = '[data-testid="project-space-picker-sort"]'
+const CHANGE = '[data-testid="work-item-change-board"]'
+const GROUPING = '[data-testid="project-space-picker-toggle-workspaces"]'
+const ALL_GROUP = '[data-testid="project-space-picker-group"][data-group-key="all"]'
+const spaceGroup = key =>
+  `[data-testid="project-space-picker-group"][data-group-key=${JSON.stringify(key)}]`
 
 function fixtureBackend({ failCreateAt } = {}) {
   const resources = new Map()
@@ -45,6 +57,118 @@ function fixtureBackend({ failCreateAt } = {}) {
   }
   return { request, resources, failures, calls, preparationFailure }
 }
+
+function pickerControl() {
+  const state = {
+    open: false,
+    groupByWorkspace: false,
+    group: 'all',
+    sort: 'name-asc',
+    query: '',
+  }
+  let failNextSelect = false
+  const requireOpen = () => {
+    if (!state.open) throw new Error(`Unable to find selector "${MENU}"`)
+  }
+  const groupKey = selector => {
+    const match = /data-group-key=("(?:[^"\\]|\\.)*")/.exec(selector)
+    return match ? JSON.parse(match[1]) : null
+  }
+
+  return {
+    state: () => ({ ...state }),
+    remount() {
+      Object.assign(state, {
+        open: false,
+        groupByWorkspace: false,
+        group: 'all',
+        sort: 'name-asc',
+        query: '',
+      })
+    },
+    failNextSelect() {
+      failNextSelect = true
+    },
+    async command(action, selector, options = {}) {
+      if (action === 'getElementCount' && selector === MENU) return Number(state.open)
+      if (action === 'clickWhenEnabled' && selector === CHANGE) {
+        state.open = true
+        return ''
+      }
+      requireOpen()
+      if (action === 'waitFor') return ''
+      if (action === 'getAttribute' && selector === GROUPING) {
+        return String(state.groupByWorkspace)
+      }
+      if (
+        action === 'getAttribute' &&
+        selector.startsWith('[data-testid="project-space-picker-group"]')
+      ) {
+        return String(state.group === groupKey(selector))
+      }
+      if (action === 'clickWhenEnabled' && selector === GROUPING) {
+        state.groupByWorkspace = !state.groupByWorkspace
+        state.group = 'all'
+        return ''
+      }
+      if (action === 'clickWhenEnabled' && selector === ALL_GROUP) {
+        state.group = 'all'
+        return ''
+      }
+      if (action === 'clickWhenEnabled' && selector.includes('data-group-key=')) {
+        state.group = groupKey(selector)
+        return ''
+      }
+      if (action === 'getValue' && selector === SORT) return state.sort
+      if (action === 'getValue' && selector === SEARCH) return state.query
+      if (action === 'select' && selector === SORT) {
+        if (failNextSelect) {
+          failNextSelect = false
+          state.open = false
+          throw new Error(`Timed out waiting for selector "${SORT}"`)
+        }
+        state.sort = options.value
+        return options.value
+      }
+      if (action === 'fill' && selector === SEARCH) {
+        state.query = options.value
+        return options.value
+      }
+      throw new Error(`Unexpected picker command: ${action} ${selector}`)
+    },
+  }
+}
+
+test('restores picker filters and retries after a transient remount', async () => {
+  const control = pickerControl()
+  const picker = createPickerSession(control, 1_000)
+  const targetGroup = spaceGroup('backend:space-a')
+  await picker.open()
+  await picker.setQuery('Picker')
+  await picker.setOrder('name-desc')
+  await picker.setGroupByWorkspace(true)
+  await picker.selectGroup(targetGroup)
+
+  control.remount()
+  assert.equal(await picker.command('getValue', SEARCH), 'Picker')
+  assert.deepEqual(control.state(), {
+    open: true,
+    groupByWorkspace: true,
+    group: 'backend:space-a',
+    sort: 'name-desc',
+    query: 'Picker',
+  })
+
+  control.failNextSelect()
+  await picker.setOrder('name-asc')
+  assert.deepEqual(control.state(), {
+    open: true,
+    groupByWorkspace: true,
+    group: 'backend:space-a',
+    sort: 'name-asc',
+    query: 'Picker',
+  })
+})
 
 test('cleans every recorded fixture after a partial preparation failure', async () => {
   const backend = fixtureBackend({ failCreateAt: 5 })

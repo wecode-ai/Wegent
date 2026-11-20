@@ -44,6 +44,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
   let activeWorkspace
   let writer
   let installed = false
+  const archiveTimeoutMs = Math.max(modelResponseTimeoutMs, 240_000)
   const marker = name => join(root, name)
   const waitMarker = name =>
     waitForValue(
@@ -78,9 +79,6 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         assert.match(result.output, /HOOK_WRITES_COMPLETE/)
         events = [assistantMessage(`${PROMPT}_${phase}_DONE`)]
       } else {
-        // The model fixture holds its first reply until the asynchronous baseline
-        // exists, so diff assertions do not depend on the accepted startup race.
-        if (phase === 'git') await waitMarker('baseline')
         const quote = value => '"' + value.replaceAll('"', '\\"') + '"'
         events = shellCommandResponse(
           body,
@@ -150,8 +148,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         const fixture = join(plugin, 'bin', 'fixture.mjs')
         await writeFile(
           fixture,
-          `#!/usr/bin/env node
-import { appendFile, readFile, access } from 'node:fs/promises'
+          `#!${process.execPath}
+import { appendFile, readFile, access, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from '../logger.mjs'
 const root = ${JSON.stringify(root)}
@@ -175,20 +173,32 @@ try {
   await handleEvent(event, config)
   if (event.hook_event_name === 'TurnStarted') await mark('baseline')
   if (event.hook_event_name === 'ExecutionCompleted') await mark('execution-ended')
+} catch (error) {
+  await writeFile(root + '/hook-error.log', String(error?.stack ?? error) + '\\n', { flag: 'a' }).catch(() => {})
+  throw error
 } finally { await mark('finished') }
 `
         )
         await chmod(fixture, 0o755)
         await writeFile(
           join(plugin, 'bin', 'fixture.cmd'),
-          '@echo off\r\nnode "%~dp0fixture.mjs"\r\n'
+          `@echo off\r\n"${process.execPath}" "%~dp0fixture.mjs"\r\n`
         )
         writer = join(root, 'write.mjs')
         await writeFile(
           writer,
-          `import { writeFile, open } from 'node:fs/promises'
+          `import { access, open, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 const cwd = process.argv[2]
+const root = ${JSON.stringify(root)}
+const deadline = Date.now() + 60000
+while (true) {
+  try { await access(join(root, 'baseline')); break }
+  catch (error) { if (error.code !== 'ENOENT') throw error }
+  if (Date.now() >= deadline) throw new Error('Lifecycle baseline was not written')
+  await delay(50)
+}
 await writeFile(join(cwd, 'source.txt'), 'agent change\\n')
 await writeFile(join(cwd, 'child.txt'), 'shared workspace shell write\\n')
 const file = await open(join(cwd, 'large.txt'), 'w')
@@ -253,7 +263,7 @@ console.log('HOOK_WRITES_COMPLETE')
               recordNames,
               names => names.length === 1,
               'No complete archive',
-              modelResponseTimeoutMs
+              archiveTimeoutMs
             )
             const directory = join(root, 'logs', 'records', recordName)
             const record = JSON.parse(await readFile(join(directory, 'record.json'), 'utf8'))
@@ -316,7 +326,7 @@ console.log('HOOK_WRITES_COMPLETE')
             },
             value => value.entered === value.finished,
             'Hook scripts did not finish before cleanup',
-            uiTimeoutMs
+            archiveTimeoutMs
           )
           drained = true
         } finally {
@@ -354,7 +364,13 @@ console.log('HOOK_WRITES_COMPLETE')
             }
           }
         }
-        if (installed) await rpc('runtime.hooks.delete', { pluginId })
+        if (installed) {
+          const hookRuns = await rpc('runtime.hooks.list', {}).catch(error => ({
+            error: String(error),
+          }))
+          await writeFile(join(root, 'hook-runs.json'), JSON.stringify(hookRuns, null, 2))
+          await rpc('runtime.hooks.delete', { pluginId })
+        }
         if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
         await rm(root, { recursive: true, force: true })
       }

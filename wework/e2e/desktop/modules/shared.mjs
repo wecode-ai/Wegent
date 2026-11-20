@@ -1626,6 +1626,12 @@ async function selectE2EModel(
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('model-switch-warning-dialog'),
+      'The model switch warning did not close after confirmation',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
   } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
     await waitForE2EModelOptionSelected(control, targetSelector)
     await control.command('press', 'body', { key: 'Escape' })

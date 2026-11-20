@@ -1249,6 +1249,10 @@ class DesktopE2EServer {
       assert.ok(processIsAlive(exitProcessId), 'The host must be running before the quit command')
     }
     const observesElectronState = ELECTRON_OBSERVATION_ACTIONS.has(action)
+    // A renderer reload can replace the control client while a read-only wait is
+    // in flight. Re-run the same wait on the replacement client instead of
+    // failing the scenario on a transport handoff.
+    const replayOnClientReplacement = action === 'waitFor'
     const availableAt = observesElectronState
       ? 0
       : (this.controlCommandAvailableAt.get(clientId) ?? 0)
@@ -1279,6 +1283,8 @@ class DesktopE2EServer {
         clientId,
         queuedAt: new Date().toISOString(),
         action,
+        command,
+        replayOnClientReplacement,
         resolve: resolvePromise,
         reject,
         resolveDelivery,
@@ -2115,11 +2121,30 @@ class DesktopE2EServer {
         )
         this.commandQueue = this.commandQueue.filter(item => {
           if (item.clientId !== previousClientId) return true
+          const pending = this.commandResults.get(item.command.id)
+          if (pending?.replayOnClientReplacement) {
+            pending.clientId = ready.clientId
+            item.clientId = ready.clientId
+            return true
+          }
           item.rejectDelivery(replacementError)
           return false
         })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
+          if (pending.replayOnClientReplacement) {
+            pending.clientReplacedAt = new Date().toISOString()
+            if (pending.started) {
+              pending.clientId = ready.clientId
+              pending.started = false
+              this.commandQueue.push({
+                clientId: ready.clientId,
+                command: pending.command,
+                rejectDelivery: pending.rejectDelivery,
+              })
+            }
+            continue
+          }
           if (pending.preserveResultAcrossClientReplacement && pending.started) {
             pending.clientReplacedAt = new Date().toISOString()
             continue

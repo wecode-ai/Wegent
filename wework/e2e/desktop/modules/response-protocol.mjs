@@ -72,6 +72,8 @@ function createSse(events) {
 }
 
 // Script only the model: task-result delivery and its history read stay native.
+const DELEGATED_RESULT_READ_ATTEMPTS = 5
+
 function delegatedTaskResultEvents(body) {
   const latestUser = (Array.isArray(body.input) ? body.input : [])
     .filter(item => item.role === 'user')
@@ -82,17 +84,38 @@ function delegatedTaskResultEvents(body) {
   )
   if (!match) return null
   const [, resultId, taskId, status] = match
-  const callId = `delegated-result-${createHash('sha256').update(resultId).digest('hex').slice(0, 16)}`
-  if (!requestContainsToolOutput(body, callId)) {
-    return mcpToolRequestEvents(body, {
-      toolName: 'read_task',
-      directToolName: 'mcp__wework_stand_in__read_task',
-      argumentsValue: { taskId },
-      searchCallId: `${callId}-search`,
-      toolCallId: callId,
-    }).events
+  const baseCallId = `delegated-result-${createHash('sha256').update(resultId).digest('hex').slice(0, 16)}`
+  let history
+  for (let attempt = 0; attempt < DELEGATED_RESULT_READ_ATTEMPTS; attempt += 1) {
+    const callId = attempt === 0 ? baseCallId : `${baseCallId}-retry-${attempt}`
+    if (!requestContainsToolOutput(body, callId)) {
+      return mcpToolRequestEvents(body, {
+        toolName: 'read_task',
+        directToolName: 'mcp__wework_stand_in__read_task',
+        argumentsValue: { taskId },
+        searchCallId: `${callId}-search`,
+        toolCallId: callId,
+      }).events
+    }
+    const output = readMcpToolOutput(body, callId)
+    if (output.trimStart().startsWith('Script failed')) {
+      // A resumed native conversation can accept Code Mode input before its
+      // MCP catalog finishes starting. Retry the bounded read while preserving
+      // every previous attempt in the request history.
+      continue
+    }
+    history = JSON.parse(output)
+    break
   }
-  const history = JSON.parse(readMcpToolOutput(body, callId))
+  if (!history) {
+    const lastOutput = readMcpToolOutput(
+      body,
+      `${baseCallId}-retry-${DELEGATED_RESULT_READ_ATTEMPTS - 1}`
+    )
+    assert.fail(
+      `The native read_task call failed in Code Mode ${DELEGATED_RESULT_READ_ATTEMPTS} times: ${lastOutput}`
+    )
+  }
   assert.equal(history.taskId, taskId, 'Completion reporting must read the exact child task')
   assert.ok(Array.isArray(history.messages), 'Completion reporting requires a real transcript')
   const answer = history.messages

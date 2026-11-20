@@ -716,7 +716,7 @@ jobs = YAML.load_file(ARGV[0])['jobs']
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
   expected_commands = [
-    'pnpm --dir wework prepare:electron',
+    'node wework/scripts/prepare-electron.mjs',
     %q{pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"}
   ]
   commands = step['run'].lines.map(&:strip).reject(&:empty?)

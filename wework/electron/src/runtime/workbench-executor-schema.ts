@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process'
+import { stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
+
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
@@ -127,4 +130,65 @@ export async function assertExecutorWorkbenchCompatibility(
     throw executorSchemaQueryFailure(error, Date.now() - startedAt)
   }
   assertWorkbenchSchema(response)
+}
+
+type ExecutorCompatibilityVerifier = (environment: NodeJS.ProcessEnv) => Promise<void>
+
+/** Reuses one successful schema probe for the selected executable during startup. */
+export class ExecutorCompatibilityGate {
+  private readonly pending = new Map<string, Promise<void>>()
+  private readonly verified = new Set<string>()
+
+  constructor(
+    private readonly verify: ExecutorCompatibilityVerifier = assertExecutorWorkbenchCompatibility
+  ) {}
+
+  async assert(environment: NodeJS.ProcessEnv): Promise<void> {
+    const key = await executorIdentity(environment)
+    if (!key) return this.verify(environment)
+    const existing = this.pending.get(key)
+    if (existing) return existing
+    if (this.verified.has(key)) {
+      console.info('[executor-schema] compatibility cached')
+      return
+    }
+
+    const startedAt = performance.now()
+    const check = this.verify(environment)
+      .then(() => {
+        this.verified.add(key)
+        console.info('[executor-schema] compatibility verified', {
+          elapsedMs: Math.round(performance.now() - startedAt),
+        })
+      })
+      .catch(error => {
+        this.pending.delete(key)
+        throw error
+      })
+      .finally(() => {
+        this.pending.delete(key)
+      })
+    this.pending.set(key, check)
+    return check
+  }
+}
+
+async function executorIdentity(environment: NodeJS.ProcessEnv): Promise<string | null> {
+  const command = environment.WEWORK_EXECUTOR_PATH?.trim()
+  if (!command) return null
+  const args = environment.WEWORK_EXECUTOR_ARGS_JSON || '[]'
+  try {
+    // Follow symbolic links so replacing the target binary invalidates the probe.
+    const metadata = await stat(command, { bigint: true })
+    return JSON.stringify([
+      resolve(command),
+      metadata.dev.toString(),
+      metadata.ino.toString(),
+      metadata.size.toString(),
+      metadata.mtimeNs.toString(),
+      args,
+    ])
+  } catch {
+    return JSON.stringify([resolve(command), args])
+  }
 }

@@ -545,6 +545,8 @@ async function expectResultsClearOfFooter(results: Locator, footer: Locator) {
 creationTest(
   'keeps expanded grant results and actions reachable at every supported dialog size',
   async ({ page, creation }) => {
+    // Four dialog sizes across both permission entry points take about a minute.
+    test.setTimeout(120_000)
     const prefix = fixtureName('e2e-grant-layout')
     const groupIds: number[] = []
     for (let index = 0; index < 8; index++) {

@@ -7,21 +7,6 @@ import {
   normalizeWorkbenchMode,
 } from './workbench-mode.js'
 
-const gitPlugin = {
-  name: MODE_MANAGED_GIT_PLUGIN,
-  enabled: true,
-}
-
-const focusHomePlugin = {
-  name: MODE_MANAGED_FOCUS_HOME_PLUGIN,
-  enabled: false,
-}
-
-const developerHomePlugin = {
-  name: MODE_MANAGED_DEVELOPER_HOME_PLUGIN,
-  enabled: true,
-}
-
 describe('workbench mode runtime policy', () => {
   test('defaults unknown stored values to developer mode', () => {
     expect(normalizeWorkbenchMode('focus')).toBe('focus')
@@ -32,7 +17,13 @@ describe('workbench mode runtime policy', () => {
 
   test('disables the Git plugin in focus mode', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([gitPlugin, focusHomePlugin, developerHomePlugin]),
+      enabledStates: vi.fn().mockResolvedValue(
+        new Map([
+          [MODE_MANAGED_GIT_PLUGIN, true],
+          [MODE_MANAGED_FOCUS_HOME_PLUGIN, false],
+          [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, true],
+        ])
+      ),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 
@@ -47,11 +38,13 @@ describe('workbench mode runtime policy', () => {
 
   test('enables the Git plugin in developer mode', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([
-        { ...gitPlugin, enabled: false },
-        { ...focusHomePlugin, enabled: true },
-        { ...developerHomePlugin, enabled: false },
-      ]),
+      enabledStates: vi.fn().mockResolvedValue(
+        new Map([
+          [MODE_MANAGED_GIT_PLUGIN, false],
+          [MODE_MANAGED_FOCUS_HOME_PLUGIN, true],
+          [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, false],
+        ])
+      ),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 
@@ -66,7 +59,13 @@ describe('workbench mode runtime policy', () => {
 
   test('does not rewrite matching plugin state', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([gitPlugin]),
+      enabledStates: vi.fn().mockResolvedValue(
+        new Map([
+          [MODE_MANAGED_GIT_PLUGIN, true],
+          [MODE_MANAGED_FOCUS_HOME_PLUGIN, false],
+          [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, true],
+        ])
+      ),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 
@@ -77,7 +76,7 @@ describe('workbench mode runtime policy', () => {
 
   test('allows intentionally empty UI plugin profiles', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([]),
+      enabledStates: vi.fn().mockResolvedValue(new Map()),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 

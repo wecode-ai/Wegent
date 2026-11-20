@@ -14,6 +14,12 @@ on:
     types:
       - checks_requested
   workflow_dispatch:
+    inputs:
+      windows_core_only:
+        description: Run only the Windows desktop Core E2E matrix
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "0 4 * * *"
 
@@ -57,6 +63,7 @@ jobs:
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
       wework_desktop_other_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_other_e2e_matrix }}
       wework_desktop_macos_inspector_e2e: ${{ steps.classify.outputs.wework_desktop_macos_inspector_e2e }}
+      windows_core_only: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_core_only }}
 
     steps:
       - name: Checkout code
@@ -211,7 +218,7 @@ jobs:
     name: Wework E2E
     needs:
       - changes
-    if: needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -262,7 +269,7 @@ jobs:
     name: Build Shared Wework Desktop E2E Artifact
     needs:
       - changes
-    if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     outputs:
@@ -389,7 +396,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-core-e2e
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -486,7 +493,7 @@ jobs:
         env:
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
-          pnpm --dir wework prepare:electron
+          node wework/scripts/prepare-electron.mjs
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Set up real object storage for collaboration E2E
@@ -811,7 +818,7 @@ jobs:
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
         run: |
-          pnpm --dir wework prepare:electron
+          node wework/scripts/prepare-electron.mjs
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
@@ -946,7 +953,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-core-e2e
-    if: needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -1122,7 +1129,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-core-e2e
-    if: needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_other_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -1241,12 +1248,12 @@ jobs:
     steps:
       - name: Check Wework E2E results
         env:
-          RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
-          RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
+          RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && needs.changes.outputs.windows_core_only != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ needs.changes.outputs.windows_core_only != 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
@@ -1353,7 +1360,7 @@ jobs:
   wework-desktop-memory-e2e:
     name: Wework Desktop macOS E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: needs.changes.outputs.windows_core_only != 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-15
     timeout-minutes: 45
     permissions:

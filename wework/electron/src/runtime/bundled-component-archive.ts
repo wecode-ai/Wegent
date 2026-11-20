@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { hashComponentPath, sha256 } from './component-content-hash.js'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import { extractPhysicalRelease } from './physical-release-files.js'
+import { runStartupStage, type StartupStageReporter } from './startup-stage.js'
 
 export interface BundledComponentArchive {
   path: string
@@ -10,11 +11,10 @@ export interface BundledComponentArchive {
   bytes: number
 }
 
-export type ComponentPreparationReporter = (
-  step: string,
-  status: 'started' | 'completed',
-  details?: Record<string, unknown>
-) => void
+export interface BundledComponentArchiveMaterializationOptions {
+  onStage?: StartupStageReporter
+  stagePrefix?: string
+}
 
 /** Keep bundled small files inside one signed archive until target-owned preparation. */
 export async function materializeBundledComponentArchive(
@@ -22,8 +22,9 @@ export async function materializeBundledComponentArchive(
   cache: string,
   archive: BundledComponentArchive,
   contentSha256: string,
-  report?: ComponentPreparationReporter
+  options: BundledComponentArchiveMaterializationOptions = {}
 ): Promise<string> {
+  const stagePrefix = options.stagePrefix ?? 'component-archive'
   const source = resolve(resources, archive.path)
   const child = relative(resolve(resources), source)
   if (
@@ -39,44 +40,55 @@ export async function materializeBundledComponentArchive(
     archive.bytes <= 0
   )
     throw new Error('Bundled component archive metadata is invalid')
-  const physicalChild = relative(await realpath(resources), await realpath(source))
-  if (
-    physicalChild === '..' ||
-    physicalChild.startsWith('../') ||
-    physicalChild.startsWith('..\\') ||
-    isAbsolute(physicalChild)
-  )
-    throw new Error('Bundled component archive escapes its package')
-  report?.('archive-checksum', 'started', { bytes: archive.bytes })
-  const metadata = await stat(source)
-  if (
-    !metadata.isFile() ||
-    metadata.size !== archive.bytes ||
-    (await sha256(source)) !== archive.sha256
-  )
-    throw new Error('Bundled component archive integrity mismatch')
-  report?.('archive-checksum', 'completed')
-  const matches = async (path: string) => {
-    try {
-      const physicalPath = await realpath(path)
-      report?.('content-checksum', 'started')
-      const matchesContent = (await hashComponentPath(physicalPath)) === contentSha256
-      report?.('content-checksum', 'completed', { matches: matchesContent })
-      return matchesContent
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
-      throw error
+
+  const sourceVerified = runStartupStage(
+    options.onStage,
+    `${stagePrefix}-source-verify`,
+    async () => {
+      const physicalChild = relative(await realpath(resources), await realpath(source))
+      if (
+        physicalChild === '..' ||
+        physicalChild.startsWith('../') ||
+        physicalChild.startsWith('..\\') ||
+        isAbsolute(physicalChild)
+      )
+        throw new Error('Bundled component archive escapes its package')
+      const metadata = await stat(source)
+      if (
+        !metadata.isFile() ||
+        metadata.size !== archive.bytes ||
+        (await sha256(source)) !== archive.sha256
+      )
+        throw new Error('Bundled component archive integrity mismatch')
     }
+  )
+  const matches = async (path: string) => {
+    return runStartupStage(
+      options.onStage,
+      `${stagePrefix}-content-verify`,
+      async () => {
+        try {
+          return (await hashComponentPath(await realpath(path))) === contentSha256
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+          throw error
+        }
+      },
+      matched => ({ matched })
+    )
   }
-  const published = await publishImmutableDirectory(
+  const published = publishImmutableDirectory(
     join(cache, archive.sha256),
     async content => {
-      report?.('extract-archive', 'started')
-      await extractPhysicalRelease(source, content)
-      report?.('extract-archive', 'completed')
-      if (!(await matches(content))) throw new Error('Bundled component content checksum mismatch')
+      await sourceVerified
+      await runStartupStage(options.onStage, `${stagePrefix}-extract`, async () => {
+        await extractPhysicalRelease(source, content)
+        if (!(await matches(content)))
+          throw new Error('Bundled component content checksum mismatch')
+      })
     },
     matches
   )
-  return realpath(published)
+  const [publishedPath] = await Promise.all([published, sourceVerified])
+  return realpath(publishedPath)
 }

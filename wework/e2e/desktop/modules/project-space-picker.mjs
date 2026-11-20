@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { reloadMainWindow, waitForWorkbenchTask } from './workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  waitForLocalExecutorReady,
+  waitForWorkbenchTask,
+} from './workspace-flows.mjs'
 
 const MENU = '[data-testid="work-item-context-menu"]'
 const OPTIONS = `${MENU} [role="option"]`
 const SEARCH = '[data-testid="project-space-picker-search"]'
 const SORT = '[data-testid="project-space-picker-sort"]'
 const CHANGE = '[data-testid="work-item-change-board"]'
+const GROUPING = '[data-testid="project-space-picker-toggle-workspaces"]'
+const CLEAR_SEARCH = '[data-testid="project-space-picker-clear-search"]'
+const EMPTY = '[data-testid="project-space-picker-empty"]'
 
 const projectKey = project => `backend:${project.id}`
 const optionSelector = project =>
@@ -14,21 +21,134 @@ const optionSelector = project =>
 const groupSelector = key =>
   `[data-testid="project-space-picker-group"][data-group-key=${JSON.stringify(key)}]`
 
-async function optionKeys(control) {
-  const count = Number(await control.command('getElementCount', OPTIONS))
-  const keys = []
-  for (let index = 1; index <= count; index += 1) {
-    keys.push(
-      await control.command('getAttribute', `${OPTIONS}:nth-child(${index})`, {
-        value: 'data-project-space-key',
-      })
-    )
-  }
-  return keys
+function isTransientPickerError(error) {
+  return /Unable to find selector|Timed out waiting for selector/.test(String(error))
 }
 
-async function assertProjects(control, projects, message) {
-  assert.deepEqual(await optionKeys(control), projects.map(projectKey), message)
+export function createPickerSession(control, timeoutMs) {
+  const state = {
+    groupByWorkspace: false,
+    groupSelector: groupSelector('all'),
+    query: '',
+    order: 'name-asc',
+  }
+
+  const raw = (action, selector, options = {}) => control.command(action, selector, options)
+  const menuOpen = async () => Number(await raw('getElementCount', MENU)) > 0
+
+  async function openMenu() {
+    await raw('clickWhenEnabled', CHANGE, { visible: true, timeoutMs })
+    await raw('waitFor', MENU, { visible: true, stableMs: 500, timeoutMs })
+    await raw('waitFor', `${CHANGE}[aria-expanded="true"]`, { timeoutMs })
+  }
+
+  async function restoreState() {
+    const groupingPressed = await raw('getAttribute', GROUPING, { value: 'aria-pressed' })
+    if (groupingPressed !== String(state.groupByWorkspace)) {
+      await raw('clickWhenEnabled', GROUPING, { visible: true, timeoutMs })
+    }
+    const groupPressed = await raw('getAttribute', state.groupSelector, {
+      value: 'aria-pressed',
+    })
+    if (groupPressed !== 'true') {
+      await raw('clickWhenEnabled', state.groupSelector, { visible: true, timeoutMs })
+    }
+    if ((await raw('getValue', SORT)) !== state.order) {
+      await raw('select', SORT, { value: state.order })
+    }
+    if ((await raw('getValue', SEARCH)) !== state.query) {
+      await raw('fill', SEARCH, { value: state.query })
+    }
+  }
+
+  async function ensureOpenState() {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        if (!(await menuOpen())) await openMenu()
+        await restoreState()
+        return
+      } catch (error) {
+        if (!isTransientPickerError(error) || attempt === 2) throw error
+      }
+    }
+  }
+
+  async function command(action, selector, options = {}) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await ensureOpenState()
+      try {
+        return await raw(action, selector, options)
+      } catch (error) {
+        if (!isTransientPickerError(error) || attempt === 2) throw error
+      }
+    }
+  }
+
+  async function setGroupByWorkspace(enabled) {
+    if (state.groupByWorkspace === enabled) return
+    await command('clickWhenEnabled', GROUPING, { visible: true, timeoutMs })
+    state.groupByWorkspace = enabled
+    state.groupSelector = groupSelector('all')
+    await command('waitFor', `${GROUPING}[aria-pressed="${enabled}"]`, { timeoutMs })
+  }
+
+  async function optionKeys() {
+    const count = Number(await command('getElementCount', OPTIONS))
+    const keys = []
+    for (let index = 1; index <= count; index += 1) {
+      keys.push(
+        await command('getAttribute', `${OPTIONS}:nth-child(${index})`, {
+          value: 'data-project-space-key',
+        })
+      )
+    }
+    return keys
+  }
+
+  return {
+    open: ensureOpenState,
+    command,
+    optionKeys,
+    async setQuery(query) {
+      await command('fill', SEARCH, { value: query })
+      state.query = query
+    },
+    async setOrder(order) {
+      await command('select', SORT, { value: order })
+      state.order = order
+    },
+    setGroupByWorkspace,
+    async selectGroup(selector) {
+      await command('clickWhenEnabled', selector, { visible: true, timeoutMs })
+      state.groupSelector = selector
+    },
+    async clearSearch() {
+      await command('clickWhenEnabled', CLEAR_SEARCH, { visible: true, timeoutMs })
+      state.query = ''
+    },
+  }
+}
+
+async function assertProjects(picker, projects, timeoutMs, message) {
+  let keys = []
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (projects.length) {
+      await picker.command('waitFor', optionSelector(projects[0]), { timeoutMs })
+    } else {
+      await picker.command('waitFor', EMPTY, { timeoutMs })
+    }
+    keys = await picker.optionKeys()
+    if (keys.length === projects.length) break
+  }
+  assert.deepEqual(keys, projects.map(projectKey), message)
+}
+
+/*
+ * Project data refreshes can briefly replace the picker's controls. Keep the
+ * intended filter state and reopen the menu after an exact selector timeout.
+ */
+async function selectGroup(picker, selector) {
+  await picker.selectGroup(selector)
 }
 
 export function createProjectSpacePickerRegression({
@@ -54,6 +174,7 @@ export function createProjectSpacePickerRegression({
   }
 
   async function openTask(control, address) {
+    await waitForLocalExecutorReady(control, workbenchReadyTimeoutMs)
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-task"]', {
       visible: true,
       timeoutMs: uiTimeoutMs,
@@ -98,83 +219,127 @@ export function createProjectSpacePickerRegression({
     async verify(control, address) {
       const { taskId } = address
       await openTask(control, address)
-      // Match and click in one control round trip so a binding refresh cannot
-      // remove the visible control between a separate wait and the click.
-      await control.command('clickWhenEnabled', CHANGE, {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
+      // The session reopens and restores picker state if a binding refresh
+      // replaces the visible control.
+      const picker = createPickerSession(control, uiTimeoutMs)
+      await picker.open()
       for (const project of projects) {
-        await control.command('waitFor', optionSelector(project), { timeoutMs: uiTimeoutMs })
+        await picker.command('waitFor', optionSelector(project), { timeoutMs: uiTimeoutMs })
       }
-      assert.equal(await control.command('getValue', SORT), 'name-asc')
-      await control.command('fill', SEARCH, { value: marker })
-      await assertProjects(control, [project2, project10, sharedA, sharedB], 'Default name order')
-      await control.command('select', SORT, { value: 'name-desc' })
+      assert.equal(await picker.command('getValue', SORT), 'name-asc')
+      await picker.setQuery(marker)
       await assertProjects(
-        control,
+        picker,
+        [project2, project10, sharedA, sharedB],
+        uiTimeoutMs,
+        'Default name order'
+      )
+      await picker.setOrder('name-desc')
+      await assertProjects(
+        picker,
         [sharedA, sharedB, project10, project2],
+        uiTimeoutMs,
         'Descending name order'
       )
 
-      const grouping = '[data-testid="project-space-picker-toggle-workspaces"]'
       assert.equal(
-        await control.command('getAttribute', grouping, { value: 'aria-pressed' }),
+        await picker.command('getAttribute', GROUPING, { value: 'aria-pressed' }),
         'false',
         'The picker must default to storage groups'
       )
-      await control.command('click', groupSelector('backend'))
+      await selectGroup(picker, groupSelector('backend'))
       await assertProjects(
-        control,
+        picker,
         [sharedA, sharedB, project10, project2],
+        uiTimeoutMs,
         'Remote projects must include projects from both spaces'
       )
-      await control.command('fill', SEARCH, { value: spaceB.name })
-      await assertProjects(control, [sharedB], 'Storage grouping must retain space-name search')
-      await control.command('fill', SEARCH, { value: marker })
-      await control.command('click', grouping)
-      await control.command('waitFor', `${grouping}[aria-pressed="true"]`)
-      await control.command('click', groupSelector(`backend:${spaceA.id}`))
-      await assertProjects(control, [sharedA, project10, project2], 'Descending within Space A')
-      await control.command('select', SORT, { value: 'name-asc' })
-      await assertProjects(control, [project2, project10, sharedA], 'Ascending within Space A')
-      await control.command('click', groupSelector(`backend:${spaceB.id}`))
-      await assertProjects(control, [sharedB], 'Space B must exclude all Space A projects')
-      await control.command('click', groupSelector(`backend:${spaceA.id}`))
-      await control.command('fill', SEARCH, { value: `${marker} Shared` })
-      await assertProjects(control, [sharedA], 'Search and Space A must both constrain results')
-      await control.command('click', groupSelector(`backend:${spaceB.id}`))
+      await picker.setQuery(spaceB.name)
       await assertProjects(
-        control,
+        picker,
         [sharedB],
+        uiTimeoutMs,
+        'Storage grouping must retain space-name search'
+      )
+      await picker.setQuery(marker)
+      await picker.setGroupByWorkspace(true)
+      await selectGroup(picker, groupSelector(`backend:${spaceA.id}`))
+      await assertProjects(
+        picker,
+        [sharedA, project10, project2],
+        uiTimeoutMs,
+        'Descending within Space A'
+      )
+      await picker.setOrder('name-asc')
+      await assertProjects(
+        picker,
+        [project2, project10, sharedA],
+        uiTimeoutMs,
+        'Ascending within Space A'
+      )
+      await selectGroup(picker, groupSelector(`backend:${spaceB.id}`))
+      await assertProjects(
+        picker,
+        [sharedB],
+        uiTimeoutMs,
+        'Space B must exclude all Space A projects'
+      )
+      await selectGroup(picker, groupSelector(`backend:${spaceA.id}`))
+      await picker.setQuery(`${marker} Shared`)
+      await assertProjects(
+        picker,
+        [sharedA],
+        uiTimeoutMs,
+        'Search and Space A must both constrain results'
+      )
+      await selectGroup(picker, groupSelector(`backend:${spaceB.id}`))
+      await assertProjects(
+        picker,
+        [sharedB],
+        uiTimeoutMs,
         'Same-named projects must retain their space identity'
       )
 
-      await control.command('click', groupSelector('all'))
-      await control.command('fill', SEARCH, { value: spaceB.name })
-      await assertProjects(control, [sharedB], 'Workspace name search must exclude other spaces')
-      await control.command('fill', SEARCH, { value: `${spaceB.name} ${sharedB.project_key}` })
-      await assertProjects(control, [sharedB], 'Search must combine owning space and project key')
-      await control.command('fill', SEARCH, { value: marker })
-      await control.command(
-        'click',
+      await selectGroup(picker, groupSelector('all'))
+      await picker.setQuery(spaceB.name)
+      await assertProjects(
+        picker,
+        [sharedB],
+        uiTimeoutMs,
+        'Workspace name search must exclude other spaces'
+      )
+      await picker.setQuery(`${spaceB.name} ${sharedB.project_key}`)
+      await assertProjects(
+        picker,
+        [sharedB],
+        uiTimeoutMs,
+        'Search must combine owning space and project key'
+      )
+      await picker.setQuery(marker)
+      await selectGroup(
+        picker,
         '[data-testid="project-space-picker-group"][data-group-key^="local"]'
       )
-      await control.command('waitFor', '[data-testid="project-space-picker-empty"]')
-      await assertProjects(control, [], 'Local space must exclude matching cloud projects')
-      await control.command('click', '[data-testid="project-space-picker-clear-search"]')
-      const localKeys = await optionKeys(control)
+      await assertProjects(
+        picker,
+        [],
+        uiTimeoutMs,
+        'Local space must exclude matching cloud projects'
+      )
+      await picker.clearSearch()
+      const localKeys = await picker.optionKeys()
       assert.ok(localKeys.length > 0, 'The local import fixture must be selectable')
       assert.ok(
         localKeys.every(key => key.startsWith('local:')),
         'Local space leaked cloud projects'
       )
 
-      await control.command('click', groupSelector('all'))
-      await control.command('fill', SEARCH, { value: `${marker} Shared` })
+      await selectGroup(picker, groupSelector('all'))
+      await picker.setQuery(`${marker} Shared`)
       await assertProjects(
-        control,
+        picker,
         [sharedA, sharedB],
+        uiTimeoutMs,
         'Duplicate names must remain separate options'
       )
       for (const [project, workspace] of [
@@ -182,12 +347,12 @@ export function createProjectSpacePickerRegression({
         [sharedB, spaceB],
       ]) {
         assert.equal(
-          await control.command('getAttribute', optionSelector(project), { value: 'aria-label' }),
+          await picker.command('getAttribute', optionSelector(project), { value: 'aria-label' }),
           `${project.name} · ${workspace.name} · ${project.project_key}`
         )
       }
-      await control.command('press', SEARCH, { key: 'ArrowDown' })
-      await control.command('press', SEARCH, { key: 'Enter' })
+      await picker.command('press', SEARCH, { key: 'ArrowDown' })
+      await picker.command('press', SEARCH, { key: 'Enter' })
       const target = `[data-testid="task-board-association-item-${targetIssue.id}"]`
       await control.command('waitFor', target, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('click', target)
@@ -214,27 +379,27 @@ export function createProjectSpacePickerRegression({
       await reloadMainWindow(control, 'The picker regression could not reconnect after reload')
       await openTask(control, address)
       await control.command('waitFor', boundContext, { timeoutMs: uiTimeoutMs })
-      await control.command('clickWhenEnabled', CHANGE, {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
+      const reopened = createPickerSession(control, uiTimeoutMs)
+      await reopened.open()
+      await reopened.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
       assert.equal(
-        await control.command('getAttribute', optionSelector(sharedA), { value: 'aria-selected' }),
+        await reopened.command('getAttribute', optionSelector(sharedA), {
+          value: 'aria-selected',
+        }),
         'false',
         'Reload selected both same-named projects'
       )
       assert.equal(
-        await control.command('getValue', SEARCH),
+        await reopened.command('getValue', SEARCH),
         '',
         'Reopening retained a stale search'
       )
-      assert.equal(await control.command('getValue', SORT), 'name-asc')
+      assert.equal(await reopened.command('getValue', SORT), 'name-asc')
       assert.equal(
-        await control.command('getAttribute', groupSelector('all'), { value: 'aria-pressed' }),
+        await reopened.command('getAttribute', groupSelector('all'), { value: 'aria-pressed' }),
         'true'
       )
-      await control.command('press', SEARCH, { key: 'Escape' })
+      await reopened.command('press', SEARCH, { key: 'Escape' })
     },
 
     async cleanup() {

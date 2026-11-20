@@ -12,18 +12,18 @@ export function normalizeWorkbenchMode(value: unknown): WorkbenchMode {
 
 export async function applyWorkbenchModeToCorePlugins(
   mode: WorkbenchMode,
-  plugins: Pick<CoreDshPluginManager, 'list' | 'setEnabled'>
+  plugins: Pick<CoreDshPluginManager, 'enabledStates' | 'setEnabled'>
 ): Promise<void> {
-  const inventory = await plugins.list()
   const desiredStates = new Map([
     [MODE_MANAGED_GIT_PLUGIN, mode === 'developer'],
     [MODE_MANAGED_FOCUS_HOME_PLUGIN, mode === 'focus'],
     [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, mode === 'developer'],
   ])
-  for (const plugin of inventory) {
-    const shouldEnable = desiredStates.get(plugin.name)
-    if (shouldEnable !== undefined && plugin.enabled !== shouldEnable) {
-      await plugins.setEnabled(plugin.name, shouldEnable)
+  const enabledStates = await plugins.enabledStates([...desiredStates.keys()])
+  for (const [name, shouldEnable] of desiredStates) {
+    const enabled = enabledStates.get(name)
+    if (enabled !== undefined && enabled !== shouldEnable) {
+      await plugins.setEnabled(name, shouldEnable)
     }
   }
 }

@@ -571,12 +571,15 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
   assert.ok(binaryName, `Unable to determine the Electron executable name from ${binaryPath}`)
   await rm(appBundlePath, { recursive: true, force: true })
   await runChecked('/bin/cp', ['-cR', sourceBundlePath, appBundlePath])
-  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') {
+  const requiresReleasePackage = process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE === '1'
+  if (!preservesMacBundleIdentifier(process.env)) {
     await runChecked('/usr/libexec/PlistBuddy', [
       '-c',
       `Set :CFBundleIdentifier ${appIdentifier}`,
       join(appBundlePath, 'Contents', 'Info.plist'),
     ])
+  }
+  if (!requiresReleasePackage) {
     await runChecked('codesign', ['--force', '--deep', '--sign', '-', appBundlePath])
   } else {
     // Complete native first-launch assessment before the inspector startup budget.
@@ -598,6 +601,15 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
     appBundlePath,
     codexBinaryPath: codexBinary,
   }
+}
+
+export function preservesMacBundleIdentifier(environment) {
+  // Regression pairs are ad-hoc signed clones. Keep the delivered bundle identity
+  // so the update's production signature check compares like-for-like applications.
+  return (
+    environment.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE === '1' ||
+    environment.WEWORK_E2E_PRESERVE_BUNDLE_IDENTIFIER === '1'
+  )
 }
 
 async function buildDesktopApp(appIdentifier, codexBinary) {

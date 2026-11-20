@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, toNamespacedPath } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -125,6 +125,61 @@ test('cleanup retains every intermediate profile link owner', async () => {
 
   for (const id of ['owner', 'intermediate', 'physical']) expect((await store.read(id)).id).toBe(id)
   expect(await readFile(join(store.slot('owner'), 'profile', 'package.json'), 'utf8')).toBe('{}')
+})
+
+test('cleanup removes obsolete prepared profiles and unreferenced switch baselines', async () => {
+  const { root, store, current, release } = await fixture()
+  const activeProfile = join(
+    root,
+    'install-preparations',
+    '1.3.0',
+    'dsh-core',
+    'profiles',
+    'wework-core'
+  )
+  const obsoleteProfile = join(
+    root,
+    'install-preparations',
+    '1.2.0',
+    'dsh-core',
+    'profiles',
+    'wework-core'
+  )
+  const baseline = join(root, 'install-preparations', '1.3.0', 'previous-profiles', 'token')
+  for (const path of [activeProfile, obsoleteProfile, baseline])
+    await mkdir(path, { recursive: true })
+  for (const path of [activeProfile, obsoleteProfile, baseline])
+    await writeFile(join(path, 'package.json'), '{}')
+  await store.save({ ...current, profileRoot: activeProfile })
+  await store.save({ ...release('old'), profileRoot: obsoleteProfile })
+
+  expect(await store.prune()).toEqual({ status: 'completed' })
+
+  expect(await readFile(join(activeProfile, 'package.json'), 'utf8')).toBe('{}')
+  await expect(lstat(obsoleteProfile)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(lstat(baseline)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('cleanup keeps a switch baseline owned by the retained rollback release', async () => {
+  const { root, store, current, release } = await fixture()
+  const activeProfile = join(
+    root,
+    'install-preparations',
+    '1.3.0',
+    'dsh-core',
+    'profiles',
+    'wework-core'
+  )
+  const baseline = join(root, 'install-preparations', '1.3.0', 'previous-profiles', 'token')
+  for (const path of [activeProfile, baseline]) await mkdir(path, { recursive: true })
+  for (const path of [activeProfile, baseline]) await writeFile(join(path, 'package.json'), '{}')
+  await store.save({ ...current, profileRoot: activeProfile, retainedRelease: 'old' })
+  await store.save({ ...release('old'), profileRoot: baseline })
+
+  expect(await store.prune()).toEqual({ status: 'completed' })
+
+  expect((await store.read('old')).id).toBe('old')
+  expect(await readFile(join(baseline, 'package.json'), 'utf8')).toBe('{}')
 })
 
 test.each(['marker', 'preserved-data'] as const)(

@@ -12,6 +12,7 @@ find "$diagnostics_root" \
   -mindepth 2 \
   -maxdepth 2 \
   -type d \
+  ! -name 'async-hooks-failure' \
   ! -name 'electron-user-data' \
   ! -name 'backend-rs-logs' \
   ! -name 'electron-logs' \

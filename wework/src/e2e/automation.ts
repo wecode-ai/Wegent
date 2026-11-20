@@ -2959,6 +2959,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           width: Number(nextSize.width),
           height: Number(nextSize.height),
           maximized: nextSize.maximized ?? false,
+          windowLabel: getDesktopWindowLabel(),
         })
       )
     }
@@ -3950,6 +3951,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return hoverDesktopControlElement(command.selector)
     case 'focus':
       return focusDesktopControlElement(command.selector)
+    case 'focusWindow': {
+      const windowLabel = getDesktopWindowLabel()
+      await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+        windowLabel,
+      })
+      return ''
+    }
     case 'pointerLeave':
       return leaveDesktopControlElement(command.selector, command.target)
     case 'pointerDown':
@@ -3994,12 +4002,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'up')
     }
     case 'select': {
-      return waitForDesktopControlElement({ ...command, enabled: true }, element => {
-        if (!(element instanceof HTMLSelectElement)) {
-          throw new Error(`Selector "${command.selector}" is not a select element`)
+      await waitForDesktopControlElement({ ...command, enabled: true }, () => '')
+      const element = findDesktopControlElementsWithin(command.selector, command.target).find(
+        (candidate): candidate is HTMLSelectElement =>
+          candidate instanceof HTMLSelectElement && desktopControlElementEnabled(candidate)
+      )
+      if (!element) throw new Error(`Selector "${command.selector}" is not a select element`)
+      const deadline = Date.now() + (command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS)
+      while (Date.now() < deadline) {
+        try {
+          return selectDesktopControlOption(element, command.value ?? '', command.by)
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !error.message.startsWith('Unable to find select option')
+          )
+            throw error
+          await waitForDomChange(document)
         }
-        return selectDesktopControlOption(element, command.value ?? '', command.by)
-      })
+      }
+      throw new Error(`Timed out waiting for select option ${command.value ?? ''}`)
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]

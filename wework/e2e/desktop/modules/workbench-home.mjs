@@ -20,10 +20,8 @@ import { CHECKPOINT_TASK_PROMPT, MODEL_API_KEY, MODEL_PROVIDER_ID } from './shar
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
-import {
-  packagedResourcesRoot,
-  verifyWorkbenchSchemaCompatibility,
-} from './workbench-schema-compatibility.mjs'
+import { readPackagedNamespace } from './packaged-resources.mjs'
+import { verifyWorkbenchSchemaCompatibility } from './workbench-schema-compatibility.mjs'
 
 const CONFIG_MARKER = 'WEWORK_E2E_WORKBENCH_HOME_CONFIG'
 const SESSION_PATH = join('sessions', 'workbench-home-e2e', 'session.marker')
@@ -149,24 +147,6 @@ function assertWithin(root, path) {
 
 async function assertAbsent(path) {
   await assert.rejects(lstat(path), { code: 'ENOENT' }, `Unexpected migration artifact: ${path}`)
-}
-
-async function readPackagedNamespace(appBinary, environment) {
-  const resourcesRoot = packagedResourcesRoot(appBinary)
-  // Electron's filesystem reads the package metadata inside the actual app.asar.
-  const script =
-    "const fs = require('node:fs'); " +
-    "const metadata = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); " +
-    "process.stdout.write(JSON.stringify(metadata.weworkExecutorNamespace?.trim() || ''))"
-  const { stdout } = await promisify(execFile)(
-    appBinary,
-    ['-e', script, join(resourcesRoot, 'app.asar', 'package.json')],
-    { env: { ...environment, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10_000 }
-  )
-  const namespace = JSON.parse(stdout)
-  assert.equal(typeof namespace, 'string')
-  if (namespace) assert.match(namespace, /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/)
-  return namespace
 }
 
 async function requestExecutor(control, method, timeoutMs) {

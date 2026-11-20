@@ -9,6 +9,9 @@ import {
 } from './ambient-asar-fixtures.js'
 import { extractPhysicalRelease } from './physical-release-files.js'
 
+// Electron's patched fs must not treat the fixture's physical app.asar as an archive.
+process.noAsar = true
+
 const roots: string[] = []
 disableAmbientAsarInterception()
 afterEach(async () => {

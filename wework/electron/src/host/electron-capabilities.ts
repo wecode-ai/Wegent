@@ -937,8 +937,13 @@ export function createElectronCapabilityRouter(
     }
   })
   router.register('e2e.setMainWindowSize', params => {
+    const label = optionalStringParam(params, 'windowLabel')
+    const contents = label && label !== 'main' ? e2eHost.captureTarget(label) : null
+    const target = contents ? BrowserWindow.fromWebContents(contents) : requiredWindow(window)
+    if (!target || target.isDestroyed())
+      throw new Error(`The ${label ?? 'main'} window is unavailable`)
     return setE2EWindowSize(
-      requiredWindow(window),
+      target,
       requiredIntegerParam(params, 'width'),
       requiredIntegerParam(params, 'height'),
       params.maximized === undefined ? false : requiredBooleanParam(params, 'maximized')

@@ -295,9 +295,17 @@ export class ReleaseStore {
 
   private async confirmRelease(id: string): Promise<void> {
     const activation = await this.activation()
-    if (!activation || activation.to !== id) return
-    if ((await this.active())?.id !== id)
-      throw new Error('Release changed before startup confirmation')
+    const active = await this.active()
+    if (active?.id !== id) return
+    if (!activation) {
+      // A retry may enter the target directly after the rejected journal was
+      // retired. Its healthy startup still supersedes the failed attempt.
+      await this.updateRollbackHistory(history =>
+        history.filter(record => record.version !== active.version)
+      )
+      return
+    }
+    if (activation.to !== id) return
     await atomicReleaseWrite(join(this.root, 'previousHealthy'), activation.from)
     await atomicReleaseWrite(join(this.root, 'last-activation.json'), JSON.stringify(activation))
     const healthy = await this.read(id)
@@ -439,6 +447,8 @@ export class ReleaseStore {
     }
     for (const marker of plan.markers) await rm(marker, { force: true })
     for (const release of plan.releases) await removePhysicalRelease(release)
+    for (const preparation of plan.preparations)
+      await rm(preparation, { recursive: true, force: true })
     for (const snapshot of plan.snapshots) await rm(snapshot, { recursive: true, force: true })
     return { status: 'completed' }
   }

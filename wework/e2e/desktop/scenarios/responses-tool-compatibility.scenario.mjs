@@ -38,6 +38,17 @@ const DONE = 'RESPONSES_TOOL_COMPLETED'
 const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
 
+function latestExecOutput(input, round) {
+  return (Array.isArray(input) ? input : [])
+    .filter(
+      item =>
+        ['function_call_output', 'custom_tool_call_output'].includes(item?.type) &&
+        item.call_id?.startsWith('responses-exec-') &&
+        item.call_id.endsWith(`-${round}`)
+    )
+    .at(-1)
+}
+
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
 export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
   const requests = []
@@ -192,15 +203,21 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       assert.equal(tools.length, 1, 'The model must receive the real Code Mode exec declaration')
       assert.equal(tools[0].type, native ? 'custom' : 'function')
       if (!native) assert.equal(tools[0].parameters.properties.input.type, 'string')
-      const callId = `responses-exec-${round}`
-      const result = accountCommandResult(body.input, callId)
+      // A resumed or retried turn can repeat the same model request. Keep each
+      // native tool call distinct so Codex does not discard the retry as a
+      // duplicate call id from the previous attempt.
+      const callId = `responses-exec-${requests.length}-${round}`
+      const completedOutput = latestExecOutput(body.input, round)
+      const result = completedOutput
+        ? accountCommandResult(body.input, completedOutput.call_id)
+        : null
       let events
       if (result?.sessionId) {
         events = shellCommandPollResponse(body, result.pollId, result.sessionId)
       } else if (result) {
         assert.ok(result.output.includes(TOOL_OK), result.output)
         assert.equal(await readFile(artifact, 'utf8'), TOOL_OK)
-        const calls = body.input.filter(item => item.call_id === callId)
+        const calls = body.input.filter(item => item.call_id === completedOutput.call_id)
         assert.equal(calls[0].type, native ? 'custom_tool_call' : 'function_call')
         assert.equal(calls[0].namespace, tools[0].namespace)
         assert.equal(calls[0].name, tools[0].name)

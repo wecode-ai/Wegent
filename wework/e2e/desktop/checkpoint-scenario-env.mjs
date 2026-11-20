@@ -40,7 +40,8 @@ export function checkpointScenarioEnv(env, checkpoint) {
     nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
     nextEnv.WEWORK_E2E_EXECUTOR_BIN =
       env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
-    nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
+    // Signed release verification sets this before invoking the runner. Local
+    // regression pairs remain unsigned fixtures and must not claim that identity.
   }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.

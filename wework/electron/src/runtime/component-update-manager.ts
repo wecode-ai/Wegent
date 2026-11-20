@@ -22,10 +22,14 @@ import { publishImmutableDirectory } from './immutable-directory.js'
 import {
   materializeBundledComponentArchive,
   type BundledComponentArchive,
-  type ComponentPreparationReporter,
 } from './bundled-component-archive.js'
 import * as tar from 'tar'
 import { hashComponentPath, sha256 } from './component-content-hash.js'
+import {
+  runStartupStage,
+  type StartupStageEvent,
+  type StartupStageReporter,
+} from './startup-stage.js'
 
 export { hashComponentPath } from './component-content-hash.js'
 
@@ -118,10 +122,12 @@ export interface ComponentUpdateManagerOptions {
   fetch?: typeof fetch
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
+  onStage?: StartupStageReporter
   validateExecutor?: (path: string) => Promise<void>
   deferBundledExecutorValidation?: boolean
-  reportPreparation?: ComponentPreparationReporter
 }
+
+export type ComponentPreparationStage = StartupStageEvent
 
 export class ComponentUpdateManager {
   private readonly resourcesRoot: string
@@ -134,6 +140,7 @@ export class ComponentUpdateManager {
   private readonly fetch: typeof fetch
   private readonly retryDelay: (attempt: number) => Promise<void>
   private readonly log: (event: Record<string, unknown>) => void
+  private readonly onStage: StartupStageReporter | undefined
   private activeStage: {
     id: string
     key: string
@@ -144,13 +151,11 @@ export class ComponentUpdateManager {
   private packaged: PackagedComponentManifest | null = null
   private readonly validateExecutor: (path: string) => Promise<void>
   private readonly deferBundledExecutorValidation: boolean
-  private readonly reportPreparation?: ComponentPreparationReporter
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
     this.validateExecutor = options.validateExecutor ?? (async () => undefined)
     this.deferBundledExecutorValidation = options.deferBundledExecutorValidation ?? false
-    this.reportPreparation = options.reportPreparation
     this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
@@ -160,6 +165,7 @@ export class ComponentUpdateManager {
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? cloudFetch
+    this.onStage = options.onStage
     this.retryDelay =
       options.retryDelay ??
       (attempt =>
@@ -170,10 +176,13 @@ export class ComponentUpdateManager {
 
   async prepareStartup(): Promise<ComponentPaths> {
     this.usingPackagedFallback = false
-    this.reportPreparation?.('read-manifest-and-state', 'started')
-    const packaged = await this.packagedManifest()
-    const saved = await this.readState()
-    this.reportPreparation?.('read-manifest-and-state', 'completed')
+    const { packaged, saved } = await this.stage(
+      'desktop-components-read-manifest-and-state',
+      async () => ({
+        packaged: await this.packagedManifest(),
+        saved: await this.readState(),
+      })
+    )
     let state = saved
     if (state.activationInProgress) {
       const crossedHostVersion =
@@ -222,6 +231,12 @@ export class ComponentUpdateManager {
     return paths
   }
 
+  /** Resolve packaged components without reading or advancing the live transaction. */
+  async preparePackagedStartup(): Promise<ComponentPaths> {
+    this.usingPackagedFallback = false
+    return this.checkedPaths(await this.packagedManifest())
+  }
+
   async confirmStartup(): Promise<void> {
     if (this.usingPackagedFallback) return
     const state = await this.readState()
@@ -262,7 +277,7 @@ export class ComponentUpdateManager {
     current?: ComponentSet
   ): Promise<ComponentPaths> {
     const paths = await this.resolvePaths(packaged, current)
-    await this.validateExecutor(paths.executor)
+    await this.stage('component-executor-validation', () => this.validateExecutor(paths.executor))
     return paths
   }
 
@@ -493,14 +508,14 @@ export class ComponentUpdateManager {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
     }
-    this.reportPreparation?.('compose-core-plugins', 'started')
-    const composedCorePlugins = await this.composeCorePlugins(
-      paths.weworkCorePlugins,
-      paths.weworkAppStatic,
-      fingerprints.weworkCorePlugins,
-      fingerprints.weworkAppStatic
+    const composedCorePlugins = await this.stage('component-compose', () =>
+      this.composeCorePlugins(
+        paths.weworkCorePlugins,
+        paths.weworkAppStatic,
+        fingerprints.weworkCorePlugins,
+        fingerprints.weworkAppStatic
+      )
     )
-    this.reportPreparation?.('compose-core-plugins', 'completed')
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
       .update('\0')
@@ -549,27 +564,46 @@ export class ComponentUpdateManager {
     current?: ComponentSet
   ): Promise<ResolvedComponent[]> {
     return Promise.all(
-      MANAGED_COMPONENT_IDS.map(async id => {
-        const packagedComponent = packaged.components[id]
-        const active = current?.components[id]
-        const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
-        let path: string
-        if (!active) {
-          path = await this.packagedComponentPath(id, packagedComponent)
-        } else {
-          const root = this.componentRoot(id, active.archiveSha256)
-          const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
-          if (await componentMatches(managedPath, active.contentSha256)) {
-            path = managedPath
-          } else if (active.contentSha256 === packagedComponent.sha256) {
-            path = await this.packagedComponentPath(id, packagedComponent)
+      MANAGED_COMPONENT_IDS.map(id =>
+        this.stage(`component-${id}`, async () => {
+          const packagedComponent = packaged.components[id]
+          const active = current?.components[id]
+          const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
+          let path: string
+          if (!active) {
+            path = await this.stage(`component-${id}-materialize`, () =>
+              this.packagedComponentPath(id, packagedComponent)
+            )
           } else {
-            throw new Error(`Managed component checksum mismatch: ${id}`)
+            const root = this.componentRoot(id, active.archiveSha256)
+            const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
+            const matches = await this.stage(
+              `component-${id}-verify`,
+              () => componentMatches(managedPath, active.contentSha256),
+              matched => ({ matched })
+            )
+            if (matches) {
+              path = managedPath
+            } else if (active.contentSha256 === packagedComponent.sha256) {
+              path = await this.stage(`component-${id}-materialize`, () =>
+                this.packagedComponentPath(id, packagedComponent)
+              )
+            } else {
+              throw new Error(`Managed component checksum mismatch: ${id}`)
+            }
           }
-        }
-        return { id, path, contentSha256 }
-      })
+          return { id, path, contentSha256 }
+        })
+      )
     )
+  }
+
+  private stage<T>(
+    stage: string,
+    run: () => Promise<T>,
+    details?: (result: T) => Record<string, unknown>
+  ): Promise<T> {
+    return runStartupStage(this.onStage, stage, run, details)
   }
 
   private async packagedComponentPath(
@@ -582,8 +616,10 @@ export class ComponentUpdateManager {
         join(this.bundledRoot, 'packaged', id),
         component.archive,
         component.sha256,
-        (step, status, details) =>
-          this.reportPreparation?.(step, status, { component: id, ...details })
+        {
+          onStage: this.onStage,
+          stagePrefix: `component-${id}-archive`,
+        }
       )
     const path = join(this.resourcesRoot, component.path)
     await stat(path)

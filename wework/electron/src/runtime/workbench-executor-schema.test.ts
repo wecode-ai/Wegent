@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
+  ExecutorCompatibilityGate,
   assertExecutorWorkbenchCompatibility,
   assertWorkbenchSchema,
 } from './workbench-executor-schema.js'
@@ -78,6 +79,61 @@ test('allows explicitly supported layout and manifest versions', () => {
 
 test('allows time for first-run macOS executable validation', () => {
   expect(EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS).toBeGreaterThan(5_000)
+})
+
+test('reuses a successful compatibility check for the selected executable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema gate '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  await writeFile(binary, 'first')
+  const verify = vi.fn(async () => undefined)
+  const gate = new ExecutorCompatibilityGate(verify)
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+
+  await Promise.all([gate.assert(environment), gate.assert(environment)])
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledOnce()
+
+  await writeFile(binary, 'replacement')
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledTimes(2)
+})
+
+test('retries a failed compatibility check', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema retry '))
+  directories.push(directory)
+  const binary = join(directory, 'executor')
+  await writeFile(binary, 'fixture')
+  const verify = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error('temporary probe failure'))
+    .mockResolvedValueOnce(undefined)
+  const gate = new ExecutorCompatibilityGate(verify)
+  const environment = { WEWORK_EXECUTOR_PATH: binary }
+
+  await expect(gate.assert(environment)).rejects.toThrow('temporary probe failure')
+  await expect(gate.assert(environment)).resolves.toBeUndefined()
+  expect(verify).toHaveBeenCalledTimes(2)
+})
+
+test('rechecks a symlink target when the binary behind the unchanged link changes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema symlink '))
+  directories.push(directory)
+  const binary = join(directory, 'executor-target')
+  const command = join(directory, 'executor-link')
+  await writeFile(binary, 'first')
+  await symlink(binary, command, process.platform === 'win32' ? 'file' : undefined)
+  const verify = vi.fn(async () => undefined)
+  const gate = new ExecutorCompatibilityGate(verify)
+  const environment = { WEWORK_EXECUTOR_PATH: command }
+
+  await gate.assert(environment)
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledOnce()
+
+  await writeFile(binary, 'replacement-with-different-size')
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledTimes(2)
 })
 
 test('missing executors and arbitrary wrapper arguments cannot authorize migration', async () => {

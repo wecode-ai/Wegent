@@ -249,6 +249,22 @@ describe('ComponentUpdateManager', () => {
     ).toBe(false)
   })
 
+  test('resolves packaged startup without advancing a pending component transaction', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+    const fetch = componentFetch(update.manifest, update.assetName, update.archive)
+    const manager = createManager(fixture, fetch)
+    await manager.stageUpdateForApp(appVersion, 'beta')
+    const statePath = join(fixture.data, 'managed-components', 'state.json')
+    const before = await readFile(statePath, 'utf8')
+
+    const packaged = await manager.preparePackagedStartup()
+
+    expect(await readFile(packaged.executor, 'utf8')).toBe('executor-v1')
+    expect(await readFile(statePath, 'utf8')).toBe(before)
+    expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
+  })
+
   test('downloads changed components and atomically activates them on next startup', async () => {
     const fixture = await createFixture()
     const update = await createExecutorUpdate(fixture.root, 'executor-v2')

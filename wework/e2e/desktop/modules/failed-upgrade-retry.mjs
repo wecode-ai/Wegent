@@ -10,6 +10,18 @@ const RETRY_DIALOG = '[data-testid="app-update-retry-dialog"]'
 const RETRY_CONFIRM = '[data-testid="app-update-retry-confirm"]'
 const RETRY_CANCEL = '[data-testid="app-update-retry-cancel"]'
 
+async function waitForRollbackHistoryCleared(root, version, timeoutMs) {
+  const path = join(root, 'update-rollback-history.json')
+  const deadline = Date.now() + timeoutMs
+  let history = []
+  while (Date.now() < deadline) {
+    history = JSON.parse(await readFile(path, 'utf8'))
+    if (!history.some(item => item.version === version)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`Healthy startup retained the previous failed activation: ${JSON.stringify(history)}`)
+}
+
 /** A delivered source may require its rollback confirmation before preparation can start. */
 export async function confirmPendingUpdateRetry(control, version) {
   const progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
@@ -135,14 +147,7 @@ export async function finishFailedUpgradeRetry(control, options) {
   assert.equal(await installedVersion(), pair.to.version)
   await assertSelectedComposition(pair.to.version)
   await continueTask(control, send, 'after a confirmed retry', workbenchReadyTimeoutMs)
-  const confirmedHistory = JSON.parse(
-    await readFile(join(root, 'update-rollback-history.json'), 'utf8')
-  )
-  assert.equal(
-    confirmedHistory.some(item => item.version === pair.to.version),
-    false,
-    'Healthy startup retained the previous failed activation'
-  )
+  await waitForRollbackHistoryCleared(root, pair.to.version, workbenchReadyTimeoutMs)
 
   await about()
   await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
