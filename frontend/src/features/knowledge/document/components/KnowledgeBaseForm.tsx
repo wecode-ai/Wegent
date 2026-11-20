@@ -26,6 +26,7 @@ import type {
   SummaryModelRef,
 } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
+import type { RetrieverCatalogCache } from '../hooks/useRetrievers'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { MultimodalConfigSection } from '@/features/knowledge/multimodal/components/MultimodalConfigSection'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
@@ -77,7 +78,7 @@ interface KnowledgeBaseFormProps {
   showRetrievalSection: boolean
   retrievalConfig: RetrievalConfigDraft
   onRetrievalConfigChange: (config: RetrievalConfigDraft) => void
-  onRetrievalConfigUserChange?: () => void
+  onRetrievalConfigUserChange?: (changes: RetrievalConfigDraft) => void
   retrievalScopeKey?: string
   retrievalScope?: KnowledgeResourceScope
   retrievalGroupName?: string
@@ -170,6 +171,7 @@ export function KnowledgeBaseForm({
   const panelId = useId()
   const panel = useRef<HTMLDivElement>(null)
   const sidebar = useRef<HTMLElement>(null)
+  const retrieverCache = useRef<RetrieverCatalogCache>(new Map())
   const [modelsOpened, setModelsOpened] = useState(false)
   const [generationOpened, setGenerationOpened] = useState(false)
   const usageReadOnly = disabled || (editableSection !== undefined && editableSection !== 'usage')
@@ -408,6 +410,7 @@ export function KnowledgeBaseForm({
               {showRetrievalSection && (
                 <RetrievalSettingsSection
                   key={retrievalScopeKey}
+                  retrieverCache={retrieverCache.current}
                   config={retrievalConfig}
                   onChange={onRetrievalConfigChange}
                   onUserChange={onRetrievalConfigUserChange}

@@ -796,6 +796,7 @@
     "retrieval": {
       "retriever": "Retriever",
       "retrieverSelect": "Select a retriever",
+      "retrieverLoadFailed": "Could not load retrievers. Try again.",
       "retrieverHint": "Storage engine for document indexing",
       "noRetriever": "No retriever available. Please configure one in Settings.",
       "embeddingModel": "Embedding Model",
@@ -991,6 +992,7 @@
       "teamKnowledgeCount": "Knowledge bases: {{count}}",
       "space": "Space",
       "unknownSpace": "Unknown space",
+      "viewRefreshFailed": "Could not refresh the default view for “{{name}}”.",
       "personalSpace": "Personal space",
       "createInSpace": "Create in this space",
       "permissionDetails": "Permissions",
@@ -1350,6 +1352,7 @@
       "submit": "Create",
       "noBoundModel": "The code wiki agent has no model bound, so generation cannot run.",
       "repositoryRequired": "Select or enter a repository address",
+      "unsupportedRepositoryProvider": "Code Wikis support GitHub, GitLab, and Gitea repositories. Choose a repository from one of these providers.",
       "fromMyRepositories": "From my repositories",
       "byUrl": "By repository address",
       "checking": "Checking the repository…",

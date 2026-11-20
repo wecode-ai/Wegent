@@ -733,6 +733,21 @@ function KnowledgeDocumentSession({
       )}
 
       <div className="flex-1 min-h-0 min-w-0 flex flex-col bg-base relative">
+        {sidebar.viewRefreshErrors.map(id => (
+          <div key={id} role="alert" className="px-3 text-sm text-error">
+            {t('document.navigation.viewRefreshFailed', {
+              name: sidebar.allKnowledgeBases.find(kb => kb.id === id)?.name ?? String(id),
+            })}
+            <button
+              type="button"
+              data-testid={`retry-knowledge-view-${id}`}
+              className="min-h-11 min-w-11 px-3"
+              onClick={() => void sidebar.retryViewRefresh(id)}
+            >
+              {t('document.navigation.retry')}
+            </button>
+          </div>
+        ))}
         {sidebar.loadError && !kbResolution && (
           <div role="alert" className="p-3 text-error">
             {t('document.navigation.loadFailed')}

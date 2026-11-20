@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Code2, Database, FileText } from 'lucide-react'
 import {
   Dialog,
@@ -99,7 +99,7 @@ type KnowledgeBaseKind = 'document' | 'code'
 interface RetrievalDraft {
   mode?: RagConfigMode
   config?: RetrievalConfigDraft
-  edited?: boolean
+  overrides?: RetrievalConfigDraft
 }
 
 function createEmptySource(): CodeWikiSourceDraft {
@@ -219,7 +219,11 @@ export function CreateKnowledgeBaseDialog({
   const retrievalScopeKey = `${effectiveScope}:${retrievalDestination}`
   const retrievalDraft = retrievalDrafts.get(retrievalScopeKey)
   const ragConfigMode = retrievalDraft?.mode ?? 'auto'
-  const retrievalConfig = retrievalDraft?.config ?? retrievalProfile
+  const retrievalConfig = useMemo(
+    () => retrievalDraft?.config ?? { ...retrievalProfile, ...retrievalDraft?.overrides },
+    [retrievalDraft?.config, retrievalDraft?.overrides, retrievalProfile]
+  )
+  const retrievalActive = navigation.selection.section === 'retrieval' && ragConfigMode === 'auto'
   const updateRetrievalDraft = useCallback(
     (change: Partial<RetrievalDraft>) => {
       setRetrievalDrafts(drafts =>
@@ -233,6 +237,7 @@ export function CreateKnowledgeBaseDialog({
     [updateRetrievalDraft]
   )
   const wasOpen = useRef(false)
+  const profileLoaded = useRef(false)
 
   // Reset only on opening, never when a refresh changes default location props.
   useEffect(() => {
@@ -263,35 +268,38 @@ export function CreateKnowledgeBaseDialog({
       setExecutionModelError('')
       resetMultimodal()
       setGuidedQuestions([])
+      profileLoaded.current = false
       setRetrievalProfile(createDefaultRetrievalConfig())
       setRetrievalDrafts(new Map())
       setMaxCalls(10)
       setExemptCalls(5)
       setError('')
+    } else if (!open && wasOpen.current) {
+      selectSection('basic')
     }
     wasOpen.current = open
   }, [open, initialKbType, defaultGroupId, selectSection, resetMultimodal])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || !retrievalActive || profileLoaded.current) return
     let cancelled = false
 
     void getKnowledgeBaseRetrievalProfile()
       .then(profile => {
-        if (cancelled || profile.health.status !== 'valid' || !profile.retrieval_config) return
+        if (cancelled) return
+        profileLoaded.current = true
+        if (profile.health.status !== 'valid' || !profile.retrieval_config) return
         setRetrievalProfile(profile.retrieval_config)
         setRetrievalDrafts(
           drafts =>
-            new Map(
-              [...drafts].map(([key, draft]) => [key, draft.edited ? draft : { mode: draft.mode }])
-            )
+            new Map([...drafts].map(([key, draft]) => [key, { ...draft, config: undefined }]))
         )
       })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, retrievalActive])
 
   // Update selectedKbType when KB type changes (keep summaryEnabled unchanged)
   const handleKbTypeChange = (newType: KnowledgeBaseType) => {
@@ -329,6 +337,11 @@ export function CreateKnowledgeBaseDialog({
         'basic',
         '[data-testid="code-wiki-source-url"], [data-tour="repo-selector"] [role="combobox"]'
       )
+      return
+    }
+    if (kind === 'code' && !repository.type) {
+      setError(t('knowledge:codeWiki.create.unsupportedRepositoryProvider'))
+      selectSection('basic', '[data-tour="repo-selector"] [role="combobox"]')
       return
     }
 
@@ -396,13 +409,18 @@ export function CreateKnowledgeBaseDialog({
     try {
       // Filter out empty guided questions
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
+      const editedFields = Object.keys(
+        retrievalDraft?.overrides ?? {}
+      ) as (keyof RetrievalConfigDraft)[]
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
         direct_access_requirement: directAccessRequirement,
         allow_document_download: allowDocumentDownload,
         retrieval_config:
-          ragConfigMode === 'disabled' || !retrievalDraft?.edited ? undefined : retrievalConfig,
+          ragConfigMode === 'disabled' || editedFields.length === 0
+            ? undefined
+            : Object.fromEntries(editedFields.map(field => [field, retrievalConfig[field]])),
         rag_config_mode: ragConfigMode,
         dingtalk_auto_sync_enabled: kind !== 'code' && dingtalkAutoSyncEnabled,
         summary_enabled: summaryEnabled,
@@ -413,7 +431,7 @@ export function CreateKnowledgeBaseDialog({
         exempt_calls_before_check: exemptCalls,
         selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
         kb_type: kind === 'code' ? 'code_wiki' : selectedKbType,
-        ...(kind === 'code'
+        ...(kind === 'code' && repository.type
           ? {
               source_type: repository.type,
               source_url: repository.url,
@@ -863,8 +881,14 @@ export function CreateKnowledgeBaseDialog({
           retrievalScopeKey={retrievalScopeKey}
           retrievalConfig={retrievalConfig}
           onRetrievalConfigChange={setRetrievalConfig}
-          onRetrievalConfigUserChange={() => {
-            updateRetrievalDraft({ edited: true })
+          onRetrievalConfigUserChange={changes => {
+            setRetrievalDrafts(drafts => {
+              const draft = drafts.get(retrievalScopeKey)
+              return new Map(drafts).set(retrievalScopeKey, {
+                ...draft,
+                overrides: { ...draft?.overrides, ...changes },
+              })
+            })
           }}
           retrievalScope={effectiveScope}
           retrievalGroupName={effectiveGroupName}

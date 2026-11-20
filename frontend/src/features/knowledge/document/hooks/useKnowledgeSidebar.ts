@@ -91,6 +91,8 @@ export interface UseKnowledgeSidebarReturn {
   selectKb: (kb: KnowledgeBase) => void
   syncKnowledgeBase: (kb: KnowledgeBase) => void
   saveKnowledgeBaseView: typeof updateKnowledgeBaseType
+  viewRefreshErrors: number[]
+  retryViewRefresh: (id: number) => Promise<void>
   selectGroup: (groupId: string) => void
   selectGroups: () => void
   selectSourceView: (sourceViewId: string) => void
@@ -195,6 +197,42 @@ function mergeKnowledgeBase(
   }
 }
 
+function mapGroupedLibraries(
+  data: AllGroupedKnowledgeResponse,
+  update: (kb: KnowledgeBaseWithGroupInfo) => KnowledgeBaseWithGroupInfo
+): AllGroupedKnowledgeResponse {
+  return {
+    ...data,
+    personal: {
+      created_by_me: data.personal.created_by_me.map(update),
+      shared_with_me: data.personal.shared_with_me.map(update),
+    },
+    groups: data.groups.map(group => ({
+      ...group,
+      knowledge_bases: group.knowledge_bases.map(update),
+    })),
+    organization: {
+      ...data.organization,
+      knowledge_bases: data.organization.knowledge_bases.map(update),
+    },
+  }
+}
+
+type ViewSave = { pending: number; revision: number; overlapping: boolean; readRevision?: number }
+type SavedViews = {
+  revision: number
+  byId: Map<number, { revision: number; type: NonNullable<KnowledgeBase['kb_type']> }>
+}
+
+function preserveSavedView<T extends { id: number; kb_type?: KnowledgeBase['kb_type'] }>(
+  kb: T,
+  views: SavedViews,
+  readRevision: number
+): T {
+  const view = views.byId.get(kb.id)
+  return view && view.revision > readRevision ? { ...kb, kb_type: view.type } : kb
+}
+
 export function useKnowledgeSidebar({
   showAdvancedKnowledge = false,
 }: {
@@ -207,9 +245,9 @@ export function useKnowledgeSidebar({
   const scopeRef = useRef(scope)
   scopeRef.current = scope
   const [stateScope, setStateScope] = useState(scope)
-  const viewSaves = useRef(
-    new Map<number, { pending: number; revision: number; overlapping: boolean }>()
-  )
+  const viewSaves = useRef(new Map<number, ViewSave>())
+  const savedViews = useRef<SavedViews>({ revision: 0, byId: new Map() })
+  const [viewRefreshErrors, setViewRefreshErrors] = useState<number[]>([])
   const requestRef = useRef(0)
   const latestSelectedKbIdRef = useRef<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -249,6 +287,8 @@ export function useKnowledgeSidebar({
 
   if (stateScope !== scope) {
     viewSaves.current = new Map()
+    savedViews.current = { revision: 0, byId: new Map() }
+    setViewRefreshErrors([])
     latestSelectedKbIdRef.current = null
     setDetailRequest(null)
     detailVersion.current++
@@ -271,13 +311,16 @@ export function useKnowledgeSidebar({
   const loadInitialData = useCallback(async () => {
     if (scopeRef.current !== scope) return
     const request = ++requestRef.current
+    const readRevision = savedViews.current.revision
     const current = () => scopeRef.current === scope && requestRef.current === request
     setIsLoading(true)
     setLoadError(null)
     try {
       const response = await knowledgeBaseApi.getAllGrouped()
       if (!current()) return
-      setAllGroupedData(response)
+      setAllGroupedData(
+        mapGroupedLibraries(response, kb => preserveSavedView(kb, savedViews.current, readRevision))
+      )
       setHasLoaded(true)
       setListRevision(value => value + 1)
       const ids = new Set(collectNavigationKnowledge(response).map(kb => kb.id))
@@ -547,6 +590,7 @@ export function useKnowledgeSidebar({
       // then fetch full KB data for fields omitted from grouped lists.
       setSelectedKb(kb)
       const selectedScope = scope
+      const readRevision = savedViews.current.revision
       getKnowledgeBase(kb.id)
         .then(fullKb => {
           if (
@@ -559,7 +603,7 @@ export function useKnowledgeSidebar({
           setSelectedKb(prev => {
             if (scopeRef.current !== selectedScope || latestSelectedKbIdRef.current !== kb.id)
               return prev
-            return fullKb
+            return preserveSavedView(fullKb, savedViews.current, readRevision)
           })
         })
         .catch(error => {
@@ -584,28 +628,13 @@ export function useKnowledgeSidebar({
   const syncKnowledgeBase = useCallback(
     (updatedKb: KnowledgeBase | Pick<KnowledgeBase, 'id' | 'kb_type'>) => {
       if (scopeRef.current !== scope) return
-      setAllGroupedData(prev => {
-        if (!prev) return prev
-
-        const updateList = (items: KnowledgeBaseWithGroupInfo[]) =>
-          items.map(item => (item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item))
-
-        return {
-          ...prev,
-          personal: {
-            created_by_me: updateList(prev.personal.created_by_me),
-            shared_with_me: updateList(prev.personal.shared_with_me),
-          },
-          groups: prev.groups.map(group => ({
-            ...group,
-            knowledge_bases: updateList(group.knowledge_bases),
-          })),
-          organization: {
-            ...prev.organization,
-            knowledge_bases: updateList(prev.organization.knowledge_bases),
-          },
-        }
-      })
+      setAllGroupedData(
+        prev =>
+          prev &&
+          mapGroupedLibraries(prev, item =>
+            item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item
+          )
+      )
 
       setSelectedKb(prev => {
         if (!prev || prev.id !== updatedKb.id) return prev
@@ -637,6 +666,49 @@ export function useKnowledgeSidebar({
     [recentKey, scope]
   )
 
+  const syncSavedView = useCallback(
+    (id: number, kb: KnowledgeBase) => {
+      if (kb.id !== id || !kb.kb_type) return
+      const views = savedViews.current
+      views.byId.set(id, { type: kb.kb_type, revision: ++views.revision })
+      syncKnowledgeBase({ id, kb_type: kb.kb_type })
+      setViewRefreshErrors(previous => previous.filter(kbId => kbId !== id))
+    },
+    [syncKnowledgeBase]
+  )
+
+  const retryViewRefresh = useCallback(
+    async (id: number) => {
+      const saves = viewSaves.current
+      const save = saves.get(id)
+      if (
+        scopeRef.current !== scope ||
+        !save ||
+        save.pending > 0 ||
+        save.readRevision === save.revision
+      )
+        return
+      const revision = save.revision
+      save.readRevision = revision
+      const current = () =>
+        scopeRef.current === scope && viewSaves.current === saves && save.revision === revision
+      try {
+        const kb = await getKnowledgeBase(id, { cache: 'no-store' })
+        if (current()) {
+          syncSavedView(id, kb)
+          saves.delete(id)
+        }
+      } catch {
+        if (current()) {
+          setViewRefreshErrors(previous => (previous.includes(id) ? previous : [...previous, id]))
+        }
+      } finally {
+        if (current()) save.readRevision = undefined
+      }
+    },
+    [scope, syncSavedView]
+  )
+
   const saveKnowledgeBaseView = useCallback<typeof updateKnowledgeBaseType>(
     async (id, type) => {
       const saves = viewSaves.current
@@ -648,38 +720,19 @@ export function useKnowledgeSidebar({
       saves.set(id, save)
 
       const currentScope = () => scopeRef.current === scope && viewSaves.current === saves
-      const syncView = (kb: KnowledgeBase) => {
-        if (kb.id === id && kb.kb_type) syncKnowledgeBase({ id, kb_type: kb.kb_type })
-      }
-
       try {
         const updated = await updateKnowledgeBaseType(id, type)
-        if (currentScope() && !save.overlapping) syncView(updated)
+        if (currentScope() && !save.overlapping) syncSavedView(id, updated)
         return updated
       } finally {
         save.pending -= 1
         if (currentScope() && save.pending === 0) {
-          if (save.overlapping) {
-            // A newer conversion also invalidates a detail read already in flight.
-            const revision = save.revision
-            const current = () => currentScope() && save.revision === revision
-            void getKnowledgeBase(id, { cache: 'no-store' })
-              .then(kb => {
-                if (current()) syncView(kb)
-              })
-              .catch(error => {
-                if (current()) setLoadError(error instanceof Error ? error.message : String(error))
-              })
-              .finally(() => {
-                if (current()) saves.delete(id)
-              })
-          } else {
-            saves.delete(id)
-          }
+          if (save.overlapping) void retryViewRefresh(id)
+          else saves.delete(id)
         }
       }
     },
-    [scope, syncKnowledgeBase]
+    [scope, syncSavedView, retryViewRefresh]
   )
 
   const selectGroup = useCallback((groupId: string) => {
@@ -805,6 +858,8 @@ export function useKnowledgeSidebar({
     selectKb,
     syncKnowledgeBase,
     saveKnowledgeBaseView,
+    viewRefreshErrors,
+    retryViewRefresh,
     selectGroup,
     selectGroups,
     selectSourceView,

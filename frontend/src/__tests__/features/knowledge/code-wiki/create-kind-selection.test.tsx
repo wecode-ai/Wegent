@@ -96,6 +96,7 @@ jest.mock('@/components/model-select/ModelRefSelector', () => ({
 // does, so they turn it on; the test below is about the rollout itself.
 const mockRuntimeConfig = jest.fn(() => ({ enableCodeWiki: true }))
 jest.mock('@/lib/runtime-config', () => ({
+  getApiBaseUrl: () => '',
   getRuntimeConfigSync: () => mockRuntimeConfig(),
 }))
 
@@ -211,6 +212,15 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.getByText('Team index', { exact: false })).toBeVisible()
     expect(screen.queryByText('Personal index', { exact: false })).not.toBeInTheDocument()
 
+    jest.mocked(retrieverApis.getUnifiedRetrievers).mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    fireEvent.click(await screen.findByTestId('retry-retriever-catalog'))
+    expect(screen.getByText('Team index', { exact: false })).toBeVisible()
+    await waitFor(() =>
+      expect(screen.queryByTestId('retry-retriever-catalog')).not.toBeInTheDocument()
+    )
+
     fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-personal'))
@@ -242,9 +252,11 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.getByDisplayValue('Release documentation')).toBeInTheDocument()
   })
 
-  it('loads the retrieval profile for documents before a kind is selected', async () => {
+  it('loads the retrieval profile only when Retrieval is opened', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
+    expect(getKnowledgeBaseRetrievalProfile).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
   })
 
@@ -262,6 +274,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     )
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     await waitFor(() => expect(mockedGetKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     await act(async () => {
       resolveProfile({

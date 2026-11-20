@@ -12,8 +12,9 @@
  * it. That answer is used before any public default.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
+import { codeWikiApi } from '@/apis/code-wiki'
 import {
   CodeWikiSourceFields,
   useCodeWikiRepository,
@@ -78,6 +79,70 @@ describe('code wiki source type inference', () => {
 
     expect(screen.getByTestId('code-wiki-source-type')).toBeInTheDocument()
   })
+})
+
+it('explains unsupported repository providers without probing them', () => {
+  mockUser.mockReturnValue({ user: { git_info: [] } })
+  jest.mocked(codeWikiApi.resolve).mockClear()
+  render(
+    <SourceForm
+      initial={{
+        ...EMPTY,
+        repo: {
+          git_repo_id: 1,
+          name: 'repo',
+          git_repo: 'team/repo',
+          git_url: 'https://gitee.com/team/repo',
+          git_domain: 'gitee.com',
+          private: false,
+          type: 'gitee',
+        },
+      }}
+    />
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'codeWiki.create.unsupportedRepositoryProvider'
+  )
+  expect(codeWikiApi.resolve).not.toHaveBeenCalled()
+})
+
+it('can retry a cached unreadable repository', async () => {
+  mockUser.mockReturnValue({ user: { git_info: [] } })
+  jest.mocked(codeWikiApi.resolve).mockClear()
+  const url = 'https://github.com/team/repo'
+  jest.useFakeTimers()
+  try {
+    render(
+      <SourceForm
+        initial={{
+          ...EMPTY,
+          mode: 'url',
+          urlInput: url,
+          probe: {
+            url,
+            type: 'github',
+            result: {
+              exists: false,
+              visibility: '',
+              default_branch: '',
+              name: '',
+              description: '',
+              access: 'none',
+              existing_wikis: [],
+            },
+          },
+        }}
+      />
+    )
+    expect(codeWikiApi.resolve).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('code-wiki-source-retry'))
+    await act(async () => {
+      jest.advanceTimersByTime(600)
+    })
+    expect(codeWikiApi.resolve).toHaveBeenCalledWith('github', url)
+  } finally {
+    jest.useRealTimers()
+  }
 })
 
 it('opens an existing wiki by ID without assuming its namespace', () => {

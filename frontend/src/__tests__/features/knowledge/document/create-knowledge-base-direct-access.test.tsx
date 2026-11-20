@@ -37,6 +37,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
   KnowledgeBaseForm: ({
     documentSyncSetting,
+    navigation,
     locationSection,
     typeSection,
     directAccessRequirement,
@@ -47,6 +48,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
   }: {
+    navigation: { selectSection: (section: 'retrieval') => void }
     documentSyncSetting?: import('react').ReactNode
     locationSection?: import('react').ReactNode
     typeSection?: import('react').ReactNode
@@ -56,12 +58,16 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onSummaryEnabledChange: (value: boolean) => void
     retrievalConfig: RetrievalConfigDraft
     onRetrievalConfigChange: (value: RetrievalConfigDraft) => void
-    onRetrievalConfigUserChange: () => void
+    onRetrievalConfigUserChange: (changes: RetrievalConfigDraft) => void
   }) => (
     <div>
       {documentSyncSetting}
       {locationSection}
       {typeSection}
+      <button type="button" onClick={() => navigation.selectSection('retrieval')}>
+        open retrieval
+      </button>
+      <output data-testid="retrieval-threshold">{retrievalConfig.score_threshold}</output>
       <button type="button" onClick={() => onNameChange('Private docs')}>
         set name
       </button>
@@ -72,7 +78,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
         type="button"
         onClick={() => {
           onRetrievalConfigChange({ ...retrievalConfig, top_k: 9 })
-          onRetrievalConfigUserChange()
+          onRetrievalConfigUserChange({ top_k: 9 })
         }}
       >
         change retrieval settings
@@ -117,7 +123,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
-    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    expect(getKnowledgeBaseRetrievalProfile).not.toHaveBeenCalled()
     expect(screen.getByTestId('knowledge-base-direct-access-read')).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
@@ -134,21 +140,37 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     })
   })
 
-  it('submits a retrieval configuration after the creator changes it', async () => {
+  it('keeps late profile defaults and submits only the creator’s retrieval edits', async () => {
     const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
     mockedGetKnowledgeBaseRetrievalProfile.mockClear()
+    let resolveProfile!: (value: unknown) => void
+    mockedGetKnowledgeBaseRetrievalProfile.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveProfile = resolve
+        })
+    )
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
     fireEvent.click(screen.getByRole('button', { name: 'change retrieval settings' }))
+    await act(async () =>
+      resolveProfile({
+        version: 1,
+        health: { status: 'valid', fallback_reason: null },
+        retrieval_config: { score_threshold: 0.8 },
+      })
+    )
+    expect(screen.getByTestId('retrieval-threshold')).toHaveTextContent('0.8')
     fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ retrieval_config: expect.objectContaining({ top_k: 9 }) })
+        expect.objectContaining({ retrieval_config: { top_k: 9 } })
       )
     })
   })
@@ -160,6 +182,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
       <CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValueOnce({
       version: 2,
@@ -171,6 +194,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     )
     rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))

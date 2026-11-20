@@ -796,6 +796,7 @@
     "retrieval": {
       "retriever": "检索引擎",
       "retrieverSelect": "选择检索引擎",
+      "retrieverLoadFailed": "检索器加载失败，可重试。",
       "retrieverHint": "文档索引的存储引擎",
       "noRetriever": "暂无可用检索引擎，请先在设置中配置",
       "embeddingModel": "Embedding 模型",
@@ -991,6 +992,7 @@
       "teamKnowledgeCount": "知识库：{{count}}",
       "space": "所在空间",
       "unknownSpace": "未知空间",
+      "viewRefreshFailed": "「{{name}}」的默认视图刷新失败。",
       "personalSpace": "个人空间",
       "createInSpace": "在此空间创建",
       "permissionDetails": "权限详情",
@@ -1350,6 +1352,7 @@
       "submit": "创建",
       "noBoundModel": "代码 Wiki 智能体未绑定模型，无法生成。",
       "repositoryRequired": "请选择或填写仓库地址",
+      "unsupportedRepositoryProvider": "当前仓库平台不支持创建代码 Wiki。请选择 GitHub、GitLab 或 Gitea 仓库。",
       "fromMyRepositories": "从我的仓库选择",
       "byUrl": "输入仓库地址",
       "checking": "正在检查仓库…",

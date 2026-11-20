@@ -6,6 +6,7 @@
 
 import { type Dispatch, type SetStateAction, useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle2, Loader2, Users } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -38,6 +39,10 @@ interface CodeWikiSourceFieldsProps {
 }
 
 const SOURCE_TYPES: CodeWikiSourceType[] = ['github', 'gitlab', 'gitea']
+
+function isSourceType(value: unknown): value is CodeWikiSourceType {
+  return SOURCE_TYPES.some(type => type === value)
+}
 
 /**
  * Infer which platform hosts a URL, or `null` when it cannot be told.
@@ -77,7 +82,11 @@ export function useCodeWikiRepository(draft: CodeWikiSourceDraft) {
   const type =
     draft.mode === 'url'
       ? (inferredType ?? draft.urlSourceType)
-      : ((draft.repo?.type as CodeWikiSourceType | undefined) ?? 'github')
+      : draft.repo?.type == null
+        ? (inferSourceType(url, user?.git_info) ?? 'github')
+        : isSourceType(draft.repo.type)
+          ? draft.repo.type
+          : null
   const probe = draft.probe
   const resolution = probe?.url === url && probe.type === type ? probe.result : null
   return { url, type, inferredType, resolution }
@@ -103,7 +112,7 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
   // Repository identity is derived from the same draft used to render the inputs.
   // A probe only supplies metadata for that identity.
   useEffect(() => {
-    if (!url || resolution) {
+    if (!url || !type || resolution) {
       setResolving(false)
       return
     }
@@ -203,7 +212,26 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
             </div>
           )}
 
-          <SourceStatus resolving={resolving} resolution={resolution} />
+          {url && !type ? (
+            <p role="alert" className="text-sm text-error">
+              {t('codeWiki.create.unsupportedRepositoryProvider')}
+            </p>
+          ) : (
+            <SourceStatus resolving={resolving} resolution={resolution} />
+          )}
+          {resolution?.exists === false && (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              data-testid="code-wiki-source-retry"
+              onClick={() => {
+                onChange(draft => ({ ...draft, probe: null }))
+              }}
+            >
+              {t('common:actions.retry')}
+            </Button>
+          )}
         </div>
       </SimpleConfigRow>
 

@@ -426,10 +426,15 @@ async function createLibraryInDialog(
   const pending = page.waitForResponse(
     response =>
       new URL(response.url()).pathname === '/api/knowledge-bases' &&
-      response.request().method() === 'POST'
+      response.request().method() === 'POST',
+    { timeout: 10_000 }
   )
-  await dialog.getByTestId('submit-create-kb').click()
-  const response = await pending
+  const [response] = await Promise.all([
+    pending.catch(error => {
+      throw new Error('等待 POST /api/knowledge-bases 响应失败', { cause: error })
+    }),
+    dialog.getByTestId('submit-create-kb').click(),
+  ])
   const body = (await response.json()) as { id: number; namespace: string }
   if (Number.isSafeInteger(body.id) && body.id > 0) creation.libraries.set(body.id, owner)
   expect(response.status()).toBe(201)

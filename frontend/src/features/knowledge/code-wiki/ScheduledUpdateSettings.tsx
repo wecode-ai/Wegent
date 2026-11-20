@@ -303,7 +303,7 @@ export function ScheduledUpdateSettings({
           )}
           <details className="group space-y-3">
             <summary
-              className="flex w-full cursor-pointer list-none items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 [&::-webkit-details-marker]:hidden"
+              className="flex min-h-11 w-full cursor-pointer list-none items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 md:min-h-0 [&::-webkit-details-marker]:hidden"
               data-testid="code-wiki-scheduled-advanced"
             >
               <span className="shrink-0 text-sm font-semibold text-text-primary">
