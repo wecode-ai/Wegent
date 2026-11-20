@@ -264,7 +264,12 @@ export function TaskIssueShare({
         }}
       >
         <Share2 className="h-4 w-4" aria-hidden="true" />
-        <span className="hidden sm:inline">{label}</span>
+        <span
+          data-testid="task-share-as-issue-label"
+          className="hidden [@container_(min-width:480px)]:inline"
+        >
+          {label}
+        </span>
       </Button>
       {draft && !apis && (
         <CloudConnectionDialog

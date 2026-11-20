@@ -6701,7 +6701,6 @@
     "action": "Share as issue",
     "excerpts": "Conversation excerpts",
     "loadEarlier": "Load earlier messages",
-    "loadMiddle": "Messages in between · Load earlier",
     "expandPreview": "Expand messages",
     "firstUnavailable": "The first message could not be loaded",
     "earlierUnavailable": "Earlier messages could not be loaded. Try again.",

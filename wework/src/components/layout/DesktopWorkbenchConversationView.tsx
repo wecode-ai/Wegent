@@ -509,7 +509,7 @@ export function DesktopWorkbenchConversationView({
                                       (projectSpaceContext || currentRuntimeTask) && (
                                         <div
                                           className={cn(
-                                            'flex min-w-0 items-center justify-between gap-1',
+                                            'flex min-w-0 items-center justify-between gap-1 [container-type:inline-size]',
                                             paneSession.transcriptLoading && 'invisible'
                                           )}
                                           inert={paneSession.transcriptLoading}

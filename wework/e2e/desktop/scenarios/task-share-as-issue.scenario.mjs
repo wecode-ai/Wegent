@@ -187,7 +187,21 @@ export function createDesktopScenario({
         modelResponseTimeoutMs
       )
       await wait(control, share, { visible: true })
+      const shareLabel = `${share} ${selector('task-share-as-issue-label')}`
+      await wait(control, shareLabel, { visible: true })
       await captureScreenshot(control, '01-task-share-entry.png')
+      const wideWindow = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 390, height: 700 }),
+      })
+      try {
+        await wait(control, share, { visible: true })
+        await wait(control, shareLabel, { visible: false })
+        assert.ok(await control.command('getAttribute', share, { value: 'aria-label' }))
+        await captureScreenshot(control, '01a-task-share-icon-only.png')
+      } finally {
+        await control.command('setMainWindowSize', 'body', { value: wideWindow })
+      }
+      await wait(control, shareLabel, { visible: true })
 
       // A colleague can discuss an excerpt without getting access to the whole task.
       await click(control, share)
@@ -582,6 +596,12 @@ export function createDesktopScenario({
       await wait(control, selector('task-issue-share-excerpts'), { text: 'Native search prompt' })
       const firstPageSize = Number(await control.command('getElementCount', historyExcerpt))
       assert.ok(firstPageSize > 2 && firstPageSize < TERMINAL_HISTORY_TURN_COUNT)
+      await click(control, selector('task-issue-share-collapse-excerpts'))
+      await wait(control, `${earlierMessages}[aria-expanded="false"]`)
+      assert.equal(Number(await control.command('getElementCount', historyExcerpt)), 2)
+      await click(control, earlierMessages)
+      await wait(control, `${earlierMessages}[aria-expanded="true"]`)
+      assert.equal(Number(await control.command('getElementCount', historyExcerpt)), firstPageSize)
       await click(control, selector('task-issue-share-all-excerpts'))
       await wait(control, selector(`task-issue-share-excerpt-content-${firstPageSize}`))
       assert.equal(

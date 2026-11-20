@@ -1,6 +1,6 @@
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { Fragment, useState } from 'react'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Ellipsis, Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TaskIssueShareDraft } from './TaskIssueShare'
 
@@ -42,7 +42,20 @@ export function TaskIssueShareExcerpts({
     }
   }
 
-  const showHistoryGap = Boolean(loadEarlier && firstAvailable && displayed.length > 1)
+  const expandCached = !showAll && excerpts.length > 2
+  const showHistoryGap =
+    firstAvailable && displayed.length > 1 && (Boolean(loadEarlier) || expandCached)
+  const historyLabel = t(
+    loading
+      ? 'independentIssues.loading'
+      : expandCached
+        ? 'taskIssueShare.expandPreview'
+        : loadEarlier
+          ? 'taskIssueShare.loadEarlier'
+          : showAll
+            ? 'taskIssueShare.recentExcerpts'
+            : 'taskIssueShare.expandPreview'
+  )
   const historyAction = (
     <Button
       variant="unstyled"
@@ -50,25 +63,36 @@ export function TaskIssueShareExcerpts({
       type="button"
       data-testid="task-issue-share-all-excerpts"
       aria-expanded={showAll}
+      aria-busy={loading}
+      aria-label={showHistoryGap ? historyLabel : undefined}
+      title={showHistoryGap ? historyLabel : undefined}
       disabled={loading}
-      onClick={() => (loadEarlier ? void fetchEarlier() : setShowAll(!showAll))}
-      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border hover:text-text-primary md:min-h-8"
+      onClick={() => (loadEarlier && !expandCached ? void fetchEarlier() : setShowAll(!showAll))}
+      className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:flex-1 before:border-t before:border-border after:flex-1 after:border-t after:border-border hover:text-text-primary md:min-h-8 ${showHistoryGap ? 'before:border-dashed after:border-dashed' : ''}`}
     >
-      {t(
-        loading
-          ? 'independentIssues.loading'
-          : loadEarlier
-            ? showHistoryGap
-              ? 'taskIssueShare.loadMiddle'
-              : 'taskIssueShare.loadEarlier'
-            : showAll
-              ? 'taskIssueShare.recentExcerpts'
-              : 'taskIssueShare.expandPreview'
+      {showHistoryGap ? (
+        <span
+          className="flex h-6 shrink-0 items-center gap-1 rounded bg-muted px-1.5"
+          aria-hidden="true"
+        >
+          {loading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <>
+              <Ellipsis className="size-4" />
+              {expandCached ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />}
+            </>
+          )}
+        </span>
+      ) : (
+        <>
+          {historyLabel}
+          <ChevronDown
+            className={`size-3.5 ${loadEarlier || showAll ? 'rotate-180' : ''}`}
+            aria-hidden="true"
+          />
+        </>
       )}
-      <ChevronDown
-        className={`size-3.5 ${loadEarlier || showAll ? 'rotate-180' : ''}`}
-        aria-hidden="true"
-      />
     </Button>
   )
 
@@ -157,6 +181,20 @@ export function TaskIssueShareExcerpts({
         })}
       </div>
       {!showHistoryGap && historyAction}
+      {showAll && loadEarlier && (
+        <Button
+          variant="unstyled"
+          showTooltip={false}
+          type="button"
+          data-testid="task-issue-share-collapse-excerpts"
+          disabled={loading}
+          onClick={() => setShowAll(false)}
+          className="flex min-h-11 w-full items-center justify-center gap-1 rounded-md text-xs text-text-secondary hover:bg-muted md:min-h-8"
+        >
+          {t('taskIssueShare.recentExcerpts')}
+          <ChevronUp aria-hidden="true" className="size-3.5" />
+        </Button>
+      )}
       {failed && (
         <p role="alert" className="px-2 py-1 text-xs text-destructive">
           {t('taskIssueShare.earlierUnavailable')}
