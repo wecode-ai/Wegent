@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
-import { ScheduledUpdateDialog } from '@/features/knowledge/code-wiki/ScheduledUpdateDialog'
+import { ScheduledUpdateSettings } from '@/features/knowledge/code-wiki/ScheduledUpdateSettings'
 import { KnowledgeBaseForm, useKnowledgeBaseFormNavigation } from './KnowledgeBaseForm'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
@@ -124,7 +124,7 @@ export function EditKnowledgeBaseDialog({
 
   // Default view dialog state
   const [showConvertDialog, setShowConvertDialog] = useState(false)
-  const [scheduledUpdateOpen, setScheduledUpdateOpen] = useState(false)
+  const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [scheduledUpdateChange, setScheduledUpdateChange] = useState<ScheduledUpdateChange>(null)
   const [isSavingChanges, setIsSavingChanges] = useState(false)
 
@@ -191,6 +191,7 @@ export function EditKnowledgeBaseDialog({
       setExecutionModelRef(kb.execution_model_ref || null)
       setExecutionModelTouched(false)
       setScheduledUpdateChange(null)
+      setScheduleError(null)
       setSummaryModelError('')
       loadMultimodalFromKB({
         multimodalAnalysisEnabled: kb.multimodal_analysis_enabled || false,
@@ -217,6 +218,30 @@ export function EditKnowledgeBaseDialog({
   const handleRetrievalConfigChange = useCallback((config: RetrievalConfigDraft) => {
     setRetrievalConfig(config)
   }, [])
+
+  const saveScheduledChange = async (kbId: number) => {
+    try {
+      if (scheduledUpdateChange?.action === 'configure') {
+        await codeWikiApi.configureScheduledUpdate(kbId, scheduledUpdateChange.data)
+      } else if (scheduledUpdateChange?.action === 'delete') {
+        await codeWikiApi.deleteScheduledUpdate(kbId)
+      }
+      handleOpenChange(false)
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : t('common:error'))
+      selectSection('generation')
+    }
+  }
+
+  const retryScheduledChange = async () => {
+    if (!fullKnowledgeBase || !scheduledUpdateChange || isSavingChanges) return
+    setIsSavingChanges(true)
+    try {
+      await saveScheduledChange(fullKnowledgeBase.id)
+    } finally {
+      setIsSavingChanges(false)
+    }
+  }
 
   const handleSubmit = async () => {
     setError('')
@@ -250,6 +275,15 @@ export function EditKnowledgeBaseDialog({
     if (!validateMultimodal()) {
       selectSection('models', '[data-testid="multimodal-analysis-model-select"]')
       return
+    }
+
+    if (scheduledUpdateChange?.action === 'configure') {
+      const { cadence, interval_days: days } = scheduledUpdateChange.data
+      if (cadence === 'custom' && (!Number.isInteger(days) || days < 2 || days > 365)) {
+        setError(tKnowledge('codeWiki.scheduledUpdate.invalidCustomDays'))
+        selectSection('generation', '[data-testid="code-wiki-scheduled-custom-days"]')
+        return
+      }
     }
 
     // Validate call limits
@@ -323,14 +357,7 @@ export function EditKnowledgeBaseDialog({
 
       await onSubmit(updateData)
 
-      if (scheduledUpdateChange?.action === 'configure') {
-        await codeWikiApi.configureScheduledUpdate(fullKnowledgeBase.id, scheduledUpdateChange.data)
-      } else if (scheduledUpdateChange?.action === 'delete') {
-        await codeWikiApi.deleteScheduledUpdate(fullKnowledgeBase.id)
-      }
-
-      setScheduledUpdateChange(null)
-      handleOpenChange(false)
+      await saveScheduledChange(fullKnowledgeBase.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common:error'))
     } finally {
@@ -344,6 +371,7 @@ export function EditKnowledgeBaseDialog({
       setSummaryModelError('')
       clearMultimodalError()
       setScheduledUpdateChange(null)
+      setScheduleError(null)
     }
     onOpenChange(newOpen)
   }
@@ -410,6 +438,7 @@ export function EditKnowledgeBaseDialog({
           ) : fullKnowledgeBase ? (
             <>
               <KnowledgeBaseForm
+                disabled={isSavingChanges || !!scheduleError}
                 navigation={navigation}
                 kindSection={
                   <div className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/5 p-3">
@@ -535,16 +564,20 @@ export function EditKnowledgeBaseDialog({
                         description={tKnowledge('codeWiki.scheduledUpdate.settingsHint')}
                         align="start"
                       >
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => setScheduledUpdateOpen(true)}
-                          className="min-h-11 min-w-11"
-                          disabled={isSavingChanges}
-                          data-testid="code-wiki-scheduled-settings"
-                        >
-                          {tKnowledge('codeWiki.scheduledUpdate.configure')}
-                        </Button>
+                        <ScheduledUpdateSettings
+                          key={fullKnowledgeBase.id}
+                          knowledgeBaseId={fullKnowledgeBase.id}
+                          draft={
+                            scheduledUpdateChange?.action === 'configure'
+                              ? scheduledUpdateChange.data
+                              : null
+                          }
+                          deleteRequested={scheduledUpdateChange?.action === 'delete'}
+                          onDraftSaved={data =>
+                            setScheduledUpdateChange({ action: 'configure', data })
+                          }
+                          onDeleteRequested={() => setScheduledUpdateChange({ action: 'delete' })}
+                        />
                       </SimpleConfigRow>
                       {scheduledUpdateChange && (
                         <p
@@ -621,7 +654,12 @@ export function EditKnowledgeBaseDialog({
                 guidedQuestions={guidedQuestions}
                 onGuidedQuestionsChange={setGuidedQuestions}
               />
-
+              {scheduleError && (
+                <div role="alert" className="shrink-0 text-sm text-error">
+                  <p>{tKnowledge('codeWiki.scheduledUpdate.saveFailedAfterKnowledgeBase')}</p>
+                  <p className="break-words">{scheduleError}</p>
+                </div>
+              )}
               {error && (
                 <p role="alert" className="shrink-0 text-sm text-error">
                   {error}
@@ -636,17 +674,22 @@ export function EditKnowledgeBaseDialog({
               disabled={loading || isSavingChanges}
               className="h-11 min-w-[44px]"
             >
-              {t('common:actions.cancel')}
+              {t(scheduleError ? 'common:actions.close' : 'common:actions.cancel')}
             </Button>
             <Button
-              onClick={handleSubmit}
+              onClick={scheduleError ? retryScheduledChange : handleSubmit}
+              data-testid={scheduleError ? 'code-wiki-scheduled-save-retry' : 'edit-kb-save'}
               variant="primary"
               disabled={
                 loading || isSavingChanges || isLoadingFullKnowledgeBase || !fullKnowledgeBase
               }
               className="h-11 min-w-[44px]"
             >
-              {loading || isSavingChanges ? t('common:actions.saving') : t('common:actions.save')}
+              {loading || isSavingChanges
+                ? t('common:actions.saving')
+                : scheduleError
+                  ? tKnowledge('codeWiki.scheduledUpdate.retrySave')
+                  : t('common:actions.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -659,17 +702,6 @@ export function EditKnowledgeBaseDialog({
         knowledgeBase={fullKnowledgeBase}
         onSuccess={handleTypeConverted}
       />
-      {knowledgeBase && (
-        <ScheduledUpdateDialog
-          knowledgeBaseId={knowledgeBase.id}
-          open={scheduledUpdateOpen}
-          onOpenChange={setScheduledUpdateOpen}
-          draft={scheduledUpdateChange?.action === 'configure' ? scheduledUpdateChange.data : null}
-          deleteRequested={scheduledUpdateChange?.action === 'delete'}
-          onDraftSaved={data => setScheduledUpdateChange({ action: 'configure', data })}
-          onDeleteRequested={() => setScheduledUpdateChange({ action: 'delete' })}
-        />
-      )}
     </>
   )
 }

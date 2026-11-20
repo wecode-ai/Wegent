@@ -1237,6 +1237,9 @@ class KnowledgeOrchestrator:
         show_generation_task: bool = False,
         language: str = "",
         generation_strategy: Optional[str] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> int:
         """Resolve defaults, persist a knowledge base, and return its id.
 
@@ -1322,6 +1325,9 @@ class KnowledgeOrchestrator:
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
             execution_model_ref=execution_model_ref,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
             multimodal_analysis_enabled=(
                 multimodal_analysis_enabled
                 if multimodal_analysis_enabled is not None
@@ -1378,6 +1384,9 @@ class KnowledgeOrchestrator:
         multimodal_analysis_video_prompt: Optional[str] = None,
         multimodal_analysis_image_prompt: Optional[str] = None,
         dingtalk_auto_sync_enabled: bool = False,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """
         Create a knowledge base with auto-configuration support.
@@ -1450,6 +1459,9 @@ class KnowledgeOrchestrator:
             embedding_model_namespace=embedding_model_namespace,
             summary_model_ref=summary_model_ref,
             task_id=task_id,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
             multimodal_analysis_enabled=multimodal_analysis_enabled,
             multimodal_analysis_model_ref=multimodal_analysis_model_ref,
             multimodal_analysis_video_prompt=multimodal_analysis_video_prompt,

@@ -6,7 +6,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 
 import { codeWikiApi } from '@/apis/code-wiki'
 import { userApis } from '@/apis/user'
-import { ScheduledUpdateDialog } from '@/features/knowledge/code-wiki/ScheduledUpdateDialog'
+import { ScheduledUpdateSettings } from '@/features/knowledge/code-wiki/ScheduledUpdateSettings'
 import type { CodeWikiScheduledUpdate } from '@/types/code-wiki'
 
 const translations: Record<string, string> = {
@@ -75,10 +75,8 @@ const PLAN: CodeWikiScheduledUpdate = {
 async function renderDialog() {
   jest.mocked(codeWikiApi.scheduledUpdate).mockResolvedValue(PLAN)
   render(
-    <ScheduledUpdateDialog
+    <ScheduledUpdateSettings
       knowledgeBaseId={7}
-      open
-      onOpenChange={jest.fn()}
       onDraftSaved={jest.fn()}
       onDeleteRequested={jest.fn()}
     />
@@ -96,11 +94,9 @@ describe('Code Wiki scheduled update details', () => {
     })
     const onDraftSaved = jest.fn()
     render(
-      <ScheduledUpdateDialog
+      <ScheduledUpdateSettings
         knowledgeBaseId={7}
-        open
         draft={{ ...PLAN, execution_principal_user_id: null }}
-        onOpenChange={jest.fn()}
         onDraftSaved={onDraftSaved}
         onDeleteRequested={jest.fn()}
       />
@@ -108,7 +104,7 @@ describe('Code Wiki scheduled update details', () => {
 
     const save = await screen.findByTestId('code-wiki-scheduled-time')
     expect(save).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('code-wiki-scheduled-save'))
+    fireEvent.change(save, { target: { value: '20:00' } })
     expect(onDraftSaved).toHaveBeenCalledWith(
       expect.objectContaining({ execution_principal_user_id: null })
     )
@@ -120,10 +116,8 @@ describe('Code Wiki scheduled update details', () => {
     const onDraftSaved = jest.fn()
     const onDeleteRequested = jest.fn()
     render(
-      <ScheduledUpdateDialog
+      <ScheduledUpdateSettings
         knowledgeBaseId={7}
-        open
-        onOpenChange={jest.fn()}
         onDraftSaved={onDraftSaved}
         onDeleteRequested={onDeleteRequested}
       />
@@ -132,9 +126,7 @@ describe('Code Wiki scheduled update details', () => {
     await screen.findByTestId('code-wiki-scheduled-read-only')
     expect(screen.getByTestId('code-wiki-scheduled-enabled')).toBeDisabled()
     expect(screen.getByTestId('code-wiki-scheduled-time')).toBeDisabled()
-    const save = screen.getByTestId('code-wiki-scheduled-save')
-    expect(save).toBeDisabled()
-    fireEvent.click(save)
+    fireEvent.change(screen.getByTestId('code-wiki-scheduled-time'), { target: { value: '20:00' } })
     expect(onDraftSaved).not.toHaveBeenCalled()
     expect(onDeleteRequested).not.toHaveBeenCalled()
     expect(screen.queryByTestId('code-wiki-scheduled-delete')).not.toBeInTheDocument()

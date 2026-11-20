@@ -63,43 +63,40 @@ jest.mock('@/features/knowledge/document/components/ConvertKnowledgeBaseTypeDial
   ConvertKnowledgeBaseTypeDialog: () => null,
 }))
 
-jest.mock('@/features/knowledge/code-wiki/ScheduledUpdateDialog', () => ({
-  ScheduledUpdateDialog: ({
-    open,
+jest.mock('@/features/knowledge/code-wiki/ScheduledUpdateSettings', () => ({
+  ScheduledUpdateSettings: ({
     deleteRequested,
     onDraftSaved,
     onDeleteRequested,
   }: {
-    open: boolean
     deleteRequested?: boolean
     onDraftSaved: (plan: CodeWikiScheduledUpdateRequest) => void
     onDeleteRequested: () => void
-  }) =>
-    open ? (
-      <div>
-        <span data-testid="scheduled-delete-requested">{String(deleteRequested)}</span>
-        <button
-          type="button"
-          data-testid="stage-scheduled-update"
-          onClick={() =>
-            onDraftSaved({
-              enabled: true,
-              cadence: 'daily',
-              interval_days: 1,
-              weekday: 0,
-              hour: 10,
-              minute: 0,
-              timezone: 'Asia/Shanghai',
-            })
-          }
-        >
-          stage scheduled update
-        </button>
-        <button type="button" data-testid="stage-scheduled-delete" onClick={onDeleteRequested}>
-          stage scheduled delete
-        </button>
-      </div>
-    ) : null,
+  }) => (
+    <div>
+      <span data-testid="scheduled-delete-requested">{String(deleteRequested)}</span>
+      <button
+        type="button"
+        data-testid="stage-scheduled-update"
+        onClick={() =>
+          onDraftSaved({
+            enabled: true,
+            cadence: 'daily',
+            interval_days: 1,
+            weekday: 0,
+            hour: 10,
+            minute: 0,
+            timezone: 'Asia/Shanghai',
+          })
+        }
+      >
+        stage scheduled update
+      </button>
+      <button type="button" data-testid="stage-scheduled-delete" onClick={onDeleteRequested}>
+        stage scheduled delete
+      </button>
+    </div>
+  ),
 }))
 
 jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled', () => ({
@@ -224,29 +221,40 @@ describe('editing a code wiki that has no model of its own', () => {
     expect(payload.execution_model_ref).toEqual(expect.objectContaining({ name: 'aaa-default' }))
   })
 
-  it('stages a scheduled update until the enclosing knowledge-base save succeeds', async () => {
+  it('retries a failed schedule save without writing the knowledge base twice', async () => {
     const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
     jest.mocked(getKnowledgeBase).mockResolvedValue(wiki)
-    jest.mocked(codeWikiApi.configureScheduledUpdate).mockResolvedValue({} as never)
+    jest
+      .mocked(codeWikiApi.configureScheduledUpdate)
+      .mockRejectedValueOnce(new Error('Schedule endpoint unavailable'))
+      .mockResolvedValueOnce({} as never)
+    const onOpenChange = jest.fn()
 
     render(
       <EditKnowledgeBaseDialog
         open
-        onOpenChange={jest.fn()}
+        onOpenChange={onOpenChange}
         knowledgeBase={wiki}
         onSubmit={onSubmit}
         knowledgeDefaultTeamId={7}
       />
     )
 
-    fireEvent.click(await screen.findByTestId('code-wiki-scheduled-settings'))
     fireEvent.click(await screen.findByTestId('stage-scheduled-update'))
 
     expect(codeWikiApi.configureScheduledUpdate).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
-    await waitFor(() => expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledTimes(1))
+    await screen.findByText('codeWiki.scheduledUpdate.saveFailedAfterKnowledgeBase')
+    expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('code-wiki-scheduled-save-retry'))
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+    expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledTimes(2)
+    expect(jest.mocked(codeWikiApi.configureScheduledUpdate).mock.calls[0]).toEqual(
+      jest.mocked(codeWikiApi.configureScheduledUpdate).mock.calls[1]
+    )
     expect(onSubmit).toHaveBeenCalledTimes(1)
     expect(onSubmit.mock.invocationCallOrder[0]).toBeLessThan(
       jest.mocked(codeWikiApi.configureScheduledUpdate).mock.invocationCallOrder[0]
@@ -268,13 +276,11 @@ describe('editing a code wiki that has no model of its own', () => {
       />
     )
 
-    fireEvent.click(await screen.findByTestId('code-wiki-scheduled-settings'))
     fireEvent.click(await screen.findByTestId('stage-scheduled-delete'))
     expect(await screen.findByTestId('code-wiki-scheduled-pending-change')).toHaveTextContent(
       'codeWiki.scheduledUpdate.pendingDelete'
     )
 
-    fireEvent.click(screen.getByTestId('code-wiki-scheduled-settings'))
     expect(await screen.findByTestId('scheduled-delete-requested')).toHaveTextContent('true')
     expect(codeWikiApi.deleteScheduledUpdate).not.toHaveBeenCalled()
 

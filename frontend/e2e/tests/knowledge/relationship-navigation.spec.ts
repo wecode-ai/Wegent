@@ -317,7 +317,12 @@ const creationTest = test.extend<{ creation: CreationSession }>({
   },
 })
 
-async function createLibraryInDialog(page: Page, creation: CreationSession, owner = creation.api) {
+async function createLibraryInDialog(
+  page: Page,
+  creation: CreationSession,
+  owner = creation.api,
+  configure?: (dialog: ReturnType<Page['getByTestId']>) => Promise<void>
+) {
   const dialog = page.getByTestId('create-kb-dialog')
   await dialog.getByTestId('kb-name-input').fill(fixtureName('e2e-create-kb'))
   const summarySection = dialog.getByTestId('knowledge-summary-section-trigger')
@@ -325,6 +330,7 @@ async function createLibraryInDialog(page: Page, creation: CreationSession, owne
   const summary = dialog.locator('#knowledge-summary-enabled')
   if ((await summary.getAttribute('aria-checked')) === 'true') await summary.click()
   await expect(summary).toHaveAttribute('aria-checked', 'false')
+  await configure?.(dialog)
   const pending = page.waitForResponse(
     response =>
       new URL(response.url()).pathname === '/api/knowledge-bases' &&
@@ -337,6 +343,35 @@ async function createLibraryInDialog(page: Page, creation: CreationSession, owne
   expect(response.status()).toBe(201)
   return body
 }
+
+creationTest(
+  'preserves guided questions and call limits when creating a document library',
+  async ({ page, creation }) => {
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('create-kb-button').click()
+
+    const question = 'Where is the team handbook?'
+    const library = await createLibraryInDialog(page, creation, creation.api, async dialog => {
+      await dialog.getByTestId('knowledge-guided-questions-section-trigger').click()
+      await dialog.getByTestId('add-guided-question').click()
+      await dialog.getByTestId('guided-question-input-0').fill(question)
+      const maxCalls = dialog.locator('#knowledge-max-calls').getByRole('slider')
+      const exemptCalls = dialog.locator('#knowledge-exempt-calls').getByRole('slider')
+      await maxCalls.press('ArrowLeft')
+      await exemptCalls.press('ArrowLeft')
+      await expect(maxCalls).toHaveAttribute('aria-valuenow', '9', { timeout: 2000 })
+      await expect(exemptCalls).toHaveAttribute('aria-valuenow', '4', { timeout: 2000 })
+    })
+
+    const detail = await creation.api.get(`/api/knowledge-bases/${library.id}`)
+    expect(detail.status).toBe(200)
+    expect(detail.data).toMatchObject({
+      guided_questions: [question],
+      max_calls_per_conversation: 9,
+      exempt_calls_before_check: 4,
+    })
+  }
+)
 
 creationTest(
   'creates once, grants a colleague, and finds the same library in relationship navigation',

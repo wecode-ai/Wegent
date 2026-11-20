@@ -31,6 +31,7 @@ import { MultimodalConfigSection } from '@/features/knowledge/multimodal/compone
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
 interface KnowledgeBaseFormProps {
+  disabled?: boolean
   navigation: ReturnType<typeof useKnowledgeBaseFormNavigation>
   kindSection?: ReactNode
   locationSection?: ReactNode
@@ -113,6 +114,7 @@ export function useKnowledgeBaseFormNavigation() {
 }
 
 export function KnowledgeBaseForm({
+  disabled,
   navigation,
   kindSection,
   locationSection,
@@ -512,7 +514,10 @@ export function KnowledgeBaseForm({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row md:gap-4">
+    <fieldset
+      disabled={disabled}
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row md:gap-4"
+    >
       <nav
         ref={sidebar}
         aria-label={t('document.formSections.navigation')}
@@ -564,6 +569,6 @@ export function KnowledgeBaseForm({
           )
         })}
       </div>
-    </div>
+    </fieldset>
   )
 }
