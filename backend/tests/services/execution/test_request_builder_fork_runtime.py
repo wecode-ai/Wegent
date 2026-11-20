@@ -73,16 +73,18 @@ def test_request_builder_extracts_fork_runtime_and_inherited_sessions():
 def test_request_builder_extracts_latest_persisted_executor_sessions_first():
     subtasks = [
         SimpleNamespace(
+            status="FAILED",
             result={
                 "executor_session": {
                     "agent": "ClaudeCode",
                     "botId": 654,
-                    "sessionId": "claude-session-old",
+                    "sessionId": "claude-session-failed",
                 }
-            }
+            },
         ),
-        SimpleNamespace(result={"executor_session": None}),
+        SimpleNamespace(status="COMPLETED", result={"executor_session": None}),
         SimpleNamespace(
+            status="COMPLETED",
             result={
                 "executor_session": {
                     "agent": "ClaudeCode",
@@ -100,6 +102,41 @@ def test_request_builder_extracts_latest_persisted_executor_sessions_first():
             "agent": "ClaudeCode",
             "botId": 654,
             "sessionId": "claude-session-new",
+        }
+    ]
+
+
+def test_request_builder_extracts_latest_session_per_bot_and_engine():
+    subtasks = [
+        SimpleNamespace(
+            status="COMPLETED",
+            result={
+                "executor_session": {
+                    "agent": "ClaudeCode",
+                    "botId": 654,
+                    "sessionId": "claude-session-old",
+                }
+            },
+        ),
+        SimpleNamespace(
+            status="COMPLETED",
+            result={
+                "executor_session": {
+                    "agent": "Codex",
+                    "botId": 655,
+                    "threadId": "codex-session-new",
+                }
+            },
+        ),
+    ]
+
+    sessions = TaskRequestBuilder._extract_persisted_sessions(subtasks)
+
+    assert sessions == [
+        {
+            "agent": "Codex",
+            "botId": 655,
+            "threadId": "codex-session-new",
         },
         {
             "agent": "ClaudeCode",
