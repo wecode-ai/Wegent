@@ -458,6 +458,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                       item => item.device_id === address.deviceId && item.task_id === address.taskId
                     )
                   : undefined
+                const canReply = humanDispatchForCard(card) && onStartHumanTaskFromReply
                 return (
                   <div key={rootId} data-testid={`cloud-task-activity-card-${rootId}`}>
                     <div data-activity-sequence={card.root.sequenceNumber}>
@@ -476,14 +477,14 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                     <div data-testid={`cloud-task-activity-replies-${rootId}`}>
                       {card.replies.map(reply => renderActivityMessage(reply))}
                     </div>
-                    {humanDispatchForCard(card) && onStartHumanTaskFromReply ? (
-                      <IssueTimelineActions
-                        rootId={rootId}
-                        replyLabel={cardReplyLabel(card)}
-                        active={replyTarget?.root.messageId === rootId}
-                        onReply={() => beginReply(card)}
-                      />
-                    ) : null}
+                    <IssueTimelineActions
+                      rootId={rootId}
+                      replyLabel={cardReplyLabel(card)}
+                      active={replyTarget?.root.messageId === rootId}
+                      onReply={canReply ? () => beginReply(card) : undefined}
+                    >
+                      {renderCommentChildAction(card.root)}
+                    </IssueTimelineActions>
                   </div>
                 )
               }
