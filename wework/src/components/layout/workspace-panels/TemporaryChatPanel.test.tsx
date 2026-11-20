@@ -588,6 +588,7 @@ vi.mock('@/features/workbench/runtimePaneStatus', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeConversationCache', () => ({
+  runtimeConversationKey: ({ deviceId, taskId }: RuntimeTaskAddress) => `${deviceId}:${taskId}`,
   appendOptimisticRuntimeConversationGuidance: (
     _address: RuntimeTaskAddress,
     _turn: string,
@@ -3128,7 +3129,8 @@ describe('TemporaryChatPanel', () => {
           itemId: undefined,
           answers: { mcp_tool_call_approval_reply: { answers: ['Allow'] } },
         },
-      })
+      }),
+      expect.objectContaining({ onError: expect.any(Function) })
     )
   })
 
@@ -3173,7 +3175,8 @@ describe('TemporaryChatPanel', () => {
         address,
         message: '继续',
         requestUserInputResponse: expect.objectContaining({ requestId: 'request-1' }),
-      })
+      }),
+      expect.objectContaining({ onError: expect.any(Function) })
     )
 
     await userEvent.click(screen.getByTestId('mock-ignore-input'))
@@ -3356,6 +3359,71 @@ describe('TemporaryChatPanel', () => {
       expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
     }
   )
+
+  it('shows the native approval result on the card that submitted it', async () => {
+    const approval = {
+      kind: 'request_user_input' as const,
+      interactionKind: 'approval' as const,
+      approvalKind: 'command' as const,
+      requestId: 7,
+      itemId: 'approval',
+      interactionScope: 'turn-1',
+      questions: [
+        { id: '__codex_approval', question: 'Approve?', options: [{ label: 'allow_once' }] },
+      ],
+    }
+    const panel = (focusedRequest = approval) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="notification-approval"
+        focusedRequest={focusedRequest}
+        coordinateUserInput
+      />
+    )
+    let rejectSubmission!: () => void
+    mocks.sendRuntimePaneMessage.mockImplementationOnce(
+      (...args: unknown[]) =>
+        new Promise<boolean>(resolve => {
+          rejectSubmission = () => {
+            const options = args[1] as { onError: (error: string) => void }
+            options.onError('Executor refused the approval')
+            resolve(false)
+          }
+        })
+    )
+    const { rerender } = render(panel())
+    const submit = () => screen.getByTestId('request-user-input-submit-button')
+    await userEvent.click(submit())
+    expect(screen.getByTestId('runtime-input-submitting')).toBeVisible()
+    expect(submit()).toBeDisabled()
+    await userEvent.click(submit())
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce()
+
+    await act(async () => rejectSubmission())
+    expect(screen.getByRole('alert')).toHaveTextContent('Executor refused the approval')
+    expect(submit()).toBeEnabled()
+    rerender(panel({ ...approval, interactionScope: 'turn-2' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    rerender(panel())
+    await userEvent.click(submit())
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address,
+        requestUserInputResponse: {
+          requestId: 7,
+          itemId: 'approval',
+          interactionScope: 'turn-1',
+          answers: { __codex_approval: { answers: ['allow_once'] } },
+        },
+      }),
+      expect.objectContaining({ onError: expect.any(Function) })
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(submit()).toBeDisabled()
+  })
 
   it('restores only the selected controlled question after notification revalidation', () => {
     mocks.renderToolBlocks = true
