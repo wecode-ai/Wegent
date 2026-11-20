@@ -128,7 +128,13 @@ export function ProjectMembersSection<
           </div>
           {canManage && (
             <div className="relative shrink-0" ref={memberComposerRef}>
-              <Popover open={membersOpen} onOpenChange={setMembersOpen}>
+              <Popover
+                open={membersOpen}
+                onOpenChange={(open, details) => {
+                  if (!open) console.debug('[project-members] picker closed', details.reason)
+                  setMembersOpen(open)
+                }}
+              >
                 <PopoverTrigger
                   render={
                     <ControlButton
