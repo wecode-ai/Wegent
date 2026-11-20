@@ -1744,7 +1744,10 @@ async function main() {
     if (usesNativeCloudInspector) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
+        {
+          backendUrl: appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL,
+          authToken: cloudEnvironment.authToken,
+        },
         electronUserDataDirectory,
         control
       )

@@ -48,17 +48,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if method == "runtime.coordination.contexts" {
-            let mut contexts = store
-                .all_personal_stand_ins(&self.device_id)
-                .map_err(settings_error)?
-                .into_iter()
-                .map(|settings| {
-                    json!({"id":format!("personal:{}",settings["userId"]),
-                        "revision":LocalTaskStore::coordination_configuration_version(&settings),
-                        "enabled":enabled(&settings),"needsProcessing":true})
-                })
-                .collect::<Vec<_>>();
-            contexts.extend(self.arrangement_contexts(&store)?);
+            // Discovery can enqueue a due calendar run into personal intake.
+            let arrangements = self.arrangement_contexts(&store)?;
+            let mut contexts = self.personal_coordination_contexts(&store)?;
+            contexts.extend(arrangements);
             let projects = self.project_router_contexts(&store).await;
             contexts.extend(
                 projects["contexts"]
@@ -129,6 +122,40 @@ impl RuntimeWorkRpcHandler {
                 "Unknown coordination operation",
             )),
         }
+    }
+
+    fn personal_coordination_contexts(
+        &self,
+        store: &LocalTaskStore,
+    ) -> Result<Vec<Value>, AppIpcError> {
+        store
+            .all_personal_stand_ins(&self.device_id)
+            .map_err(settings_error)?
+            .into_iter()
+            .map(|settings| {
+                let user = settings["userId"]
+                    .as_i64()
+                    .ok_or_else(|| AppIpcError::new("bad_request", "Invalid stand-in owner"))?;
+                let enabled = enabled(&settings);
+                let needs_processing = enabled && self.personal_coordination_due(store, user)?;
+                Ok(json!({"id":format!("personal:{user}"),
+                    "revision":LocalTaskStore::coordination_configuration_version(&settings),
+                    "enabled":enabled,"needsProcessing":needs_processing}))
+            })
+            .collect()
+    }
+
+    fn personal_coordination_due(
+        &self,
+        store: &LocalTaskStore,
+        user: i64,
+    ) -> Result<bool, AppIpcError> {
+        let state = store
+            .stand_in_processing_state(user)
+            .map_err(settings_error)?;
+        Ok(state["routingRetry"].is_object()
+            || store.stand_in_has_due_work(user).map_err(settings_error)?
+            || self.has_stand_in_work_change(user, &state))
     }
 
     async fn coordination_snapshot(

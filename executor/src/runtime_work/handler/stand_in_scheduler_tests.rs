@@ -1,6 +1,100 @@
 use super::tests::{connection_event, fixture};
 use super::*;
 
+async fn personal_processing_needed(handler: &RuntimeWorkRpcHandler) -> bool {
+    let response = handler
+        .coordination_rpc("runtime.coordination.contexts", json!({}))
+        .await
+        .unwrap();
+    let context = response["contexts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|context| context["id"] == "personal:7")
+        .unwrap();
+    context["needsProcessing"].as_bool().unwrap()
+}
+
+#[tokio::test]
+async fn discovery_is_idle_until_intake_is_due() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let previous = store.stand_in_processing_state(7).unwrap();
+    assert!(!personal_processing_needed(&handler).await);
+    assert_eq!(store.stand_in_processing_state(7).unwrap(), previous);
+
+    let mut event = connection_event();
+    event["notBefore"] = json!((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339());
+    let mut event = store
+        .enqueue_stand_in_event(7, json!("deferred-intake"), event)
+        .unwrap();
+    assert!(!personal_processing_needed(&handler).await);
+
+    event["notBefore"] = json!((chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339());
+    store.save_stand_in_event(7, &event).unwrap();
+    assert!(personal_processing_needed(&handler).await);
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["events"][0]["id"], event["id"]);
+}
+
+#[tokio::test]
+async fn discovery_notices_work_state_changes_and_returns_to_idle() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    let mut link = RuntimeTaskLink {
+        local_task_id: "stand-in-work".into(),
+        status: "queued".into(),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        runtime_handle: json!({"origin":{"initiatedBy":"stand_in","userId":7,"standInId":"default"}}),
+        ..Default::default()
+    };
+    handler.upsert_local_task(link.clone());
+    assert!(personal_processing_needed(&handler).await);
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["skip"], true);
+    assert!(!personal_processing_needed(&handler).await);
+
+    link.status = "done".into();
+    handler.upsert_local_task(link);
+    assert!(personal_processing_needed(&handler).await);
+    handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    let events = store.stand_in_events(7).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["kind"], "work_state");
+    assert_eq!(events[0]["taskId"], "stand-in-work");
+    assert_eq!(events[0]["state"][3], "done");
+}
+
+#[tokio::test]
+async fn explicit_check_admits_one_snapshot_when_idle() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, _) = fixture(root.path());
+    assert!(!personal_processing_needed(&handler).await);
+    handler
+        .coordination_rpc(
+            "runtime.coordination.wake",
+            json!({"contextId":"personal:7"}),
+        )
+        .await
+        .unwrap();
+    assert!(personal_processing_needed(&handler).await);
+    let snapshot = handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["skip"], true);
+    assert!(!personal_processing_needed(&handler).await);
+}
+
 #[tokio::test]
 async fn explicit_check_recovers_an_assessment_that_failed_before_command_acceptance() {
     let root = tempfile::tempdir().unwrap();
@@ -71,6 +165,7 @@ async fn failed_routing_is_not_replanned_but_new_direct_events_still_reach_the_r
         .await
         .unwrap();
     assert_eq!(store.stand_in_actions(7).unwrap()[0]["status"], "failed");
+    assert!(!personal_processing_needed(&handler).await);
     for _ in 0..3 {
         let snapshot = handler
             .coordination_snapshot_for_test(&store, 7)
@@ -88,6 +183,7 @@ async fn failed_routing_is_not_replanned_but_new_direct_events_still_reach_the_r
     let fresh = store
         .enqueue_stand_in_event(7, json!("fresh-event"), connection_event())
         .unwrap();
+    assert!(personal_processing_needed(&handler).await);
     let snapshot = handler
         .coordination_snapshot_for_test(&store, 7)
         .await

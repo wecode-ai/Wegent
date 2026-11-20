@@ -3002,6 +3002,7 @@
     "plugins_local_auth_cancelled": "Authorization was cancelled",
     "plugins_local_auth_logout_confirm": "Log out of {{name}}? You will need to authorize again.",
     "plugins_local_auth_logout_failed": "Failed to log out",
+    "plugins_local_auth_busy": "Plugin authorization is temporarily busy. Try again shortly.",
     "plugins_local_auth_logout_cleanup_failed": "Account access was revoked, but local credentials could not be cleared. Click Log out again to retry cleanup.",
     "plugins_local_auth_poll_failed": "Failed to check authorization status",
     "plugins_local_auth_health_failed": "Could not confirm the plugin login status. Check the connection and try again; this does not mean you need to sign in again.",

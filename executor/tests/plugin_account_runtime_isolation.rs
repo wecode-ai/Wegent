@@ -74,15 +74,33 @@ impl LocalBackendTransport for Transport {
     fn call<'a>(&'a self, event: &'a str, payload: Value, _: Duration) -> Reply<'a, Value> {
         let response = match event {
             "plugin.auth.automatic" if payload["prepare_only"] == true => {
-                assert_eq!(payload["installed_plugin_ids"], json!([42]));
+                let mut expected: Vec<_> = self
+                    .packages
+                    .iter()
+                    .map(|package| package["installed_plugin_id"].as_u64().unwrap())
+                    .collect();
+                expected.sort_unstable();
+                expected.dedup();
+                assert_eq!(payload["installed_plugin_ids"], json!(expected));
                 json!({"success":true,"packages":*self.packages})
             }
             "plugin.auth.automatic" => {
-                assert_eq!(payload["installed_plugin_ids"], json!([42]));
                 let targets = payload["targets"].as_array().unwrap();
                 assert_eq!(targets.len(), 1);
-                assert_eq!(targets[0]["installed_plugin_id"], 42);
                 let slug = targets[0]["connector_slug"].as_str().unwrap().to_owned();
+                let package = self
+                    .packages
+                    .iter()
+                    .find(|package| package["connector_slug"] == slug)
+                    .unwrap();
+                assert_eq!(
+                    targets[0]["installed_plugin_id"],
+                    package["installed_plugin_id"]
+                );
+                assert_eq!(
+                    payload["installed_plugin_ids"],
+                    json!([package["installed_plugin_id"]])
+                );
                 self.actions.lock().unwrap().push((event.into(), slug));
                 json!({"success":true,"migrations":[]})
             }
@@ -124,15 +142,15 @@ impl LocalBackendTransport for Transport {
     fn on_close(&self, _: ConnectionClosedHandler) {}
 }
 
-fn mixed_package(home: &Path) -> Vec<Value> {
+fn mixed_packages(home: &Path, installations: &[u64], python_count: usize) -> Vec<Value> {
     let checksum = format!("sha256:{}", "a".repeat(64));
     let root = home.join("workbench/shared/plugins").join("a".repeat(64));
     fs::create_dir_all(root.join(".codex-plugin")).unwrap();
     fs::create_dir_all(home.join("capabilities")).unwrap();
     // More waiting Python connectors than provider slots exposes accidental starvation.
-    let packages: Vec<_> = (0..11)
+    let packages: Vec<_> = (0..=python_count)
         .map(|index| {
-            let (slug, extension) = if index < 10 {
+            let (slug, extension) = if index < python_count {
                 (format!("python-{index}"), "py")
             } else {
                 ("native".to_owned(), "mjs")
@@ -143,7 +161,8 @@ fn mixed_package(home: &Path) -> Vec<Value> {
                 "// not executed by this preparation test",
             )
             .unwrap();
-            json!({"installed_plugin_id":42,"connector_slug":slug,"checksum":checksum,
+            let installed_id = installations.get(index).unwrap_or(&installations[0]);
+            json!({"installed_plugin_id":installed_id,"connector_slug":slug,"checksum":checksum,
                 "auth_definition":{"protocolVersion":1,"credentialType":"oauth2",
                 "adapter":script,"oauth2":["authorize","refresh","revoke"]}})
         })
@@ -156,11 +175,19 @@ fn mixed_package(home: &Path) -> Vec<Value> {
         .to_string(),
     )
     .unwrap();
+    let plugins: serde_json::Map<_, _> = installations
+        .iter()
+        .map(|id| {
+            (
+                format!("mixed-{id}@wework"),
+                json!({"installed_plugin_id":id,
+            "managed":true,"enabled":true,"checksum":checksum,"store_path":root}),
+            )
+        })
+        .collect();
     fs::write(
         home.join("capabilities/manifest-v2.json"),
-        json!({"plugins":{"mixed@wework":{"installed_plugin_id":42,
-            "managed":true,"enabled":true,"checksum":checksum,"store_path":root}}})
-        .to_string(),
+        json!({"plugins":plugins}).to_string(),
     )
     .unwrap();
     packages
@@ -204,7 +231,7 @@ async fn until(mut condition: impl FnMut() -> bool) {
 #[tokio::test]
 async fn mixed_connectors_prepare_independently_before_intents_and_revocation_leases() {
     let home = tempfile::tempdir().unwrap();
-    let packages = Arc::new(mixed_package(home.path()));
+    let packages = Arc::new(mixed_packages(home.path(), &[42], 10));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!(
         "http://{}/runtime/python/ensure",
@@ -292,18 +319,56 @@ async fn mixed_connectors_prepare_independently_before_intents_and_revocation_le
     revoke_pending(transport, home.path()).await.unwrap();
     until(|| marker.exists()).await;
     drop(running);
-    let actions = actions.lock().unwrap();
-    assert_eq!(actions.len(), 22);
-    let counts = connector_action_counts(&actions);
+    let counts = {
+        let actions = actions.lock().unwrap();
+        assert_eq!(actions.len(), 22);
+        connector_action_counts(&actions)
+    };
     assert_eq!(counts.len(), 11);
-    for count in counts.values() {
-        assert_eq!(
-            *count, 2,
-            "each connector may create only its own intent and lease"
-        );
-    }
+    assert!(
+        counts.values().all(|count| *count == 2),
+        "each connector may create only its own intent and lease"
+    );
     assert_eq!(bridge.installation_requests.load(Ordering::SeqCst), 0);
+    ready_installation_runs_while_four_others_prepare(&bridge, &release, &marker).await;
     server.abort();
+}
+
+async fn ready_installation_runs_while_four_others_prepare(
+    bridge: &Bridge,
+    release: &watch::Sender<bool>,
+    marker: &Path,
+) {
+    fs::remove_file(marker).unwrap();
+    let before = bridge.requests.load(Ordering::SeqCst);
+    release.send(false).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let actions = Arc::new(Mutex::new(Vec::new()));
+    let running = broker::start(
+        Transport {
+            packages: Arc::new(mixed_packages(home.path(), &[51, 52, 53, 54, 55], 4)),
+            actions: actions.clone(),
+        },
+        home.path().to_owned(),
+        Arc::new(AtomicBool::new(true)),
+        false,
+    )
+    .await
+    .unwrap();
+    until(|| {
+        bridge.requests.load(Ordering::SeqCst) == before + 4 && actions.lock().unwrap().len() == 1
+    })
+    .await;
+    assert_eq!(actions.lock().unwrap()[0].1, "native");
+    assert!(
+        !marker.exists(),
+        "the four other installations are still preparing"
+    );
+    release.send(true).unwrap();
+    until(|| marker.exists()).await;
+    assert_eq!(actions.lock().unwrap().len(), 5);
+    assert_eq!(bridge.installation_requests.load(Ordering::SeqCst), 0);
+    drop(running);
 }
 
 fn connector_action_counts(

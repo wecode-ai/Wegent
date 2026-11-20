@@ -7,6 +7,116 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
+    let _environment = environment::LaunchEnvironment::new();
+    let path = crate::local::capabilities::default_manifest_path();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"version": 2, "mcps": {
+            "connector": {"server": {"url": "${{backend_api_url}}/mcp/connectors/sse"}},
+            "web": {"server": {"url": "https://example.test/mcp"}}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    for backend_url in [None, Some(""), Some(" \t\n")] {
+        let request = ExecutionRequest {
+            backend_url: backend_url.map(str::to_owned),
+            mcp_servers: vec![json!({
+                "name": "web", "url": "${{backend_api_url}}/mcp/connectors/sse"
+            })],
+            ..Default::default()
+        };
+        let mut launch = CodexLaunchConfig::default();
+        super::mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        assert!(!launch.thread_config.contains_key("mcp_servers.web"));
+        assert!(!launch.thread_config.contains_key("mcp_servers.connector"));
+        assert!(launch.mcp_unavailable);
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_resume_params("thread", &request, &launch),
+            thread_fork_params("thread", None, &request, &launch),
+        ] {
+            assert!(params["developerInstructions"]
+                .as_str()
+                .unwrap()
+                .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+        }
+        let request = ExecutionRequest {
+            mcp_servers: Vec::new(),
+            ..request
+        };
+        let mut runtime = Map::new();
+        assert!(configure_global_mcps(&request, &mut runtime).unwrap());
+        assert_eq!(
+            runtime["mcp_servers.web"]["url"],
+            "https://example.test/mcp"
+        );
+        assert!(!runtime.contains_key("mcp_servers.connector"));
+        assert!(!serde_json::to_string(&runtime).unwrap().contains("${{"));
+    }
+}
+
+#[test]
+fn global_mcp_backend_context_rebinds_without_argv_credentials() {
+    let _environment = environment::LaunchEnvironment::new();
+    let path = crate::local::capabilities::default_manifest_path();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"version": 2, "mcps": {
+            "connector": {"server": {
+                "type": "${{task_data.transport}}",
+                "command": "unused",
+                "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"}
+            }}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    for (backend, token) in [
+        ("https://first.example/api/", "synthetic-first-token"),
+        (
+            "https://second.example/deployment/api/",
+            "synthetic-next-token",
+        ),
+    ] {
+        let request = ExecutionRequest {
+            backend_url: Some(backend.into()),
+            auth_token: Some(token.into()),
+            extra: Map::from_iter([("task_data".into(), json!({"transport":"http"}))]),
+            ..Default::default()
+        };
+        let mut launch = CodexLaunchConfig::default();
+        super::mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        let runtime = &launch.thread_config;
+        assert_eq!(
+            runtime["mcp_servers.connector"]["url"],
+            format!("{}/mcp/connectors/sse", backend.trim_end_matches('/'))
+        );
+        assert_eq!(
+            runtime["mcp_servers.connector"]["http_headers"]["Authorization"],
+            format!("Bearer {token}")
+        );
+        assert!(!launch
+            .config_overrides
+            .iter()
+            .any(|value| value.contains(token)));
+        assert!(!fs::read_to_string(&path).unwrap().contains(token));
+    }
+    let request = ExecutionRequest {
+        backend_url: Some("https://backend.example/api".into()),
+        extra: Map::from_iter([("task_data".into(), json!({"transport":"http"}))]),
+        ..Default::default()
+    };
+    let mut runtime = Map::new();
+    configure_global_mcps(&request, &mut runtime).unwrap();
+    assert!(!runtime.contains_key("mcp_servers.connector"));
+}
+
+#[test]
 fn provider_switch_boundary_uses_a_trusted_developer_item() {
     let mut request = ExecutionRequest::default();
     request
@@ -1189,10 +1299,14 @@ fn codex_app_server_uses_native_desktop_http_identity() {
 fn mcp_thread_diagnostics_report_names_without_config_values() {
     let params = json!({
         "config": {
-            "mcp_servers.wework_space.command": "/path/to/wegent-executor",
-            "mcp_servers.wework_space.args": ["space-mcp-server"],
-            "mcp_servers.wework_space.env.WEWORK_SPACE_AUTH_TOKEN": "secret-token",
-            "mcp_servers.example.url": "https://mcp.example.com",
+            "mcp_servers": {
+                "wework_space": {
+                    "command": "/path/to/wegent-executor",
+                    "args": ["space-mcp-server"],
+                    "env": {"WEWORK_SPACE_AUTH_TOKEN": "secret-token"}
+                },
+                "example": {"url": "https://mcp.example.com"}
+            },
             "model": "test-model"
         }
     });
@@ -2927,11 +3041,7 @@ fn stdio_mcp_environment_is_private_per_service_in_start_and_resume_rpc() {
         ..Default::default()
     };
     let mut launch = CodexLaunchConfig::default();
-    let (overrides, environment) =
-        runtime_capabilities::request_mcp_config_overrides(&request, &mut launch.thread_config)
-            .unwrap();
-    launch.config_overrides.extend(overrides);
-    launch.env.extend(environment);
+    runtime_capabilities::configure_request_mcps(&request, &mut launch.thread_config).unwrap();
     for name in ["TOKEN", "OPENAI_API_KEY", "PATH"] {
         assert!(!launch.env.contains_key(name));
     }
@@ -2951,19 +3061,19 @@ fn stdio_mcp_environment_is_private_per_service_in_start_and_resume_rpc() {
         thread_resume_params("existing-thread", &request, &launch),
     ] {
         assert_eq!(
-            params["config"]["mcp_servers.first.env"]["TOKEN"],
+            params["config"]["mcp_servers"]["first"]["env"]["TOKEN"],
             "first-secret"
         );
         assert_eq!(
-            params["config"]["mcp_servers.second.env"]["TOKEN"],
+            params["config"]["mcp_servers"]["second"]["env"]["TOKEN"],
             "second-secret"
         );
         assert_eq!(
-            params["config"]["mcp_servers.first.env"]["OPENAI_API_KEY"],
+            params["config"]["mcp_servers"]["first"]["env"]["OPENAI_API_KEY"],
             "key-one"
         );
         assert_eq!(
-            params["config"]["mcp_servers.second.env"]["PATH"],
+            params["config"]["mcp_servers"]["second"]["env"]["PATH"],
             "/two/bin"
         );
     }
@@ -3794,27 +3904,36 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     assert!(!collaboration_hint.contains("cannot be called from inside"));
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
-        config["mcp_servers.wework_browser.url"],
+        config["mcp_servers"]["wework_browser"]["url"],
         "http://127.0.0.1:2/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.env_http_headers.Authorization"],
+        config["mcp_servers"]["wework_browser"]["env_http_headers"]["Authorization"],
         "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION"
     );
     assert_eq!(
         launch_config.env["WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION"],
         "Bearer test-browser-mcp-instance-token"
     );
-    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
-    assert!(!config.contains_key("mcp_servers.wework_browser.args"));
-    assert!(!config.contains_key("mcp_servers.wework_browser.startup_timeout_sec"));
-    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 120);
+    assert!(config["mcp_servers"]["wework_browser"]
+        .get("command")
+        .is_none());
+    assert!(config["mcp_servers"]["wework_browser"]
+        .get("args")
+        .is_none());
+    assert!(config["mcp_servers"]["wework_browser"]
+        .get("startup_timeout_sec")
+        .is_none());
     assert_eq!(
-        config["mcp_servers.wework_browser.default_tools_approval_mode"],
+        config["mcp_servers"]["wework_browser"]["tool_timeout_sec"],
+        120
+    );
+    assert_eq!(
+        config["mcp_servers"]["wework_browser"]["default_tools_approval_mode"],
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
+        config["mcp_servers"]["wework_browser"]["http_headers"]["X-Wework-Browser-Label"],
         "workspace-browser-task-123"
     );
     assert!(!launch_config
@@ -3859,7 +3978,10 @@ fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn()
                 thread_resume_params("thread", &request, &launch),
                 thread_fork_params("thread", None, &request, &launch),
             ] {
-                assert_eq!(params["config"][key], "approve");
+                assert_eq!(
+                    params["config"]["mcp_servers"]["wework_space"]["default_tools_approval_mode"],
+                    "approve"
+                );
                 assert_eq!(
                     params["approvalsReviewer"],
                     external_work::reviewer(&request)
@@ -3899,12 +4021,125 @@ fn control_mcp_deadline_overrides_the_default_for_start_resume_and_fork() {
         thread_fork_params("thread", None, &request, &launch),
     ] {
         assert_eq!(
-            params["config"]["mcp_servers.wework_control.tool_timeout_sec"],
+            params["config"]["mcp_servers"]["wework_control"]["tool_timeout_sec"],
             180
         );
         assert_eq!(
-            params["config"]["mcp_servers.wework_space.tool_timeout_sec"],
+            params["config"]["mcp_servers"]["wework_space"]["tool_timeout_sec"],
             60
+        );
+    }
+}
+
+#[test]
+fn invalid_control_context_preserves_independent_managed_mcps() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest::default();
+    let mut launch = CodexLaunchConfig::default();
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        configure_managed_mcp_server(
+            &request,
+            name,
+            crate::task_runtime::mcp::SpaceMcpClientConfig {
+                url: "http://127.0.0.1/space/mcp".into(),
+                headers: BTreeMap::new(),
+                auto_approve: true,
+            },
+            &mut launch,
+        );
+    }
+    assert!(launch.control_mcp_execution.is_none());
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+    ] {
+        let servers = &params["config"]["mcp_servers"];
+        assert!(servers.get(crate::workbench_control::SERVER_NAME).is_none());
+        assert_eq!(servers["wework_space"]["url"], "http://127.0.0.1/space/mcp");
+        assert_eq!(servers["wework_space"]["required"], false);
+        assert!(params["developerInstructions"]
+            .as_str()
+            .unwrap()
+            .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+    }
+}
+
+#[test]
+fn unavailable_managed_mcps_are_omitted_instead_of_creating_invalid_transports() {
+    let mut environment = environment::LaunchEnvironment::new();
+    environment.without_browser_bridge();
+    let request = ExecutionRequest {
+        task_id: "42".into(),
+        ..Default::default()
+    };
+    let configs = runtime_capabilities::managed_mcp_configs(&request).unwrap();
+    assert!(
+        configs.len() < 4,
+        "the request must contain an unavailable managed service"
+    );
+    let launch = build_codex_launch_config(&request).unwrap();
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        if configs.contains_key(name) {
+            continue;
+        }
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_resume_params("thread", &request, &launch),
+            thread_fork_params("thread", None, &request, &launch),
+        ] {
+            let config = params["config"].as_object().unwrap();
+            assert!(config["mcp_servers"].get(name).is_none());
+            assert!(!config.keys().any(|key| key.starts_with("mcp_servers.")));
+        }
+    }
+}
+
+#[test]
+fn thread_mcp_table_replacement_preserves_transports_and_admission_identity() {
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig {
+        thread_config: Map::from_iter([(
+            "mcp_servers.\"docs.eu\"".into(),
+            json!({"command":"node", "args":["docs.js"], "env":{"TOKEN":"old"}}),
+        )]),
+        config_overrides: vec![
+            "mcp_servers={}".into(),
+            "mcp_servers.wework_control.url=\"http://127.0.0.1/mcp\"".into(),
+            "mcp_servers.wework_control.required=false".into(),
+            "mcp_servers.\"docs.eu\".env={}".into(),
+        ],
+        ..Default::default()
+    };
+    let previous = json!({"config":{"mcp_servers":{"stale":{"url":"https://old.example/mcp"}}}});
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+    ] {
+        let config = params["config"].as_object().unwrap();
+        assert!(!config.keys().any(|key| key.starts_with("mcp_servers.")));
+        let servers = &config["mcp_servers"];
+        assert_eq!(servers["wework_control"]["url"], "http://127.0.0.1/mcp");
+        assert_eq!(servers["wework_control"]["required"], false);
+        assert_eq!(servers["docs.eu"]["command"], "node");
+        assert_eq!(servers["docs.eu"]["env"], json!({}));
+        assert!(servers.get("stale").is_none());
+        assert_ne!(
+            mcp_reload::thread_context_configuration(&params),
+            mcp_reload::thread_context_configuration(&previous)
+        );
+        assert_eq!(
+            mcp_reload::mcp_thread_configuration(&params)["mcp_servers"],
+            *servers
         );
     }
 }
@@ -3934,34 +4169,38 @@ fn codex_thread_binds_project_space_through_context_grant() {
     let config = params["config"].as_object().expect("thread config");
 
     assert!(request.mcp_servers.is_empty());
-    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(config["mcp_servers"]["wework_space"]["enabled"], true);
+    assert_eq!(config["mcp_servers"]["wework_space"]["url"], endpoint.url);
     assert_eq!(
-        config["mcp_servers.wework_space.env_http_headers.Authorization"],
+        config["mcp_servers"]["wework_space"]["env_http_headers"]["Authorization"],
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
     );
     assert_eq!(
         launch_config.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
         format!("Bearer {}", endpoint.token)
     );
-    assert!(!config.contains_key("mcp_servers.wework_space.command"));
-    assert!(!config.contains_key("mcp_servers.wework_space.args"));
-    assert!(!config.contains_key("mcp_servers.wework_space.startup_timeout_sec"));
-    assert_eq!(config["mcp_servers.wework_space.tool_timeout_sec"], 60);
+    assert!(config["mcp_servers"]["wework_space"]
+        .get("command")
+        .is_none());
+    assert!(config["mcp_servers"]["wework_space"].get("args").is_none());
+    assert!(config["mcp_servers"]["wework_space"]
+        .get("startup_timeout_sec")
+        .is_none());
     assert_eq!(
-        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        config["mcp_servers"]["wework_space"]["tool_timeout_sec"],
+        60
+    );
+    assert_eq!(
+        config["mcp_servers"]["wework_space"]["default_tools_approval_mode"],
         "approve"
     );
     assert!(
-        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+        !config["mcp_servers"]["wework_space"]["http_headers"]["X-Wework-Mcp-Context"]
             .as_str()
             .unwrap()
             .is_empty()
     );
-    let mcp_config = config
-        .iter()
-        .filter(|(key, _)| key.starts_with("mcp_servers.wework_space."))
-        .collect::<BTreeMap<_, _>>();
+    let mcp_config = &config["mcp_servers"]["wework_space"];
     let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
     assert!(!serialized.contains("https://wework.example.com"));
     assert!(!serialized.contains("runtime-token"));
@@ -3993,8 +4232,8 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(config["mcp_servers"]["wework_space"]["enabled"], true);
+    assert_eq!(config["mcp_servers"]["wework_space"]["url"], endpoint.url);
 }
 
 #[test]
@@ -4008,20 +4247,22 @@ fn codex_thread_discovers_project_space_without_a_project_binding() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(config["mcp_servers"]["wework_space"]["enabled"], true);
+    assert_eq!(config["mcp_servers"]["wework_space"]["url"], endpoint.url);
     assert_eq!(
-        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        config["mcp_servers"]["wework_space"]["default_tools_approval_mode"],
         "approve"
     );
     assert!(
-        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+        !config["mcp_servers"]["wework_space"]["http_headers"]["X-Wework-Mcp-Context"]
             .as_str()
             .unwrap()
             .is_empty()
     );
-    assert!(!config.contains_key("mcp_servers.wework_space.command"));
-    assert!(!config.contains_key("mcp_servers.wework_space.args"));
+    assert!(config["mcp_servers"]["wework_space"]
+        .get("command")
+        .is_none());
+    assert!(config["mcp_servers"]["wework_space"].get("args").is_none());
     assert!(launch_config
         .env
         .keys()
@@ -4048,29 +4289,29 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
-    assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
+    assert_eq!(config["mcp_servers"]["wework_space"]["enabled"], true);
     assert_eq!(
-        config["mcp_servers.wework_notifications.url"],
+        config["mcp_servers"]["wework_notifications"]["enabled"],
+        true
+    );
+    assert_eq!(
+        config["mcp_servers"]["wework_notifications"]["url"],
         format!(
             "{}/notifications/mcp",
             endpoint.url.trim_end_matches("/mcp")
         )
     );
     assert!(
-        !config["mcp_servers.wework_notifications.http_headers.X-Wework-Mcp-Context"]
+        !config["mcp_servers"]["wework_notifications"]["http_headers"]["X-Wework-Mcp-Context"]
             .as_str()
             .unwrap()
             .is_empty()
     );
     assert_eq!(
-        config["mcp_servers.wework_notifications.env_http_headers.Authorization"],
+        config["mcp_servers"]["wework_notifications"]["env_http_headers"]["Authorization"],
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"
     );
-    let mcp_config = config
-        .iter()
-        .filter(|(key, _)| key.starts_with("mcp_servers.wework_notifications."))
-        .collect::<BTreeMap<_, _>>();
+    let mcp_config = &config["mcp_servers"]["wework_notifications"];
     let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
     assert!(!serialized.contains("https://wework.example.com"));
     assert!(!serialized.contains("runtime-token"));
@@ -4087,48 +4328,6 @@ fn codex_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
         }),
     );
     assert!(build_codex_launch_config(&request).is_err());
-}
-
-#[test]
-fn required_project_space_startup_failure_terminates_the_turn() {
-    let message = json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "threadId": "thread-1",
-            "name": "wework_space",
-            "status": "failed",
-            "failureReason": "HTTP 401"
-        }
-    });
-
-    assert_eq!(
-        required_mcp_startup_failure(&message).as_deref(),
-        Some("required project-space capability failed to connect: HTTP 401")
-    );
-    assert!(required_mcp_startup_failure(&json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "name": "wework_space",
-            "status": "ready"
-        }
-    }))
-    .is_none());
-    assert!(required_mcp_startup_failure(&json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "name": "wework_space",
-            "status": "cancelled"
-        }
-    }))
-    .is_none());
-    assert!(required_mcp_startup_failure(&json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "name": "another_server",
-            "status": "failed"
-        }
-    }))
-    .is_none());
 }
 
 #[test]
@@ -4815,24 +5014,9 @@ async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools
             config_reload_resume_thread_id(&plan, &request, previous.as_ref()),
             Some("worker-thread")
         );
-        let field = |suffix: &str| {
-            configuration
-                .iter()
-                .find(|(key, _)| key.contains("wework_stand_in") && key.ends_with(suffix))
-                .unwrap()
-                .1
-                .as_str()
-                .unwrap()
-                .to_owned()
-        };
-        let url = field(".url");
-        let context = configuration
-            .iter()
-            .find(|(key, _)| {
-                key.contains("wework_stand_in") && key.contains("X-Wework-Mcp-Context")
-            })
-            .unwrap()
-            .1
+        let server = &configuration["mcp_servers"]["wework_stand_in"];
+        let url = server["url"].as_str().unwrap().to_owned();
+        let context = server["http_headers"]["X-Wework-Mcp-Context"]
             .as_str()
             .unwrap();
         let client = reqwest::Client::new();

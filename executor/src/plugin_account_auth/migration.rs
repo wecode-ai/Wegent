@@ -62,9 +62,20 @@ async fn migrate_inner<T: super::PluginAuthTransport>(
     {
         return Err(AuthError("plugin_auth_invalid_request"));
     }
-    let gateway = NativeAuthGateway::new(transport);
+    let transport = if expected.is_none() {
+        // Pin the session before resolving the installation for a manual migration.
+        transport.for_plugin(0, true)
+    } else {
+        transport
+    };
+    let gateway = NativeAuthGateway::new(transport.clone());
     let prepared = gateway.prepare(migration_id).await?;
     let package = prepared.package;
+    let gateway = if expected.is_none() {
+        NativeAuthGateway::new(transport.for_plugin(package.installed_plugin_id, true))
+    } else {
+        gateway
+    };
     if expected.is_some_and(|expected| expected != &package) {
         return Err(AuthError("plugin_auth_definition_mismatch"));
     }

@@ -179,9 +179,11 @@ automatic continuation, no duplicate user messages, and cancellation.
 
 When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
 
-### Anthropic Empty-Output Recovery
+### Codex subagent message conversion
 
-For every Anthropic Messages upstream, the executor normalizes Codex subagent `agent_message` items to messages with the `developer` role. The Anthropic adapter then places their content in the upstream request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated upstream to verify that both the child task and the completion reach that field.
+The executor normalizes Codex subagent `agent_message` items to `developer` messages. The Chat Completions adapter converts them to a `system` message within `messages`, and the Anthropic Messages adapter writes them to the request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated Anthropic upstream to verify that both the child task and the completion reach that field.
+
+### Anthropic Empty-Output Recovery
 
 Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
 

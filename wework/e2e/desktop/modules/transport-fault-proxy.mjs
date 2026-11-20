@@ -126,6 +126,7 @@ export class TransportFaultProxy {
     this.websockets = new Set()
     this.deviceSockets = new Set()
     this.rule = () => null
+    this.jsonRule = null
     this.paused = false
     this.acknowledgementsPaused = false
     this.preserveHost = preserveHost
@@ -178,7 +179,37 @@ export class TransportFaultProxy {
       entry.responseCompleted = true
       entry.completedAt = new Date().toISOString()
     })
-    const fault = this.rule(entry, request)
+    const jsonRule = this.jsonRule
+    if (jsonRule?.matches(entry)) {
+      this.forwardJson(request, response, entry, jsonRule).catch(() => response.destroy())
+      return
+    }
+    this.applyFault(request, response, entry, this.rule(entry, request))
+  }
+
+  async forwardJson(request, response, entry, rule) {
+    const chunks = []
+    let length = 0
+    for await (const chunk of request) {
+      length += chunk.length
+      assert.ok(length <= 1024 * 1024, 'JSON fault gate request exceeds its bounded buffer')
+      chunks.push(chunk)
+    }
+    if (response.destroyed) return
+    const body = Buffer.concat(chunks, length)
+    // The rule receives only the live request. Never retain JSON in diagnostics.
+    const gate = this.jsonRule === rule ? rule.select(JSON.parse(body)) : null
+    this.applyFault(
+      request,
+      response,
+      entry,
+      gate?.fault ?? this.rule(entry, request),
+      body,
+      gate?.ready
+    )
+  }
+
+  applyFault(request, response, entry, fault, body, ready) {
     entry.fault = fault
     if (fault === 'disconnect') {
       request.resume()
@@ -197,6 +228,7 @@ export class TransportFaultProxy {
       let forwarded = false
       this.pausedRequests.add(entry)
       response.once('close', () => {
+        body = undefined
         this.pausedRequests.delete(entry)
         // A transport that closed without delivering a full reply was cancelled.
         if (!entry.responseCompleted) entry.cancelled = true
@@ -207,24 +239,26 @@ export class TransportFaultProxy {
         forwarded = true
         entry.released = true
         this.pausedRequests.delete(entry)
-        this.forwardUpstream(request, response, entry, null)
+        this.forwardUpstream(request, response, entry, null, body)
+        body = undefined
         return true
       }
       entry.cancel = () => {
         if (entry.cancelled || response.destroyed || response.writableEnded) return false
         entry.cancelled = true
+        body = undefined
         this.pausedRequests.delete(entry)
         request.resume()
         response.destroy()
         return true
       }
-      // Leave the original request stream paused; release forwards it once unchanged.
+      ready?.(entry)
       return
     }
-    this.forwardUpstream(request, response, entry, fault)
+    this.forwardUpstream(request, response, entry, fault, body, ready)
   }
 
-  forwardUpstream(request, response, entry, fault) {
+  forwardUpstream(request, response, entry, fault, body, ready) {
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
       if (fault === 'drop-before-headers') {
@@ -253,6 +287,7 @@ export class TransportFaultProxy {
           response.once('close', () => {
             held = null
           })
+          entry.cancel = () => response.destroy()
           entry.release = () =>
             new Promise(resolve => {
               const reply = held
@@ -268,6 +303,7 @@ export class TransportFaultProxy {
               entry.released = true
             })
           entry.committedResponseHeld = true
+          ready?.(entry)
         })
         return
       }
@@ -293,7 +329,8 @@ export class TransportFaultProxy {
     upstream.once('close', () => this.upstreams.delete(upstream))
     upstream.on('error', () => response.destroy())
     response.once('close', () => upstream.destroy())
-    request.pipe(upstream)
+    if (body) upstream.end(body)
+    else request.pipe(upstream)
   }
 
   upgrade(request, downstream, head) {
