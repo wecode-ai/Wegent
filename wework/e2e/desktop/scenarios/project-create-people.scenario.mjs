@@ -105,16 +105,19 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', 'POST')
-      participants = await Promise.all(
-        Array.from({ length: 10 }, (_, index) =>
-          request('/api/admin/users', 'POST', {
+      participants = []
+      // The admin endpoint hashes passwords synchronously. Avoid queuing all
+      // ten requests behind one another under the same per-request deadline.
+      for (let index = 0; index < 10; index += 1) {
+        participants.push(
+          await request('/api/admin/users', 'POST', {
             user_name: `project-invitee-${process.pid}-${index}`,
             password: 'project-people-e2e-only',
             role: 'user',
             auth_source: 'password',
           })
         )
-      )
+      }
       workspace = await request('/api/v1/workspaces', 'POST', {
         name: `project-people-group-${process.pid}`,
       })
