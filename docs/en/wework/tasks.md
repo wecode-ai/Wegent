@@ -52,11 +52,11 @@ During the initial task load, the desktop sidebar shows **Loading tasks…** bel
 
 ### Share a conversation as an issue
 
-In a desktop task, select **Share as issue** above the composer. It opens the same **New issue** view as the collaboration sidebar. Choose participants on the left and review the title, description and deliverables on the right. Sign in to your team's Wework service if prompted.
+In a desktop task, select **Share as issue** above the composer. It opens the same creation view as the collaboration sidebar. Edit the title at the top. On the left, choose participants, assign the issue and optionally link a project. You are the default assignee. On the right, choose what to share and add a to-do. Sign in to your team's Wework service if prompted.
 
 - Leave participants and the project blank and select **Create Issue** to keep the issue private. Select colleagues and choose **Create and share** to notify them.
 - Choose a project to place the issue on its board under the project's default issue visibility.
-- Preview conversation files and select up to 100 attachments. Choose one or multiple conversation excerpts and expand longer ones to read them in full.
+- **Content to share** lists conversation excerpts from oldest to newest. Use the shortcuts to select all messages, the first message or the last message. Click a message or image to select it, then click again to deselect it. Use the button at the top right of an image to enlarge it. Select up to 100 attachments.
 - Status, priority, assignee and due date are under **More settings**. The issue keeps a snapshot of the submitted content.
 
 <a id="conversation-interactions"></a>

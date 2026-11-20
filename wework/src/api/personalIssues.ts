@@ -100,6 +100,9 @@ export function independentIssueInput(issue: IndependentIssue): IndependentIssue
 
 export function createPersonalIssuesApi(client: HttpClient) {
   return {
+    assignmentCount(signal?: AbortSignal): Promise<{ count: number }> {
+      return client.get('/v1/me/issue-assignment-count', { signal })
+    },
     list(
       scope: PersonalIssueScope,
       includeCompleted: boolean,

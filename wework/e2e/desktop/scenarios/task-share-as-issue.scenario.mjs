@@ -4,6 +4,7 @@ import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { verifyIssueCreationColumns } from '../modules/independent-issue-draft.mjs'
+import { switchPersonalPluginAccount } from '../modules/plugin-personal-uninstall-flow.mjs'
 import {
   assistantMessage,
   createSse,
@@ -18,6 +19,10 @@ import {
 const prompt = 'Investigate a model error for conversation sharing'
 const generatedFilename = 'model-error.txt'
 const generatedContent = 'Empty payload reproduction'
+const generatedImage = 'preview-example.png'
+const imageData = readFileSync(
+  new URL('../../../resources/icons/32x32.png', import.meta.url)
+).toString('base64')
 const reply = 'The model error occurs when the response payload is empty.'
 const activePane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const selector = id => `[data-testid="${id}"]`
@@ -138,14 +143,14 @@ export function createDesktopScenario({
       const events = requestContainsToolOutput(body)
         ? [
             assistantMessage(
-              `${reply}\n\nCheck the response status and compare it with the empty payload.\n\nSave the minimal reproduction as an attachment.\n\n[${generatedFilename}](./${generatedFilename})`
+              `${reply}\n\nCheck the response status and compare it with the empty payload.\n\nSave the minimal reproduction as an attachment.\n\n[${generatedFilename}](./${generatedFilename})\n\n[${generatedImage}](./${generatedImage})`
             ),
           ]
         : selectedToolCall(
             'share-generate-file',
             selectShellToolCommand(
               body,
-              "node -e \"const fs=require('node:fs');const path=require('node:path');fs.writeFileSync(path.join(process.env.WEGENT_TASK_WORKSPACE || process.cwd(),'model-error.txt'),'Empty payload reproduction')\"",
+              `node -e "const fs=require('node:fs');const path=require('node:path');const cwd=process.env.WEGENT_TASK_WORKSPACE || process.cwd();fs.writeFileSync(path.join(cwd,'${generatedFilename}'),'${generatedContent}');fs.writeFileSync(path.join(cwd,'${generatedImage}'),Buffer.from('${imageData}','base64'))"`,
               workspacePath
             )
           )
@@ -185,6 +190,8 @@ export function createDesktopScenario({
       await wait(control, selector('independent-issue-options'), { visible: true })
       await wait(control, 'details:not([open]) > [data-testid="independent-issue-options"]')
       await verifyIssueCreationColumns(control)
+      await wait(control, selector('issue-participant-self'), { visible: true })
+      assert.match(await control.command('getText', dialog), /仅邀请用户可见|invitees only/)
       await captureScreenshot(control, '02-task-share-dialog.png')
       await click(control, selector('independent-issue-options'))
       await wait(control, 'details[open] > [data-testid="independent-issue-options"]')
@@ -207,80 +214,141 @@ export function createDesktopScenario({
       await click(control, share)
       await wait(control, dialog, { visible: true })
       await inviteColleague(control)
+      await click(control, selector(`issue-participant-assignee-human:${colleague.id}`))
       await control.command('fill', title, { value: 'Model error follow-up' })
       await control.command('fill', description, {
         value: 'Please verify the empty response case.',
       })
-      await click(control, selector('task-issue-share-excerpts'))
-      await control.command('markElementWithText', `${dialog} label`, {
+      const shareContent = selector('task-issue-share-content')
+      const gallery = `${shareContent} ${selector('task-issue-share-conversation-files')}`
+      await wait(control, `${gallery} ${selector('task-issue-share-thumbnail-image')}`, {
+        visible: true,
+      })
+      await wait(control, `${shareContent} ${selector('task-issue-share-excerpts')}`, {
+        visible: true,
+      })
+      const metrics = async target =>
+        JSON.parse(await control.command('getElementMetrics', target))[0]
+      const excerptsBounds = await metrics(selector('task-issue-share-excerpts'))
+      const galleryBounds = await metrics(gallery)
+      const todoBounds = await metrics(description)
+      assert.ok(excerptsBounds.bottom < galleryBounds.top && galleryBounds.bottom < todoBounds.top)
+      const projectBounds = await metrics(selector('independent-issue-project'))
+      assert.ok(projectBounds.right < galleryBounds.left)
+      assert.ok(projectBounds.top > excerptsBounds.top)
+      await control.command('markElementWithText', selector('task-issue-share-excerpt'), {
         text: reply,
         value: 'share-selected-reply',
       })
-      const excerpt = `[data-e2e-anchor-id="share-selected-reply"] ${selector('task-issue-share-excerpt')}`
-      await click(control, excerpt)
-      await wait(control, `${excerpt}:checked`)
+      const excerpt = '[data-e2e-anchor-id="share-selected-reply"]'
       const userExcerpt = `${dialog} ${selector('task-issue-share-excerpt')}:not(${excerpt})`
-      await click(control, userExcerpt)
-      await wait(control, `${userExcerpt}:checked`)
-      await wait(control, `${excerpt}:checked`)
-      const replyRow = `${dialog} div:has(> label[data-e2e-anchor-id="share-selected-reply"])`
-      const expandReply = `${replyRow} > button[aria-expanded]`
-      const replyContent = `${replyRow} [data-testid^="task-issue-share-excerpt-content-"]`
-      const replyMetrics = async () =>
-        JSON.parse(await control.command('getElementMetrics', replyContent))[0]
-      const collapsedHeight = (await replyMetrics()).height
-      await click(control, expandReply)
-      await wait(control, `${expandReply}[aria-expanded="true"]`)
+      await click(control, selector('task-issue-share-select-last'))
+      await wait(
+        control,
+        `${excerpt}[aria-pressed="true"] ${selector('task-issue-share-excerpt-check')}`
+      )
+      await wait(control, `${userExcerpt}[aria-pressed="false"]`)
+      await captureScreenshot(control, '03b-task-share-single-excerpt.png')
+      await click(control, selector('task-issue-share-select-all'))
+      await wait(control, `${excerpt}[aria-pressed="true"]`)
+      await wait(control, `${userExcerpt}[aria-pressed="true"]`)
+      const expand = selector('task-issue-share-all-excerpts')
+      const replyContent = `${excerpt} [data-testid^="task-issue-share-excerpt-content-"]`
+      const collapsedHeight = (await metrics(replyContent)).height
+      await click(control, expand)
+      await wait(control, `${expand}[aria-expanded="true"]`)
       assert.ok(
-        (await replyMetrics()).height > collapsedHeight,
+        (await metrics(replyContent)).height > collapsedHeight,
         'Expanding reveals the full excerpt'
       )
       await captureScreenshot(control, '03a-task-share-expanded-multiple.png')
-      await click(control, expandReply)
-      await wait(control, `${expandReply}[aria-expanded="false"]`)
-      assert.equal((await replyMetrics()).height, collapsedHeight)
-      await click(control, selector('task-issue-share-excerpt-mode-single'))
-      await wait(control, `${userExcerpt}[type="radio"]:checked`)
-      await wait(control, `${excerpt}[type="radio"]:not(:checked)`)
+      await click(control, expand)
+      await wait(control, `${expand}[aria-expanded="false"]`)
+      assert.equal((await metrics(replyContent)).height, collapsedHeight)
+      await click(control, selector('task-issue-share-select-first'))
+      await wait(control, `${userExcerpt}[aria-pressed="false"]`)
       await click(control, excerpt)
-      await wait(control, `${excerpt}[type="radio"]:checked`)
-      await wait(control, `${userExcerpt}:not(:checked)`)
-      await captureScreenshot(control, '03b-task-share-single-excerpt.png')
-      await click(control, selector('task-issue-share-clear-excerpts'))
-      await wait(control, `${excerpt}:not(:checked)`)
-      await click(control, selector('task-issue-share-excerpt-mode-multiple'))
-      await wait(control, `${excerpt}[type="checkbox"]:not(:checked)`)
+      await wait(control, `${excerpt}[aria-pressed="false"]`)
       await click(control, excerpt)
-      await wait(control, `${excerpt}:checked`)
+      await wait(control, `${excerpt}[aria-pressed="true"]`)
       await control.command('selectFile', selector('task-issue-share-file-input'), {
-        filename: 'preview-example.png',
+        filename: generatedImage,
         mimeType: 'image/png',
         value: readFileSync(
           new URL('../../../resources/icons/128x128.png', import.meta.url)
         ).toString('base64'),
       })
+      const uploadedThumbnail = `${selector('task-issue-share-local-file-0')} img`
+      await wait(control, uploadedThumbnail, { visible: true })
+      await captureScreenshot(control, '03e-task-share-gallery.png')
+      const previousSize = await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify({ width: 390, height: 700 }),
+      })
+      try {
+        await control.command('scrollIntoView', gallery)
+        const [narrowGallery] = JSON.parse(await control.command('getElementMetrics', gallery))
+        assert.ok(narrowGallery.scrollWidth <= narrowGallery.clientWidth + 1)
+        await captureScreenshot(control, '03f-task-share-narrow-gallery.png')
+      } finally {
+        await control.command('setMainWindowSize', 'body', { value: previousSize })
+      }
       await click(control, selector('task-issue-share-preview-local-file-0'))
       await wait(control, `${selector('cloud-file-preview-image')}[alt="preview-example.png"]`, {
         visible: true,
       })
       await captureScreenshot(control, '03c-task-share-image-preview.png')
-      await click(control, selector('cloud-file-preview-close'))
+      const previewClose = selector('cloud-file-preview-close')
+      const [closeBounds] = JSON.parse(await control.command('getElementMetrics', previewClose))
+      const x = closeBounds.left + closeBounds.width / 2
+      const y = closeBounds.top + closeBounds.height / 2
+      const headerDrag = `${selector('workbench-main-header')} .electron-titlebar-drag-region`
+      if (process.platform === 'darwin') {
+        const [dragBounds] = JSON.parse(await control.command('getElementMetrics', headerDrag))
+        assert.ok(dragBounds, 'The workbench must have a native titlebar region')
+        assert.equal(
+          await control.command('getComputedStyleValue', headerDrag, {
+            value: '-webkit-app-region',
+          }),
+          'no-drag',
+          `Preview close at (${x}, ${y}) must be clickable over the native titlebar ${JSON.stringify(dragBounds)}`
+        )
+      }
+      await control.command('clickAt', 'body', { value: JSON.stringify({ x, y }) })
       await wait(control, selector('cloud-file-preview-dialog'), { visible: false })
+      if (process.platform === 'darwin') {
+        assert.equal(
+          await control.command('getComputedStyleValue', headerDrag, {
+            value: '-webkit-app-region',
+          }),
+          'drag',
+          'Closing the preview restores normal window dragging'
+        )
+      }
       await click(control, selector('task-issue-share-remove-file-0'))
       await selectAttachment(control, 'draft.txt', 'Do not share this draft')
       await click(control, selector('task-issue-share-remove-file-0'))
       await wait(control, selector('task-issue-share-conversation-files'), {
         text: generatedFilename,
       })
-      await click(control, selector('task-issue-share-preview-conversation-file-0'))
+      const fileTile = `${gallery} li:has([title="${generatedFilename}"])`
+      const fileSelection = `${fileTile} button[aria-pressed]`
+      await click(control, `${fileTile} button[data-testid^="task-issue-share-preview-"]`)
       await wait(control, selector('cloud-file-preview-text'), { text: generatedContent })
       await captureScreenshot(control, '03d-task-share-file-preview.png')
       await click(control, selector('cloud-file-preview-close'))
       await wait(control, selector('cloud-file-preview-dialog'), { visible: false })
-      await wait(control, `${selector('task-issue-share-conversation-file-0')}:not(:checked)`)
-      await wait(control, `${excerpt}:checked`)
+      await wait(control, `${fileSelection}[aria-pressed="false"]`)
+      await wait(control, `${excerpt}[aria-pressed="true"]`)
       assert.equal(await control.command('getValue', title), 'Model error follow-up')
-      await click(control, selector('task-issue-share-conversation-file-0'))
+      await click(control, fileSelection)
+      await wait(
+        control,
+        `${fileSelection}[aria-pressed="true"] ${selector('task-issue-share-selected-file')}`
+      )
+      assert.match(
+        await control.command('getText', selector('task-issue-share-selection-count')),
+        /(?:已选 1 个文件 · 1 段会话|Files 1, excerpts 1)/
+      )
       await captureScreenshot(control, '03-task-share-selected-content.png')
       await click(control, save)
       await wait(control, selector('independent-issue-edit'), { visible: true })
@@ -288,6 +356,15 @@ export function createDesktopScenario({
       const mine = await request('/v1/personal-issues?scope=created')
       const issue = mine.items.find(item => item.title === 'Model error follow-up')
       assert.ok(issue, 'The shared issue must be saved without a project')
+      assert.equal(issue.assignee_id, colleague.id)
+      assert.equal(
+        (await request('/v1/me/issue-assignment-count', { token: colleagueToken })).count,
+        1
+      )
+      assert.equal(
+        (await request('/v1/me/issue-assignment-count', { token: outsiderToken })).count,
+        0
+      )
       assert.match(issue.description, /Please verify the empty response case/)
       assert.ok(issue.description.includes(reply))
       assert.match(issue.description, /(?:助手|Assistant) · /)
@@ -310,6 +387,18 @@ export function createDesktopScenario({
       const sourcePath = `/v1/personal-issues/${issue.id}/source`
       const source = await request(sourcePath)
       assert.ok(source.device_id && source.task_id)
+      const oldest = JSON.parse(
+        await control.command('getLocalRuntimeTranscript', 'body', {
+          value: JSON.stringify({
+            taskId: source.task_id,
+            afterCursor: 'start',
+            limit: 1,
+            includeFullContent: true,
+          }),
+        })
+      )
+      assert.equal(oldest.hasMoreBefore, false)
+      assert.ok(JSON.stringify(oldest.messages).includes(prompt))
       await request(sourcePath, { token: colleagueToken, status: 404 })
       const oversizedShare = new FormData()
       oversizedShare.set(
@@ -347,14 +436,14 @@ export function createDesktopScenario({
       await click(control, selector('independent-issue-open-source'))
       await wait(control, assistant, { text: reply })
       await wait(control, dialog, { visible: false })
-      await request(`/v1/personal-issues/${issue.id}`, {
+      const revoked = await request(`/v1/personal-issues/${issue.id}`, {
         method: 'PATCH',
         body: {
           title: issue.title,
           description: issue.description,
           status: issue.status,
           priority: issue.priority,
-          assignee_id: issue.assignee_id,
+          assignee_id: null,
           due_at: issue.metadata.due_at,
           participants: [],
           version: issue.version,
@@ -445,6 +534,27 @@ export function createDesktopScenario({
       await wait(control, selector('cloud-todo-detail-close'), { visible: false })
       await wait(control, selector('task-linked-issues'), { visible: true })
       await captureScreenshot(control, '10-task-share-back-to-conversation.png')
+      await switchPersonalPluginAccount(control, { ...cloud, authToken: colleagueToken })
+      const badge = selector('workspace-tab-issue-assignment-count')
+      await wait(control, badge, { text: '0' })
+      await request(`/v1/personal-issues/${issue.id}`, {
+        method: 'PATCH',
+        body: {
+          title: revoked.title,
+          description: revoked.description,
+          status: revoked.status,
+          priority: revoked.priority,
+          assignee_id: colleague.id,
+          due_at: revoked.metadata.due_at,
+          participants: [colleague.id],
+          version: revoked.version,
+        },
+      })
+      await wait(control, badge, { text: '1' })
+      await captureScreenshot(control, '11-assignee-collaboration-tab.png')
+      await click(control, selector('workspace-tab-select-fixed-board'))
+      await click(control, selector('collaboration-primary-issues-assigned'))
+      await wait(control, 'body', { text: revoked.title })
     },
   }
 }

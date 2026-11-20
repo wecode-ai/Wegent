@@ -95,6 +95,12 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         subscription.handlers.onWeworkNotification?.()
         continue
       }
+      if (event.event === 'wework.issue.assignments.changed') {
+        if (typeof event.payload.userId === 'number') {
+          subscription.handlers.onIssueAssignmentsChanged?.(event.payload.userId)
+        }
+        continue
+      }
       if (event.event === 'wework.issue.shared') {
         const { id, userId, title, body, url } = event.payload
         if (
@@ -551,6 +557,7 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeTransportReplaced ||
     handlers.onProjectTaskAssigned ||
     handlers.onIssueShared ||
+    handlers.onIssueAssignmentsChanged ||
     handlers.onWeworkNotification
   )
 }

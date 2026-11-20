@@ -1,9 +1,10 @@
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
-import { useCallback, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { createIndependentIssueDraft } from './independentIssueDraft'
-import { ChevronDown, ChevronRight, Folder } from 'lucide-react'
-import { IssueDetailSearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
+import { ChevronRight, Folder } from 'lucide-react'
+import { type SharedWorkspaceApi } from '@wegent/collaboration'
 import { usePanelData } from '@wegent/collaboration/platform'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -17,13 +18,7 @@ import { TaskIssueShareFiles } from './TaskIssueShareFiles'
 import { TaskIssueShareExcerpts } from './TaskIssueShareExcerpts'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
 import { IssueProjectSelect } from './IssueProjectSelect'
-import {
-  participantKey,
-  participantLabel,
-  participantNeedsIdentifier,
-  resourceInvitations,
-  type IssueParticipant,
-} from './issueParticipants'
+import { participantKey, resourceInvitations, type IssueParticipant } from './issueParticipants'
 
 export interface IssueCreationInput extends IndependentIssueInput {
   project_id?: string
@@ -40,6 +35,7 @@ export function IndependentIssueEditor({
   shareDraft,
   userId,
   busy,
+  titleSlot,
   onSave,
   onCancel,
   onDirtyChange,
@@ -51,12 +47,16 @@ export function IndependentIssueEditor({
   shareDraft?: TaskIssueShareDraft
   userId: number
   busy: boolean
+  titleSlot?: HTMLElement | null
   onSave(input: IssueCreationInput, files: File[], conversationFileIds: string[]): Promise<void>
   onCancel(): void
   onDirtyChange?(dirty: boolean): void
 }) {
   const { t } = useTranslation('common')
+  const formId = useId()
   const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([])
+  const [allExcerpts, setAllExcerpts] = useState<TaskIssueShareDraft['excerpts'] | null>(null)
+  const availableExcerpts = allExcerpts ?? shareDraft?.excerpts ?? []
   const [shareFiles, setShareFiles] = useState<File[]>([])
   const [conversationFileIds, setConversationFileIds] = useState<string[]>([])
   const canSelectProject = allowProjectSelection ?? !issue
@@ -139,33 +139,13 @@ export function IndependentIssueEditor({
     : draft.assignee_id
       ? `human:${draft.assignee_id}`
       : ''
-  const assigneeOptions = [
-    { value: '', label: t('independentIssues.unassigned'), description: undefined },
-    ...(['human', 'agent', 'group'] as const).flatMap(kind =>
-      people
-        .filter(person => person.kind === kind)
-        .map(person => {
-          const identified = participantNeedsIdentifier(person, people, userId)
-          return {
-            value: person.key,
-            label: identified
-              ? person.name
-              : participantLabel(person, people, { id: userId, name: t('personalHome.me') }),
-            description: identified ? `#${person.id}` : undefined,
-            group: t(`issue_creation.participant_${kind}`),
-            searchText: String(person.id),
-          }
-        })
-    ),
-  ]
-  const selectedAssignee = assigneeOptions.find(option => option.value === assignee)
-  const selection = (label: string, identifier?: string) => (
-    <>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {identifier && <span className="shrink-0 text-text-secondary">{identifier}</span>}
-      <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-    </>
-  )
+  const changeAssignee = (person: IssueParticipant | null) =>
+    setDraft(previous => ({
+      ...previous,
+      assignee_id: person?.kind === 'human' ? person.id : null,
+      assignee_resource:
+        person && person.kind !== 'human' ? { kind: person.kind, id: person.id } : null,
+    }))
   const field = (label: string, children: ReactNode) => (
     <label className="flex min-w-0 items-center gap-2 text-sm">
       <span className="w-16 shrink-0 text-text-secondary">{label}</span>
@@ -173,17 +153,33 @@ export function IndependentIssueEditor({
     </label>
   )
   const audience = (
-    <div className="grid min-w-0 gap-3 border-t border-border pt-3">
+    <div className="mt-2 grid min-w-0 gap-1">
       {canSelectProject && (
         <div className="grid grid-cols-1 gap-1">
-          <label className="flex items-center gap-2 text-sm">
+          <div className="flex min-w-0 items-center gap-2">
             <Folder className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-            <span className="shrink-0 text-text-secondary">
-              {t('issue_creation.project_label')}
-            </span>
             <IssueProjectSelect
               projects={projects}
-              className={`${control} flex-1`}
+              className="min-h-11 min-w-0 flex-1 rounded-md px-2 py-1 text-sm text-text-primary hover:bg-muted md:min-h-8"
+              triggerPlaceholder={t('issue_creation.project_label')}
+              scopeHint={
+                <span
+                  data-testid="issue-project-scope"
+                  className="block text-xs text-text-secondary"
+                >
+                  {t(
+                    projectId
+                      ? shareDraft
+                        ? project?.default_issue_security === 'related'
+                          ? 'taskIssueShare.relatedVisibility'
+                          : 'taskIssueShare.projectVisibility'
+                        : 'issue_creation.project_scope_hint'
+                      : draft.participants.length || draft.resource_participants?.length
+                        ? 'taskIssueShare.independentVisibility'
+                        : 'taskIssueShare.privateVisibility'
+                  )}
+                </span>
+              }
               disabled={loadingProjects}
               value={projectId}
               onChange={value => {
@@ -192,7 +188,7 @@ export function IndependentIssueEditor({
                 setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
               }}
             />
-          </label>
+          </div>
           {loadingProjects && (
             <p
               role="status"
@@ -200,17 +196,6 @@ export function IndependentIssueEditor({
               className="text-sm text-text-secondary"
             >
               {t('issue_creation.projects_loading')}
-            </p>
-          )}
-          {projectId && (
-            <p data-testid="issue-project-scope" className="text-sm text-text-secondary">
-              {t(
-                shareDraft
-                  ? project?.default_issue_security === 'related'
-                    ? 'taskIssueShare.relatedVisibility'
-                    : 'taskIssueShare.projectVisibility'
-                  : 'issue_creation.project_scope_hint'
-              )}
             </p>
           )}
           {projectError !== undefined && (
@@ -228,22 +213,18 @@ export function IndependentIssueEditor({
           )}
         </div>
       )}
-
-      {shareDraft && !projectId && (
-        <p className="text-sm text-text-secondary">{t('taskIssueShare.independentVisibility')}</p>
-      )}
     </div>
   )
   return (
     <DialogForm
+      id={formId}
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       onSubmit={event => {
         event.preventDefault()
         if (busy || !draft.title.trim()) return
-        const excerpts =
-          shareDraft?.excerpts
-            .filter(excerpt => selectedExcerpts.includes(excerpt.id))
-            .map(excerpt => `${t(`taskIssueShare.${excerpt.role}`)} · ${excerpt.content}`) ?? []
+        const excerpts = availableExcerpts
+          .filter(excerpt => selectedExcerpts.includes(excerpt.id))
+          .map(excerpt => `${t(`taskIssueShare.${excerpt.role}`)} · ${excerpt.content}`)
         void onSave(
           {
             ...draft,
@@ -257,16 +238,35 @@ export function IndependentIssueEditor({
         )
       }}
     >
+      {!issue &&
+        titleSlot &&
+        createPortal(
+          <input
+            form={formId}
+            required
+            maxLength={255}
+            disabled={busy}
+            data-testid="independent-issue-title"
+            aria-label={t('independentIssues.title')}
+            placeholder={t('issue_creation.title_placeholder')}
+            value={draft.title}
+            onChange={event => set('title', event.target.value)}
+            className="min-h-11 w-full rounded-md bg-transparent px-1 text-heading-sm font-medium outline-none hover:bg-muted/40 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8"
+          />,
+          titleSlot
+        )}
       <div
         data-testid="independent-issue-editor-scroll"
         className="min-h-0 flex-1 overflow-y-auto p-5 [container-type:inline-size]"
       >
         <fieldset
           disabled={busy}
-          className="grid min-w-0 gap-5 [@container_(min-width:620px)]:grid-cols-[minmax(13rem,2fr)_minmax(0,3fr)]"
+          className="grid min-w-0 gap-5 [@container_(min-width:620px)]:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]"
         >
-          <aside className="grid min-w-0 content-start gap-2 [@container_(min-width:620px)]:border-r [@container_(min-width:620px)]:border-border [@container_(min-width:620px)]:pr-5">
-            <p className="text-sm font-medium">{t('taskIssueShare.participantsOptional')}</p>
+          <aside className="flex min-w-0 flex-col gap-2 [@container_(min-width:620px)]:border-r [@container_(min-width:620px)]:border-border [@container_(min-width:620px)]:pr-5">
+            <p className="flex min-h-11 items-center text-sm font-medium md:min-h-8">
+              {t('taskIssueShare.participantsOptional')}
+            </p>
             <IssueParticipantPicker
               api={api}
               collaborationApi={collaborationApi}
@@ -274,59 +274,77 @@ export function IndependentIssueEditor({
               selected={people}
               colleaguesOnly={Boolean(shareDraft)}
               onChange={changePeople}
+              assigneeKey={assignee}
+              onAssign={changeAssignee}
+              ownerId={owner}
               disabled={busy || owner !== userId}
             />
             {shareDraft && draft.participants.length > 0 && (
               <p className="text-sm text-text-secondary">{t('taskIssueShare.notifyHint')}</p>
             )}
+            {canSelectProject && <div className="mt-auto">{audience}</div>}
           </aside>
           <div className="grid min-w-0 content-start gap-3">
-            <label className="grid gap-1">
-              <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
-              <input
-                required
-                maxLength={255}
-                data-testid="independent-issue-title"
-                aria-label={t('independentIssues.title')}
-                placeholder={t('issue_creation.title_placeholder')}
-                value={draft.title}
-                onChange={event => set('title', event.target.value)}
-                className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-secondary md:min-h-8"
-              />
-            </label>
-            <label className="grid gap-1">
-              <span className="text-sm text-text-secondary">
-                {t('independentIssues.description')}
-              </span>
-              <textarea
-                data-testid="independent-issue-description"
-                aria-label={t('independentIssues.description')}
-                placeholder={t('issue_creation.description_placeholder')}
-                value={draft.description}
-                onChange={event => set('description', event.target.value)}
-                rows={3}
-                className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
-              />
-            </label>
+            {issue && (
+              <label className="grid gap-1">
+                <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
+                <input
+                  required
+                  maxLength={255}
+                  data-testid="independent-issue-title"
+                  aria-label={t('independentIssues.title')}
+                  placeholder={t('issue_creation.title_placeholder')}
+                  value={draft.title}
+                  onChange={event => set('title', event.target.value)}
+                  className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-secondary md:min-h-8"
+                />
+              </label>
+            )}
             {shareDraft && (
               <TaskIssueShareFiles
-                sourceTitle={shareDraft.title}
                 files={shareFiles}
                 conversationFiles={shareDraft.conversationFiles}
                 selectedConversationFileIds={conversationFileIds}
+                selectedExcerptCount={selectedExcerpts.length}
                 onSelectConversationFiles={setConversationFileIds}
                 onChange={setShareFiles}
-              />
+              >
+                {shareDraft.historyUnavailable && (
+                  <p role="alert" className="text-sm text-text-secondary">
+                    {t('taskIssueShare.historyUnavailable')}
+                  </p>
+                )}
+                {availableExcerpts.length > 0 && (
+                  <TaskIssueShareExcerpts
+                    excerpts={availableExcerpts}
+                    loadAll={
+                      shareDraft.history
+                        ? async () => {
+                            const excerpts = await shareDraft.history!.all()
+                            setAllExcerpts(excerpts)
+                            return excerpts
+                          }
+                        : undefined
+                    }
+                    selected={selectedExcerpts}
+                    onSelect={setSelectedExcerpts}
+                  />
+                )}
+              </TaskIssueShareFiles>
             )}
-            {shareDraft && (
-              <TaskIssueShareExcerpts
-                excerpts={shareDraft.excerpts}
-                selected={selectedExcerpts}
-                onSelect={setSelectedExcerpts}
+            <label className="grid gap-1">
+              <span className="text-sm text-text-secondary">{t('taskIssueShare.todo')}</span>
+              <textarea
+                data-testid="independent-issue-description"
+                aria-label={t('taskIssueShare.todo')}
+                placeholder={t('taskIssueShare.todoPlaceholder')}
+                value={draft.description}
+                onChange={event => set('description', event.target.value)}
+                rows={2}
+                className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
               />
-            )}
-            {audience}
-            <details className="group min-w-0 border-t border-border pt-2">
+            </label>
+            <details className="group min-w-0">
               <summary
                 data-testid="independent-issue-options"
                 className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
@@ -383,34 +401,6 @@ export function IndependentIssueEditor({
                       </option>
                     ))}
                   </select>
-                )}
-                {field(
-                  t('independentIssues.assignee'),
-                  <IssueDetailSearchableSelect
-                    modal
-                    testId="independent-issue-assignee"
-                    accessibleLabel={t('independentIssues.assignee')}
-                    className={`${control} flex items-center gap-2 text-left`}
-                    value={assignee}
-                    options={assigneeOptions}
-                    searchPlaceholder={t('todo.search_assignee')}
-                    emptyLabel={t('todo.no_matching_assignee')}
-                    triggerContent={selection(
-                      selectedAssignee?.label ?? t('independentIssues.unassigned'),
-                      selectedAssignee?.description
-                    )}
-                    onChange={value => {
-                      const target = people.find(person => person.key === value)
-                      setDraft(previous => ({
-                        ...previous,
-                        assignee_id: target?.kind === 'human' ? target.id : null,
-                        assignee_resource:
-                          target && target.kind !== 'human'
-                            ? { kind: target.kind, id: target.id }
-                            : null,
-                      }))
-                    }}
-                  />
                 )}
                 {field(
                   t('independentIssues.due'),

@@ -21,6 +21,8 @@ import {
   type TaskIssueConversationFile,
 } from './taskIssueConversationFiles'
 import { useCloudIssueApis } from './useCloudIssueApis'
+import type { RuntimeTranscriptResponse } from '@/types/api'
+import { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 
 export type TaskIssueShareDraft = {
   title: string
@@ -28,6 +30,60 @@ export type TaskIssueShareDraft = {
   source: SharedIssueSource
   conversationFiles: TaskIssueConversationFile[]
   excerpts: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>[]
+  historyUnavailable?: boolean
+  history?: {
+    first: Promise<TaskIssueShareDraft['excerpts']>
+    all(): Promise<TaskIssueShareDraft['excerpts']>
+  }
+}
+
+function shareExcerpts(messages: WorkbenchMessage[]): TaskIssueShareDraft['excerpts'] {
+  return messages.flatMap(message => {
+    if (message.status !== 'done' || message.contentTruncated || message.role === 'system')
+      return []
+    const content =
+      message.role === 'assistant'
+        ? getAssistantRenderProjection(message).content.trim()
+        : getUserMessageTextProjection(message.content).content.trim()
+    return content ? [{ id: message.id, role: message.role, content }] : []
+  })
+}
+
+type ReadSharePage = (cursor: string, limit: number) => Promise<RuntimeTranscriptResponse>
+
+function readShareHistory(read: ReadSharePage, tail: TaskIssueShareDraft['excerpts']) {
+  async function readPage(cursor: string, limit: number) {
+    const page = await read(cursor, limit)
+    if (page.historyUnavailable || (page.hasMoreAfter && !page.afterCursor))
+      throw new Error('Conversation history is unavailable')
+    return page
+  }
+  const start = readPage('start', 16)
+  const combine = (head: TaskIssueShareDraft['excerpts']) => [
+    ...new Map([...head, ...tail].map(excerpt => [excerpt.id, excerpt])).values(),
+  ]
+  const first = start.then(page =>
+    combine(shareExcerpts(projectRuntimePaneTranscript(page).messages))
+  )
+  let all: Promise<TaskIssueShareDraft['excerpts']> | undefined
+  return {
+    first,
+    all: () =>
+      (all ??= (async () => {
+        let page = await start
+        const excerpts = shareExcerpts(projectRuntimePaneTranscript(page).messages)
+        while (page.hasMoreAfter && page.afterCursor) {
+          const cursor = page.afterCursor
+          page = await readPage(cursor, 60)
+          if (page.afterCursor === cursor) throw new Error('Transcript cursor did not advance')
+          excerpts.push(...shareExcerpts(projectRuntimePaneTranscript(page).messages))
+        }
+        return combine(excerpts)
+      })().catch(error => {
+        all = undefined
+        throw error
+      })),
+  }
 }
 
 function openIssue(issue: SharedIssueTarget) {
@@ -43,17 +99,24 @@ export function TaskIssueShare({
   messages,
   address,
   readWorkspaceFileChunk,
+  readHistoryPage,
 }: {
   title: string
   messages: WorkbenchMessage[]
   address: { deviceId: string; taskId: string; workspacePath?: string | null }
   readWorkspaceFileChunk?: ReadWorkspaceFileChunk
+  readHistoryPage?(
+    cursor: string,
+    limit: number,
+    signal: AbortSignal
+  ): Promise<RuntimeTranscriptResponse>
 }) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
   const fetchAttachment = useAttachmentDownload()
   const apis = useCloudIssueApis(cloud)
   const [draft, setDraft] = useState<TaskIssueShareDraft | null>(null)
+  const historyRequest = useRef<AbortController | null>(null)
   const [projectIssue, setProjectIssue] = useState<SharedIssueTarget | null>(null)
   const [linksOpen, setLinksOpen] = useState(false)
   const linksTrigger = useRef<HTMLButtonElement>(null)
@@ -72,6 +135,8 @@ export function TaskIssueShare({
   } = usePanelData(loadLinks, Boolean(personal))
   const clearProjectIssue = useCallback(() => setProjectIssue(null), [])
   const close = () => {
+    historyRequest.current?.abort()
+    historyRequest.current = null
     setDraft(null)
   }
   const label = t('taskIssueShare.action')
@@ -152,8 +217,19 @@ export function TaskIssueShare({
           setLinksOpen(false)
           setProjectIssue(null)
           const sourceTitle = Array.from(title.trim()).slice(0, 255).join('')
+          const excerpts = shareExcerpts(messages)
+          historyRequest.current?.abort()
+          const requestId = crypto.randomUUID()
+          const controller = new AbortController()
+          historyRequest.current = controller
+          const history = readHistoryPage
+            ? readShareHistory(
+                (cursor, limit) => readHistoryPage(cursor, limit, controller.signal),
+                excerpts
+              )
+            : undefined
           setDraft({
-            requestId: crypto.randomUUID(),
+            requestId,
             source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
             title: sourceTitle,
             conversationFiles: taskIssueConversationFiles(
@@ -162,17 +238,21 @@ export function TaskIssueShare({
               readWorkspaceFileChunk,
               fetchAttachment
             ),
-            excerpts: messages.flatMap(message => {
-              if (message.status !== 'done' || message.contentTruncated) return []
-              const { id, role } = message
-              if (role === 'system') return []
-              const content =
-                role === 'assistant'
-                  ? getAssistantRenderProjection(message).content.trim()
-                  : getUserMessageTextProjection(message.content).content.trim()
-              return content ? [{ id, role, content }] : []
-            }),
+            excerpts: history ? [] : excerpts,
+            history,
           })
+          void history?.first.then(
+            first =>
+              setDraft(current =>
+                current?.requestId === requestId ? { ...current, excerpts: first } : current
+              ),
+            () =>
+              setDraft(current =>
+                current?.requestId === requestId
+                  ? { ...current, historyUnavailable: true }
+                  : current
+              )
+          )
         }}
       >
         <Share2 className="h-4 w-4" aria-hidden="true" />

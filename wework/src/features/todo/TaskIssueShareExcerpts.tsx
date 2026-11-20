@@ -1,119 +1,142 @@
-import { useId, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { useState } from 'react'
+import { Check, ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TaskIssueShareDraft } from './TaskIssueShare'
-
-const modes = ['single', 'multiple'] as const
 
 export function TaskIssueShareExcerpts({
   excerpts,
   selected,
   onSelect,
+  loadAll,
 }: {
   excerpts: TaskIssueShareDraft['excerpts']
   selected: string[]
   onSelect(ids: string[]): void
+  loadAll?(): Promise<TaskIssueShareDraft['excerpts']>
 }) {
   const { t } = useTranslation('common')
-  const groupName = useId()
-  const [mode, setMode] = useState<(typeof modes)[number]>('multiple')
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
+  const [previewEnd, setPreviewEnd] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
   if (!excerpts.length) return null
+  const displayed = showAll ? excerpts : previewEnd ? excerpts.slice(-2) : excerpts.slice(0, 2)
+  const toggle = (id: string) =>
+    onSelect(selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id])
+  const allSelected = selected.length === excerpts.length
+  async function withAll(action: (items: TaskIssueShareDraft['excerpts']) => void) {
+    setLoading(true)
+    setFailed(false)
+    try {
+      action((await loadAll?.()) ?? excerpts)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
-    <details className="rounded-lg border border-border">
-      <summary
-        data-testid="task-issue-share-excerpts"
-        className="min-h-11 cursor-pointer rounded-lg px-3 py-2 text-sm keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8"
-      >
-        {t('taskIssueShare.excerpts', { count: selected.length })}
-      </summary>
-      <div className="flex flex-wrap items-center justify-between gap-1 border-t border-border px-2 py-1">
-        <div
-          role="group"
-          aria-label={t('taskIssueShare.excerptSelectionMode')}
-          className="inline-flex rounded-md bg-muted p-0.5"
-        >
-          {modes.map(option => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={mode === option}
-              data-testid={`task-issue-share-excerpt-mode-${option}`}
-              onClick={() => {
-                setMode(option)
-                if (option === 'single' && selected.length > 1) onSelect(selected.slice(-1))
-              }}
-              className="min-h-10 rounded px-3 text-sm text-text-secondary hover:text-text-primary aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-text-primary md:min-h-7"
-            >
-              {t(`taskIssueShare.excerptMode_${option}`)}
-            </button>
-          ))}
-        </div>
+    <section
+      data-testid="task-issue-share-excerpts"
+      aria-label={t('taskIssueShare.excerpts')}
+      className="min-w-0"
+    >
+      <div className="flex flex-wrap gap-x-2 px-2 pt-1">
         <button
           type="button"
-          data-testid="task-issue-share-clear-excerpts"
-          disabled={!selected.length}
-          onClick={() => onSelect([])}
-          className="min-h-10 rounded px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:min-h-7"
+          data-testid="task-issue-share-select-all"
+          aria-pressed={allSelected}
+          disabled={loading}
+          onClick={() =>
+            void withAll(items =>
+              onSelect(selected.length === items.length ? [] : items.map(excerpt => excerpt.id))
+            )
+          }
+          className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
         >
-          {t('taskIssueShare.clearExcerpts')}
+          {t('taskIssueShare.selectAll')}
         </button>
-      </div>
-      <div className="max-h-56 divide-y divide-border overflow-y-auto border-t border-border">
-        {excerpts.map((excerpt, index) => {
-          const isExpanded = expanded === excerpt.id
-          const contentId = `${groupName}-excerpt-${index}`
-          return (
-            <div key={excerpt.id} className="flex min-w-0 items-start gap-1 px-2 py-1">
-              <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-start gap-2 rounded px-1 py-1 text-sm hover:bg-muted">
-                <input
-                  type={mode === 'single' ? 'radio' : 'checkbox'}
-                  name={mode === 'single' ? groupName : undefined}
-                  data-testid="task-issue-share-excerpt"
-                  className="mt-1 shrink-0 accent-text-primary"
-                  checked={selected.includes(excerpt.id)}
-                  onChange={event => {
-                    onSelect(
-                      mode === 'single'
-                        ? [excerpt.id]
-                        : event.target.checked
-                          ? [...selected, excerpt.id]
-                          : selected.filter(id => id !== excerpt.id)
-                    )
-                  }}
-                />
-                <span className="min-w-0">
-                  <span className="block font-medium">{t(`taskIssueShare.${excerpt.role}`)}</span>
-                  <span
-                    id={contentId}
-                    data-testid={`task-issue-share-excerpt-content-${index}`}
-                    className={`whitespace-pre-wrap break-words text-text-secondary ${isExpanded ? 'block' : 'line-clamp-2'}`}
-                  >
-                    {excerpt.content}
-                  </span>
-                </span>
-              </label>
+        {excerpts.length > 1 &&
+          (['first', 'last'] as const).map(position => {
+            const excerpt = excerpts[position === 'first' ? 0 : excerpts.length - 1]
+            return (
               <button
+                key={position}
                 type="button"
-                data-testid={`task-issue-share-excerpt-expand-${index}`}
-                aria-controls={contentId}
-                aria-expanded={isExpanded}
-                onClick={() => setExpanded(isExpanded ? null : excerpt.id)}
-                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8 md:min-w-8"
-                aria-label={t(
-                  isExpanded ? 'taskIssueShare.collapseExcerpt' : 'taskIssueShare.expandExcerpt'
-                )}
+                data-testid={`task-issue-share-select-${position}`}
+                aria-pressed={selected.includes(excerpt.id)}
+                onClick={() => {
+                  setShowAll(false)
+                  setPreviewEnd(position === 'last')
+                  toggle(excerpt.id)
+                }}
+                className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
               >
-                <ChevronDown
-                  className={`h-4 w-4 ${isExpanded ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                />
+                {t(`taskIssueShare.select_${position}`)}
               </button>
-            </div>
+            )
+          })}
+      </div>
+      <div className="grid max-h-48 gap-1.5 overflow-y-auto px-2 pb-1 pt-2">
+        {displayed.map((excerpt, index) => {
+          const checked = selected.includes(excerpt.id)
+          const fromUser = excerpt.role === 'user'
+          const fade = !showAll && index === 1
+          return (
+            <button
+              key={excerpt.id}
+              type="button"
+              aria-pressed={checked}
+              data-testid="task-issue-share-excerpt"
+              onClick={() => toggle(excerpt.id)}
+              className={`flex min-h-11 min-w-0 items-start gap-2 px-3 py-2 text-left text-sm hover:bg-muted md:min-h-8 ${fromUser ? 'max-w-[85%] justify-self-end rounded-2xl bg-muted' : 'rounded-lg'}`}
+            >
+              <span className="sr-only">{t(`taskIssueShare.${excerpt.role}`)}</span>
+              <span
+                data-testid={`task-issue-share-excerpt-content-${index}`}
+                className={`min-w-0 whitespace-pre-wrap break-words text-text-primary ${showAll ? '' : 'line-clamp-2'} ${fade ? '[mask-image:linear-gradient(to_bottom,black_45%,transparent)]' : ''}`}
+              >
+                {excerpt.content}
+              </span>
+              {checked && (
+                <Check
+                  data-testid="task-issue-share-excerpt-check"
+                  aria-hidden="true"
+                  className="mt-0.5 size-4 shrink-0"
+                />
+              )}
+            </button>
           )
         })}
       </div>
-    </details>
+      <button
+        type="button"
+        data-testid="task-issue-share-all-excerpts"
+        aria-expanded={showAll}
+        disabled={loading}
+        onClick={() => (showAll ? setShowAll(false) : void withAll(() => setShowAll(true)))}
+        className="flex min-h-11 w-full items-center justify-center gap-1 border-t border-border px-2 py-1 text-xs text-text-secondary hover:bg-muted md:min-h-8"
+      >
+        {t(
+          loading
+            ? 'independentIssues.loading'
+            : showAll
+              ? 'taskIssueShare.recentExcerpts'
+              : loadAll
+                ? 'taskIssueShare.allHistory'
+                : 'taskIssueShare.allExcerpts',
+          {
+            count: excerpts.length,
+          }
+        )}
+        <ChevronDown className={`size-3.5 ${showAll ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {failed && (
+        <p role="alert" className="px-2 py-1 text-xs text-destructive">
+          {t('taskIssueShare.historyUnavailable')}
+        </p>
+      )}
+    </section>
   )
 }

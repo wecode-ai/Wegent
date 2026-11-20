@@ -16,6 +16,8 @@ import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { SharedIssueSourceButton } from './SharedIssueSourceButton'
 import { IndependentIssueEditor } from './IndependentIssueEditor'
 
+const newIssueFocus = { fallbackSelector: '[data-testid="collaboration-primary-create-issue"]' }
+
 const action =
   'min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8'
 
@@ -77,6 +79,7 @@ function IndependentIssueDialogContent({
   const [associating, setAssociating] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
   const [discarding, setDiscarding] = useState<'close' | 'edit' | 'reload' | null>(null)
   const refreshSavedIssue = state.refreshSavedIssue
   const reloadLatest = () => {
@@ -96,7 +99,9 @@ function IndependentIssueDialogContent({
     presentation === 'dialog',
     editing && !issue
       ? '[data-testid="independent-issue-search-people"]'
-      : '[data-testid="independent-issue-title"]'
+      : '[data-testid="independent-issue-title"]',
+    true,
+    !issueId && !shareDraft ? newIssueFocus : undefined
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   const name = (id: number | null) =>
@@ -125,16 +130,24 @@ function IndependentIssueDialogContent({
           aria-labelledby="independent-issue-dialog-title"
           inert={deleting}
           data-testid="independent-issue-dialog"
-          className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]'}`}
+          className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]'} ${presentation === 'dialog' && !issueId && !issue ? '[@media(max-height:740px)]:h-[calc(100dvh-2rem)]' : ''}`}
         >
           <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3">
-            <div className="min-w-0">
-              <h2
-                id="independent-issue-dialog-title"
-                className="truncate text-heading-sm font-medium"
-              >
-                {issue?.title ?? t('independentIssues.create')}
-              </h2>
+            <div className="min-w-0 flex-1">
+              {editing && !issue && !loading ? (
+                <div ref={setTitleSlot} className="w-full">
+                  <h2 id="independent-issue-dialog-title" className="sr-only">
+                    {t('independentIssues.create')}
+                  </h2>
+                </div>
+              ) : (
+                <h2
+                  id="independent-issue-dialog-title"
+                  className="truncate text-heading-sm font-medium"
+                >
+                  {issue?.title ?? t('independentIssues.create')}
+                </h2>
+              )}
               {(issueId || (shareDraft && issue)) && (
                 <p className="mt-1 text-sm text-text-secondary">
                   {t('independentIssues.noProject')}
@@ -224,6 +237,7 @@ function IndependentIssueDialogContent({
                 shareDraft={issue ? undefined : shareDraft}
                 userId={userId}
                 busy={busy}
+                titleSlot={titleSlot}
                 onDirtyChange={setDirty}
                 onSave={(input, shareFiles, fileIds) =>
                   state.save(

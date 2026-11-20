@@ -1243,6 +1243,9 @@ methods = ["POST"]
 path = "/api/v1/personal-issues/share"
 [[routes]]
 methods = ["GET"]
+path = "/api/v1/me/issue-assignment-count"
+[[routes]]
+methods = ["GET"]
 path = "/api/v1/personal-issues/shared-from"
 [[routes]]
 methods = ["GET"]

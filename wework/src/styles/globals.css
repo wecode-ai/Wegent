@@ -37,6 +37,7 @@ input.content-find-input:focus-visible {
 
 /* Native drag regions intercept clicks even beneath renderer overlays. */
 body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
+body:has([data-wework-file-preview]) .electron-titlebar-drag-region,
 body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }

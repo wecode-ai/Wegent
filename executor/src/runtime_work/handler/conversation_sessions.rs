@@ -145,11 +145,14 @@ impl RuntimeWorkRpcHandler {
             .flatten();
         let current = ids.last().unwrap();
         let requested = runtime_session_id_from_payload(&payload);
+        let from_start = after.as_deref() == Some("start");
         let thread = if let Some(cursor) = &cursor {
             if cursor.task != task || cursor.ascending != after.is_some() {
                 return Err(invalid_cursor());
             }
             cursor.thread.clone()
+        } else if from_start {
+            ids.first().unwrap().clone()
         } else if before.is_some() || after.is_some() {
             requested.clone().unwrap_or_else(|| current.clone())
         } else {

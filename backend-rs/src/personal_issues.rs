@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 
+mod assignment_count;
 mod participants;
 pub(crate) mod share;
 use participants::{ResourceInvitation, ResourceParticipant};
@@ -393,6 +394,9 @@ async fn create_issue_record(
     for notice in notices {
         notifications::deliver(state, notice).await;
     }
+    if let Some(assignee) = body.assignee_id {
+        assignment_count::invalidate(state, assignee).await;
+    }
     Ok(())
 }
 
@@ -464,6 +468,7 @@ async fn update_issue(
     body: Input,
 ) -> Result<Issue, FastApiError> {
     body.validate()?;
+    let mut affected = [None, None];
     let result = state.mysql.with_transaction(async |tx| {
         let Some(row) = locked(tx, issue_id).await? else { return Ok(Admission::Missing); };
         let result = admission(&row, user.0.id, &body);
@@ -479,9 +484,15 @@ async fn update_issue(
         if !valid_people(tx, &metadata.participants).await? { return Ok(Admission::InvalidPeople); }
         metadata.assigned_at = if body.assignee_id == row.assignee_id { row.metadata.0.assigned_at } else { body.assignee_id.map(|_| chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string()) };
         tx.execute("UPDATE loop_items SET title=?,description=?,status=?,priority=?,assignee_user_id=?,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", (body.title.trim(),body.description.as_str(),body.status.as_str(),body.priority.as_str(),body.assignee_id,Json(metadata),issue_id)).await?;
+        if row.assignee_id != body.assignee_id || row.status != body.status || row.metadata.0.archived != body.archived {
+            affected = [row.assignee_id, body.assignee_id.filter(|id| Some(*id) != row.assignee_id)];
+        }
         Ok(Admission::Allowed)
     }).await.map_err(internal)?;
     admitted(result)?;
+    for assignee in affected.into_iter().flatten() {
+        assignment_count::invalidate(state, assignee).await;
+    }
     read(&state.mysql, issue_id, user.0.id).await
 }
 
@@ -498,11 +509,13 @@ async fn delete_issue(
     issue_id: &str,
     body: Version,
 ) -> Result<Value, FastApiError> {
+    let mut assignee = None;
     let result = state.mysql.with_transaction(async |tx| {
         let Some(row) = locked(tx, issue_id).await? else { return Ok(Err(Admission::Missing)); };
         if row.creator_id != user.0.id { return Ok(Err(Admission::Missing)); }
         if row.version != body.version { return Ok(Err(Admission::Conflict)); }
         tx.execute("UPDATE loop_items SET deleted_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?", (issue_id,)).await?;
+        assignee = row.assignee_id;
         Ok(Ok(row.metadata.0.share))
     }).await.map_err(internal)?;
     match result {
@@ -513,6 +526,9 @@ async fn delete_issue(
         }
         Ok(None) => {}
         Err(reason) => admitted(reason)?,
+    }
+    if let Some(assignee) = assignee {
+        assignment_count::invalidate(state, assignee).await;
     }
     Ok(json!({"deleted":true}))
 }

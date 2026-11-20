@@ -528,6 +528,21 @@ export function DesktopWorkbenchConversationView({
                                                 readWorkspaceFileChunk={
                                                   workspaceFileApi.readWorkspaceFileChunk
                                                 }
+                                                readHistoryPage={
+                                                  paneSession.transcriptHasMoreBefore &&
+                                                  services?.runtimeWorkApi
+                                                    ? (afterCursor, limit, signal) =>
+                                                        services.runtimeWorkApi!.getRuntimeTranscript(
+                                                          {
+                                                            ...currentRuntimeTask,
+                                                            afterCursor,
+                                                            limit,
+                                                            includeFullContent: true,
+                                                          },
+                                                          { signal }
+                                                        )
+                                                    : undefined
+                                                }
                                               />
                                             )}
                                         </div>

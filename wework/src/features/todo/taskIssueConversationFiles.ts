@@ -3,6 +3,11 @@ import { devicePathBasename, normalizeDevicePath } from '@wegent/chat-core/devic
 import { readWorkspaceFileBytes, type ReadWorkspaceFileChunk } from '@/lib/workspace-file-bytes'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { buildConversationOutputs } from '@/features/dsh-runtime/conversationOutputs'
+import {
+  classifyMarkdownLink,
+  extractMarkdownLinks,
+} from '@/components/chat/assistantMarkdownLinks'
+import { mimeTypeForFileName } from '@wegent/chat-core/workspace-file-types'
 
 export interface TaskIssueConversationFile {
   id: string
@@ -41,11 +46,27 @@ export function taskIssueConversationFiles(
   if (!workspacePath || !readChunk) return [...files.values()]
   const root = normalizeDevicePath(workspacePath)
   const prefix = root.endsWith('/') ? root : `${root}/`
-  for (const output of buildConversationOutputs(messages).outputs) {
-    if (output.resource.kind !== 'file') continue
+  const paths = new Set(
+    buildConversationOutputs(messages).outputs.flatMap(({ resource }) =>
+      resource.kind === 'file' ? [resource.path] : []
+    )
+  )
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    for (const link of extractMarkdownLinks(message.content)) {
+      const target = classifyMarkdownLink(link.href)
+      if (
+        target.kind === 'file' &&
+        !target.isDirectory &&
+        mimeTypeForFileName(target.path).startsWith('image/')
+      )
+        paths.add(target.path)
+    }
+  }
+  for (const outputPath of paths) {
     let path: string
     try {
-      path = normalizeDevicePath(output.resource.path)
+      path = normalizeDevicePath(outputPath)
     } catch {
       continue
     }

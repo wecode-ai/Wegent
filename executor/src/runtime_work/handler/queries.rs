@@ -479,8 +479,21 @@ impl RuntimeWorkRpcHandler {
         let limit = transcript_limit(&payload);
         let before_cursor = string_field(&payload, "beforeCursor")
             .or_else(|| string_field(&payload, "before_cursor"));
-        let after_cursor = string_field(&payload, "afterCursor")
+        let mut after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        if after_cursor.as_deref() == Some("start") {
+            let link = historical_link
+                .clone()
+                .or_else(|| self.store.get_task_summary(&local_task_id));
+            after_cursor = Some(
+                if link.as_ref().is_none_or(|link| link.runtime == "codex") {
+                    crate::runtime_work::codex_transcript_search::first_history_cursor()
+                        .map_err(|error| AppIpcError::new("history_cursor_invalid", error))?
+                } else {
+                    "offset:0".to_string()
+                },
+            );
+        }
         let search_match_requested = before_cursor
             .as_deref()
             .or(after_cursor.as_deref())

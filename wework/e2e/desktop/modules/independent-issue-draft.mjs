@@ -7,8 +7,9 @@ export async function verifyIssueCreationColumns(control) {
   const metric = async id => JSON.parse(await control.command('getElementMetrics', testId(id)))[0]
   const people = await metric('independent-issue-search-people')
   const title = await metric('independent-issue-title')
+  const todo = await metric('independent-issue-description')
   assert.ok(
-    people.right < title.left && title.top < people.bottom,
+    people.right < todo.left && title.bottom < todo.top,
     'A wide creation dialog must show participants beside the issue content'
   )
 }
@@ -50,8 +51,8 @@ export async function verifyEnglishLinkedIssueLayout(
       JSON.parse(await control.command('getElementMetrics', selector))[0]
     const scroll = await metric(testId('independent-issue-editor-scroll'))
     const people = await metric(testId('independent-issue-search-people'))
-    const title = await metric(testId('independent-issue-title'))
-    assert.ok(people.bottom <= title.top, 'A narrow creation dialog must stack both columns')
+    const todo = await metric(testId('independent-issue-description'))
+    assert.ok(people.bottom <= todo.top, 'A narrow creation dialog must stack both columns')
     assert.equal(
       await control.command('getText', testId('issue-project-selected-name')),
       project.name

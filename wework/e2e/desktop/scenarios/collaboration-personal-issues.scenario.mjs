@@ -225,13 +225,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
       await click(control, `independent-issue-invite-${participant.id}`)
-      await click(control, 'independent-issue-options')
-      await chooseIssueProperty(
-        control,
-        'independent-issue-assignee',
-        `human:${participant.id}`,
-        participant.user_name
-      )
+      await click(control, `issue-participant-assignee-human:${participant.id}`)
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const invited = await request(
@@ -393,13 +387,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'issue-participant-tab-group')
       await wait(control, `[data-testid="issue-participant-invite-group:${group.id}"]`)
       await click(control, `issue-participant-invite-group:${group.id}`)
-      await click(control, 'independent-issue-options')
-      await chooseIssueProperty(
-        control,
-        'independent-issue-assignee',
-        `agent:${agent.id}`,
-        agent.name
-      )
+      await click(control, `issue-participant-assignee-agent:${agent.id}`)
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const typed = (await request('/api/v1/personal-issues?scope=created')).items.find(

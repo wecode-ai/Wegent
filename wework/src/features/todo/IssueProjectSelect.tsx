@@ -1,4 +1,5 @@
 import { ChevronDown } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { IssueDetailSearchableSelect } from '@wegent/collaboration'
 import type { CloudProject } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -9,6 +10,8 @@ export function IssueProjectSelect({
   disabled,
   className,
   placeholder,
+  triggerPlaceholder,
+  scopeHint,
   onChange,
 }: {
   projects: CloudProject[]
@@ -16,6 +19,8 @@ export function IssueProjectSelect({
   disabled?: boolean
   className: string
   placeholder?: string
+  triggerPlaceholder?: string
+  scopeHint?: ReactNode
   onChange(value: string): void
 }) {
   const { t } = useTranslation('common')
@@ -49,8 +54,9 @@ export function IssueProjectSelect({
                 )}
               </>
             ) : (
-              empty
+              (triggerPlaceholder ?? empty)
             )}
+            {scopeHint}
           </span>
           <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
         </>

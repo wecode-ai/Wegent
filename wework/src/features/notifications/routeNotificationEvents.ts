@@ -4,6 +4,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { parseWeworkScheme, weworkIssueScheme } from './scheme'
+import { ISSUE_ASSIGNMENTS_CHANGED } from '@/features/todo/issueAssignmentEvents'
 
 export interface RouteNotificationInput {
   chatStream: WorkbenchServices['chatStream']
@@ -80,6 +81,13 @@ export function createRouteNotificationEvents() {
       binding = current
       const ownsStream = () => observing && binding === current && current.active
       const release = current.stream.subscribe({
+        onIssueAssignmentsChanged: userId => {
+          if (ownsStream() && userId === input?.currentUserId)
+            window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
+        },
+        onRuntimeTransportReplaced: () => {
+          if (ownsStream()) window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
+        },
         onWeworkNotification: () => {
           if (ownsStream()) window.dispatchEvent(new Event('wework-notifications-changed'))
         },
@@ -96,7 +104,10 @@ export function createRouteNotificationEvents() {
           void sendSystemNotification({ title, body, url })
         },
         onProjectTaskAssigned: payload => {
-          if (ownsStream()) notifyAssignment(payload)
+          if (!ownsStream()) return
+          if (payload.projectStore !== 'local')
+            window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
+          notifyAssignment(payload)
         },
       })
       if (binding === current && current.active) current.release = release
