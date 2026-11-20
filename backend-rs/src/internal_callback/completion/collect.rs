@@ -306,7 +306,7 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
 pub(super) fn failure_details(message: &str, code: &str) -> Map<String, Value> {
     let info = crate::chat_errors::classify_chat_error(Some(code), Some(message));
     let mut details = Map::from_iter([
-        ("error_type".into(), json!(info.code)),
+        ("error_type".into(), json!(code)),
         (
             "error_info".into(),
             json!({

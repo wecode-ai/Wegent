@@ -50,8 +50,14 @@ pub(super) fn record(
         return;
     }
     let code = result
-        .and_then(|value| value.get("error_type"))
+        .and_then(|value| value.get("error_info"))
+        .and_then(|value| value.get("code"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            result
+                .and_then(|value| value.get("error_type"))
+                .and_then(Value::as_str)
+        })
         .or(code);
     let info = crate::chat_errors::classify_chat_error(code, message);
     crate::chat_metrics::record_terminal(
