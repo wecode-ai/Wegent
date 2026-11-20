@@ -60,6 +60,7 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
             ],
             "skip_git_clone": true,
             "new_session": true,
+            "legacy_session_fallback": true,
             "fork_runtime": {"workspaceArchive": {"sourceTaskId": 1}},
             "inherited_sessions": [{"agent": "CodeX", "threadId": "thread-1"}],
             "workspace_source": "local_path",
@@ -96,6 +97,7 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
     assert_eq!(execution.knowledge_base_scopes[0].knowledge_base_id, 9);
     assert!(execution.skip_git_clone);
     assert!(execution.new_session);
+    assert!(execution.legacy_session_fallback);
     assert_eq!(
         execution.resolved_shell_type().as_deref(),
         Some("claudecode")

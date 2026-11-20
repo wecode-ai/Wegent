@@ -493,19 +493,70 @@ fn setup(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, ExecutionRequest) {
     let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
     link.thread_id = Some("thread-1".into());
     link.goal_status = Some("active".into());
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "task-1".into(),
         subtask_id: "request-1".into(),
         ..Default::default()
     };
+    request.new_session = true;
     handler.upsert_local_task(link);
     handler.register_thread_event_route("thread-1", "task-1".into(), request.clone(), false);
     (handler, root, request)
 }
 
 #[tokio::test]
+async fn saved_backend_fallback_resumes_on_the_next_local_send() {
+    let (handler, root, mut request) = setup("saved-backend-fallback");
+    request.legacy_session_fallback = true;
+    handler.store.update_task("task-1", |link| {
+        link.goal_status = None;
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
+    });
+    let execution = start_test_execution(&handler, "task-1");
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    handler.route_codex_notification(notification("turn/completed", "turn-1"));
+    let saved = runtime_event_request_from_link(&handler.local_task_link("task-1").unwrap());
+
+    let continuation = handler
+        .send_message(json!({
+            "taskId": "task-1", "message": "continue", "executionRequest": saved
+        }))
+        .await
+        .unwrap();
+    assert_eq!(continuation["accepted"], true);
+    assert_eq!(continuation["status"], "queued");
+    {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let queued_turn = scheduler.queued_turns.front().unwrap();
+        assert!(!queued_turn.request.new_session);
+        assert!(!queued_turn.request.legacy_session_fallback);
+        assert_eq!(queued_turn.resume_thread_id.as_deref(), Some("thread-1"));
+    }
+    assert!(handler.remove_queued_turn("task-1").await.unwrap());
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
+    assert_completed_send_session_routing(false).await;
+}
+
+#[tokio::test]
+async fn native_completed_backend_fallback_waits_in_scheduler_for_old_process_cleanup() {
+    assert_completed_send_session_routing(true).await;
+}
+
+async fn assert_completed_send_session_routing(backend_fallback: bool) {
     let (handler, root, request) = setup("native-completed-send-cleanup");
+    let mut request = request;
+    request.legacy_session_fallback = backend_fallback;
     handler
         .store
         .update_task("task-1", |link| link.goal_status = None);
@@ -533,6 +584,24 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
     assert_eq!(continuation["accepted"], true);
     assert_eq!(continuation["status"], "queued");
     assert_eq!(handler.queued_local_task_position("task-1"), Some(0));
+    {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let queued_turn = scheduler.queued_turns.front().unwrap();
+        assert_eq!(queued_turn.request.new_session, backend_fallback);
+        assert_eq!(
+            queued_turn.request.legacy_session_fallback,
+            backend_fallback
+        );
+        assert!(queued_turn.direct_thread_id.is_none());
+        assert_eq!(
+            queued_turn.resume_thread_id.as_deref(),
+            if backend_fallback {
+                None
+            } else {
+                Some("thread-1")
+            }
+        );
+    }
     assert!(handler.is_current_local_task_execution("task-1", execution));
     assert_eq!(
         handler.turn_scheduler.lock().unwrap().active_task_ids.len(),

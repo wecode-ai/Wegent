@@ -79,6 +79,7 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     assert_eq!(backend_projects.len(), 1);
     assert_eq!(backend_projects[0]["id"], "12");
     assert_eq!(backend_projects[0]["space"]["space_id"], "12");
+    assert_eq!(backend_projects[0]["name"], "Authorized project");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     server.abort();
 }

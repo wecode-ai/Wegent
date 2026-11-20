@@ -1399,7 +1399,21 @@ impl RuntimeWorkRpcHandler {
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
-        request.new_session = start_new_session;
+        // A prepared local request defaults to a new native session, while a
+        // continuation must resume its thread. Only the Backend's explicit
+        // unproven-session fallback or a user-selected boundary starts fresh.
+        let backend_fallback = request.legacy_session_fallback;
+        request.new_session = start_new_session || backend_fallback;
+        let start_fresh_native_session = request.new_session;
+        log_executor_event(
+            "runtime continuation session selected",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("explicit_new_session", start_new_session.to_string()),
+                ("legacy_session_fallback", backend_fallback.to_string()),
+                ("new_session", request.new_session.to_string()),
+            ],
+        );
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()
@@ -1561,8 +1575,8 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         let direct_thread_id = thread_id
             .clone()
-            .filter(|_| ephemeral && !start_new_session);
-        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_new_session);
+            .filter(|_| ephemeral && !start_fresh_native_session);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_fresh_native_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         payload[super::control::connection_events::OWNER_INPUT] = json!(
             owner_input

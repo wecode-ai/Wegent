@@ -63,6 +63,7 @@ pub mod seam;
 pub mod selected_knowledge;
 pub mod session;
 mod session_context;
+pub(crate) use session_context::normalize_executor_session;
 pub mod shell;
 pub mod skill_generation;
 pub mod skills;

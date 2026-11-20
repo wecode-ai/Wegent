@@ -98,6 +98,9 @@ pub struct BuildExecutionRequestInput<'a> {
     /// `TaskRequestBuilder.build`'s `new_session` argument; the create and
     /// background builders use the source default.
     pub new_session: bool,
+    /// Whether an execution may start a fresh native session when the Task has
+    /// no authenticated prior session evidence.
+    pub allow_new_session_fallback: bool,
     /// `build_execution_request(knowledge_base_refs=...)`: this request's
     /// normalized knowledge-base refs (`_get_current_knowledge_base_refs`).
     pub knowledge_base_refs: &'a [super::schema::KbToolRef],
@@ -992,27 +995,45 @@ async fn build_request_with_runtime(
     // executor sessions and the legacy bindings. It is the last read of the
     // source builder, and its predicate decides whether the assistant-subtask
     // listing is issued at all.
-    let (inherited_sessions, legacy_session_bindings) = super::session_context::build(
-        &state.mysql,
-        &super::session_context::SessionContextInput {
-            task_id: input.task_id,
-            // A Task the create flow may build for is owned by the request
-            // user (`get_owned_active_task` / the newly inserted row).
-            task_user_id: input.user_id,
-            user_id: input.user_id,
-            bot_configs: &bot_configs,
-            task_json: input.task_json,
-            executor_deleted: input.executor_deleted,
-            new_session: input.new_session,
-            is_subscription,
-            // The deployment's task/subtask table templates; the session
-            // context renders its statements against the task's shard exactly
-            // like the completion path's `Tables`.
-            table_templates: state.task_store.table_templates(),
-        },
-    )
-    .await
-    .map_err(dependency)?;
+    let session_input = super::session_context::SessionContextInput {
+        task_id: input.task_id,
+        // A Task the create flow may build for is owned by the request
+        // user (`get_owned_active_task` / the newly inserted row).
+        task_user_id: input.user_id,
+        user_id: input.user_id,
+        bot_configs: &bot_configs,
+        task_json: input.task_json,
+        executor_deleted: input.executor_deleted,
+        new_session: input.new_session,
+        allow_new_session_fallback: input.allow_new_session_fallback,
+        // The deployment's task/subtask table templates; the session
+        // context renders its statements against the task's shard exactly
+        // like the completion path's `Tables`.
+        table_templates: state.task_store.table_templates(),
+        is_subscription,
+    };
+    let (inherited_sessions, legacy_session_bindings) =
+        super::session_context::build(&state.mysql, &session_input)
+            .await
+            .map_err(dependency)?;
+    let legacy_session_fallback = !input.new_session
+        && super::session_context::should_start_new_session(
+            &session_input,
+            &inherited_sessions,
+            &legacy_session_bindings,
+        );
+    let new_session = input.new_session || legacy_session_fallback;
+    if input.allow_new_session_fallback {
+        tracing::info!(
+            task_id = input.task_id,
+            subtask_id = input.assistant_subtask_id,
+            requested_new_session = input.new_session,
+            legacy_session_fallback,
+            inherited_session_count = inherited_sessions.len(),
+            legacy_binding_count = legacy_session_bindings.len(),
+            "chat continuation session selected"
+        );
+    }
 
     // `_process_contexts` (`unified.py:464`): the executor attachment payload
     // is built from the user subtask's attachment contexts at this position,
@@ -1107,7 +1128,8 @@ async fn build_request_with_runtime(
         fork_runtime: super::session_context::fork_runtime(input.task_json),
         inherited_sessions,
         legacy_session_bindings,
-        new_session: input.new_session,
+        new_session,
+        legacy_session_fallback,
         is_subscription,
         history_limit,
         ..ExecutionRequest::default()

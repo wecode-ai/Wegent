@@ -21,7 +21,7 @@ mod status;
 pub mod workday_calendar;
 
 pub use execution::{AgentKind, ExecutionRequest, KnowledgeBaseScope, FULL_KB_TOOL_ACCESS_MODE};
-pub use openai::{OpenAIResponsesRequest, ProtocolError};
+pub use openai::{OpenAIResponsesRequest, ProtocolError, LEGACY_SESSION_FALLBACK};
 pub use status::TaskStatus;
 
 pub const CODEX_FILES_MENTIONED_HEADER: &str = "# Files mentioned by the user:";

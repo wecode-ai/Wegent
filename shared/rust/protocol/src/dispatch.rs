@@ -20,6 +20,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::LEGACY_SESSION_FALLBACK;
+
 /// The `/v1/responses` request body. Keys serialize in this order, matching the
 /// recorded body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +139,7 @@ pub const METADATA_KEY_ORDER: &[&str] = &[
     "sandbox_metadata",
     "callback_url",
     "new_session",
+    LEGACY_SESSION_FALLBACK,
     "collaboration_model",
 ];
 
@@ -240,6 +243,9 @@ pub struct ExecutionRequest {
     pub sandbox_metadata: Option<Value>,
     pub callback_url: Option<String>,
     pub new_session: bool,
+    /// Explicitly marks a Backend-selected fresh-session fallback, distinct
+    /// from a locally prepared request whose new-session default is reset.
+    pub legacy_session_fallback: bool,
     pub collaboration_model: String,
     pub message_id: Option<i64>,
     pub user_message_id: Option<i64>,
@@ -342,6 +348,7 @@ impl Default for ExecutionRequest {
             sandbox_metadata: None,
             callback_url: None,
             new_session: false,
+            legacy_session_fallback: false,
             collaboration_model: "single".to_string(),
             message_id: None,
             user_message_id: None,
@@ -776,6 +783,10 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
     );
     metadata.insert("new_session".into(), serde_json::json!(request.new_session));
     metadata.insert(
+        LEGACY_SESSION_FALLBACK.into(),
+        serde_json::json!(request.legacy_session_fallback),
+    );
+    metadata.insert(
         "collaboration_model".into(),
         serde_json::json!(request.collaboration_model),
     );
@@ -848,6 +859,7 @@ fn string_field(value: &Value, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OpenAIResponsesRequest;
     use serde_json::json;
 
     #[test]
@@ -965,6 +977,24 @@ mod tests {
     }
 
     #[test]
+    fn assemble_carries_the_explicit_legacy_fallback_marker() {
+        let request = ExecutionRequest {
+            new_session: true,
+            legacy_session_fallback: true,
+            ..ExecutionRequest::default()
+        };
+        let wire = serde_json::to_value(assemble(&request, false, true)).unwrap();
+        assert_eq!(wire["metadata"]["new_session"], json!(true));
+        assert_eq!(wire["metadata"][LEGACY_SESSION_FALLBACK], json!(true));
+
+        let execution = OpenAIResponsesRequest::from_value(wire)
+            .unwrap()
+            .to_execution_request();
+        assert!(execution.new_session);
+        assert!(execution.legacy_session_fallback);
+    }
+
+    #[test]
     fn mcp_servers_become_mcp_tools() {
         let request = ExecutionRequest {
             mcp_servers: vec![json!({"name": "srv", "url": "http://x", "type": "sse"})],
@@ -1029,10 +1059,9 @@ mod tests {
 
     #[test]
     fn recorded_key_orders_are_documented() {
-        // The recorded chat-shell body carries 72 metadata keys.
-        assert_eq!(METADATA_KEY_ORDER.len(), 72);
+        assert_eq!(METADATA_KEY_ORDER.len(), 73);
         assert_eq!(METADATA_KEY_ORDER[0], "task_id");
-        assert_eq!(METADATA_KEY_ORDER[71], "collaboration_model");
+        assert_eq!(METADATA_KEY_ORDER[72], "collaboration_model");
         assert_eq!(MODEL_CONFIG_KEY_ORDER.len(), 18);
         assert_eq!(MODEL_CONFIG_KEY_ORDER[0], "api_key");
         assert_eq!(MODEL_CONFIG_KEY_ORDER[13], "supports_developer_role");

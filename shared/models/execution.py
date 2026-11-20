@@ -171,6 +171,8 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
+    # Explicit Backend-selected fallback; local send adapters reset new_session.
+    legacy_session_fallback: bool = False
     ephemeral: bool = False
     fork_runtime: Optional[dict] = None
     inherited_sessions: list[dict] = field(default_factory=list)

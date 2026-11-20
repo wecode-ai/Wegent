@@ -38,6 +38,9 @@ pub(crate) struct SessionContextInput<'a> {
     pub executor_deleted: bool,
     /// The source builder's `new_session` argument.
     pub new_session: bool,
+    /// Whether an execution may fall back to a new native session when this
+    /// task has no authenticated prior session evidence.
+    pub allow_new_session_fallback: bool,
     /// Subscription recovery has its own cap, independent of chat history.
     pub is_subscription: bool,
     /// The deployment's physical table templates (`{{tasks}}` when the
@@ -68,6 +71,20 @@ pub(crate) fn needs_bindings(input: &SessionContextInput<'_>) -> bool {
     !input.new_session
         && input.task_user_id == input.user_id
         && input.bot_configs.iter().any(is_coding_shell_config)
+}
+
+/// A continuation without an authenticated prior session must not ask the
+/// executor to resume an unproven remembered session. The caller can safely
+/// start a new native conversation instead.
+pub(crate) fn should_start_new_session(
+    input: &SessionContextInput<'_>,
+    inherited_sessions: &[Value],
+    legacy_session_bindings: &[Value],
+) -> bool {
+    input.allow_new_session_fallback
+        && needs_bindings(input)
+        && inherited_sessions.is_empty()
+        && legacy_session_bindings.is_empty()
 }
 
 /// The pure half of `_build_session_context`: the listing's persisted
@@ -208,7 +225,7 @@ fn row_json(row: &MysqlRow, column: &str) -> Option<Value> {
 
 /// `_normalize_executor_session`: keep the agent, the session/thread id and
 /// the bot id; drop anything else.
-fn normalize_executor_session(session: Option<&Value>) -> Option<Value> {
+pub(crate) fn normalize_executor_session(session: Option<&Value>) -> Option<Value> {
     let session = session?.as_object()?;
     let agent = session.get("agent").filter(|value| is_truthy(value))?;
     let session_id =
@@ -379,6 +396,7 @@ mod tests {
         user_id: i64,
         executor_deleted: bool,
         new_session: bool,
+        allow_new_session_fallback: bool,
     ) -> SessionContextInput<'a> {
         SessionContextInput {
             task_id: 801406538674539,
@@ -388,6 +406,7 @@ mod tests {
             task_json,
             executor_deleted,
             new_session,
+            allow_new_session_fallback,
             is_subscription: false,
             table_templates: TableTemplates {
                 tasks: "tasks_0711",
@@ -426,7 +445,7 @@ mod tests {
                 json!({"metadata":{"labels":{"type":"subscription"}}})
             };
             for deleted in [false, true] {
-                let mut input = input(&bots, &task_json, 7, 7, deleted, false);
+                let mut input = input(&bots, &task_json, 7, 7, deleted, false, false);
                 input.is_subscription = explicit;
                 // No history setting is required for executor recovery.
                 let (inherited, bindings) = build(&fixture.mysql, &input).await.unwrap();
@@ -459,21 +478,21 @@ mod tests {
         let task_json = json!({});
         let bots = [coding_bot(637588)];
         assert!(needs_bindings(&input(
-            &bots, &task_json, 5831, 5831, false, false
+            &bots, &task_json, 5831, 5831, false, false, false
         )));
         assert!(!needs_bindings(&input(
-            &bots, &task_json, 1809, 5831, false, false
+            &bots, &task_json, 1809, 5831, false, false, false
         )));
         assert!(!needs_bindings(&input(
-            &bots, &task_json, 5831, 5831, false, true
+            &bots, &task_json, 5831, 5831, false, true, false
         )));
         let chat = [json!({"id": 637588, "shell_type": "Chat"})];
         assert!(!needs_bindings(&input(
-            &chat, &task_json, 5831, 5831, false, false
+            &chat, &task_json, 5831, 5831, false, false, false
         )));
         let codex = [json!({"id": 637588, "shell_type": "Codex"})];
         assert!(needs_bindings(&input(
-            &codex, &task_json, 5831, 5831, false, false
+            &codex, &task_json, 5831, 5831, false, false, false
         )));
     }
 
@@ -484,10 +503,12 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let task_json = json!({});
         let chat = [json!({"id": 637588, "shell_type": "Chat"})];
-        let (inherited, bindings) =
-            build(&mysql, &input(&chat, &task_json, 5831, 5831, false, false))
-                .await
-                .expect("context");
+        let (inherited, bindings) = build(
+            &mysql,
+            &input(&chat, &task_json, 5831, 5831, false, false, false),
+        )
+        .await
+        .expect("context");
         assert!(inherited.is_empty());
         assert!(bindings.is_empty());
         assert!(mysql.queries().is_empty(), "{:?}", mysql.queries());
@@ -501,10 +522,12 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let task_json = json!({});
         let bots = [coding_bot(637588)];
-        let (inherited, bindings) =
-            build(&mysql, &input(&bots, &task_json, 5831, 5831, false, false))
-                .await
-                .expect("context");
+        let (inherited, bindings) = build(
+            &mysql,
+            &input(&bots, &task_json, 5831, 5831, false, false, false),
+        )
+        .await
+        .expect("context");
         assert!(inherited.is_empty());
         assert!(bindings.is_empty());
         let calls = mysql.queries();
@@ -524,7 +547,7 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let task_json = json!({});
         let bots = [coding_bot(637588)];
-        let mut context = input(&bots, &task_json, 5831, 5831, false, false);
+        let mut context = input(&bots, &task_json, 5831, 5831, false, false, false);
         context.table_templates = TableTemplates {
             tasks: "{{tasks}}",
             subtasks: "{{subtasks}}",
@@ -561,11 +584,91 @@ mod tests {
         let task_json = json!({});
         let bots = [coding_bot(637588)];
         let (inherited, bindings) = context_from(
-            &input(&bots, &task_json, 5831, 5831, false, false),
+            &input(&bots, &task_json, 5831, 5831, false, false, false),
             Vec::new(),
         );
         assert!(inherited.is_empty());
         assert!(bindings.is_empty());
+    }
+
+    /// A continuation with no authenticated session evidence must be rebuilt
+    /// as a new native session instead of resuming an unproven marker.
+    #[test]
+    fn an_empty_listing_selects_a_new_session_when_fallback_is_allowed() {
+        let task_json = json!({});
+        let bots = [coding_bot(637588)];
+        let continuation = input(&bots, &task_json, 5831, 5831, false, false, true);
+        let (inherited, bindings) = context_from(&continuation, Vec::new());
+        assert!(should_start_new_session(
+            &continuation,
+            &inherited,
+            &bindings
+        ));
+        assert!(inherited.is_empty());
+        assert!(bindings.is_empty());
+    }
+
+    /// Existing sessions and explicit new sessions are already unambiguous;
+    /// they do not need this fallback decision.
+    #[test]
+    fn new_session_fallback_only_applies_to_unproven_continuations() {
+        let task_json = json!({});
+        let bots = [coding_bot(637588)];
+        let unproven = input(&bots, &task_json, 5831, 5831, false, false, true);
+        let (inherited, bindings) = context_from(&unproven, Vec::new());
+        assert!(should_start_new_session(&unproven, &inherited, &bindings));
+
+        let explicit_new = input(&bots, &task_json, 5831, 5831, false, true, true);
+        let (inherited, bindings) = context_from(&explicit_new, Vec::new());
+        assert!(!should_start_new_session(
+            &explicit_new,
+            &inherited,
+            &bindings
+        ));
+
+        let other_user = input(&bots, &task_json, 1809, 5831, false, false, true);
+        let (inherited, bindings) = context_from(&other_user, Vec::new());
+        assert!(!should_start_new_session(
+            &other_user,
+            &inherited,
+            &bindings
+        ));
+
+        let fallback_disabled = input(&bots, &task_json, 5831, 5831, false, false, false);
+        let (inherited, bindings) = context_from(&fallback_disabled, Vec::new());
+        assert!(!should_start_new_session(
+            &fallback_disabled,
+            &inherited,
+            &bindings
+        ));
+    }
+
+    /// Persisted proof and explicitly inherited sessions represent an
+    /// authenticated continuation and must keep the existing session.
+    #[test]
+    fn new_session_fallback_keeps_authenticated_sessions() {
+        let task_json = json!({});
+        let bots = [coding_bot(637588)];
+        let continuation = input(&bots, &task_json, 5831, 5831, false, false, true);
+
+        let persisted = vec![persisted("claudeCode", 637588, "sessionId", "session-1")];
+        let (inherited, bindings) = context_from(&continuation, persisted);
+        assert!(!should_start_new_session(
+            &continuation,
+            &inherited,
+            &bindings
+        ));
+
+        let fork_json = json!({"spec": {"fork": {"runtime": {"sessions": [
+            {"agent": "claudeCode", "sessionId": "fork-session"}
+        ]}}}});
+        let fork_input = input(&bots, &fork_json, 5831, 5831, false, false, true);
+        let (inherited, bindings) = context_from(&fork_input, Vec::new());
+        assert!(!should_start_new_session(
+            &fork_input,
+            &inherited,
+            &bindings
+        ));
     }
 
     /// A persisted ClaudeCode session addressed to the request's Bot becomes a
@@ -576,7 +679,7 @@ mod tests {
         let bots = [coding_bot(637588)];
         let sessions = vec![persisted("claudeCode", 637588, "sessionId", "session-1")];
         let (inherited, bindings) = context_from(
-            &input(&bots, &task_json, 5831, 5831, false, false),
+            &input(&bots, &task_json, 5831, 5831, false, false, false),
             sessions,
         );
         assert!(inherited.is_empty(), "no deleted executor");
@@ -604,7 +707,7 @@ mod tests {
             persisted("claudeCode", 637588, "sessionId", "bad session id"),
         ];
         let (_, bindings) = context_from(
-            &input(&bots, &task_json, 5831, 5831, false, false),
+            &input(&bots, &task_json, 5831, 5831, false, false, false),
             sessions,
         );
         assert!(bindings.is_empty(), "{bindings:?}");
@@ -617,8 +720,10 @@ mod tests {
         let task_json = json!({});
         let chat = [json!({"id": 637588, "shell_type": "Chat"})];
         let sessions = vec![persisted("claudeCode", 637588, "sessionId", "session-1")];
-        let (inherited, bindings) =
-            context_from(&input(&chat, &task_json, 5831, 5831, true, false), sessions);
+        let (inherited, bindings) = context_from(
+            &input(&chat, &task_json, 5831, 5831, true, false, false),
+            sessions,
+        );
         assert_eq!(
             inherited,
             vec![json!({"agent": "claudeCode", "botId": 637588, "sessionId": "session-1"})]
@@ -638,8 +743,10 @@ mod tests {
         // The persisted row repeats the fork session's identity
         // (`(agent, botId, sessionId, threadId)`, no bot id here).
         let sessions = vec![json!({"agent": "codex", "threadId": "thread-1"})];
-        let (inherited, _) =
-            context_from(&input(&chat, &task_json, 5831, 5831, true, false), sessions);
+        let (inherited, _) = context_from(
+            &input(&chat, &task_json, 5831, 5831, true, false, false),
+            sessions,
+        );
         assert_eq!(
             inherited,
             vec![json!({"agent": "codex", "threadId": "thread-1"})]
