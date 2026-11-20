@@ -226,19 +226,21 @@ export function ContextSettingsPage() {
               {t('workbench.context_settings_user_preference_prompt_description')}
             </p>
           </div>
-          <button
+          <ControlButton
             type="button"
             data-testid="context-user-preference-prompt-save-button"
             disabled={loading || userPreferencePrompt.trim() === savedUserPreferencePrompt}
             onClick={() => void handleSaveUserPreferencePrompt()}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            variant="primary"
+            size="sm"
+            className="shrink-0 leading-[18px]"
           >
             <Save className="h-4 w-4" />
             <span>{t('workbench.context_settings_user_preference_prompt_save')}</span>
-          </button>
+          </ControlButton>
         </div>
         <div className="px-4 py-4">
-          <textarea
+          <ControlTextarea
             data-testid="context-user-preference-prompt-textarea"
             value={userPreferencePrompt}
             maxLength={USER_PREFERENCE_PROMPT_MAX_LENGTH}
