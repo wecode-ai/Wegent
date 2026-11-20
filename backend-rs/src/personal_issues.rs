@@ -507,9 +507,9 @@ async fn delete_issue(
     }).await.map_err(internal)?;
     match result {
         Ok(Some(share)) => {
-            share::clean_deleted_share(state, issue_id, &share.files)
-                .await
-                .map_err(internal)?;
+            if let Err(error) = share::clean_deleted_share(state, issue_id, &share.files).await {
+                tracing::warn!(issue_id, %error, "Deleted issue attachment cleanup will be retried");
+            }
         }
         Ok(None) => {}
         Err(reason) => admitted(reason)?,

@@ -266,3 +266,42 @@ test.each([true, false])(
     })
   }
 )
+
+test('a delayed shared Issue lookup cannot replace a newer conversation link', async () => {
+  let finishLookup!: (response: Response) => void
+  const lookup = new Promise<Response>(resolve => {
+    finishLookup = resolve
+  })
+  const fetchIssue = vi.fn(() => lookup)
+  vi.stubGlobal('fetch', fetchIssue)
+  render(
+    <CloudConnectionContext.Provider
+      value={
+        {
+          isConnected: true,
+          token: 'test-token',
+          apiBaseUrl: 'https://backend.example.test/api',
+        } as CloudConnectionContextValue
+      }
+    >
+      <Harness
+        tabs={[
+          { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+        ]}
+      />
+    </CloudConnectionContext.Provider>
+  )
+
+  act(() => {
+    openWeworkScheme('wework://personal-issues/share-12-test')
+  })
+  expect(fetchIssue).toHaveBeenCalledTimes(1)
+  act(() => {
+    openWeworkScheme('wework://tasks/device-1/newer-task')
+  })
+  await act(async () => {
+    finishLookup(Response.json({ id: 'share-12-test' }))
+  })
+
+  expect(screen.getByTestId('active-route')).toHaveTextContent('taskId=newer-task')
+})

@@ -46,6 +46,7 @@ export interface WeworkSchemeInput {
 export function createWeworkSchemeService() {
   let input: WeworkSchemeInput | null = null
   let generation = 0
+  let navigationOrder = 0
   let focusRequest = 0
   const pendingUrls = new Set<string>()
   const openedSchemeIds = new Set<number>()
@@ -69,6 +70,7 @@ export function createWeworkSchemeService() {
     const revision = generation
     let destination = parseWeworkScheme(url)
     if (!destination) return true
+    const order = ++navigationOrder
     if (destination.kind === 'collaboration-exp') {
       if (!input.experiment.loaded) {
         if (deferInRenderer) pendingUrls.add(url)
@@ -172,6 +174,8 @@ export function createWeworkSchemeService() {
         cloud.apiBaseUrl !== input.connection?.apiBaseUrl
       )
         return false
+      // A superseded native request is consumed so it cannot replay on the next drain.
+      if (order !== navigationOrder) return true
       if (movedIssue?.cloud_project_id && movedIssue.can_view_detail !== false) {
         destination = {
           kind: 'board',

@@ -328,8 +328,22 @@ export function createIndependentIssueDialogState(
       const issue = snapshot.issue
       if (!issue) return Promise.resolve(false)
       return run(async current => {
-        await api.remove(issue.id, issue.version)
-        if (current()) notify(observer => observer.onSaved(null))
+        try {
+          await api.remove(issue.id, issue.version)
+        } catch (reason) {
+          if (!current()) return
+          if (reason instanceof ApiError && reason.status === 403) {
+            clearDenied(reason)
+            return
+          }
+          if (!(reason instanceof ApiError) || reason.status !== 404) throw reason
+        }
+        if (!current()) return
+        loadId = null
+        issueReadVersion += 1
+        commentReadVersion += 1
+        publish({ issue: null, comments: [], body: '', editing: false, associationPending: false })
+        notify(observer => observer.onSaved(null))
       })
     },
   }
