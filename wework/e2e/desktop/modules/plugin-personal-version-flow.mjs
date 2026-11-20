@@ -216,6 +216,7 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
           !snapshot.testIds.includes('personal-plugin-install-private-dialog'),
         'The author detail still offers install after account installation'
       )
+      await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
     } finally {
       const installed = await accountPlugin(cloud, name)
       if (installed) {
@@ -291,7 +292,6 @@ export async function verifyPersonalPluginVersionSubmission({
     auth_source: 'password',
   })
   await verifyAuthorCloudInstall({ cloud: cloudEnvironment, control, request, recipient, root })
-  await control.command('clickIfPresent', testId('plugin-detail-back-button'))
   const packageBytes = await readFile(
     await createPackage(root, currentVersion, initialManifestName, initialDisplayName)
   )
