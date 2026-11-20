@@ -8,7 +8,18 @@ Kubernetes-style CRD models for cloud-native agent management.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, func
+from sqlalchemy import (
+    DDL,
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    event,
+    func,
+)
 
 from .base import Base
 
@@ -54,3 +65,25 @@ class Kind(Base):
             "mysql_collate": "utf8mb4_unicode_ci",
         },
     )
+
+
+# Fresh Python installations create the schema before stamping the migration head.
+# The generated lookup key is a MySQL implementation detail, outside the ORM.
+event.listen(
+    Kind.__table__,
+    "after_create",
+    DDL(
+        "ALTER TABLE kinds ADD COLUMN cloud_device_id_key VARBINARY(400) "
+        "GENERATED ALWAYS AS (LEFT(JSON_UNQUOTE(JSON_EXTRACT(json, "
+        "'$.spec.cloudConfig.deviceId')), 100)) VIRTUAL, ALGORITHM=INPLACE, LOCK=NONE"
+    ).execute_if(dialect="mysql"),
+)
+event.listen(
+    Kind.__table__,
+    "after_create",
+    DDL(
+        "CREATE INDEX idx_kinds_cloud_device_id ON kinds "
+        "(cloud_device_id_key, kind, namespace, is_active, user_id) "
+        "ALGORITHM=INPLACE LOCK=NONE"
+    ).execute_if(dialect="mysql"),
+)

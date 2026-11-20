@@ -648,8 +648,8 @@ async fn cloud_match_locks_and_updates_on_the_same_transaction() {
         statements[1].starts_with("SELECT kinds.id, kinds.user_id FROM kinds")
             && statements[1].contains("kinds.user_id <> ?")
             && statements[1].contains("kinds.namespace = 'default'")
-            && statements[1].contains("cloudConfig.sandboxId")
-            && statements[1].contains("<> ''"),
+            && statements[1].contains("FORCE INDEX (idx_kinds_cloud_device_id)")
+            && statements[1].contains("cloudConfig.deviceId"),
         "{statements:?}"
     );
     assert!(

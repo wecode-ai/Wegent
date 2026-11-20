@@ -470,28 +470,59 @@ async fn assert_managed_cloud_identity(
         json!({"deviceId": name})
     );
 
-    let foreign = format!("{prefix}-foreign-cloud");
     mysql.execute(
         "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)
          VALUES (9, 'foreign-cloud-e2e', '', true, 'user', 'password', '{}')",
         (),
     ).await.unwrap();
+    for (ack_id, reported_type, sandbox_id) in
+        [(14, "local", Some("sandbox-foreign")), (19, "cloud", None)]
+    {
+        let foreign = format!("{prefix}-foreign-{ack_id}");
+        assert_foreign_managed_cloud_conflict(
+            mysql,
+            redis,
+            &client,
+            &foreign,
+            ack_id,
+            reported_type,
+            sandbox_id,
+        )
+        .await;
+    }
+}
+
+async fn assert_foreign_managed_cloud_conflict(
+    mysql: &MysqlService,
+    redis: &RedisService,
+    client: &PollClient,
+    foreign: &str,
+    ack_id: u8,
+    reported_type: &str,
+    sandbox_id: Option<&str>,
+) {
+    // Managed IDs can differ from Kind names, including provisioned legacy rows.
+    let kind_name = format!("{foreign}-kind");
+    let mut cloud_config = json!({"deviceId": foreign});
+    if let Some(sandbox_id) = sandbox_id {
+        cloud_config["sandboxId"] = json!(sandbox_id);
+    }
     let foreign_document = json!({"spec": {
         "deviceType": "cloud", "deviceId": foreign, "runtimeInstanceId": "runtime-cloud",
-        "cloudConfig": {"deviceId": foreign, "sandboxId": "sandbox-foreign"},
+        "cloudConfig": cloud_config,
     }});
     mysql.execute(
         "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
          VALUES (9, 'Device', ?, 'default', ?, true, now(), now())",
-        (foreign.as_str(), foreign_document.to_string()),
+        (kind_name.as_str(), foreign_document.to_string()),
     ).await.unwrap();
     assert_eq!(
         event_ack(
-            &client,
-            14,
+            client,
+            ack_id,
             "device:register",
             json!({
-                "device_id": foreign, "name": "Managed Cloud", "device_type": "local",
+                "device_id": foreign, "name": "Managed Cloud", "device_type": reported_type,
                 "runtime_instance_id": "runtime-cloud",
             })
         )
@@ -502,7 +533,7 @@ async fn assert_managed_cloud_identity(
         .fetch_one(
             "SELECT COUNT(*) FROM kinds WHERE user_id = ? AND kind = 'Device'
          AND namespace = 'default' AND name = ?",
-            (USER_ID, foreign.as_str()),
+            (USER_ID, foreign),
         )
         .await
         .unwrap();
@@ -514,7 +545,7 @@ async fn assert_managed_cloud_identity(
         .fetch_one(
             "SELECT json FROM kinds WHERE user_id = 9 AND kind = 'Device'
          AND namespace = 'default' AND name = ?",
-            (foreign.as_str(),),
+            (kind_name.as_str(),),
         )
         .await
         .unwrap();

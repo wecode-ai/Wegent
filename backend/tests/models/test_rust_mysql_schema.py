@@ -5,8 +5,8 @@ import json
 import re
 from pathlib import Path
 
-from sqlalchemy.dialects.mysql import dialect
-from sqlalchemy.schema import CreateIndex, CreateTable
+from sqlalchemy import create_mock_engine
+from sqlalchemy.schema import DDL, CreateIndex, CreateTable, ExecutableDDLElement
 
 from app.db.base import Base
 
@@ -27,19 +27,29 @@ def normalize_table_options(statement: str) -> tuple[str, tuple[str, ...]]:
 
 def test_latest_rust_schema_matches_sqlalchemy_mysql_metadata() -> None:
     schema = json.loads((ASSETS / "schema.json").read_text())
-    expected = {}
-    for table in Base.metadata.sorted_tables:
-        statements = [str(CreateTable(table).compile(dialect=dialect())).strip()]
-        statements.extend(
-            str(CreateIndex(index).compile(dialect=dialect())).strip()
-            for index in sorted(table.indexes, key=lambda item: item.name)
-        )
-        expected[table.name] = [normalize_table_options(sql) for sql in statements]
+    expected: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+
+    def capture(ddl: ExecutableDDLElement, *_args: object, **_kwargs: object) -> None:
+        if isinstance(ddl, CreateTable):
+            table = ddl.element
+        elif isinstance(ddl, CreateIndex):
+            table = ddl.element.table
+        else:
+            assert isinstance(ddl, DDL)
+            table = ddl.target
+        sql = str(ddl.compile(dialect=engine.dialect)).strip()
+        expected.setdefault(table.name, []).append(normalize_table_options(sql))
+
+    # Capture dialect-specific DDL events and ordinary metadata alike.
+    engine = create_mock_engine("mysql://", capture)
+    Base.metadata.create_all(engine)
     actual = {
-        item["table"]: [normalize_table_options(sql) for sql in item["statements"]]
+        item["table"]: sorted(
+            normalize_table_options(sql) for sql in item["statements"]
+        )
         for item in schema["tables"]
     }
-    assert actual == expected
+    assert actual == {name: sorted(statements) for name, statements in expected.items()}
 
 
 def test_native_revision_graph_preserves_all_alembic_dependencies() -> None:

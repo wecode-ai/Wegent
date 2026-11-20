@@ -62,14 +62,16 @@ const CLOUD_DEVICES_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS
      '$.spec.cloudConfig.deviceId')) = ?) ORDER BY kinds.id FOR UPDATE";
 
 /// Server-provisioned identities are global; ordinary device names are owner-scoped.
+/// The first predicate uses the bounded binary index key. The full value check
+/// excludes longer persisted values that share the indexed prefix.
 const FOREIGN_MANAGED_CLOUD_QUERY: &str = "SELECT kinds.id, kinds.user_id FROM kinds \
-     WHERE kinds.user_id <> ? AND kinds.kind = 'Device' AND kinds.namespace = 'default' \
-     AND kinds.is_active IS true \
-     AND JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.deviceType')) = 'cloud' \
+     FORCE INDEX (idx_kinds_cloud_device_id) \
+     WHERE kinds.cloud_device_id_key = CAST(? AS BINARY) \
+     AND kinds.kind = 'Device' AND kinds.namespace = 'default' AND kinds.is_active IS true \
+     AND kinds.user_id <> ? \
+     AND BINARY JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.deviceType')) = 'cloud' \
      AND JSON_TYPE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = 'STRING' \
-     AND JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = ? \
-     AND JSON_TYPE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.sandboxId')) = 'STRING' \
-     AND TRIM(JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.sandboxId'))) <> '' \
+     AND BINARY JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = CAST(? AS BINARY) \
      LIMIT 1";
 
 /// `db.refresh(device_kind)` after the successful commit: `db.get(Kind, id)`
@@ -166,7 +168,11 @@ where
     let foreign: Option<(i64, i64)> = transaction
         .fetch_optional(
             FOREIGN_MANAGED_CLOUD_QUERY,
-            (user_id, payload.device_id.as_str()),
+            (
+                payload.device_id.as_str(),
+                user_id,
+                payload.device_id.as_str(),
+            ),
         )
         .await?;
     if foreign.is_some() {

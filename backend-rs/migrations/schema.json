@@ -1,5 +1,5 @@
 {
-  "revision": "b1c2d3e4f5a6",
+  "revision": "f6a3c81bd295",
   "tables": [
     {
       "table": "background_executions",
@@ -29,6 +29,8 @@
       "table": "kinds",
       "statements": [
         "CREATE TABLE kinds (\n\tid INTEGER NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\tkind VARCHAR(50) NOT NULL, \n\tname VARCHAR(100) NOT NULL, \n\tnamespace VARCHAR(100) NOT NULL, \n\tjson JSON NOT NULL, \n\tis_active BOOL, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "ALTER TABLE kinds ADD COLUMN cloud_device_id_key VARBINARY(400) GENERATED ALWAYS AS (LEFT(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.cloudConfig.deviceId')), 100)) VIRTUAL, ALGORITHM=INPLACE, LOCK=NONE",
+        "CREATE INDEX idx_kinds_cloud_device_id ON kinds (cloud_device_id_key, kind, namespace, is_active, user_id) ALGORITHM=INPLACE LOCK=NONE",
         "CREATE INDEX idx_kinds_name_kind_ns_active ON kinds (name, kind, namespace, is_active)",
         "CREATE INDEX ix_kinds_id ON kinds (id)",
         "CREATE INDEX ix_kinds_kind ON kinds (kind)",
