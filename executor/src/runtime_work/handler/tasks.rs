@@ -2425,19 +2425,16 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await
         };
-        let result = match resumed {
-            Ok(thread_id) => {
-                self.register_thread_event_route(
-                    &thread_id,
-                    link.local_task_id.clone(),
-                    request,
-                    true,
-                );
-                self.run_context_compaction(client, link, local_task_id, thread_id)
-                    .await
-            }
-            Err(error) => Ok(task_action_failure(link, error)),
+        let thread_id = match resumed {
+            Ok(thread_id) => thread_id,
+            // An ambiguous resume may still activate a Goal. An inactive read
+            // issued before that resume settles cannot release its registration.
+            Err(error) => return Ok(task_action_failure(link, error)),
         };
+        self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
+        let result = self
+            .run_context_compaction(client, link, local_task_id, thread_id.clone())
+            .await;
         // Settle the shared registration only from a current native Goal snapshot.
         // The local registration also covers compaction if a Goal stops mid-action.
         if registration.is_some() {

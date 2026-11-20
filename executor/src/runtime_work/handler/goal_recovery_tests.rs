@@ -362,7 +362,8 @@ fn timed_out_goal_resume_or_activation_retains_its_route_until_native_state_conf
             handler.retain_runtime_model_config("task-1", &request.model_config);
             block_goal_admission(&handler);
             install_native_history(&mut handler, &root, vec![], None);
-            fs::write(root.join(format!("{method}.hold")), "").unwrap();
+            let pending = if compact { "defer" } else { "hold" };
+            fs::write(root.join(format!("{method}.{pending}")), "").unwrap();
             fs::write(
                 root.join("thread_goal_set.json"),
                 json!({"goal":{"status":"active"}}).to_string(),
@@ -370,10 +371,11 @@ fn timed_out_goal_resume_or_activation_retains_its_route_until_native_state_conf
             .unwrap();
             fs::write(
                 root.join("thread_goal_get.json"),
-                json!({"goal":{"status":"active"}}).to_string(),
+                json!({"goal":{"status":"blocked"}}).to_string(),
             )
             .unwrap();
-            fs::write(root.join(format!("{method}.notifications.jsonl")), json!({
+            let notification_method = if compact { "test_fence" } else { method };
+            fs::write(root.join(format!("{notification_method}.notifications.jsonl")), json!({
             "method":"thread/goal/updated", "params":{"threadId":thread,"goal":{"status":"active"}}
         }).to_string() + "\n").unwrap();
             let result = if compact {
@@ -394,7 +396,14 @@ fn timed_out_goal_resume_or_activation_retains_its_route_until_native_state_conf
             assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
                 .goal_model_route
                 .is_some());
-            fs::remove_file(root.join(format!("{method}.hold"))).unwrap();
+            fs::remove_file(root.join(format!("{method}.{pending}"))).unwrap();
+            if compact {
+                fs::write(root.join("test_fence.json"), "{}").unwrap();
+                handler
+                    .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+                    .await
+                    .unwrap();
+            }
             tokio::time::timeout(Duration::from_secs(5), async {
                 while handler
                     .local_task_link("task-1")
