@@ -612,6 +612,7 @@ export function createRuntimeTaskStreamHandlers(
           error: payload.error,
           errorType: payload.type,
           startedAt: payload.startedAt,
+          errorInfo: payload.errorInfo,
           durationMs: payload.durationMs,
         });
       }

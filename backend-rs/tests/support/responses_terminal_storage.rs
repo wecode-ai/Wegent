@@ -41,11 +41,14 @@ pub async fn verify(fixture: &Fixture) {
         .clone()
         .expect("real Redis for terminal delivery");
     let (url, stop, server) = http_e2e::start_callback_server(state).await;
+    let metrics_url = url.replace("/api/internal/callback", "/metrics");
     let client = brz_http::Client::builder()
         .timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(10))
         .build()
         .unwrap();
+    let completed_before = scrape_chat_metrics(&client, &metrics_url).await;
+    let failed_before = scrape_chat_metrics(&client, &metrics_url).await;
     let send = async |task_id, subtask_id, event_type: &str, data: Value| {
         client
             .post(&url)
@@ -125,6 +128,21 @@ pub async fn verify(fixture: &Fixture) {
         None,
     )
     .await;
+    let completed_after = scrape_chat_metrics(&client, &metrics_url).await;
+    assert_chat_counter_incremented(
+        &completed_before,
+        &completed_after,
+        r#"wegent_chat_runs_total{outcome="success",entrypoint="web",shell="unknown",execution_mode="unknown"}"#,
+        "the committed terminal transition must increment the success counter once",
+    );
+    assert_eq!(
+        scrape_chat_metrics(&client, &metrics_url).await,
+        completed_after,
+        "a second scrape must not reset cumulative counters",
+    );
+
+    // The first delivery committed before its post-commit acknowledgement
+    // failed. The retry above replayed that winner without incrementing again.
 
     // A queued stale dispatch failure can survive another producer committing
     // and acknowledging the winner. Recovery must read the completed row on
@@ -154,7 +172,7 @@ pub async fn verify(fixture: &Fixture) {
     let message = "executor could not start";
     let error = json!({"message": message, "code": "EXECUTOR_DISPATCH_FAILED"});
     assert_eq!(
-        send(FAILED_TASK_ID, FAILED_SUBTASK_ID, "error", error).await,
+        send(FAILED_TASK_ID, FAILED_SUBTASK_ID, "error", error.clone()).await,
         200
     );
     let delivery = http_e2e::next_callback(&mut failed).await;
@@ -170,7 +188,30 @@ pub async fn verify(fixture: &Fixture) {
         Some(message),
     )
     .await;
+    let failed_after = scrape_chat_metrics(&client, &metrics_url).await;
+    assert_chat_counter_incremented(
+        &failed_before,
+        &failed_after,
+        r#"wegent_chat_runs_total{outcome="failed",entrypoint="web",shell="unknown",execution_mode="unknown"}"#,
+        "the committed failure must increment the failed counter once",
+    );
+    assert_chat_counter_incremented(
+        &failed_before,
+        &failed_after,
+        r#"wegent_chat_run_failures_total{error_category="platform",error_code="dispatch_error",stage="dispatch",entrypoint="web",shell="unknown",execution_mode="unknown"}"#,
+        "the failed attempt must increment its classified cause once",
+    );
     failed.close().await.unwrap();
+
+    assert_eq!(
+        send(FAILED_TASK_ID, FAILED_SUBTASK_ID, "error", error).await,
+        200
+    );
+    assert_eq!(
+        scrape_chat_metrics(&client, &metrics_url).await,
+        failed_after,
+        "a duplicate terminal callback must not increment metrics",
+    );
 
     stop.send(()).unwrap();
     server.await.unwrap();
@@ -194,6 +235,7 @@ async fn seed(fixture: &Fixture) {
         .unwrap();
     for sql in [
         "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'RUNNING')",
+        "UPDATE tasks SET client_origin = 'frontend'",
         "CREATE TABLE tasks_0007 LIKE tasks",
         "CREATE TABLE subtasks_0007 LIKE subtasks",
         "INSERT INTO tasks_0007 SELECT * FROM tasks",
@@ -286,4 +328,33 @@ async fn verify_recovery_readback(redis: &RedisService) {
         .await
         .unwrap();
     assert_eq!(remaining, 0);
+}
+
+async fn scrape_chat_metrics(client: &brz_http::Client, metrics_url: &str) -> String {
+    let response = client.get(metrics_url).unwrap().send().await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let body = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    body.lines()
+        .filter(|line| {
+            line.starts_with("# HELP wegent_chat_")
+                || line.starts_with("# TYPE wegent_chat_")
+                || line.starts_with("wegent_chat_")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn chat_counter(metrics: &str, series: &str) -> Option<u64> {
+    let prefix = format!("{series} ");
+    metrics
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .and_then(|value| value.parse().ok())
+}
+
+fn assert_chat_counter_incremented(before: &str, after: &str, series: &str, message: &str) {
+    let before = chat_counter(before, series).unwrap_or_default();
+    let after =
+        chat_counter(after, series).unwrap_or_else(|| panic!("{message}: missing {series}"));
+    assert_eq!(after, before + 1, "{message}");
 }

@@ -17,7 +17,8 @@ async fn metrics() -> Response {
 /// Creates a streaming response without consuming counters or buffering the body.
 pub fn response() -> Response {
     let robot = std::io::Cursor::new(crate::background_jobs::robot::prometheus().into_bytes());
-    let body = ReaderStream::new(PrometheusReader::new().chain(robot));
+    let chat = std::io::Cursor::new(crate::chat_metrics::prometheus().into_bytes());
+    let body = ReaderStream::new(PrometheusReader::new().chain(robot).chain(chat));
     Response::stream(StatusCode::OK, ResponseStream::new(body)).content_type(CONTENT_TYPE)
 }
 
@@ -82,6 +83,9 @@ mod tests {
                 body.contains("brz_conn_total{type=\"REDIS\",name=\"prometheus-http-test\"} 7\n")
             );
             assert!(!body.contains("status_class="));
+            assert!(body.contains("# TYPE wegent_chat_runs_total counter\n"));
+            assert!(body.contains("# TYPE wegent_chat_run_failures_total counter\n"));
+            assert!(body.contains("# TYPE wegent_chat_requests_total counter\n"));
         }
         assert_eq!(request.snapshot(), before);
         assert_eq!(current.get(), 3);

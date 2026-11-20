@@ -28,29 +28,25 @@ async fn existing_subtask_result<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     task_id: i64,
     subtask_id: i64,
-) -> Option<Value> {
-    let (_, subtask_table) = super::resolve_tables(ctx.app, ctx.tables, task_id)
-        .await
-        .ok()?;
+) -> MysqlResult<Option<Value>> {
+    let (_, subtask_table) = super::resolve_tables(ctx.app, ctx.tables, task_id).await?;
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
-    let row: MysqlRow = mysql
+    let row: Option<MysqlRow> = mysql
         .fetch_optional(
             crate::task_store_statements::subtask_by_id_statement(&subtask_table),
             (subtask_id,),
         )
-        .await
-        .ok()
-        .flatten()?;
-    if subtask_column::<i64>(&row, "task_id").ok().flatten() != Some(task_id) {
-        return None;
+        .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if subtask_column::<i64>(&row, "task_id")? != Some(task_id) {
+        return Ok(None);
     }
-    let result: Option<Value> = subtask_column::<Json<Value>>(&row, "result")
-        .ok()
-        .flatten()
-        .map(|json| json.0);
-    result.filter(Value::is_object)
+    let result: Option<Value> = subtask_column::<Json<Value>>(&row, "result")?.map(|json| json.0);
+    Ok(result.filter(Value::is_object))
 }
 
 /// `_merge_blocks`: merge persisted and in-memory blocks preserving first-seen
@@ -189,11 +185,11 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     result: Option<&Value>,
     error_message: Option<&str>,
     error_code: Option<&str>,
-) -> Option<Value> {
+) -> MysqlResult<Option<Value>> {
     let normalized_status = status.to_uppercase();
     let accumulated_content = session::get_accumulated_content(ctx.redis, subtask_id).await;
     let existing_result = existing_subtask_result(ctx, task_id, subtask_id)
-        .await
+        .await?
         .unwrap_or_else(|| Value::Object(Map::new()));
 
     let runtime_result = result.filter(|value| value.is_object());
@@ -239,9 +235,9 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
         || !accumulated_content.is_empty()
         || !blocks.is_empty()
         || normalized_status == "COMPLETED"
-        || (normalized_status == "FAILED" && error_code.is_some());
+        || normalized_status == "FAILED";
     if !has_payload {
-        return None;
+        return Ok(None);
     }
 
     let mut final_result = runtime;
@@ -295,17 +291,32 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
         final_result.insert("value".into(), Value::String(text_value));
     }
 
-    if normalized_status == "FAILED"
-        && let Some(code) = error_code
-    {
-        final_result.extend(failure_details(error_message.unwrap_or_default(), code));
+    if normalized_status == "FAILED" {
+        let code = error_code.or_else(|| final_result.get("error_type").and_then(Value::as_str));
+        let details = failure_details(
+            error_message.unwrap_or_default(),
+            code.unwrap_or("generic_error"),
+        );
+        final_result.extend(details);
     }
 
-    Some(Value::Object(final_result))
+    Ok(Some(Value::Object(final_result)))
 }
 
 pub(super) fn failure_details(message: &str, code: &str) -> Map<String, Value> {
-    let mut details = Map::from_iter([("error_type".into(), json!(code))]);
+    let info = crate::chat_errors::classify_chat_error(Some(code), Some(message));
+    let mut details = Map::from_iter([
+        ("error_type".into(), json!(code)),
+        (
+            "error_info".into(),
+            json!({
+                "code": info.code,
+                "category": info.category,
+                "retry_policy": info.retry_policy,
+                "stage": crate::chat_errors::error_stage(info.code),
+            }),
+        ),
+    ]);
     if let Some(status_code) = extract_http_status_code(message) {
         details.insert("error_code".into(), json!(status_code));
     }

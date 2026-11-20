@@ -737,7 +737,9 @@ fn error_frame_keeps_the_source_payload_order() {
     assert_eq!(
         python_dumps(&error_payload(&event)),
         "{\"subtask_id\": 801406538682290, \"error\": \"API Error: timeout, model_id: qwen3.8-flash\", \
-         \"task_id\": 801406538682287, \"type\": \"runtime_error\", \"message_id\": 2}"
+         \"task_id\": 801406538682287, \"type\": \"runtime_error\", \"error_info\": \
+         {\"code\": \"generic_error\", \"category\": \"unknown\", \
+          \"retry_policy\": \"unknown\", \"stage\": \"unknown\"}, \"message_id\": 2}"
     );
 }
 

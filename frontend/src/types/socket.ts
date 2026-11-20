@@ -4,6 +4,7 @@
 
 import type { InteractiveFormAnswerPayload, SkillRef, SubtaskContextBrief, TaskType } from './api'
 import type { ArtifactNodeContext } from './knowledge-artifact'
+import type { ChatErrorInfo } from '@wegent/chat-core'
 
 /**
  * Socket.IO event types and payload definitions
@@ -366,6 +367,7 @@ export interface ChatErrorPayload {
   subtask_id: number
   error: string
   type?: string
+  error_info?: ChatErrorInfo
   /** Message ID for ordering (primary sort key) */
   message_id?: number
   /** Task ID for page refresh recovery */

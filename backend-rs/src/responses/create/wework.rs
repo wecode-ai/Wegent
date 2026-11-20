@@ -988,6 +988,7 @@ async fn existing_conversation_response(
     user_id: i64,
     body: &WeworkResponseCreate,
     selection: &ModelSelection,
+    observation: &mut crate::chat_metrics::RequestObservation,
 ) -> Result<brz_http_server::HttpResponse<BodyStream>, FastApiError> {
     let (device_id, task_id) = match (&body.conversation, &body.previous_response_id) {
         (Some(conversation), _) => conversation_address(conversation)?,
@@ -1059,6 +1060,7 @@ async fn existing_conversation_response(
         &selection,
     )
     .await?;
+    observation.accept();
     let mut runtime_turn_id: Option<String> = None;
     let wait = async {
         loop {
@@ -1124,6 +1126,7 @@ pub(crate) async fn create_response(
     limit: RateLimit,
     limit_key: &str,
 ) -> Result<brz_http_server::HttpResponse<BodyStream>, FastApiError> {
+    let mut observation = crate::chat_metrics::RequestObservation::new("wework");
     // The body is parsed only after the discriminator selected this branch.
     let body: WeworkResponseCreate = serde_json::from_value(body).map_err(|error| {
         FastApiError::detail(
@@ -1231,7 +1234,8 @@ pub(crate) async fn create_response(
     .await?;
 
     if body.conversation.is_some() || body.previous_response_id.is_some() {
-        return existing_conversation_response(state, user_id, &body, &selection).await;
+        return existing_conversation_response(state, user_id, &body, &selection, &mut observation)
+            .await;
     }
     let device_id = body
         .execution
@@ -1308,6 +1312,7 @@ pub(crate) async fn create_response(
                 .to_string(),
         ));
     }
+    observation.accept();
     let Some(subscription) = subscription else {
         // `background=True`: the queued snapshot is returned immediately.
         return seam::json_response(&snapshot);

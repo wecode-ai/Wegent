@@ -21,6 +21,7 @@ mod collect;
 mod delivery;
 mod events;
 mod handlers;
+mod metrics;
 mod persist;
 mod sql;
 mod text_value;
@@ -61,8 +62,11 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
     message: &str,
     code: &str,
 ) -> Option<Value> {
-    let result = match ctx {
-        Some(ctx) => collect_completed_result(
+    // A transient read failure must leave the stored result untouched. Passing
+    // no collected payload makes the terminal update status-only; retrying with
+    // a fabricated empty object could erase a previously persisted answer.
+    let result = if let Some(ctx) = ctx {
+        match collect_completed_result(
             ctx,
             task_id,
             subtask_id,
@@ -72,8 +76,16 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
             Some(code),
         )
         .await
-        .unwrap_or_else(|| Value::Object(collect::failure_details(message, code))),
-        None => Value::Object(collect::failure_details(message, code)),
+        {
+            Ok(Some(result)) => Some(result),
+            Ok(None) => Some(Value::Object(collect::failure_details(message, code))),
+            Err(failure) => {
+                tracing::warn!(%failure, task_id, subtask_id, "executor failure result read failed");
+                None
+            }
+        }
+    } else {
+        Some(Value::Object(collect::failure_details(message, code)))
     };
     let (task_table, subtask_table) = resolve_tables(
         ctx.and_then(|ctx| ctx.app),
@@ -85,13 +97,13 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
         tracing::warn!(%error, task_id, subtask_id, "executor failure table read failed");
     })
     .ok()?;
-    let (row, metrics_message) = persist::persist_executor_failure(
+    let (row, metrics_message, labels) = persist::persist_executor_failure(
         mysql,
         &task_table,
         &subtask_table,
         task_id,
         subtask_id,
-        &result,
+        result.as_ref(),
         message,
     )
     .await
@@ -99,6 +111,14 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
         |error| tracing::warn!(%error, task_id, subtask_id, "executor failure transaction failed"),
     )
     .ok()??;
+    metrics::record(
+        &row,
+        "FAILED",
+        Some(code),
+        Some(message),
+        result.as_ref(),
+        labels,
+    );
     if let Some(ctx) = ctx {
         persist::publish_task_run_metrics(ctx, &row, subtask_id, "FAILED", metrics_message).await;
         if let Err(error) =
@@ -111,12 +131,12 @@ pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
             task_id,
             subtask_id,
             "FAILED",
-            Some(&result),
+            result.as_ref(),
             Some(message),
         )
         .await;
     }
-    Some(result)
+    result
 }
 
 /// The deployment inputs one completion flow renders.
@@ -390,7 +410,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
     let final_result = collect::collect_completed_result(
         ctx, task_id, subtask_id, status, result, error, error_code,
     )
-    .await;
+    .await?;
 
     let committed = Box::pin(persist::persist_terminal_transition(
         ctx,
