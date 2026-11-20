@@ -80,7 +80,10 @@ pub(super) fn apply_runtime_event_conversation_context(
     if let Some(payload) = payload.as_object_mut() {
         payload.remove("conversationContext");
     }
-    if super::util::is_private_discussion(request) {
+    let origin = request.extra.get("origin").unwrap_or(&Value::Null);
+    if origin["type"] == "stand_in_schedule" && origin["memoryReview"] == true {
+        payload["conversationContext"] = json!("stand_in_memory_review");
+    } else if super::util::is_private_discussion(request) {
         payload["conversationContext"] = json!("private_discussion");
     }
 }
@@ -2848,6 +2851,35 @@ mod tests {
                 } else {
                     assert!(emitted["payload"].get("conversationContext").is_none());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn marks_memory_review_events_without_changing_the_transcript() {
+        let (event_tx, mut events) = broadcast::channel(4);
+        for memory_review in [true, false] {
+            let mut request = ExecutionRequest::default();
+            request.extra.insert(
+                "origin".into(),
+                json!({"type": "stand_in_schedule", "memoryReview": memory_review}),
+            );
+            for event in ["response.block.created", "response.completed"] {
+                let data = json!({"value": "Original transcript"});
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "task",
+                    &request,
+                    data.clone(),
+                );
+                let emitted = events.try_recv().unwrap();
+                assert_eq!(emitted["payload"]["data"], data);
+                assert_eq!(
+                    emitted["payload"]["conversationContext"].as_str(),
+                    memory_review.then_some("stand_in_memory_review")
+                );
             }
         }
     }
