@@ -51,21 +51,29 @@ impl RuntimeWorkRpcHandler {
                 thread_id,
                 thread_path.as_deref(),
                 |registration| {
-                    if let Some(route) = self
-                        .thread_event_routing
-                        .lock()
-                        .expect("thread event routing lock should not be poisoned")
-                        .routes
-                        .get_mut(thread_id)
-                    {
-                        // Native activation may outlive an ambiguous resume response.
-                        route.goal_model_route = registration;
-                    }
+                    self.retain_goal_model_route(thread_id, registration);
                 },
             )
             .await
             .map_err(|error| AppIpcError::new("model_route_failed", error))?;
         Ok(())
+    }
+
+    pub(super) fn retain_goal_model_route(
+        &self,
+        thread_id: &str,
+        registration: Option<crate::agents::ModelActionRegistration>,
+    ) {
+        if let Some(route) = self
+            .thread_event_routing
+            .lock()
+            .expect("thread event routing lock should not be poisoned")
+            .routes
+            .get_mut(thread_id)
+        {
+            // Native activation may outlive an ambiguous resume response.
+            route.goal_model_route = registration;
+        }
     }
 
     pub(super) fn release_goal_model_routes(&self, local_task_id: &str) {

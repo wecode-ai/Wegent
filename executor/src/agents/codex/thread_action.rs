@@ -4,6 +4,7 @@
 
 use super::*;
 
+#[derive(Clone)]
 pub(crate) struct ModelActionRegistration {
     _model_route: Option<Arc<LocalProxyRegistration>>,
     _control_context: Option<Arc<crate::task_runtime::mcp_http::ControlMcpExecution>>,

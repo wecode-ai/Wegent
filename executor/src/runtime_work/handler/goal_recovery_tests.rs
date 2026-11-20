@@ -345,7 +345,11 @@ fn goal_activation_binds_and_retains_the_route_until_the_goal_stops() {
 fn timed_out_goal_resume_or_activation_retains_its_route_until_native_state_confirms_stop() {
     run_goal_test(async {
         let _timeout = ScalarEnv::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
-        for method in ["thread_resume", "thread_goal_set"] {
+        for (method, compact) in [
+            ("thread_resume", false),
+            ("thread_goal_set", false),
+            ("thread_resume", true),
+        ] {
             let (mut handler, root, mut request) = setup("goal-model-route-ambiguous-activation");
             let thread = "11111111-1111-4111-8111-111111111111";
             request.model_config = json!({"model_id":"goal-route-model",
@@ -364,13 +368,24 @@ fn timed_out_goal_resume_or_activation_retains_its_route_until_native_state_conf
                 json!({"goal":{"status":"active"}}).to_string(),
             )
             .unwrap();
+            fs::write(
+                root.join("thread_goal_get.json"),
+                json!({"goal":{"status":"active"}}).to_string(),
+            )
+            .unwrap();
             fs::write(root.join(format!("{method}.notifications.jsonl")), json!({
             "method":"thread/goal/updated", "params":{"threadId":thread,"goal":{"status":"active"}}
         }).to_string() + "\n").unwrap();
-            let result = handler
-                .set_task_goal(json!({"taskId":"task-1","status":"active"}))
-                .await
-                .unwrap();
+            let result = if compact {
+                handler
+                    .compact_task(json!({"taskId":"task-1","modelConfig":request.model_config}))
+                    .await
+            } else {
+                handler
+                    .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+                    .await
+            }
+            .unwrap();
             assert_eq!(result["accepted"], false);
             assert!(
                 result["error"].as_str().unwrap().contains("timed out"),
