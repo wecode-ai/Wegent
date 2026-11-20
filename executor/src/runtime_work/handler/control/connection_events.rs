@@ -206,21 +206,30 @@ impl RuntimeWorkRpcHandler {
         task: &str,
         keys: &[String],
     ) -> Result<(), AppIpcError> {
+        self.load_resource_event_facts(task, keys).map(|_| ())
+    }
+
+    fn load_resource_event_facts(
+        &self,
+        task: &str,
+        keys: &[String],
+    ) -> Result<std::collections::BTreeMap<String, (Value, Value)>, AppIpcError> {
         if keys.is_empty() {
-            return Ok(());
+            return Ok(Default::default());
         }
+        let requested = keys.iter().map(String::as_str).collect::<HashSet<_>>();
         let known = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::TaskEvents(task),
-            |state| Ok(resource_delivery::event_facts(state, task)),
+            |state| Ok(resource_delivery::event_facts(state, task, &requested)),
         )?;
-        if keys.iter().any(|key| !known.contains_key(key)) {
+        if known.len() != requested.len() {
             return Err(AppIpcError::new(
                 "bad_request",
                 "Resource event does not belong to this conversation's authorized observations",
             ));
         }
-        Ok(())
+        Ok(known)
     }
 
     fn event_subscription_path(&self) -> PathBuf {
@@ -264,7 +273,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             event_store::Scope::Task(task)
         };
-        let projected = event_store::update_and_read(
+        let mut projected = event_store::update_and_read(
             &self.event_subscription_path(),
             scope,
             |state| {
@@ -291,18 +300,15 @@ impl RuntimeWorkRpcHandler {
             },
             event_store::Scope::TaskProjection(task),
         )?;
-        let subscriptions = projected["operations"]
-            .as_object()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let Value::Object(operations) = projected["operations"].take() else {
+            unreachable!("event subscription projection always contains operations");
+        };
+        let subscriptions = Value::Array(operations.into_values().collect());
         if let Some(task) = record["task_id"].as_str() {
             let mut changed = false;
-            self.store.update_task(task, |link| {
-                let next = json!(subscriptions);
-                if link.runtime_handle["connectionEventSubscriptions"] != next {
-                    link.runtime_handle["connectionEventSubscriptions"] = next;
+            self.store.update_task_without_snapshot(task, |link| {
+                if link.runtime_handle["connectionEventSubscriptions"] != subscriptions {
+                    link.runtime_handle["connectionEventSubscriptions"] = subscriptions;
                     changed = true;
                 }
             });

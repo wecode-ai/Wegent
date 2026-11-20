@@ -450,6 +450,27 @@ impl RuntimeWorkStore {
     }
 
     pub fn list_task_summaries(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
+        self.list_filtered_task_summaries(include_archived, |_| true)
+    }
+
+    pub(super) fn list_filtered_task_summaries(
+        &self,
+        include_archived: bool,
+        matches_task: impl Fn(&RuntimeTaskLink) -> bool,
+    ) -> Vec<RuntimeTaskLink> {
+        self.list_filtered_task_values(
+            include_archived,
+            matches_task,
+            RuntimeTaskLink::list_summary,
+        )
+    }
+
+    pub(super) fn list_filtered_task_values<T>(
+        &self,
+        include_archived: bool,
+        matches_task: impl Fn(&RuntimeTaskLink) -> bool,
+        project: impl Fn(&RuntimeTaskLink) -> T,
+    ) -> Vec<T> {
         self.refresh_index_from_disk_if_changed();
         let Some(index) = self.index.lock().ok() else {
             return Vec::new();
@@ -458,10 +479,10 @@ impl RuntimeWorkStore {
             .tasks
             .values()
             .filter(|task| include_archived || task.status != "archived")
-            .map(RuntimeTaskLink::list_summary)
+            .filter(|task| matches_task(task))
             .collect::<Vec<_>>();
         tasks.sort_by_key(|task| Reverse(task.updated_at));
-        tasks
+        tasks.into_iter().map(project).collect()
     }
 
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
