@@ -45,22 +45,26 @@ impl RuntimeWorkRpcHandler {
         // recovery reloads the passive history profile after activation and can
         // unload the native continuation that the mutation already started.
         let thread_path = runtime_thread_path_from_link(link);
-        let (_, registration) = self
-            .codex_app_server
-            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
+        self.codex_app_server
+            .resume_thread_for_model_action(
+                &request,
+                thread_id,
+                thread_path.as_deref(),
+                |registration| {
+                    if let Some(route) = self
+                        .thread_event_routing
+                        .lock()
+                        .expect("thread event routing lock should not be poisoned")
+                        .routes
+                        .get_mut(thread_id)
+                    {
+                        // Native activation may outlive an ambiguous resume response.
+                        route.goal_model_route = registration;
+                    }
+                },
+            )
             .await
             .map_err(|error| AppIpcError::new("model_route_failed", error))?;
-        if let Some(route) = self
-            .thread_event_routing
-            .lock()
-            .expect("thread event routing lock should not be poisoned")
-            .routes
-            .get_mut(thread_id)
-        {
-            // Native Goal turns may run without a local send future. Retain both
-            // inference and control registrations until the Goal stops.
-            route.goal_model_route = registration;
-        }
         Ok(())
     }
 

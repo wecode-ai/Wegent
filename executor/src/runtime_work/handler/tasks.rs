@@ -2404,8 +2404,16 @@ impl RuntimeWorkRpcHandler {
         self.ensure_notification_router().await;
         let thread_path = runtime_thread_path_from_link(link);
         // Keep the execution registrations until native compaction settles.
-        let (thread_id, _registration) = match client
-            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
+        let mut _registration = None;
+        let thread_id = match client
+            .resume_thread_for_model_action(
+                &request,
+                thread_id,
+                thread_path.as_deref(),
+                |registration| {
+                    _registration = registration;
+                },
+            )
             .await
         {
             Ok(context) => context,
