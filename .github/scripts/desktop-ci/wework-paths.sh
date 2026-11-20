@@ -482,6 +482,7 @@ classify_wework_path() {
       wework/e2e/desktop/modules/collaboration-board-field-drag.mjs | \
       wework/e2e/desktop/modules/collaboration-board-preferences.mjs | \
       wework/e2e/desktop/modules/collaboration-board-tag-drag.mjs | \
+      wework/e2e/desktop/modules/collaboration-local-project-import.mjs | \
       wework/e2e/desktop/modules/project-only-navigation.mjs)
       select_target "core:collaboration-shared-core"
       return

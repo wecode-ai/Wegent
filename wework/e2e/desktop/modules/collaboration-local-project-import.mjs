@@ -79,6 +79,29 @@ export async function verifyCollaborationLocalProjectImport(
     value: JSON.stringify({ projectKey: key }),
   })
   const row = inCollaborationSidebar(`[data-testid="collaboration-workspace-project-${projectId}"]`)
+  const pinnedProjects = '[data-testid="collaboration-pinned-projects"]'
+  const projectTree = '[data-testid="collaboration-project-tree"]'
+  const pinProject = async (id, pinned) => {
+    const rowSelector = inCollaborationSidebar(
+      `${pinned ? projectTree : pinnedProjects} [data-testid="collaboration-workspace-project-${id}"]`
+    )
+    await revealCollaborationSidebarElement(control, rowSelector)
+    await control.command('hover', rowSelector)
+    await control.command(
+      'clickWhenEnabled',
+      inCollaborationSidebar(`[data-testid="collaboration-project-menu-${id}"]`)
+    )
+    await control.command('clickWhenEnabled', `[data-testid="collaboration-project-pin-${id}"]`)
+    const destination = inCollaborationSidebar(
+      `${pinned ? pinnedProjects : projectTree} [data-testid="collaboration-workspace-project-${id}"]`
+    )
+    await control.command('waitFor', destination)
+    assert.equal(
+      Number(await control.command('getElementCount', rowSelector)),
+      0,
+      `Project ${id} must appear only in its new sidebar section`
+    )
+  }
   for (let pass = 0; pass < 2; pass += 1) {
     await reloadMainWindow(control, 'The imported local project renderer did not reconnect')
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
@@ -228,5 +251,17 @@ export async function verifyCollaborationLocalProjectImport(
     )
     await control.command('waitFor', cloudWorkspace)
     await control.command('waitFor', cloudProject)
+    if (pass === 0) {
+      await pinProject(cloudProjectId, true)
+      await pinProject(projectId, true)
+    } else {
+      await pinProject(projectId, false)
+      await pinProject(cloudProjectId, false)
+      assert.equal(
+        Number(await control.command('getElementCount', inCollaborationSidebar(pinnedProjects))),
+        0,
+        'Removing the final pin must hide the pinned section'
+      )
+    }
   }
 }

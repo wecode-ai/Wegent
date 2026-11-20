@@ -3,18 +3,20 @@
 
 import { useId, useMemo, useRef, useState } from 'react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
-import { useDOMEvent } from '../dom-events'
+import { useDOMEvent, useFocusRequest } from '../dom-events'
 import {
   CloudOff,
   ChevronRight,
   Ellipsis,
   FolderOpen,
   FolderPlus,
+  Pin,
+  PinOff,
   Plus,
   Settings,
   SquarePen,
 } from 'lucide-react'
-import { ActionMenu } from '../controls/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '../controls/ActionMenu'
 import {
   CollaborationPrimaryNavigation,
   CollaborationManagementNavigation,
@@ -28,6 +30,10 @@ import type {
 import type { CollaborationDomain, CollaborationPlatformHostAdapter } from './types'
 import type { PlatformMessages } from './platformMessages'
 import { buildWorkspaceNavigation } from './workspaceNavigation'
+
+function projectPinKey(project: CollaborationProject) {
+  return `${project.project_store}:${project.id}`
+}
 
 export function CollaborationPlatformNavigation({
   domain,
@@ -144,6 +150,22 @@ export function CollaborationPlatformNavigation({
     string | null
   >(autoExpandedWorkspaceId)
   const projectFirst = host.capabilities.projectNavigation === 'projects'
+  const projectPins = projectFirst ? host.projectPins : undefined
+  const pinnedKeys = new Set(projectPins?.keys)
+  const visibleProjectsByKey = new Map(
+    [...projectsByWorkspace].flatMap(([workspaceId, items]) =>
+      items.map(project => [projectPinKey(project), { project, workspaceId }] as const)
+    )
+  )
+  const pinnedProjects = [...pinnedKeys].flatMap(key => {
+    const project = visibleProjectsByKey.get(key)
+    return project ? [project] : []
+  })
+  const [pinErrorScope, setPinErrorScope] = useState<string>()
+  const [pinFocusRequest, setPinFocusRequest] = useState<{
+    key: string
+    scope: string
+  }>()
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true)
   const [retryingNavigation, setRetryingNavigation] = useState(false)
   const fullSidebar = host.capabilities.sidebarPresentation !== 'context'
@@ -287,7 +309,9 @@ export function CollaborationPlatformNavigation({
     isDefault,
   }: ReturnType<typeof buildWorkspaceNavigation>['workspaces'][number]) => {
     const expanded = workspaceExpansion.get(candidate.id) ?? projectFirst
-    const candidateProjects = projectsByWorkspace.get(candidate.id) ?? []
+    const candidateProjects = (projectsByWorkspace.get(candidate.id) ?? []).filter(
+      project => !pinnedKeys.has(projectPinKey(project))
+    )
     const workspaceActive = host.location.workspaceId === candidate.id && !host.location.projectId
     const canManageWorkspace =
       isDefault ||
@@ -366,18 +390,56 @@ export function CollaborationPlatformNavigation({
             className="collaboration-workspace-project-list"
             aria-label={`${candidate.name} · ${messages.projects}`}
           >
-            {candidateProjects.map(project => (
-              <ProjectNavigationRow
-                key={project.id}
-                project={project}
-                host={navigationHost}
-                messages={messages}
-                onArchiveProject={onArchiveProject}
-              />
-            ))}
+            {candidateProjects.map(project => renderProjectRow(project, candidate.id))}
           </nav>
         ) : null}
       </section>
+    )
+  }
+  const renderProjectRow = (project: CollaborationProject, workspaceId: string) => {
+    const key = projectPinKey(project)
+    const pinned = pinnedKeys.has(key)
+    return (
+      <ProjectNavigationRow
+        key={key}
+        project={project}
+        host={navigationHost}
+        messages={messages}
+        onArchiveProject={onArchiveProject}
+        focusRequest={
+          pinFocusRequest?.scope === host.accountScope && pinFocusRequest.key === key
+            ? pinFocusRequest
+            : undefined
+        }
+        onFocusRestored={() => setPinFocusRequest(undefined)}
+        pinAction={
+          projectPins && {
+            label: pinned ? projectPins.unpinLabel : projectPins.pinLabel,
+            icon: pinned ? PinOff : Pin,
+            testId: `collaboration-project-pin-${project.id}`,
+            onSelect: async () => {
+              const focusOwner = document.activeElement
+              try {
+                await projectPins.setPinned(key, !pinned)
+              } catch {
+                setPinErrorScope(host.accountScope)
+                return
+              }
+              if (pinned) {
+                setWorkspaceExpansion(current => new Map(current).set(workspaceId, true))
+              }
+              setPinErrorScope(undefined)
+              if (
+                focusOwner &&
+                (document.activeElement === focusOwner ||
+                  (!focusOwner.isConnected && document.activeElement === document.body))
+              ) {
+                setPinFocusRequest({ key, scope: host.accountScope })
+              }
+            },
+          }
+        }
+      />
     )
   }
   return (
@@ -475,6 +537,31 @@ export function CollaborationPlatformNavigation({
           ) : null}
           {projectFirst ? (
             <>
+              {projectPins && pinErrorScope === host.accountScope ? (
+                <div className="collaboration-navigation-error" role="alert">
+                  {projectPins.saveError}
+                </div>
+              ) : null}
+              {projectPins && pinnedProjects.length > 0 ? (
+                <section
+                  className="collaboration-pinned-projects"
+                  data-testid="collaboration-pinned-projects"
+                >
+                  <div className="collaboration-workspace-section-heading">
+                    <span className="collaboration-workspace-section-title">
+                      {projectPins.heading}
+                    </span>
+                  </div>
+                  <nav
+                    aria-label={projectPins.heading}
+                    className="collaboration-workspace-project-list collaboration-ungrouped-projects"
+                  >
+                    {pinnedProjects.map(({ project, workspaceId }) =>
+                      renderProjectRow(project, workspaceId)
+                    )}
+                  </nav>
+                </section>
+              ) : null}
               <div className="collaboration-workspace-section-heading">
                 <span className="collaboration-workspace-section-title">{messages.projects}</span>
                 <div className="collaboration-workspace-section-actions">
@@ -513,18 +600,28 @@ function ProjectNavigationRow({
   host,
   messages,
   onArchiveProject,
+  pinAction,
+  focusRequest,
+  onFocusRestored,
 }: {
   project: CollaborationProject
   host: CollaborationPlatformHostAdapter
   messages: PlatformMessages
   onArchiveProject(project: CollaborationProject): void
+  pinAction?: ActionMenuItem
+  focusRequest?: object
+  onFocusRestored(): void
 }) {
+  const rowButton = useRef<HTMLButtonElement>(null)
+  useFocusRequest(rowButton, focusRequest, { enabled: Boolean(focusRequest) })
+  const canManage = canAccessCollaborationProjectView(project, 'manage')
   return (
     <div
       className={`collaboration-workspace-project-row${project.project_store === 'local' ? ' has-offline-project' : ''}`}
-      key={project.id}
     >
       <button
+        ref={rowButton}
+        onFocus={focusRequest ? onFocusRestored : undefined}
         type="button"
         className={`collaboration-workspace-project${
           host.location.projectId === project.id ? ' active' : ''
@@ -571,33 +668,39 @@ function ProjectNavigationRow({
         )
       ) : null}
       <div className="collaboration-project-row-actions">
-        {canAccessCollaborationProjectView(project, 'manage') && (
+        {(pinAction || canManage) && (
           <ActionMenu
             ariaLabel={`${messages.projectActions} · ${project.name}`}
             testId={`collaboration-project-menu-${project.id}`}
             triggerClassName="collaboration-project-new-conversation"
             items={[
-              {
-                label: messages.projectSettings,
-                icon: Settings,
-                testId: `collaboration-project-settings-${project.id}`,
-                onSelect: () =>
-                  host.navigate({
-                    platformView: 'spaces',
-                    collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
-                    workspaceId: project.workspace_id ?? null,
-                    workspaceView: 'projects',
-                    projectId: project.id,
-                    projectView: 'manage',
-                    projectSettingsSection: 'project',
-                    issueId: null,
-                  }),
-              },
-              {
-                label: messages.archiveProject,
-                testId: `collaboration-project-archive-${project.id}`,
-                onSelect: () => onArchiveProject(project),
-              },
+              ...(pinAction ? [pinAction] : []),
+              ...(canManage
+                ? [
+                    {
+                      label: messages.projectSettings,
+                      icon: Settings,
+                      testId: `collaboration-project-settings-${project.id}`,
+                      onSelect: () =>
+                        host.navigate({
+                          platformView: 'spaces',
+                          collaborationDomain:
+                            project.project_store === 'local' ? 'local' : 'cloud',
+                          workspaceId: project.workspace_id ?? null,
+                          workspaceView: 'projects',
+                          projectId: project.id,
+                          projectView: 'manage',
+                          projectSettingsSection: 'project',
+                          issueId: null,
+                        }),
+                    },
+                    {
+                      label: messages.archiveProject,
+                      testId: `collaboration-project-archive-${project.id}`,
+                      onSelect: () => onArchiveProject(project),
+                    },
+                  ]
+                : []),
             ]}
           />
         )}

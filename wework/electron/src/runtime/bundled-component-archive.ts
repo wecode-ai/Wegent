@@ -10,12 +10,19 @@ export interface BundledComponentArchive {
   bytes: number
 }
 
+export type ComponentPreparationReporter = (
+  step: string,
+  status: 'started' | 'completed',
+  details?: Record<string, unknown>
+) => void
+
 /** Keep bundled small files inside one signed archive until target-owned preparation. */
 export async function materializeBundledComponentArchive(
   resources: string,
   cache: string,
   archive: BundledComponentArchive,
-  contentSha256: string
+  contentSha256: string,
+  report?: ComponentPreparationReporter
 ): Promise<string> {
   const source = resolve(resources, archive.path)
   const child = relative(resolve(resources), source)
@@ -40,6 +47,7 @@ export async function materializeBundledComponentArchive(
     isAbsolute(physicalChild)
   )
     throw new Error('Bundled component archive escapes its package')
+  report?.('archive-checksum', 'started', { bytes: archive.bytes })
   const metadata = await stat(source)
   if (
     !metadata.isFile() ||
@@ -47,9 +55,14 @@ export async function materializeBundledComponentArchive(
     (await sha256(source)) !== archive.sha256
   )
     throw new Error('Bundled component archive integrity mismatch')
+  report?.('archive-checksum', 'completed')
   const matches = async (path: string) => {
     try {
-      return (await hashComponentPath(await realpath(path))) === contentSha256
+      const physicalPath = await realpath(path)
+      report?.('content-checksum', 'started')
+      const matchesContent = (await hashComponentPath(physicalPath)) === contentSha256
+      report?.('content-checksum', 'completed', { matches: matchesContent })
+      return matchesContent
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
       throw error
@@ -58,7 +71,9 @@ export async function materializeBundledComponentArchive(
   const published = await publishImmutableDirectory(
     join(cache, archive.sha256),
     async content => {
+      report?.('extract-archive', 'started')
       await extractPhysicalRelease(source, content)
+      report?.('extract-archive', 'completed')
       if (!(await matches(content))) throw new Error('Bundled component content checksum mismatch')
     },
     matches
