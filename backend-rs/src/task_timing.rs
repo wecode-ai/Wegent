@@ -167,7 +167,7 @@ async fn load_accessible_task(
         .map_err(|error| dependency("read task member", error))?;
     member
         .is_some()
-        .then(|| AccessibleTask { task })
+        .then_some(AccessibleTask { task })
         .ok_or_else(not_found)
 }
 
