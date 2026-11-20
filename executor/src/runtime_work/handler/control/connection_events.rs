@@ -90,9 +90,7 @@ fn mark_cloud_cancellation(record: &mut Value) {
 fn event_can_continue_goal(record: &Value, goal: &Value) -> bool {
     record["waiting_goal"] == goal_identity(goal)
         && (goal["status"] == "blocked"
-            || (goal["status"] == "active"
-                && (record["status"] == "pending"
-                    || conditions::is_independent_github_merge_wait(record))))
+            || (goal["status"] == "active" && record["status"] == "pending"))
 }
 
 fn handled_event_summaries(record: &Value) -> Value {
@@ -189,7 +187,7 @@ impl RuntimeWorkRpcHandler {
                     "[]".to_owned()
                 } else {
                     format!(
-                        "Change requests bound to this conversation: {}\nIf the task needs to wait for checks or merge, verify the current status. Reuse the PR/MR merge wait across head changes. If no matching wait exists, discover the exact resource and call subscribe_connection_events with wait_for_event:true. Provide the exact head SHA for checks or workflow runs. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
+                        "Change requests bound to this conversation: {}\nTo wait for a PR/MR, verify current status, then use a single merge wait for CI results and conflicts. Reuse it across head changes. If no matching wait exists, discover the exact PR/MR and call subscribe_connection_events with git_wait:merge and wait_for_event:true. Provide the exact head SHA for checks or workflow runs. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
                         json!(urls)
                     )
                 };
@@ -381,19 +379,11 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({"subscription":public_subscription(&record)}));
         }
-        let mut filter = conditions::resolve(&args)?;
-        let conflict = conditions::split_github_merge(&args, &mut filter);
+        let filter = conditions::resolve(&args)?;
         let subscription = self
             .arm_event_subscription(&link, &records, &args, key, filter)
             .await?;
-        let mut result = json!({"subscription":subscription});
-        if let Some(filter) = conflict {
-            let conflict_key = format!("pr-conflict:{}", self.subscription_id(task, key));
-            result["conflict_subscription"] = self
-                .arm_event_subscription(&link, &records, &args, &conflict_key, filter)
-                .await?;
-        }
-        Ok(result)
+        Ok(json!({"subscription":subscription}))
     }
 
     async fn arm_event_subscription(
@@ -1027,10 +1017,7 @@ impl RuntimeWorkRpcHandler {
                 if !matches!(phase, "preparing" | "armed" | "pending" | "resuming_goal") {
                     continue;
                 }
-                if status == Some("active")
-                    && (matches!(phase, "preparing" | "resuming_goal")
-                        || conditions::is_independent_github_merge_wait(&record))
-                {
+                if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
                     continue;
                 }
                 record["status"] = json!("cancelled");

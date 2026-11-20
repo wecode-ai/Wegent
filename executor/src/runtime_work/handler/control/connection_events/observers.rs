@@ -184,6 +184,18 @@ impl RuntimeWorkRpcHandler {
         for name in ["providerId", "profile", "kind", "id", "name"] {
             field(&source, name)?;
         }
+        // Exact PR/MR views and merge waits share the same current-status observation.
+        if matches!(
+            source["providerId"].as_str(),
+            Some("@wegent/dsh-connection-git/github" | "@wegent/dsh-connection-git/gitlab")
+        ) && source["monitoredObjects"]
+            .as_array()
+            .is_some_and(|objects| {
+                objects.len() == 1 && objects[0]["entityKind"] == "change_request"
+            })
+        {
+            source["observeCurrentStatus"] = json!(true);
+        }
         source["enabledAfter"] = json!(chrono::Utc::now().to_rfc3339());
         source["policy"] = json!({"automatic":false,"askBeforeAct":true});
         self.connection_call("validate", source["providerId"].as_str(), source.clone())

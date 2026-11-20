@@ -88,6 +88,7 @@ describe('DesktopSidebar event waits', () => {
     ['error', false, '事件继续执行遇到问题，请查看会话'],
     ['cancelled', false, null],
     ['armed', true, null],
+    ['pending', true, '事件已到达，等待继续'],
   ] as const)('event subscription sidebar status %s running=%s', async (status, running, label) => {
     renderSidebar({
       runtimeWork: {

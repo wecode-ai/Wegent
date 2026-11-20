@@ -185,36 +185,6 @@ export function useWorkbenchPaneEnvironment({
     [currentRuntimeTask, projectWork.selectedDeviceWorkspaceId, state.runtimeWork, workspaceProject]
   )
   const preferences = useAppPreferencesState()
-  const fallbackPolicy = useCallback(
-    (info: EnvironmentInfo) => {
-      const gitRepository = resolveConversationSummaryIsGitRepository({
-        activeWorkspacePath: runtimeWorkspaceContext?.workspaceTarget?.path,
-        environmentInfo: info,
-        project: selectedWorkspaceProject ?? activeConversationProject,
-        projectWorkspace: selectedProjectDeviceWorkspace,
-      })
-      return (
-        hasMatchingConversationSummaryHostService(
-          conversationSummaryEntries,
-          {
-            'workspace.isGitRepository': gitRepository,
-          },
-          WEWORK_HOST_SERVICES.environment
-        ) &&
-        (preferences?.preferences.changeRequestStatusEnabled ?? true) &&
-        currentChangeRequestTarget === null
-      )
-    },
-    [
-      runtimeWorkspaceContext?.workspaceTarget?.path,
-      selectedWorkspaceProject,
-      activeConversationProject,
-      selectedProjectDeviceWorkspace,
-      conversationSummaryEntries,
-      preferences?.preferences.changeRequestStatusEnabled,
-      currentChangeRequestTarget,
-    ]
-  )
   const connection = useContext(CloudConnectionContext)
   const ownerTarget = currentRuntimeTask ? runtimeWorkspaceTarget : projectRuntimeWorkspaceTarget
   const ownerDeviceId =
@@ -264,8 +234,6 @@ export function useWorkbenchPaneEnvironment({
     activeConversationProject,
     selectedProjectDeviceWorkspace,
     conversationSummaryEntries,
-    preferences?.preferences.changeRequestStatusEnabled,
-    currentChangeRequestTarget,
   ])
   const sourceInput = useMemo(
     () => ({
@@ -277,7 +245,6 @@ export function useWorkbenchPaneEnvironment({
       loadEnvironmentInfo,
       devices: state.devices,
       workspaceRoots,
-      fallbackPolicy,
       apiOwner: services,
       autoLoad: Boolean(activeConversationProject || currentRuntimeTask),
     }),
@@ -290,7 +257,6 @@ export function useWorkbenchPaneEnvironment({
       loadEnvironmentInfo,
       state.devices,
       workspaceRoots,
-      fallbackPolicy,
       services,
       activeConversationProject,
     ]
@@ -334,9 +300,25 @@ export function useWorkbenchPaneEnvironment({
     () => (deviceApi ? getChangeRequestMonitor(deviceApi) : null),
     [deviceApi]
   )
+  const { remoteUrl, branchName } = environmentInfo
+  const displayedChangeRequestTarget =
+    currentChangeRequestTarget ??
+    (activeWorkspaceTarget &&
+    remoteUrl &&
+    branchName &&
+    environmentInfo.workspacePath === activeWorkspaceTarget.path &&
+    environmentInfo.deviceId === activeWorkspaceTarget.deviceId
+      ? {
+          deviceId: activeWorkspaceTarget.deviceId,
+          taskId: currentRuntimeTask?.taskId ?? '',
+          workspacePath: activeWorkspaceTarget.path,
+          remoteUrl,
+          branch: branchName,
+        }
+      : null)
   const sharedChangeRequestSnapshot = useTaskChangeRequest(
     changeRequestStatusEnabled ? changeRequestMonitor : null,
-    changeRequestStatusEnabled ? currentChangeRequestTarget : null
+    changeRequestStatusEnabled ? displayedChangeRequestTarget : null
   )
   const selectedWorktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectDeviceWorkspace)
   const selectedWorktreeDevice = findWorkbenchDevice(state.devices, selectedWorktreeDeviceId)
@@ -548,11 +530,11 @@ export function useWorkbenchPaneEnvironment({
     ]
   )
   const sharedEnvironmentInfo = useMemo<EnvironmentInfo>(() => {
-    if (!currentChangeRequestTarget || !sharedChangeRequestSnapshot) {
+    if (!sharedChangeRequestSnapshot) {
       return environmentInfo
     }
     return applySharedChangeRequestSnapshot(environmentInfo, sharedChangeRequestSnapshot)
-  }, [currentChangeRequestTarget, environmentInfo, sharedChangeRequestSnapshot])
+  }, [environmentInfo, sharedChangeRequestSnapshot])
 
   return {
     workspaceProject,
