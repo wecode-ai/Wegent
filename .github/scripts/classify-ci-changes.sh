@@ -140,7 +140,6 @@ classify_path() {
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
-      .github/ci/wework-native-test-ubuntu.sources | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/core-runner-slots.* | \

@@ -103,7 +103,7 @@ async fn queued_history_keeps_command_unconfirmed_when_processing_admission_clos
         receipt_handler
             .command_receipt(json!({"taskId":"task-1","commandId":"command","userId":7})),
     );
-    let mut duplicate = Box::pin(handler.existing_payload_command(&payload));
+    let mut duplicate = Box::pin(handler.existing_payload_command(&payload, false));
     assert!(futures_util::poll!(receipt.as_mut()).is_pending());
     assert!(futures_util::poll!(duplicate.as_mut()).is_pending());
     assert_eq!(
@@ -162,11 +162,12 @@ async fn ordinary_replay_uses_the_same_current_account_check_as_receipt_reads() 
     *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
         backend_url: url,
         auth_token: "synthetic-test-token".into(),
+        authenticated_user_id: Some(8),
         ..Default::default()
     });
     assert_eq!(
         handler
-            .existing_payload_command(&payload)
+            .existing_payload_command(&payload, false)
             .await
             .unwrap_err()
             .code,

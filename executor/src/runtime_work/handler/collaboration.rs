@@ -117,12 +117,19 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    fn clear_cloud_collaboration_round(&self, manager_runtime_task_id: &str) {
-        self.store.update_task(manager_runtime_task_id, |link| {
-            if let Some(handle) = link.runtime_handle.as_object_mut() {
-                handle.remove(CLOUD_COLLABORATION_ROUND_KEY);
-            }
-        });
+    fn clear_cloud_collaboration_round(&self, command: &CloudCollaborationRoundCommand) {
+        self.store
+            .update_task(&command.manager_runtime_task_id, |link| {
+                let Some(handle) = link.runtime_handle.as_object_mut() else {
+                    return;
+                };
+                if handle
+                    .get(CLOUD_COLLABORATION_ROUND_KEY)
+                    .is_some_and(|round| round["round_id"] == command.round_id)
+                {
+                    handle.remove(CLOUD_COLLABORATION_ROUND_KEY);
+                }
+            });
     }
 
     async fn monitor_cloud_collaboration_round(&self, command: CloudCollaborationRoundCommand) {

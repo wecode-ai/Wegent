@@ -350,32 +350,26 @@ export function ProjectItem({
     }
   }
   const closeArchiveConfirm = () => {
-    if (!projectArchiving) {
-      setArchiveConfirmOpen(false)
-    }
+    setArchiveConfirmOpen(false)
   }
   const runArchiveProjectConversations = async (options?: ArchiveRuntimeTaskOptions) => {
     const runtimeProjectKey = runtimeProjectWork?.project.key
-    if (!runtimeProjectKey || !onArchiveProjectConversations) return
+    if (projectArchiving || !runtimeProjectKey || !onArchiveProjectConversations) return
+    setArchiveConfirmOpen(false)
+    setForceArchiveConfirmOpen(false)
     setProjectArchiving(true)
     try {
       const result = await onArchiveProjectConversations(runtimeProjectKey, options)
       if (result?.status === 'dirty_worktree') {
-        setArchiveConfirmOpen(false)
         setForceArchiveConfirmOpen(true)
-        return
       }
-      setArchiveConfirmOpen(false)
-      setForceArchiveConfirmOpen(false)
     } finally {
       setProjectArchiving(false)
     }
   }
   const confirmArchiveProjectConversations = () => runArchiveProjectConversations()
   const closeForceArchiveConfirm = () => {
-    if (!projectArchiving) {
-      setForceArchiveConfirmOpen(false)
-    }
+    setForceArchiveConfirmOpen(false)
   }
   const confirmForceArchiveProjectConversations = () =>
     runArchiveProjectConversations({ force: true })
@@ -773,7 +767,6 @@ export function ProjectItem({
         })}
         confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={projectArchiving}
         testId={`archive-project-conversations-dialog-${project.id}`}
         onClose={closeArchiveConfirm}
         onConfirm={confirmArchiveProjectConversations}
@@ -800,7 +793,6 @@ export function ProjectItem({
         description={t('workbench.archive_runtime_task_dirty_worktree_force_desc')}
         confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={projectArchiving}
         testId={`archive-project-force-dialog-${project.id}`}
         onClose={closeForceArchiveConfirm}
         onConfirm={confirmForceArchiveProjectConversations}

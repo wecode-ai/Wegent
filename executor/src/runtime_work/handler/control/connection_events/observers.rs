@@ -194,15 +194,8 @@ impl RuntimeWorkRpcHandler {
             let connection = self
                 .backend_connection_snapshot()?
                 .ok_or_else(|| invalid("Connect this Runtime to its cloud account"))?;
-            let owner = self
-                .runtime_http(reqwest::Method::GET, "/users/me", None)
-                .await?;
-            if owner["id"].as_i64().map_or(true, |id| id <= 0)
-                || self.backend_connection_snapshot()?.as_ref() != Some(&connection)
-            {
-                return Err(invalid("Connection account changed"));
-            }
-            record["cloud_registration"] = json!({"owner_id":owner["id"],"device_id":self.cloud_device_id()?,"backend_url":connection.backend_url});
+            let owner = Self::local_connection_user(&connection)?;
+            record["cloud_registration"] = json!({"owner_id":owner,"device_id":self.cloud_device_id()?,"backend_url":connection.backend_url});
         }
         self.save_ui_observer(&record)?;
         Ok(record)

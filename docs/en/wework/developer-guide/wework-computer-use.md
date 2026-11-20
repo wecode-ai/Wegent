@@ -134,10 +134,8 @@ process exit, and pipe closure under a single probe ID. The Executor log also re
 Codex process startup and output-collection trace events for correlation with the
 transcript by call and process ID. The schema probe records timing and process metadata only.
 
-Official ChatGPT subscription inference sends native Codex Responses requests via HTTP POST.
-The official WebSocket service can reject input item IDs during session restoration, while
-HTTP accepts those IDs and the full context. When a desktop tool returns the same JSON as
-text and structured content, the Executor keeps the structured copy.
+When a desktop tool returns the same JSON as text and structured content, the Executor
+keeps the structured copy.
 
 ## Permissions and settings
 

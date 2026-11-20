@@ -160,6 +160,7 @@ export function createCloudTodoBoardSlots(
     dingtalkAuthPrompt,
     dingtalkAuthBusy,
     setBoardRefreshNonce,
+    archiveBusy,
     setArchiveItem,
     setArchiveError,
     batchConfirmBusy,
@@ -167,6 +168,7 @@ export function createCloudTodoBoardSlots(
     setBatchConfirmItems,
     setBatchConfirmRetryItemKeys,
     setRuntimeBatchArchiveItems,
+    setBatchArchiveError,
     openTodoCreation,
     createTodoInBoardColumn,
     loadMoreExternalColumn,
@@ -654,7 +656,11 @@ export function createCloudTodoBoardSlots(
                   <button
                     type="button"
                     data-testid="cloud-my-tasks-archive-completed"
-                    onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
+                    disabled={archiveBusy}
+                    onClick={() => {
+                      setBatchArchiveError(null)
+                      setRuntimeBatchArchiveItems([...columnItems])
+                    }}
                     className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover:opacity-100"
                     aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
                   >
@@ -789,7 +795,7 @@ export function createCloudTodoBoardSlots(
               agentNames={agentNameById}
               dragDisabled={isAITableProject}
               issueDetailOnly={!isMyTasksBoard}
-              archiveDisabled={isAITableProject}
+              archiveDisabled={isAITableProject || archiveBusy}
               progressDisplay={progressDisplay}
               changeRequestMonitor={changeRequestMonitor}
               renderBadges={badges => (

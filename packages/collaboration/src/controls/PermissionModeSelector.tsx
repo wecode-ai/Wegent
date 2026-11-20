@@ -152,8 +152,7 @@ export function PermissionModeSelector({
             if (confirmation === 'automatic') {
               if (mode !== undefined) onCommandApprovalChange?.(mode)
             } else {
-              if (mode === undefined || mode === commandApproval)
-                onChange('full-access')
+              if (mode === undefined) onChange('full-access')
               else onChange('full-access', mode)
             }
             setConfirmation(null)

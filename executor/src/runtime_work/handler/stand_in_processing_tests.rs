@@ -25,6 +25,135 @@ pub(super) fn connection_event() -> Value {
 }
 
 #[tokio::test]
+async fn cloud_issue_failures_leave_unrelated_connection_events_routable() {
+    use axum::{extract::Path, http::StatusCode, routing::get, Router};
+
+    let root = tempfile::tempdir().unwrap();
+    let (mut handler, store, mut settings) = fixture(root.path());
+    let release_issue = Arc::new(tokio::sync::Notify::new());
+    let issue_gate = release_issue.clone();
+    let router = Router::new().route(
+        "/api/v1/loop-items/{id}",
+        get(move |Path(id): Path<String>| {
+            let issue_gate = issue_gate.clone();
+            async move {
+                if id == "missing" {
+                    issue_gate.notified().await;
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url,
+        auth_token: "test-session".into(),
+        authenticated_user_id: Some(7),
+        ..Default::default()
+    })));
+    handler.verify_local_stand_in_owner(7).unwrap();
+    settings["roles"][0]["collaboration"] = json!({"enabled":true,"allProjects":false,"projects":[{"id":"project","store":"cloud"}],"excludedProjects":[],"tags":[],"policy":{"automatic":true,"askBeforeAct":true}});
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+
+    let mut issue_events = Vec::new();
+    for issue in ["missing", "unavailable"] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: issue.into(),
+            status: "done".into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","userId":7,"standInId":"default","cloudProjectId":"project","projectStore":"cloud","loopItemId":issue}}),
+            ..Default::default()
+        });
+        issue_events.push(
+            store
+                .enqueue_stand_in_event(
+                    7,
+                    json!(issue),
+                    json!({"kind":"work_state","taskId":issue,"roleIds":["default"]}),
+                )
+                .unwrap(),
+        );
+    }
+    for round in [1, 2] {
+        let mut incoming = connection_event();
+        incoming["message"]["id"] = json!(format!("connection-{round}"));
+        let healthy = store
+            .enqueue_stand_in_event(7, json!(round), incoming)
+            .unwrap();
+        let snapshot = handler
+            .coordination_snapshot_for_test(&store, 7)
+            .await
+            .unwrap();
+        assert!(snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["id"] == healthy["id"]));
+        assert!(snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["kind"] == "connection"));
+        if round == 1 {
+            assert_eq!(
+                store
+                    .stand_in_event(7, issue_events[0]["id"].as_str().unwrap())
+                    .unwrap()["status"],
+                "pending",
+                "The source is routable before the slow Issue read returns"
+            );
+            release_issue.notify_one();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    handler
+                        .coordination_snapshot_for_test(&store, 7)
+                        .await
+                        .unwrap();
+                    if store
+                        .stand_in_event(7, issue_events[0]["id"].as_str().unwrap())
+                        .unwrap()["status"]
+                        == "cancelled"
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            store.stand_in_processing_state(7).unwrap()["error"],
+            Value::Null
+        );
+    }
+    for (event, status) in issue_events.iter().zip(["cancelled", "pending"]) {
+        assert_eq!(
+            store
+                .stand_in_event(7, event["id"].as_str().unwrap())
+                .unwrap()["status"],
+            status
+        );
+    }
+    assert_eq!(
+        handler.verify_local_stand_in_owner(8).unwrap_err().code,
+        "permission_denied"
+    );
+    handler
+        .backend_connection
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .authenticated_user_id = Some(8);
+    assert!(handler.verify_local_stand_in_owner(7).is_err());
+    server.abort();
+}
+
+#[tokio::test]
 async fn conversation_turns_do_not_depend_on_automatic_followup_policy_or_assignment() {
     let root = tempfile::tempdir().unwrap();
     let (handler, store, mut settings) = fixture(root.path());
@@ -460,7 +589,7 @@ fn coordinator_is_persistent_but_absent_from_normal_task_lists() {
         ..Default::default()
     });
     assert!(handler.local_task_link(&task_id(7)).is_some());
-    assert!(handler.collect_cached_links(false).is_empty());
+    assert!(handler.collect_cached_links(false, |_| true).0.is_empty());
     let mut link = handler.local_task_link(&task_id(7)).unwrap();
     link.status = "failed".into();
     link.runtime_handle["lastError"] = json!("Model disconnected");
