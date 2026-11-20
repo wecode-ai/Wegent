@@ -778,6 +778,62 @@ fn inactive_managed_cloud_rows_follow_the_generic_reactivation_path() {
 }
 
 #[test]
+fn inactive_managed_cloud_rejects_stale_non_cloud_reports() {
+    let payload = RegisterPayload {
+        device_type: DeviceType::Local,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    let mut row = managed_cloud_row(Some("runtime-1"));
+    row.is_active = 0;
+    row.json["spec"]["cloudConfig"] = serde_json::json!({
+        "deviceId": payload.device_id, "sandboxId": "sandbox-1",
+    });
+
+    assert!(managed_cloud_registration(&row, &payload).is_err());
+}
+
+#[test]
+fn inactive_managed_cloud_reactivation_normalizes_a_stale_local_report() {
+    let payload = RegisterPayload {
+        device_type: DeviceType::Local,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    let mut row = managed_cloud_row(Some("runtime-1"));
+    row.is_active = 0;
+    row.json["spec"]["cloudConfig"] = serde_json::json!({
+        "deviceId": payload.device_id, "sandboxId": "sandbox-1",
+    });
+    let effective = managed_cloud_reactivation_payload(&[row.clone()], &payload)
+        .expect("the managed type is normalized before persistence");
+
+    let updated: Value = serde_json::from_str(
+        &updated_device_json(row.json.clone(), &effective, None, None).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(updated["spec"]["deviceType"], "cloud");
+    assert_eq!(
+        updated["spec"]["cloudConfig"],
+        serde_json::json!({"deviceId": payload.device_id, "sandboxId": "sandbox-1"})
+    );
+}
+
+#[test]
+fn formal_cloud_without_sandbox_cannot_override_a_local_report() {
+    let payload = RegisterPayload {
+        device_type: DeviceType::Local,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    let mut row = managed_cloud_row(Some("runtime-1"));
+    row.is_active = 0;
+    row.json["spec"]["cloudConfig"] = serde_json::json!({"deviceId": payload.device_id});
+
+    assert!(managed_cloud_registration(&row, &payload).is_err());
+}
+
+#[test]
 fn formal_cloud_registration_preserves_bootstrap_and_exact_legacy_identity() {
     let payload = RegisterPayload {
         device_type: DeviceType::Cloud,

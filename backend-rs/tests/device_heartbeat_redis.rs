@@ -426,13 +426,14 @@ async fn assert_managed_cloud_identity(
         )
         .await
         .unwrap();
+    // A stale local report must not downgrade the validated managed identity.
     assert_eq!(
         event_ack(
             &client,
             16,
             "device:register",
             json!({
-                "device_id": name, "name": "Managed Cloud", "device_type": "cloud",
+                "device_id": name, "name": "Managed Cloud", "device_type": "local",
                 "runtime_instance_id": "runtime-cloud",
             })
         )

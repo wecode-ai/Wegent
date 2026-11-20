@@ -383,6 +383,8 @@ where
             Err(conflict) => return Err(rejection(conflict.0)),
         }
     }
+    let managed_cloud_payload = managed_cloud_reactivation_payload(&devices, payload);
+    let payload = managed_cloud_payload.as_ref().unwrap_or(payload);
     let selected = match select_registration_device(
         &devices,
         &payload.device_id,
@@ -425,6 +427,23 @@ where
         .execute(device_update_query(reactivates), (json, updated_at, row_id))
         .await?;
     Ok(row_id)
+}
+
+/// A validated inactive managed row still belongs to the generic reactivation
+/// path. Its persisted cloud type wins over an executor's stale local report.
+fn managed_cloud_reactivation_payload(
+    devices: &[DeviceKindRow],
+    payload: &RegisterPayload,
+) -> Option<RegisterPayload> {
+    let reactivates = devices.iter().any(|row| {
+        row.is_active == 0 && matches!(managed_cloud_registration(row, payload), Ok(true))
+    });
+    if !reactivates {
+        return None;
+    }
+    let mut payload = payload.clone();
+    payload.device_type = DeviceType::Cloud;
+    Some(payload)
 }
 
 /// `upsert_device_crd`'s identity validations, which run before any
