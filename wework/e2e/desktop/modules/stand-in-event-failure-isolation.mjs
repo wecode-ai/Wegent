@@ -15,6 +15,8 @@ import {
 
 const MESSAGE = 'STAND_IN_EVENT_FAILURE_ISOLATION'
 const RESULT = 'The independent source event completed.'
+// One coordinator pass starts cloud authorization and the next collects its result.
+const EVENT_RETIREMENT_TIMEOUT_MS = 15_000
 
 export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelResponseTimeoutMs }) {
   let modelCalls = 0
@@ -138,7 +140,7 @@ export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelRe
         await storyUntil(
           async () => ({ failed: read(failed).status, healthy: read(healthy).status }),
           status => status.failed === 'cancelled' && status.healthy === 'handled',
-          uiTimeoutMs,
+          EVENT_RETIREMENT_TIMEOUT_MS,
           'The missing Issue must retire independently while the direct message is dispatched'
         )
         const { items } = await rpc('runtime.stand_in.work.list', { userId })

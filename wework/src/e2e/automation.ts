@@ -749,8 +749,9 @@ async function seedDesktopE2ECloudConnection(
   return connection
 }
 
-export async function seedDesktopE2ERuntime(): Promise<void> {
-  const runtimeConfig = getDesktopE2ERuntimeConfig()
+async function seedDesktopE2ELocalModelRuntime(
+  runtimeConfig: DesktopE2ERuntimeConfig
+): Promise<void> {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
   if (modelServerUrl) {
@@ -762,7 +763,21 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
       if (configurationError) throw new Error(configurationError)
     }
   }
-  await seedDesktopE2ECloudConnection(runtimeConfig, true)
+}
+
+let desktopE2ELocalModelSeed: Promise<void> = Promise.resolve()
+
+export function waitForDesktopE2ELocalModelSeed(): Promise<void> {
+  return desktopE2ELocalModelSeed
+}
+
+export async function seedDesktopE2ERuntime(
+  beforeSeed: Promise<void> = Promise.resolve()
+): Promise<void> {
+  const runtimeConfig = beforeSeed.catch(() => undefined).then(() => getDesktopE2ERuntimeConfig())
+  desktopE2ELocalModelSeed = runtimeConfig.then(seedDesktopE2ELocalModelRuntime)
+  await desktopE2ELocalModelSeed
+  await seedDesktopE2ECloudConnection(await runtimeConfig, true)
 }
 
 export async function installWeworkAutomationBridge(
@@ -779,10 +794,11 @@ export async function installWeworkAutomationBridge(
     installLocalHarnessDiagnostics()
   }
   installDesktopE2EClipboard()
+  // Recovery controls connect before seeding; model commands must await its owner snapshot.
+  const runtimeSeed = seedDesktopE2ERuntime(beforeSeed)
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
-  await beforeSeed.catch(() => undefined)
-  await seedDesktopE2ERuntime()
+  await runtimeSeed
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {

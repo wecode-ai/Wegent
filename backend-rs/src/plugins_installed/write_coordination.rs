@@ -5,7 +5,10 @@
 //! Shared protocol with Python's plugin-write coordinator. The lease only
 //! covers this user's plugin writes; it never locks the `users` table.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use brz_mysql::{FromMysqlRow, Mysql, MysqlError, MysqlResult, MysqlTransaction};
 use brz_redis::{Redis, SetExpiration, SetOptions};
@@ -14,7 +17,13 @@ use tracing::Instrument;
 
 use crate::http_compat::FastApiError;
 
+mod native;
 mod scoped;
+#[cfg(test)]
+pub(crate) use native::NATIVE_LEASE_PROMOTION_SCRIPT;
+pub(crate) use native::{
+    NativeAdmissionError, NativeAdmissionTiming, NativeWriteAdmission, complete_native_write,
+};
 pub(crate) use scoped::installation_write_revision;
 
 const LEASE_SECONDS: u64 = 180;
@@ -48,7 +57,28 @@ pub(crate) struct PluginWriteLease<'a, R: Redis> {
     name: String,
     additional: Vec<(String, String)>,
     installations: Option<Vec<i64>>,
+    verify_timing: Option<VerifyTiming>,
     pub deadline: Instant,
+}
+
+#[derive(Default)]
+struct VerifyTiming {
+    micros: AtomicU64,
+    calls: AtomicU64,
+}
+
+struct VerifyCall<'a> {
+    timing: &'a VerifyTiming,
+    started: Instant,
+}
+
+impl Drop for VerifyCall<'_> {
+    fn drop(&mut self) {
+        self.timing
+            .micros
+            .fetch_add(self.started.elapsed().as_micros() as u64, Ordering::Relaxed);
+        self.timing.calls.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[derive(Debug, FromMysqlRow)]
@@ -158,6 +188,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                         name: name.to_owned(),
                         additional: Vec::new(),
                         installations: None,
+                        verify_timing: None,
                         deadline: Instant::now() + OPERATION_BUDGET,
                     });
                 }
@@ -207,31 +238,47 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         } else {
             None
         };
+        self.initialize_policy(mysql, bootstrap)
+            .await
+            .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
+    }
+
+    async fn initialize_policy<M: Mysql>(
+        &self,
+        mysql: &M,
+        bootstrap: Option<Self>,
+    ) -> Result<MysqlResult<()>, tokio::time::error::Elapsed> {
         let deadline = (Instant::now() + ACQUIRE_WAIT).min(self.deadline);
-        let Ok(result) = tokio::time::timeout_at(deadline, async {
-            self.verify_owned().await?;
-            if let Some(lease) = &bootstrap {
-                lease.verify_owned().await?;
-            }
-            mysql
-                .with_transaction(async |transaction| {
-                    ensure_policy_in(transaction, self.user_id).await?;
-                    self.verify_owned().await
-                })
-                .await
+        // A timeout can leave the COMMIT pending. In that case the bootstrap
+        // lease expires instead of admitting another first-policy creator.
+        let result = tokio::time::timeout_at(deadline, async {
+            self.verify_policy_leases(bootstrap.as_ref()).await?;
+            self.initialize_policy_row(mysql).await
         })
-        .await
-        else {
-            // COMMIT may still complete after cancellation. Keep bootstrap fencing
-            // until expiry instead of admitting another first-policy creator.
-            return Err(coordination_error("plugin_write_busy"));
-        };
+        .await?;
         if matches!(&result, Ok(_) | Err(MysqlError::InvalidQuery { .. }))
             && let Some(lease) = bootstrap
         {
             lease.release().await;
         }
-        result
+        Ok(result)
+    }
+
+    async fn verify_policy_leases(&self, bootstrap: Option<&Self>) -> MysqlResult<()> {
+        self.verify_owned().await?;
+        if let Some(lease) = bootstrap {
+            lease.verify_owned().await?;
+        }
+        Ok(())
+    }
+
+    async fn initialize_policy_row<M: Mysql>(&self, mysql: &M) -> MysqlResult<()> {
+        mysql
+            .with_transaction(async |transaction| {
+                ensure_policy_in(transaction, self.user_id).await?;
+                self.verify_owned().await
+            })
+            .await
     }
 
     /// Reuse an active transaction instead of waiting for a second pool slot.
@@ -287,6 +334,23 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         self.verify_owned().await
     }
 
+    pub(crate) fn track_verify_timing(&mut self) {
+        self.verify_timing = Some(VerifyTiming::default());
+    }
+
+    pub(crate) fn verify_timing(&self) -> Option<(u64, u64)> {
+        self.verify_timing.as_ref().map(|timing| {
+            (
+                timing.micros.load(Ordering::Relaxed) / 1000,
+                timing.calls.load(Ordering::Relaxed),
+            )
+        })
+    }
+
+    pub(crate) fn is_account_policy_lease(&self) -> bool {
+        self.name == "@account-policy"
+    }
+
     pub async fn verify_owned(&self) -> MysqlResult<()> {
         if Instant::now() >= self.deadline {
             return Err(coordination_error("plugin_write_lease_lost"));
@@ -298,11 +362,16 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         {
             let mut get = brz_redis::cmd("GET");
             get.arg(key.as_str());
-            let current: Option<brz_redis::RedisBytes> = self
+            let call = self.verify_timing.as_ref().map(|timing| VerifyCall {
+                timing,
+                started: Instant::now(),
+            });
+            let result = self
                 .redis
-                .command(get)
-                .await
-                .map_err(|_| coordination_error("plugin_write_unavailable"))?;
+                .command::<Option<brz_redis::RedisBytes>>(get)
+                .await;
+            drop(call);
+            let current = result.map_err(|_| coordination_error("plugin_write_unavailable"))?;
             if current.is_none_or(|value| value.as_ref() != token.as_bytes()) {
                 return Err(coordination_error("plugin_write_lease_lost"));
             }
@@ -315,16 +384,15 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
             .chain(self.additional.drain(..))
             .collect::<Vec<_>>();
         for (key, token) in keys {
-            self.release_key(&key, &token).await;
+            Self::release_key(self.redis, self.user_id, &key, &token).await;
         }
     }
 
-    async fn release_key(&self, key: &str, token: &str) {
+    async fn release_key(redis: &R, user_id: i64, key: &str, token: &str) {
         // redis-py `Script.__call__`: EVALSHA first, then load the same
         // canonical bytes with `SCRIPT LOAD` on NOSCRIPT and retry.
         let result = tokio::time::timeout(Duration::from_millis(500), async {
-            let first = self
-                .redis
+            let first = redis
                 .evalsha::<_, _, _, i64>(RELEASE_SHA, [key], [token])
                 .await;
             // redis-py only loads the script on NOSCRIPT; transport, NOAUTH,
@@ -340,15 +408,10 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
             load.arg("LOAD").arg(RELEASE_SCRIPT);
             // Wait for the load reply before retrying; a lazy pipe would let
             // the retry race the load.
-            if self
-                .redis
-                .command::<brz_redis::RedisBytes>(load)
-                .await
-                .is_err()
-            {
+            if redis.command::<brz_redis::RedisBytes>(load).await.is_err() {
                 return first;
             }
-            self.redis
+            redis
                 .evalsha::<_, _, _, i64>(RELEASE_SHA, [key], [token])
                 .await
         })
@@ -356,7 +419,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         if !matches!(result, Ok(Ok(_))) {
             // Once committed, unlock failure must not turn success into an
             // error. Redis expiry bounds cleanup after failure/cancellation.
-            tracing::warn!(user_id = self.user_id, "plugin write lease cleanup failed");
+            tracing::warn!(user_id, "plugin write lease cleanup failed");
         }
     }
 }

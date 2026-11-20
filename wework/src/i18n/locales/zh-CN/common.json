@@ -2989,6 +2989,7 @@
     "plugins_local_auth_cancelled": "已取消授权",
     "plugins_local_auth_logout_confirm": "确定退出「{{name}}」登录？退出后需要重新授权。",
     "plugins_local_auth_logout_failed": "退出登录失败",
+    "plugins_local_auth_busy": "插件授权暂时繁忙，请稍后重试。",
     "plugins_local_auth_logout_cleanup_failed": "账户授权已撤销，但本机登录凭据清理失败。请再次点击退出登录重试清理。",
     "plugins_local_auth_poll_failed": "检查授权状态失败",
     "plugins_local_auth_health_failed": "无法确认插件登录状态，请检查连接后重试；这不代表需要重新登录。",

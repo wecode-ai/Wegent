@@ -6,6 +6,10 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, sync::OnceLock};
 
+pub const AVAILABILITY_INSTRUCTIONS: &str = "Connector availability: If an MCP is omitted, fails to initialize, times out, or returns an error, skip only that service and continue independent task work with available tools. Briefly explain any affected work to the user in their language. Do not repeat a failed business operation or claim that unavailable work succeeded. Preserve native approvals, connector authentication, and access boundaries.";
+
+pub const UNAVAILABLE_HINT: &str = "Some connectors are temporarily unavailable; their MCP capabilities have been skipped for this execution. Continue with available tools and briefly explain affected work to the user in their language.";
+
 fn task_reference() -> &'static Regex {
     static REFERENCE: OnceLock<Regex> = OnceLock::new();
     REFERENCE.get_or_init(|| Regex::new(r"\$\{\{\s*([^{}]+?)\s*\}\}").unwrap())
@@ -51,17 +55,9 @@ pub fn bind_context(
     request: &ExecutionRequest,
     environment: &mut BTreeMap<String, String>,
 ) -> Result<(), String> {
-    let context = request.variable_context();
-    let mut unconfigured = Vec::new();
-    for (name, server) in servers.iter_mut() {
+    let context = prepare_context(servers, request)?;
+    for server in servers.values_mut() {
         normalize_context_references(server, request.auth_token.as_deref())?;
-        if let Some(path) = missing_user_mcp_context(server, &context)? {
-            let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
-            fields.extend([("server_name", name.clone()), ("context_path", path)]);
-            crate::logging::log_executor_event("unconfigured user MCP skipped", &fields);
-            unconfigured.push(name.clone());
-            continue;
-        }
         visit_strings(server, &mut |text| {
             for captures in env_reference().captures_iter(text) {
                 let path = decode_context_path(&captures[1])?;
@@ -79,10 +75,72 @@ pub fn bind_context(
             Ok(())
         })?;
     }
+    Ok(())
+}
+
+/// Isolate a capability failure without weakening its validation or binding credentials.
+pub fn retain_available_servers(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+    stage: &str,
+    mut prepare: impl FnMut(&str, &mut Value) -> Result<bool, String>,
+) {
+    servers.retain(|name, server| match prepare(name, server) {
+        Ok(available) => available,
+        Err(_) => {
+            log_server_unavailable(request, name, stage);
+            false
+        }
+    });
+}
+
+pub fn log_server_unavailable(request: &ExecutionRequest, name: &str, stage: &str) {
+    let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
+    fields.extend([
+        ("server_name", name.to_owned()),
+        ("stage", stage.to_owned()),
+    ]);
+    // Error strings can contain credential values, URLs or response bodies.
+    crate::logging::log_executor_event("MCP unavailable; execution continues", &fields);
+}
+
+pub fn bind_available_context(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+    environment: &mut BTreeMap<String, String>,
+) {
+    retain_available_servers(servers, request, "context_binding", |name, definition| {
+        let mut candidate = BTreeMap::from([(name.to_owned(), definition.clone())]);
+        let mut bindings = BTreeMap::new();
+        bind_context(&mut candidate, request, &mut bindings)?;
+        let Some(bound) = candidate.remove(name) else {
+            return Ok(false);
+        };
+        *definition = bound;
+        environment.extend(bindings);
+        Ok(true)
+    });
+}
+
+/// Remove optional services before either native or direct context resolution.
+pub fn prepare_context(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+) -> Result<Value, String> {
+    let context = request.variable_context();
+    let mut unconfigured = Vec::new();
+    for (name, server) in servers.iter_mut() {
+        if let Some(path) = missing_optional_mcp_context(server, &context)? {
+            let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([("server_name", name.clone()), ("context_path", path)]);
+            crate::logging::log_executor_event("unconfigured MCP skipped", &fields);
+            unconfigured.push(name.clone());
+        }
+    }
     for name in unconfigured {
         servers.remove(&name);
     }
-    Ok(())
+    Ok(context)
 }
 
 fn normalize_context_references(server: &mut Value, token: Option<&str>) -> Result<(), String> {
@@ -112,14 +170,26 @@ fn decode_context_path(encoded: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Invalid MCP context reference".to_owned())
 }
 
-// User-managed integrations are optional. Apply this to both incoming templates
-// and persisted references so removing credentials also removes stale services.
-fn missing_user_mcp_context(server: &mut Value, context: &Value) -> Result<Option<String>, String> {
+// User integrations and backend-dependent MCPs are optional for execution.
+// Check incoming and persisted references before binding any credentials.
+fn missing_optional_mcp_context(
+    server: &mut Value,
+    context: &Value,
+) -> Result<Option<String>, String> {
     let mut missing = None;
     visit_strings(server, &mut |text| {
-        for captures in env_reference().captures_iter(text) {
-            let path = decode_context_path(&captures[1])?;
-            if path.starts_with("task_data.user_mcps.")
+        let paths = task_reference()
+            .captures_iter(text)
+            .map(|captures| Ok(captures[1].trim().to_owned()))
+            .chain(
+                env_reference()
+                    .captures_iter(text)
+                    .map(|captures| decode_context_path(&captures[1])),
+            );
+        for path in paths {
+            let path = path?;
+            if (path.starts_with("task_data.user_mcps.")
+                || matches!(path.as_str(), "backend_url" | "backend_api_url"))
                 && get_nested_value(Some(context), &path)
                     .filter(|value| !value.is_null())
                     .filter(|value| !value.as_str().is_some_and(|text| text.trim().is_empty()))
@@ -201,6 +271,32 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn capability_binding_failures_preserve_other_servers_without_partial_credentials() {
+        let mut servers = BTreeMap::from([
+            (
+                "missing-token".into(),
+                json!({"url":"https://example.test/mcp", "headers":{"A":"${{task_id}}", "B":"${{task_token}}"}}),
+            ),
+            (
+                "invalid-reference".into(),
+                json!({"url":"${WEGENT_MCP_CONTEXT_f}"}),
+            ),
+            ("web".into(), json!({"url":"https://example.test/web"})),
+        ]);
+        let mut environment = BTreeMap::new();
+        bind_available_context(
+            &mut servers,
+            &ExecutionRequest {
+                task_id: "synthetic-task".into(),
+                ..Default::default()
+            },
+            &mut environment,
+        );
+        assert_eq!(servers.keys().collect::<Vec<_>>(), vec!["web"]);
+        assert!(environment.is_empty());
+    }
+
+    #[test]
     fn connector_api_templates_rebind_backend_and_credentials_on_each_turn() {
         let mut servers = BTreeMap::from([(
             "connector".to_owned(),
@@ -280,10 +376,44 @@ mod tests {
     }
 
     #[test]
+    fn missing_backend_context_only_skips_dependent_mcps() {
+        for backend_url in [None, Some(""), Some(" \t\n")] {
+            for path in ["backend_url", "backend_api_url"] {
+                for reference in [
+                    format!("${{{{{path}}}}}"),
+                    format!("${{{}}}", context_variable(path)),
+                ] {
+                    let request = ExecutionRequest {
+                        backend_url: backend_url.map(str::to_owned),
+                        auth_token: Some("synthetic-token".to_owned()),
+                        ..Default::default()
+                    };
+                    let mut servers = BTreeMap::from([
+                        (
+                            "connector".to_owned(),
+                            json!({
+                                "url": format!("{reference}/mcp/connectors/sse"),
+                                "headers": {"Authorization": "Bearer ${{task_token}}"},
+                            }),
+                        ),
+                        ("web".to_owned(), json!({"url": "https://example.test/mcp"})),
+                    ]);
+                    let mut environment = BTreeMap::new();
+                    bind_context(&mut servers, &request, &mut environment).unwrap();
+                    assert_eq!(servers.len(), 1);
+                    assert!(servers.contains_key("web"));
+                    assert!(environment.is_empty());
+                    resolve_context(servers.get_mut("web").unwrap(), &environment).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
     fn missing_required_context_still_fails() {
         let mut servers = BTreeMap::from([(
             "required".to_owned(),
-            json!({"url": "${{backend_url}}/mcp"}),
+            json!({"url": "https://example.test/mcp", "headers": {"Authorization": "Bearer ${{task_token}}"}}),
         )]);
         assert_eq!(
             bind_context(
@@ -292,7 +422,7 @@ mod tests {
                 &mut BTreeMap::new()
             )
             .unwrap_err(),
-            "Missing MCP execution context: backend_url"
+            "Missing MCP execution context: task_token"
         );
     }
 

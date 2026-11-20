@@ -64,6 +64,33 @@ test('routing commits the native snapshot identity and structured decision', asy
   }
 })
 
+test('idle discovery requests no snapshot until the executor reports work', async () => {
+  const { runtime, calls, contexts, errors } = fixture()
+  contexts[0].needsProcessing = false
+  try {
+    await runtime.start()
+    await runtime.running
+    assert.deepEqual(
+      calls.map(call => call.method),
+      ['runtime.coordination.contexts']
+    )
+
+    contexts[0].needsProcessing = true
+    await runtime.wake()
+    assert.deepEqual(
+      calls.slice(1).map(call => call.method),
+      [
+        'runtime.coordination.contexts',
+        'runtime.coordination.snapshot',
+        'runtime.coordination.commit',
+      ]
+    )
+    assert.deepEqual(errors, [])
+  } finally {
+    runtime.stop()
+  }
+})
+
 test('project assessments use shared-context instructions without changing personal assessments', async () => {
   const f = fixture()
   f.contexts[0].kind = 'project'

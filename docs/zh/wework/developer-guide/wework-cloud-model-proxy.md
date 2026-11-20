@@ -166,9 +166,11 @@ executor 验证工具结果保留、无重复用户消息、自动恢复与取�
 
 Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
 
-### Anthropic 空输出恢复
+### Codex 子代理消息转换
 
-对所有 Anthropic Messages 上游，executor 先把 Codex 子代理的 `agent_message` 规范为带 `developer` 角色的消息，再由 Anthropic 适配器将内容写入上游请求的 `system` 字段。`model-sse-parsing` 检查点使用真实 Codex 父子代理和模拟上游，验证子代理任务及完成结果都通过该字段送达。
+executor 将 Codex 子代理的 `agent_message` 规范为 `developer` 消息。Chat Completions 适配器将其转换为 `messages` 中的 `system` 消息，Anthropic Messages 适配器将其写入请求的 `system` 字段。`model-sse-parsing` 检查点使用真实 Codex 父子代理和模拟 Anthropic 上游，验证子代理任务及完成结果都通过该字段送达。
+
+### Anthropic 空输出恢复
 
 部分 Anthropic Messages 兼容服务可能在 `message_delta` 中返回结束原因和大于零的 `output_tokens`，却没有发送任何文本、思考内容或工具调用。executor 的 Codex compat proxy 会把这种不完整响应转换为失败事件，而不是错误地发出成功完成事件。Codex 随后按流错误恢复机制重试当前模型请求，避免 Wework 在没有 assistant 回复时提前结束任务。
 

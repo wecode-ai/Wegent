@@ -219,7 +219,6 @@ pub(super) fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) 
 }
 
 fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
-    let adapt_agent_messages = matches!(api_format, "openai-responses" | "anthropic-messages");
     let adapt_detached_context =
         matches!(api_format, "anthropic-messages" | "openai-chat-completions");
     let Some(input) = body.get_mut("input") else {
@@ -242,9 +241,7 @@ fn normalize_responses_request_input(body: &mut Value, api_format: &str) {
         let Some(object) = item.as_object_mut() else {
             continue;
         };
-        if adapt_agent_messages
-            && object.get("type").and_then(Value::as_str) == Some("agent_message")
-        {
+        if object.get("type").and_then(Value::as_str) == Some("agent_message") {
             // The message content carries the sender and recipient in its Codex envelope.
             object.retain(|field, _| field == "content");
             object.insert("type".to_owned(), json!("message"));

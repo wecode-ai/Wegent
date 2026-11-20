@@ -79,9 +79,11 @@ pub(super) async fn exchange(
     p: &Principal,
     operation: &str,
     data: &Value,
-) -> MysqlResult<Value> {
+) -> MysqlResult<ExchangeOutcome> {
     if operation == "plugin.auth.automatic" {
-        return automatic(tx, p, parse(data)?).await;
+        return automatic(tx, p, parse(data)?)
+            .await
+            .map(ExchangeOutcome::Fresh);
     }
     if matches!(
         operation,
@@ -97,7 +99,7 @@ pub(super) async fn exchange(
             return Err(invalid());
         }
         return if operation == "plugin.auth.enroll" {
-            enroll(tx, p, &input).await
+            enroll(tx, p, &input).await.map(ExchangeOutcome::Fresh)
         } else {
             stage(tx, p, &input).await
         };
@@ -122,7 +124,9 @@ pub(super) async fn exchange(
         .await?
         {
             let pkg = validated(tx, p, &row, true).await?;
-            return Ok(json!({"package":pkg.metadata()?,"operation":"transfer"}));
+            return Ok(ExchangeOutcome::Fresh(
+                json!({"package":pkg.metadata()?,"operation":"transfer"}),
+            ));
         }
         let row = get(
             tx,
@@ -134,7 +138,9 @@ pub(super) async fn exchange(
         .await?
         .ok_or_else(|| fail("plugin_auth_migration_expired"))?;
         let pkg = validated(tx, p, &row, false).await?;
-        return Ok(json!({"package":pkg.metadata()?,"operation":"export"}));
+        return Ok(ExchangeOutcome::Fresh(
+            json!({"package":pkg.metadata()?,"operation":"export"}),
+        ));
     }
     transfer(tx, p, operation, &input.migration_id).await
 }
@@ -506,7 +512,7 @@ async fn stage(
     tx: &mut impl MysqlTransaction,
     p: &Principal,
     input: &Enrollment,
-) -> MysqlResult<Value> {
+) -> MysqlResult<ExchangeOutcome> {
     if let Some(row) = get(
         tx,
         p.user_id,
@@ -520,7 +526,9 @@ async fn stage(
         if row.json["spec"]["account_id"] != input.account_id {
             return Err(fail("plugin_auth_account_mismatch"));
         }
-        return Ok(json!({"state":row.json["spec"]["state"]}));
+        return Ok(ExchangeOutcome::Replayed(
+            json!({"state":row.json["spec"]["state"]}),
+        ));
     }
     let row = get(
         tx,
@@ -587,14 +595,14 @@ async fn stage(
         false,
     )
     .await?;
-    Ok(json!({"state":"staged"}))
+    Ok(ExchangeOutcome::Fresh(json!({"state":"staged"})))
 }
 async fn transfer(
     tx: &mut impl MysqlTransaction,
     p: &Principal,
     operation: &str,
     id: &str,
-) -> MysqlResult<Value> {
+) -> MysqlResult<ExchangeOutcome> {
     let row = get(tx, p.user_id, "ConnectorTransfer", id, false)
         .await?
         .ok_or_else(|| fail("plugin_auth_migration_expired"))?;
@@ -603,18 +611,18 @@ async fn transfer(
     match operation {
         "plugin.auth.transfer.prepare" => {
             if s["state"] == "completed" {
-                return Ok(json!({"state":"completed"}));
+                return Ok(ExchangeOutcome::Fresh(json!({"state":"completed"})));
             }
             if !row.is_active || s["state"] != "staged" {
                 return Err(fail("plugin_auth_migration_expired"));
             }
-            Ok(
+            Ok(ExchangeOutcome::Fresh(
                 json!({"state":"staged","package":pkg.metadata()?,"credential":credentials::decrypt(&s["credential"],&escrow_context(p.user_id,id,&s))?}),
-            )
+            ))
         }
         "plugin.auth.transfer.abort" => {
             if s["state"] == "aborted" {
-                return Ok(json!({"state":"aborted"}));
+                return Ok(ExchangeOutcome::Replayed(json!({"state":"aborted"})));
             }
             if s["state"] != "staged" {
                 return Err(fail("plugin_auth_operation_mismatch"));
@@ -622,7 +630,7 @@ async fn transfer(
             s["state"] = json!("aborted");
             s.as_object_mut().expect("spec").remove("credential");
             save(tx, p.user_id, "ConnectorTransfer", id, Some(&row), s, false).await?;
-            Ok(json!({"state":"aborted"}))
+            Ok(ExchangeOutcome::Fresh(json!({"state":"aborted"})))
         }
         "plugin.auth.transfer.finish" => {
             if s["state"] == "completed" {
@@ -635,7 +643,9 @@ async fn transfer(
                 )
                 .await?
                 .ok_or_else(invalid)?;
-                return Ok(json!({"connection":metadata(&connection)}));
+                return Ok(ExchangeOutcome::Replayed(
+                    json!({"connection":metadata(&connection)}),
+                ));
             }
             if !row.is_active || s["state"] != "staged" {
                 return Err(fail("plugin_auth_migration_expired"));
@@ -671,7 +681,7 @@ async fn transfer(
             s["connection_id"] = connection["id"].clone();
             s.as_object_mut().expect("spec").remove("credential");
             save(tx, p.user_id, "ConnectorTransfer", id, Some(&row), s, false).await?;
-            Ok(json!({"connection":connection}))
+            Ok(ExchangeOutcome::Fresh(json!({"connection":connection})))
         }
         _ => Err(invalid()),
     }

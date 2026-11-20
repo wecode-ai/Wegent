@@ -251,7 +251,7 @@ impl LocalBackendConnectionController {
             self.plugin_auth
                 .socket(Some(transport.clone()), cloud_plugin_auth);
             if state.plugin_broker.is_none() {
-                match crate::plugin_account_auth::broker::start(
+                match crate::plugin_account_auth::broker::start_native(
                     self.plugin_auth.clone(),
                     crate::config::paths::executor_home(),
                     self.connection_status.clone(),
