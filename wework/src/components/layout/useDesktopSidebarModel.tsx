@@ -645,9 +645,7 @@ export function useDesktopSidebarModel({
   const displayedProjectsExpanded = projectsExpanded
   const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
   const showEmptyProjectCreateAction =
-    (!runtimeWorkLoad || runtimeWorkLoad.phase === 'ready') &&
-    runtimeWork !== null &&
-    runtimeWork !== undefined &&
+    runtimeWork != null &&
     runtimeWorkCheck !== null &&
     runtimeWorkCheck !== undefined &&
     runtimeWorkCheck !== 'syncing' &&
