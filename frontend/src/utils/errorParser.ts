@@ -2,375 +2,292 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Parse error messages and return user-friendly error information.
- *
- * Supports backend-provided error types (preferred) with string-based
- * keyword matching as fallback.
- */
+/** Classify chat errors using explicit backend codes before legacy messages. */
+export type ErrorCategory =
+  | 'model'
+  | 'input'
+  | 'access'
+  | 'policy'
+  | 'runtime'
+  | 'tool'
+  | 'transport'
+  | 'platform'
+  | 'unknown'
 
-export type ErrorType =
-  | 'context_length_exceeded'
-  | 'quota_exceeded'
-  | 'rate_limit'
-  | 'payload_too_large'
-  | 'network_error'
-  | 'timeout_error'
-  | 'llm_error'
-  | 'llm_unsupported'
-  | 'invalid_parameter'
-  | 'forbidden'
-  | 'container_oom'
-  | 'container_error'
-  | 'content_filter'
-  | 'provider_error'
-  | 'image_too_large'
-  | 'model_protocol_error'
-  | 'invalid_role'
-  | 'permission_denied'
-  | 'generic_error'
+export type RetryPolicy = 'after_backoff' | 'after_change' | 'none' | 'unknown'
+
+const ERROR_DEFINITIONS = {
+  context_length_exceeded: { category: 'input', retryPolicy: 'after_change' },
+  quota_exceeded: { category: 'model', retryPolicy: 'after_change' },
+  rate_limit: { category: 'model', retryPolicy: 'after_backoff' },
+  server_overloaded: { category: 'model', retryPolicy: 'after_backoff' },
+  payload_too_large: { category: 'input', retryPolicy: 'after_change' },
+  model_service_connection_error: { category: 'transport', retryPolicy: 'after_backoff' },
+  network_error: { category: 'transport', retryPolicy: 'after_backoff' },
+  timeout_error: { category: 'transport', retryPolicy: 'after_backoff' },
+  llm_error: { category: 'model', retryPolicy: 'after_backoff' },
+  model_unavailable: { category: 'model', retryPolicy: 'after_backoff' },
+  llm_unsupported: { category: 'input', retryPolicy: 'after_change' },
+  invalid_parameter: { category: 'input', retryPolicy: 'after_change' },
+  forbidden: { category: 'access', retryPolicy: 'after_change' },
+  authentication_expired: { category: 'access', retryPolicy: 'after_change' },
+  container_oom: { category: 'runtime', retryPolicy: 'after_change' },
+  container_error: { category: 'runtime', retryPolicy: 'after_change' },
+  skills_unmanaged_entries: { category: 'runtime', retryPolicy: 'after_change' },
+  skill_deploy_failed: { category: 'runtime', retryPolicy: 'after_change' },
+  executor_start_failed: { category: 'runtime', retryPolicy: 'unknown' },
+  workspace_unavailable: { category: 'runtime', retryPolicy: 'after_change' },
+  content_filter: { category: 'policy', retryPolicy: 'after_change' },
+  provider_error: { category: 'model', retryPolicy: 'after_backoff' },
+  image_too_large: { category: 'input', retryPolicy: 'after_change' },
+  model_protocol_error: { category: 'input', retryPolicy: 'after_change' },
+  invalid_role: { category: 'input', retryPolicy: 'after_change' },
+  permission_denied: { category: 'access', retryPolicy: 'after_change' },
+  tool_execution_failed: { category: 'tool', retryPolicy: 'unknown' },
+  connector_unavailable: { category: 'tool', retryPolicy: 'after_backoff' },
+  plugin_load_failed: { category: 'tool', retryPolicy: 'after_change' },
+  stream_protocol_error: { category: 'transport', retryPolicy: 'after_backoff' },
+  internal_error: { category: 'platform', retryPolicy: 'after_backoff' },
+  storage_error: { category: 'platform', retryPolicy: 'after_backoff' },
+  dispatch_error: { category: 'platform', retryPolicy: 'after_backoff' },
+  generic_error: { category: 'unknown', retryPolicy: 'unknown' },
+} as const satisfies Record<string, { category: ErrorCategory; retryPolicy: RetryPolicy }>
+
+export type ErrorType = keyof typeof ERROR_DEFINITIONS
+
+export type ErrorInfo = import('@wegent/chat-core').ChatErrorInfo
 
 export interface ParsedError {
   type: ErrorType
+  category: ErrorCategory
+  retryPolicy: RetryPolicy
   message: string
   originalError?: string
   retryable?: boolean
 }
 
-// Valid backend error type values
-const VALID_BACKEND_TYPES = new Set<string>([
-  'context_length_exceeded',
-  'quota_exceeded',
-  'rate_limit',
-  'llm_error',
-  'model_unavailable',
-  'container_oom',
-  'container_error',
-  'network_error',
-  'timeout_error',
-  'llm_unsupported',
-  'forbidden',
-  'payload_too_large',
-  'invalid_parameter',
-  'content_filter',
-  'provider_error',
-  'image_too_large',
-  'model_protocol_error',
-  'invalid_role',
-  'permission_denied',
-  'generic_error',
-])
-
-// Map backend error codes to frontend ErrorType
-const BACKEND_TYPE_MAP: Record<string, ErrorType> = {
-  context_length_exceeded: 'context_length_exceeded',
-  quota_exceeded: 'quota_exceeded',
-  rate_limit: 'rate_limit',
-  llm_error: 'llm_error',
-  model_unavailable: 'llm_error',
-  container_oom: 'container_oom',
-  container_error: 'container_error',
-  network_error: 'network_error',
-  timeout_error: 'timeout_error',
-  llm_unsupported: 'llm_unsupported',
-  forbidden: 'forbidden',
-  payload_too_large: 'payload_too_large',
-  invalid_parameter: 'invalid_parameter',
-  content_filter: 'content_filter',
-  provider_error: 'provider_error',
-  image_too_large: 'image_too_large',
-  model_protocol_error: 'model_protocol_error',
-  invalid_role: 'invalid_role',
-  permission_denied: 'permission_denied',
-  generic_error: 'generic_error',
+function backendErrorType(code?: string): ErrorType | undefined {
+  const normalized = code?.trim().toLowerCase()
+  if (normalized === 'llm_error') {
+    return 'model_unavailable'
+  }
+  if (normalized === 'device_callback_too_large') {
+    return 'payload_too_large'
+  }
+  return normalized && Object.prototype.hasOwnProperty.call(ERROR_DEFINITIONS, normalized)
+    ? (normalized as ErrorType)
+    : undefined
 }
 
-/**
- * Parse error and return structured error information.
- *
- * @param error - Error object or error message
- * @param backendType - Optional error type from backend classification
- * @returns Parsed error information
- */
-export function parseError(error: Error | string, backendType?: string): ParsedError {
-  const errorMessage = typeof error === 'string' ? error : error.message
+function normalizeSpecificBackendType(code?: string): ErrorType | undefined {
+  const type = backendErrorType(code)
+  return type !== undefined && type !== 'generic_error' && !isLegacyLLMError(code)
+    ? type
+    : undefined
+}
 
-  // Use backend-provided type if valid
-  if (backendType && VALID_BACKEND_TYPES.has(backendType)) {
-    const type = BACKEND_TYPE_MAP[backendType] || 'generic_error'
-    return {
-      type,
-      message: errorMessage,
-      originalError: errorMessage,
-      retryable: true,
+function isLegacyLLMError(code?: string): boolean {
+  return code?.trim().toLowerCase() === 'llm_error'
+}
+
+/** Explicit causes prevail; a generic code can be refined from a known message. */
+export function parseError(
+  error: Error | string,
+  backendType?: string,
+  errorInfo?: ErrorInfo
+): ParsedError {
+  const errorMessage = typeof error === 'string' ? error : error.message
+  const metadataType = normalizeSpecificBackendType(errorInfo?.code)
+  const explicitType = metadataType ?? normalizeSpecificBackendType(backendType)
+  const type = explicitType ?? classifyByMessage(errorMessage, errorInfo?.code, backendType)
+  const definition = ERROR_DEFINITIONS[type]
+  const useMetadataRetryPolicy =
+    metadataType !== undefined || (explicitType === undefined && errorInfo?.code == null)
+  const retryPolicy =
+    useMetadataRetryPolicy && isRetryPolicy(errorInfo?.retry_policy)
+      ? errorInfo.retry_policy
+      : definition.retryPolicy
+
+  return {
+    type,
+    category: definition.category,
+    retryPolicy,
+    message: errorMessage,
+    originalError: errorMessage,
+    // Unknown causes retain the manual retry action without claiming recovery.
+    retryable: retryPolicy === 'after_backoff' || retryPolicy === 'unknown',
+  }
+}
+
+function isRetryPolicy(policy: unknown): policy is RetryPolicy {
+  return ['after_backoff', 'after_change', 'none', 'unknown'].includes(policy as string)
+}
+
+const MESSAGE_RULES: ReadonlyArray<readonly [ErrorType, ReadonlyArray<string | RegExp>]> = [
+  ['skills_unmanaged_entries', ['agent skills directory contains unmanaged entries']],
+  [
+    'context_length_exceeded',
+    [
+      'prompt is too long',
+      'context_length_exceeded',
+      'context length exceeded',
+      'maximum context length',
+      'token limit exceeded',
+      'tokens exceeds the model',
+      'input is too long',
+      'maximum number of tokens',
+    ],
+  ],
+  [
+    'content_filter',
+    [
+      'data_inspection_failed',
+      'inappropriate content',
+      'content filter',
+      'content management',
+      'content_policy',
+      'contentfilter',
+      'risky content',
+      'content_filtering_policy',
+      'responsibleaipolicy',
+      'resp_safety_modify_answer',
+    ],
+  ],
+  ['image_too_large', ['image exceeds', 'image too large', 'image size exceeds']],
+  ['invalid_role', ['invalid role']],
+  ['model_protocol_error', ['invalid model id', 'only claude', 'only thudm', 'only moonshot']],
+  [
+    'quota_exceeded',
+    [
+      '商业付费模型额度已用完',
+      'quota exceeded',
+      'insufficient_quota',
+      'billing',
+      'credit balance',
+      'payment required',
+      'account balance',
+      'insufficient funds',
+      'exceeded your current quota',
+    ],
+  ],
+  ['rate_limit', ['rate limit', 'rate_limit', 'too many requests', 'throttl']],
+  ['server_overloaded', ['server_overloaded', 'server overloaded', 'serveroverloaded']],
+  [
+    'authentication_expired',
+    ['authentication_expired', 'authentication expired', 'credentials expired', 'not logged in'],
+  ],
+  [
+    'permission_denied',
+    [
+      '无权限调用此模型',
+      '禁止使用外部模型',
+      'permission_denied',
+      'permission denied',
+      'permission_error',
+    ],
+  ],
+  ['forbidden', ['forbidden', 'not allowed', 'unauthorized', /\b403\b/]],
+  // A transport cause remains informative even inside an executor/provider wrapper.
+  ['container_oom', ['out of memory', /\boom\b/, 'memory allocation']],
+  ['timeout_error', ['timeout', 'timed out', '504 gateway', '超时']],
+  ['connector_unavailable', ['connector unavailable', 'connector not connected']],
+  [
+    'model_service_connection_error',
+    ['model proxy request failed', 'failed to send request to the model service'],
+  ],
+  [
+    'network_error',
+    [
+      'network',
+      'fetch failed',
+      'connection refused',
+      'connection reset',
+      'connection error',
+      'connection failed',
+      'not connected',
+      'websocket',
+      'peer closed connection',
+      'upstream connection interrupted',
+    ],
+  ],
+  ['provider_error', ['error from provider', 'upstream error', '502 bad gateway']],
+  [
+    'llm_unsupported',
+    [
+      'multi-modal',
+      'multimodal',
+      'do not support',
+      'does not support',
+      'not support image',
+      /llm model.*received/,
+    ],
+  ],
+  [
+    'model_unavailable',
+    [
+      'model not found',
+      'model unavailable',
+      'llm request failed',
+      'llm api error',
+      'llm call failed',
+      'llm service error',
+      'model error',
+      'token limit',
+    ],
+  ],
+  ['invalid_parameter', [/invalid.*parameter/]],
+  ['payload_too_large', [/\b413\b/, 'payload too large']],
+  ['skill_deploy_failed', ['skill deployment failed', 'failed to deploy skill']],
+  ['executor_start_failed', ['executor start failed', 'failed to start executor']],
+  ['workspace_unavailable', ['workspace unavailable', 'workspace not found']],
+  ['tool_execution_failed', ['tool execution failed']],
+  ['plugin_load_failed', ['plugin load failed', 'failed to load plugin']],
+  ['stream_protocol_error', ['stream protocol error']],
+  ['internal_error', ['internal_error', 'internal server error']],
+  ['storage_error', ['storage_error', 'storage error']],
+  ['dispatch_error', ['dispatch_error', 'dispatch failed']],
+  [
+    'container_error',
+    [
+      'container',
+      'executor',
+      'docker',
+      'disappeared unexpectedly',
+      'no ports mapped',
+      'crashed unexpectedly',
+      'exit code',
+      'device disconnected',
+    ],
+  ],
+]
+
+function classifyByMessage(
+  errorMessage: string,
+  metadataCode?: string,
+  backendType?: string
+): ErrorType {
+  const lowerMessage = errorMessage.toLowerCase()
+  for (const [type, patterns] of MESSAGE_RULES) {
+    if (
+      patterns.some(pattern =>
+        typeof pattern === 'string' ? lowerMessage.includes(pattern) : pattern.test(lowerMessage)
+      )
+    ) {
+      return type
     }
   }
 
-  // Fall back to keyword-based string matching
-  return classifyByMessage(errorMessage)
+  if (isLegacyLLMError(metadataCode) || isLegacyLLMError(backendType)) {
+    return 'model_unavailable'
+  }
+  return 'generic_error'
 }
 
-/**
- * Classify error by keyword matching on the message string.
- */
-function classifyByMessage(errorMessage: string): ParsedError {
-  const lowerMessage = errorMessage.toLowerCase()
-
-  // Context length exceeded (check before general LLM errors)
-  if (
-    lowerMessage.includes('prompt is too long') ||
-    lowerMessage.includes('context_length_exceeded') ||
-    lowerMessage.includes('context length exceeded') ||
-    lowerMessage.includes('maximum context length') ||
-    lowerMessage.includes('token limit exceeded') ||
-    lowerMessage.includes('tokens exceeds the model') ||
-    lowerMessage.includes('input is too long') ||
-    lowerMessage.includes('maximum number of tokens')
-  ) {
-    return buildResult('context_length_exceeded', errorMessage)
-  }
-
-  // Content filter / safety moderation (check before generic 400 errors)
-  if (
-    lowerMessage.includes('data_inspection_failed') ||
-    lowerMessage.includes('inappropriate content') ||
-    lowerMessage.includes('content filter') ||
-    lowerMessage.includes('content management') ||
-    lowerMessage.includes('content_policy') ||
-    lowerMessage.includes('contentfilter') ||
-    lowerMessage.includes('risky content') ||
-    lowerMessage.includes('content_filtering_policy') ||
-    lowerMessage.includes('responsibleaipolicy') ||
-    lowerMessage.includes('resp_safety_modify_answer')
-  ) {
-    return buildResult('content_filter', errorMessage)
-  }
-
-  // Image too large (check before generic payload errors)
-  if (
-    lowerMessage.includes('image exceeds') ||
-    lowerMessage.includes('image too large') ||
-    lowerMessage.includes('image size exceeds')
-  ) {
-    return buildResult('image_too_large', errorMessage)
-  }
-
-  // Invalid role in messages (model protocol mismatch)
-  if (lowerMessage.includes('invalid role')) {
-    return buildResult('invalid_role', errorMessage)
-  }
-
-  // Model protocol error (model ID not supported by provider)
-  if (
-    lowerMessage.includes('invalid model id') ||
-    lowerMessage.includes('only claude') ||
-    lowerMessage.includes('only thudm') ||
-    lowerMessage.includes('only moonshot')
-  ) {
-    return buildResult('model_protocol_error', errorMessage)
-  }
-
-  // Container OOM
-  if (
-    lowerMessage.includes('out of memory') ||
-    /\boom\b/.test(lowerMessage) ||
-    lowerMessage.includes('memory allocation')
-  ) {
-    return buildResult('container_oom', errorMessage)
-  }
-
-  // Container/executor errors (includes Claude Code shell disconnections)
-  if (
-    lowerMessage.includes('container') ||
-    lowerMessage.includes('executor') ||
-    lowerMessage.includes('docker') ||
-    lowerMessage.includes('disappeared unexpectedly') ||
-    lowerMessage.includes('no ports mapped') ||
-    lowerMessage.includes('crashed unexpectedly') ||
-    lowerMessage.includes('exit code') ||
-    lowerMessage.includes('device disconnected') ||
-    lowerMessage.includes('not logged in')
-  ) {
-    return buildResult('container_error', errorMessage)
-  }
-
-  // Quota exceeded (check before rate_limit and permission — more specific)
-  if (
-    lowerMessage.includes('quota exceeded') ||
-    lowerMessage.includes('insufficient_quota') ||
-    lowerMessage.includes('billing') ||
-    lowerMessage.includes('credit balance') ||
-    lowerMessage.includes('payment required') ||
-    lowerMessage.includes('insufficient funds') ||
-    lowerMessage.includes('exceeded your current quota')
-  ) {
-    return buildResult('quota_exceeded', errorMessage)
-  }
-
-  // Rate limit (temporary throttling)
-  if (
-    lowerMessage.includes('rate limit') ||
-    lowerMessage.includes('rate_limit') ||
-    lowerMessage.includes('too many requests') ||
-    lowerMessage.includes('throttl')
-  ) {
-    return buildResult('rate_limit', errorMessage)
-  }
-
-  // Permission denied (model access restrictions, check before generic forbidden)
-  if (
-    lowerMessage.includes('permission_denied') ||
-    lowerMessage.includes('permission denied') ||
-    lowerMessage.includes('permission_error')
-  ) {
-    return buildResult('permission_denied', errorMessage)
-  }
-
-  // Forbidden/unauthorized
-  if (
-    lowerMessage.includes('forbidden') ||
-    lowerMessage.includes('not allowed') ||
-    lowerMessage.includes('unauthorized') ||
-    lowerMessage.includes('403')
-  ) {
-    return buildResult('forbidden', errorMessage)
-  }
-
-  // Provider error (model provider service wrapping)
-  if (lowerMessage.includes('error from provider') || lowerMessage.includes('upstream error')) {
-    return buildResult('provider_error', errorMessage)
-  }
-
-  // Model unsupported (multi-modal, incompatibility)
-  if (
-    lowerMessage.includes('multi-modal') ||
-    lowerMessage.includes('multimodal') ||
-    lowerMessage.includes('do not support') ||
-    lowerMessage.includes('does not support') ||
-    lowerMessage.includes('not support image') ||
-    (lowerMessage.includes('llm model') && lowerMessage.includes('received'))
-  ) {
-    return buildResult('llm_unsupported', errorMessage)
-  }
-
-  // General LLM errors (model unavailable, API errors)
-  if (
-    lowerMessage.includes('model not found') ||
-    lowerMessage.includes('model unavailable') ||
-    lowerMessage.includes('llm request failed') ||
-    lowerMessage.includes('llm api error') ||
-    lowerMessage.includes('llm call failed') ||
-    lowerMessage.includes('llm service error') ||
-    lowerMessage.includes('model error') ||
-    lowerMessage.includes('api rate limit') ||
-    lowerMessage.includes('token limit')
-  ) {
-    return buildResult('llm_error', errorMessage)
-  }
-
-  // Invalid parameter
-  if (lowerMessage.includes('invalid') && lowerMessage.includes('parameter')) {
-    return buildResult('invalid_parameter', errorMessage)
-  }
-
-  // Payload too large
-  if (lowerMessage.includes('413') || lowerMessage.includes('payload too large')) {
-    return buildResult('payload_too_large', errorMessage)
-  }
-
-  // Timeout (includes gateway timeouts)
-  if (
-    lowerMessage.includes('timeout') ||
-    lowerMessage.includes('timed out') ||
-    lowerMessage.includes('504 gateway') ||
-    lowerMessage.includes('502 bad gateway') ||
-    lowerMessage.includes('超时')
-  ) {
-    return buildResult('timeout_error', errorMessage)
-  }
-
-  // Network errors (includes upstream connection issues)
-  if (
-    lowerMessage.includes('network') ||
-    lowerMessage.includes('fetch') ||
-    lowerMessage.includes('connection') ||
-    lowerMessage.includes('not connected') ||
-    lowerMessage.includes('websocket') ||
-    lowerMessage.includes('peer closed connection') ||
-    lowerMessage.includes('upstream connection interrupted')
-  ) {
-    return buildResult('network_error', errorMessage)
-  }
-
-  // Generic fallback
-  return buildResult('generic_error', errorMessage)
-}
-
-function buildResult(type: ErrorType, errorMessage: string): ParsedError {
-  return {
-    type,
-    message: errorMessage,
-    originalError: errorMessage,
-    retryable: true,
-  }
-}
-
-/**
- * Get user-friendly error message for display in toast/UI.
- *
- * Always returns an i18n-translated friendly message for ALL error types.
- * Raw error details are available separately via parseError().originalError
- * (shown in the expandable "Error Details" section of ErrorCard).
- *
- * @param error - Error object or error message
- * @param t - i18n translation function
- * @param backendType - Optional error type from backend classification
- */
+/** Raw details remain available separately in the expandable ErrorCard details. */
 export function getErrorDisplayMessage(
   error: Error | string,
   t: (key: string) => string,
   backendType?: string
 ): string {
-  const parsed = parseError(error, backendType)
-
-  switch (parsed.type) {
-    case 'context_length_exceeded':
-      return t('errors.context_length_exceeded')
-    case 'quota_exceeded':
-      return t('errors.quota_exceeded')
-    case 'rate_limit':
-      return t('errors.rate_limit')
-    case 'forbidden':
-      return t('errors.forbidden') || t('errors.generic_error')
-    case 'container_oom':
-      return t('errors.container_oom')
-    case 'container_error':
-      return t('errors.container_error')
-    case 'llm_unsupported':
-      return t('errors.llm_unsupported')
-    case 'llm_error':
-      return t('errors.llm_error')
-    case 'invalid_parameter':
-      return t('errors.invalid_parameter')
-    case 'payload_too_large':
-      return t('errors.payload_too_large')
-    case 'network_error':
-      return t('errors.network_error')
-    case 'timeout_error':
-      return t('errors.timeout_error')
-    case 'content_filter':
-      return t('errors.content_filter')
-    case 'provider_error':
-      return t('errors.provider_error')
-    case 'image_too_large':
-      return t('errors.image_too_large')
-    case 'model_protocol_error':
-      return t('errors.model_protocol_error')
-    case 'invalid_role':
-      return t('errors.invalid_role')
-    case 'permission_denied':
-      return t('errors.permission_denied')
-    default:
-      return t('errors.generic_error')
-  }
+  return t('errors.' + parseError(error, backendType).type)
 }

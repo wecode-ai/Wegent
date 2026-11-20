@@ -155,21 +155,10 @@ impl RuntimeWorkRpcHandler {
                 Err(error) => return Err(error),
             };
             if !allowed || !same_session {
-                record["status"] = json!("cancelled");
-                self.save_event_subscription(&id, &record)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub(in crate::runtime_work::handler) fn cancel_connection_waits_for_goal_identity(
-        &self,
-        task: &str,
-        goal: &Value,
-    ) -> Result<(), AppIpcError> {
-        for (id, mut record) in self.connection_goal_records(task)? {
-            if record["waiting_goal"] != goal_identity(goal) {
-                record["status"] = json!("cancelled");
+                record["status"] = json!(closed_goal_wait_status(
+                    &record,
+                    same_goal && same_session && current["status"] == "complete",
+                ));
                 self.save_event_subscription(&id, &record)?;
             }
         }

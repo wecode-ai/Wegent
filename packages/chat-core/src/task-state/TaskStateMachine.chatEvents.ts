@@ -447,6 +447,9 @@ export function reduceChatErrorEvent({
     timestamp: Date.now(),
     error: event.error,
     errorType: event.errorType ?? existingMessage.errorType,
+    result: event.errorInfo
+      ? { ...existingMessage.result, error_info: event.errorInfo }
+      : existingMessage.result,
     messageId: event.messageId ?? existingMessage.messageId,
   })
 

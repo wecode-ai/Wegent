@@ -325,7 +325,7 @@ async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
         execution_id,
         &request,
         None,
-        Err("startup failed".into()),
+        Err("Agent Skills directory contains unmanaged entries".into()),
     );
     let mut terminal = None;
     while let Ok(event) = event_rx.try_recv() {
@@ -334,6 +334,16 @@ async fn recovered_goal_failure_before_active_turn_has_no_old_user_identity() {
         }
     }
     let event = terminal.expect("startup failure should emit its terminal event");
+    assert_eq!(
+        event["payload"]["data"]["error"]["code"],
+        "skills_unmanaged_entries",
+    );
+    assert_eq!(event["payload"]["data"]["error_info"]["stage"], "prepare");
+    let stored = handler.local_task_link("task-1").unwrap();
+    assert_eq!(
+        stored.runtime_handle["startupFailure"]["errorInfo"],
+        event["payload"]["data"]["error_info"],
+    );
     assert!(event["payload"].get("clientUserMessageId").is_none());
     assert!(event["payload"]
         .get("runtimeGeneratedUserMessage")

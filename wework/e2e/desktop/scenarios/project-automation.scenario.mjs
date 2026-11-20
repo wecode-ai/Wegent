@@ -540,6 +540,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           text: PROJECT_AGENT_NAME,
           timeoutMs: uiTimeoutMs,
         })
+        // A separate reader can see the committed grant before the client has
+        // received the reactivation response and refreshed its Agent list.
+        await control.command(
+          'waitFor',
+          scoped(`[data-testid="project-agent-unavailable-${projectAgent.id}"]`),
+          { visible: false, timeoutMs: uiTimeoutMs }
+        )
         await control.command(
           'click',
           scoped('[data-testid="collaboration-project-settings-groups"]')

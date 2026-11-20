@@ -57,7 +57,7 @@ fn activating_an_owned_goal_does_not_admit_another_continuation() {
             if let Some(execution) = execution {
                 handler.finish_local_task_execution("task-1", execution);
             }
-            handler.sync_runtime_task_goal_status("task-1", None);
+            handler.sync_runtime_task_goal_status("task-1", None, None);
             handler.persist_current_turn_state().await.unwrap();
             let _ = fs::remove_dir_all(root);
         }
@@ -284,7 +284,7 @@ fn reactivated_native_goal_recovers_without_a_live_local_execution() {
         assert!(!turn.request.extra.contains_key("runtime_command_id"));
         assert!(restored.queued_turns.is_empty());
         assert!(!handler.is_active_local_task("task-1"));
-        handler.sync_runtime_task_goal_status("task-1", Some("paused".into()));
+        handler.sync_runtime_task_goal_status("task-1", Some("paused".into()), None);
         handler.persist_current_turn_state().await.unwrap();
         assert!(turns::read_runtime_turn_state(&handler.turn_queue_path)
             .unwrap()
@@ -323,13 +323,13 @@ fn goal_activation_binds_and_retains_the_route_until_the_goal_stops() {
             );
             // Passive history refreshes must not drop the Goal's inference lease.
             handler.register_thread_event_route_from_store("thread-1");
-            handler.sync_runtime_task_goal_status("task-1", Some("active".into()));
+            handler.sync_runtime_task_goal_status("task-1", Some("active".into()), None);
             assert!(
                 handler.thread_event_routing.lock().unwrap().routes["thread-1"]
                     .goal_model_route
                     .is_some()
             );
-            handler.sync_runtime_task_goal_status("task-1", status.map(str::to_owned));
+            handler.sync_runtime_task_goal_status("task-1", status.map(str::to_owned), None);
             assert!(
                 handler.thread_event_routing.lock().unwrap().routes["thread-1"]
                     .goal_model_route

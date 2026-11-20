@@ -29,7 +29,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import type { UnifiedModel } from '@/apis/models'
 import type { Team } from '@/types/api'
-import { parseError, getErrorDisplayMessage, type ErrorType } from '@/utils/errorParser'
+import {
+  parseError,
+  getErrorDisplayMessage,
+  type ErrorType,
+  type ErrorCategory,
+  type RetryPolicy,
+  type ErrorInfo,
+} from '@/utils/errorParser'
 import {
   buildErrorCardInteractionId,
   markErrorInteracted,
@@ -43,6 +50,7 @@ import type { Message } from './MessageBubble'
 export interface ErrorCardProps {
   error: string
   errorType?: string
+  errorInfo?: ErrorInfo
   subtaskId?: number
   taskId?: number
   timestamp: number
@@ -93,9 +101,24 @@ const NEW_CONVERSATION_ERROR_TYPES = new Set<ErrorType>([
   'container_error',
 ])
 
+const ERROR_HINT_KEYS: Partial<Record<ErrorType, string>> = {
+  context_length_exceeded: 'errors.context_length_hint',
+  quota_exceeded: 'errors.quota_hint',
+  rate_limit: 'errors.rate_limit_hint',
+  server_overloaded: 'errors.rate_limit_hint',
+  content_filter: 'errors.content_filter_hint',
+  provider_error: 'errors.provider_error_hint',
+  image_too_large: 'errors.image_too_large_hint',
+  model_protocol_error: 'errors.model_protocol_error_hint',
+  invalid_role: 'errors.invalid_role_hint',
+  permission_denied: 'errors.permission_denied_hint',
+  skills_unmanaged_entries: 'errors.skills_unmanaged_entries_hint',
+}
+
 export function ErrorCard({
   error,
   errorType,
+  errorInfo,
   subtaskId,
   taskId,
   timestamp,
@@ -108,7 +131,10 @@ export function ErrorCard({
   const { user } = useUser()
   const { getRecommendedModels, isLoading: areRecommendationsLoading } = useErrorRecommendations()
 
-  const parsedError = useMemo(() => parseError(error, errorType), [error, errorType])
+  const parsedError = useMemo(
+    () => parseError(error, errorType, errorInfo),
+    [error, errorType, errorInfo]
+  )
   const interactionId = useMemo(() => {
     if (!subtaskId) {
       return null
@@ -140,8 +166,8 @@ export function ErrorCard({
   const [copySuccess, setCopySuccess] = useState(false)
 
   const friendlyMessage = useMemo(
-    () => getErrorDisplayMessage(error, (key: string) => t(key), errorType),
-    [error, errorType, t]
+    () => getErrorDisplayMessage(error, (key: string) => t(key), parsedError.type),
+    [error, parsedError.type, t]
   )
 
   const recommendationErrorType = errorType?.trim() || parsedError.type
@@ -155,29 +181,18 @@ export function ErrorCard({
   const showRetry = !!onRetry && !areRecommendationsLoading
 
   const hintKey = useMemo(() => {
-    switch (parsedError.type) {
-      case 'context_length_exceeded':
-        return t('errors.context_length_hint')
-      case 'quota_exceeded':
-        return t('errors.quota_hint')
-      case 'rate_limit':
-        return t('errors.rate_limit_hint')
-      case 'content_filter':
-        return t('errors.content_filter_hint')
-      case 'provider_error':
-        return t('errors.provider_error_hint')
-      case 'image_too_large':
-        return t('errors.image_too_large_hint')
-      case 'model_protocol_error':
-        return t('errors.model_protocol_error_hint')
-      case 'invalid_role':
-        return t('errors.invalid_role_hint')
-      case 'permission_denied':
-        return t('errors.permission_denied_hint')
-      default:
-        return null
+    const key = ERROR_HINT_KEYS[parsedError.type]
+    if (key) {
+      return t(key)
     }
-  }, [parsedError.type, t])
+    if (parsedError.retryPolicy === 'after_change') {
+      return t('errors.retry_after_change_hint')
+    }
+    if (parsedError.retryPolicy === 'after_backoff') {
+      return t('errors.retry_after_backoff_hint')
+    }
+    return null
+  }, [parsedError.type, parsedError.retryPolicy, t])
 
   const collapseCard = useCallback(
     (action: string, persist: boolean = false) => {
@@ -247,7 +262,10 @@ export function ErrorCard({
       />
       <ErrorCardCopyDeveloper
         error={error}
-        errorType={errorType ?? parsedError.type}
+        errorType={parsedError.type}
+        backendErrorType={errorType}
+        errorCategory={parsedError.category}
+        retryPolicy={parsedError.retryPolicy}
         subtaskId={subtaskId}
         taskId={taskId}
         timestamp={timestamp}
@@ -264,6 +282,7 @@ export function ErrorCard({
           recommendedModels={recommendedModels}
           showNewConversation={showNewConversation}
           showRetry={showRetry}
+          retryPolicy={parsedError.retryPolicy}
           onRetryWithModel={handleRetryWithModel}
           onNewConversation={handleNewConversation}
           onRetry={handleRetry}
@@ -344,6 +363,9 @@ function ErrorCardDetails({
 function ErrorCardCopyDeveloper({
   error,
   errorType,
+  backendErrorType,
+  errorCategory,
+  retryPolicy,
   subtaskId,
   taskId,
   timestamp,
@@ -356,6 +378,9 @@ function ErrorCardCopyDeveloper({
 }: {
   error: string
   errorType: string
+  backendErrorType?: string
+  errorCategory: ErrorCategory
+  retryPolicy: RetryPolicy
   subtaskId?: number
   taskId?: number
   timestamp: number
@@ -374,6 +399,9 @@ function ErrorCardCopyDeveloper({
       subtaskId: subtaskId ?? null,
       timestamp: new Date(timestamp).toISOString(),
       errorType,
+      backendErrorType: backendErrorType ?? null,
+      errorCategory,
+      retryPolicy,
       errorMessage: error,
     }
     const copied = await copyTextWithFallback(JSON.stringify(diagnosticInfo, null, 2))
@@ -381,7 +409,19 @@ function ErrorCardCopyDeveloper({
       onCopySuccess(true)
       setTimeout(() => onCopySuccess(false), 2000)
     }
-  }, [error, errorType, subtaskId, taskId, timestamp, userId, userName, onCopySuccess])
+  }, [
+    error,
+    errorType,
+    backendErrorType,
+    errorCategory,
+    retryPolicy,
+    subtaskId,
+    taskId,
+    timestamp,
+    userId,
+    userName,
+    onCopySuccess,
+  ])
 
   return (
     <div className="pl-7">
@@ -408,6 +448,7 @@ function ErrorCardSolutions({
   recommendedModels,
   showNewConversation,
   showRetry,
+  retryPolicy,
   onRetryWithModel,
   onNewConversation,
   onRetry,
@@ -417,6 +458,7 @@ function ErrorCardSolutions({
   recommendedModels: UnifiedModel[]
   showNewConversation: boolean
   showRetry: boolean
+  retryPolicy: RetryPolicy
   onRetryWithModel: (model: UnifiedModel) => void
   onNewConversation: () => void
   onRetry: () => void
@@ -463,7 +505,11 @@ function ErrorCardSolutions({
             data-testid="error-card-retry"
           >
             <RefreshCw className="h-3.5 w-3.5 mr-1" />
-            {t('errors.retry_with_current_model')}
+            {t(
+              retryPolicy === 'after_change'
+                ? 'errors.retry_after_change'
+                : 'errors.retry_with_current_model'
+            )}
           </Button>
         )}
       </div>
