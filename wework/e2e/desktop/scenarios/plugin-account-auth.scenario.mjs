@@ -72,7 +72,7 @@ async function waitForValue(read, accept, timeoutMs, message) {
     if (accept(value)) return value
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(message)
+  throw new Error(typeof message === 'function' ? message() : message)
 }
 
 export async function createDesktopScenario({

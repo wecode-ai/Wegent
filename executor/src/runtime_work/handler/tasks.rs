@@ -2370,6 +2370,11 @@ impl RuntimeWorkRpcHandler {
         };
 
         let mut request = runtime_model_request(&link, &payload)?;
+        crate::runtime_work::api_context::bind_task_identity(
+            &mut request,
+            &self.device_id,
+            &link.local_task_id,
+        );
         self.apply_backend_connection(&mut request);
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
@@ -2403,15 +2408,61 @@ impl RuntimeWorkRpcHandler {
         );
         self.ensure_notification_router().await;
         let thread_path = runtime_thread_path_from_link(link);
-        // Retain the registered inference route until native compaction settles.
-        let (thread_id, _model_route) = match client
-            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
-            .await
-        {
-            Ok(context) => context,
+        let mut registration = None;
+        let resumed = {
+            let gate = self.task_send_gate(&format!("goal-status:{local_task_id}"));
+            let _guard = gate.lock().await;
+            let _mutation = self.begin_goal_status_mutation(local_task_id);
+            client
+                .resume_thread_for_model_action(
+                    &request,
+                    thread_id,
+                    thread_path.as_deref(),
+                    |prepared| {
+                        self.retain_goal_model_route(thread_id, prepared.clone());
+                        registration = prepared;
+                    },
+                )
+                .await
+        };
+        let thread_id = match resumed {
+            Ok(thread_id) => thread_id,
+            // An ambiguous resume may still activate a Goal. An inactive read
+            // issued before that resume settles cannot release its registration.
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
+        let result = self
+            .run_context_compaction(client, link, local_task_id, thread_id.clone())
+            .await;
+        // Settle the shared registration only from a current native Goal snapshot.
+        // The local registration also covers compaction if a Goal stops mid-action.
+        if registration.is_some() {
+            let projection = self.begin_goal_status_read(local_task_id);
+            if let Ok(snapshot) = client
+                .request("thread/goal/get", json!({"threadId": thread_id}))
+                .await
+            {
+                if let Some(goal) = snapshot.get("goal") {
+                    projection.apply_if_current(|| {
+                        self.hydrate_runtime_task_goal_status(
+                            local_task_id,
+                            string_field(goal, "status"),
+                        );
+                    });
+                }
+            }
+        }
+        result
+    }
+
+    async fn run_context_compaction(
+        &self,
+        client: &CodexAppServerClient,
+        link: &RuntimeTaskLink,
+        local_task_id: &str,
+        thread_id: String,
+    ) -> Result<Value, AppIpcError> {
         let previous_turn_id = match self
             .read_codex_recent_turns_with_client(client, &thread_id)
             .await
