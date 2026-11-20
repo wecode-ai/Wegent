@@ -248,10 +248,11 @@ pub(crate) async fn call(
                 &route.logical_device_id,
             ))
         })?;
-    if grant == TaskGrant::StandInRole {
-        if let Some(source_route) = role_task_source(method, user_id, &payload)? {
-            resolve_route(app, user_id, source_route).await?;
-        }
+    if grant == TaskGrant::StandInRole
+        && let Some(source_route) = role_task_source(method, user_id, &payload)
+            .map_err(|message| CallFailure::Rpc(rpc_error("permission_denied", message)))?
+    {
+        resolve_route(app, user_id, source_route).await?;
     }
 
     let payload = if method == RUNTIME_TASK_CREATE_METHOD {
@@ -331,12 +332,9 @@ fn role_task_source<'a>(
     method: &str,
     user_id: i64,
     payload: &'a Value,
-) -> Result<Option<&'a str>, CallFailure> {
+) -> Result<Option<&'a str>, &'static str> {
     if payload["userId"].as_i64() != Some(user_id) {
-        return Err(CallFailure::Rpc(rpc_error(
-            "permission_denied",
-            "The role task owner must match the connected account",
-        )));
+        return Err("The role task owner must match the connected account");
     }
     if !matches!(
         method,
@@ -348,12 +346,7 @@ fn role_task_source<'a>(
         .as_str()
         .filter(|source| !source.trim().is_empty())
         .map(Some)
-        .ok_or_else(|| {
-            CallFailure::Rpc(rpc_error(
-                "permission_denied",
-                "A current owned source device is required",
-            ))
-        })
+        .ok_or("A current owned source device is required")
 }
 
 fn runtime_request_envelope(

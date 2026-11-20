@@ -50,25 +50,34 @@ fn specialist_relay_requires_the_authenticated_owner_and_a_source_route_for_star
         role_task_source(STAND_IN_ROLE_START_METHOD, 23, &intent).unwrap(),
         Some("source-device")
     );
-    for payload in [
-        json!({"userId":24,"intent":{"sourceRoute":"source-device"}}),
-        json!({"userId":23,"intent":{"sourceRoute":"  "}}),
-        json!({"userId":23}),
+    for (payload, message) in [
+        (
+            json!({"userId":24,"intent":{"sourceRoute":"source-device"}}),
+            "The role task owner must match the connected account",
+        ),
+        (
+            json!({"userId":23,"intent":{"sourceRoute":"  "}}),
+            "A current owned source device is required",
+        ),
+        (
+            json!({"userId":23}),
+            "A current owned source device is required",
+        ),
     ] {
-        assert!(matches!(
+        assert_eq!(
             role_task_source(STAND_IN_ROLE_START_METHOD, 23, &payload),
-            Err(CallFailure::Rpc(error)) if error.code == "permission_denied"
-        ));
+            Err(message)
+        );
     }
     let branches = json!({"userId":23,"taskId":"original"});
     assert_eq!(
         role_task_source("runtime.stand_in.role_task.branches", 23, &branches).unwrap(),
         None
     );
-    assert!(matches!(
+    assert_eq!(
         role_task_source("runtime.stand_in.role_task.branches", 24, &branches),
-        Err(CallFailure::Rpc(error)) if error.code == "permission_denied"
-    ));
+        Err("The role task owner must match the connected account")
+    );
 }
 
 #[test]
