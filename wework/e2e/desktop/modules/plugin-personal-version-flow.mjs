@@ -11,6 +11,7 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import { refreshPluginInventory } from './plugin-inventory-state.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 import { verifyPersonalRecipientManagedInstall } from './plugin-personal-recipient-install.mjs'
@@ -149,16 +150,15 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
       await control.command('navigate', 'body', { value: '/plugins' })
       await control.command('waitFor', testId('plugins-search-input'))
       await control.command('click', testId('plugins-distribution-tab-personal'))
+      // The native fixture import bypasses the import dialog's catalog refresh.
+      if (alreadyShared) await refreshPluginInventory(control)
       await control.command('fill', testId('plugins-search-input'), { value: name })
       await control.command(
         'clickWhenEnabled',
         `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
       )
-      if (alreadyShared) {
-        // A published listing with an editable source on disk offers Install directly.
-        await control.command('clickWhenEnabled', testId(`plugin-detail-toggle-${previous.id}`))
-      } else {
-        await control.command('clickWhenEnabled', target)
+      await control.command('clickWhenEnabled', target)
+      if (!alreadyShared) {
         await control.command('waitFor', testId('personal-plugin-install-private-dialog'), {
           text: sourceVersion,
         })
