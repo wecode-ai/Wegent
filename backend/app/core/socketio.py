@@ -16,10 +16,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
 import socketio
-from socketio import packet as socketio_packet
 
 from app.core.config import settings
-from app.core.socketio_redis import ObservedRedisManager, _ack_reference
+from app.core.socketio_redis import ObservedRedisManager
 
 logger = logging.getLogger(__name__)
 
@@ -29,70 +28,6 @@ SOCKETIO_CORS_ORIGINS = "*"
 SOCKETIO_PING_INTERVAL = 25  # seconds
 SOCKETIO_PING_TIMEOUT = 20  # seconds
 SOCKETIO_MAX_HTTP_BUFFER_SIZE = 1000000  # 1MB
-
-
-class ObservedSocketIOServer(socketio.AsyncServer):
-    """Trace ACK ingress only in the desktop E2E diagnostic environment."""
-
-    def _trace_ack(
-        self,
-        stage: str,
-        eio_sid: str,
-        namespace: str | None,
-        callback_id: int | None,
-        packet_bytes: int | None,
-        packet_type: str | None = None,
-        error_type: str | None = None,
-    ) -> None:
-        sid = self.manager.sid_from_eio_sid(eio_sid, namespace or "/")
-        logger.info(
-            "Socket.IO E2E ACK stage=%s host_ref=%s eio_ref=%s sid_ref=%s "
-            "namespace=%s callback_id=%s packet_bytes=%s packet_type=%s error_type=%s",
-            stage,
-            _ack_reference(getattr(self.manager, "host_id", None)),
-            _ack_reference(eio_sid),
-            _ack_reference(sid),
-            namespace,
-            callback_id,
-            packet_bytes,
-            packet_type,
-            error_type,
-        )
-
-    async def _handle_eio_message(self, eio_sid: str, data: str | bytes) -> None:
-        if data[:1] in ("3", "6", b"3", b"6"):
-            try:
-                packet = self.packet_class(encoded_packet=data)
-            except Exception as error:
-                self._trace_ack(
-                    "packet-decode-error",
-                    eio_sid,
-                    None,
-                    None,
-                    len(data),
-                    None,
-                    type(error).__name__,
-                )
-            else:
-                if packet.packet_type in (
-                    socketio_packet.ACK,
-                    socketio_packet.BINARY_ACK,
-                ):
-                    self._trace_ack(
-                        "packet-in",
-                        eio_sid,
-                        packet.namespace,
-                        packet.id,
-                        len(data),
-                        socketio_packet.packet_names[packet.packet_type],
-                    )
-        await super()._handle_eio_message(eio_sid, data)
-
-    async def _handle_ack(
-        self, eio_sid: str, namespace: str | None, id: int, data: object
-    ) -> None:
-        self._trace_ack("decoded", eio_sid, namespace, id, None)
-        await super()._handle_ack(eio_sid, namespace, id, data)
 
 
 def create_socketio_server() -> socketio.AsyncServer:
@@ -107,12 +42,12 @@ def create_socketio_server() -> socketio.AsyncServer:
     # Create Redis manager for cross-worker communication
     redis_url = settings.REDIS_URL
 
-    ack_diagnostics = os.environ.get("WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS") == "true"
     try:
         # A half-open subscription must time out so redis-py can resubscribe.
         mgr = ObservedRedisManager(
             redis_url,
-            ack_diagnostics=ack_diagnostics,
+            ack_diagnostics=os.environ.get("WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS")
+            == "true",
             redis_options={
                 "client_name": settings.SOCKETIO_REDIS_CLIENT_NAME,
                 "socket_timeout": settings.SOCKETIO_REDIS_SOCKET_TIMEOUT,
@@ -129,8 +64,7 @@ def create_socketio_server() -> socketio.AsyncServer:
         mgr = None
 
     # Create Socket.IO server
-    server_type = ObservedSocketIOServer if ack_diagnostics else socketio.AsyncServer
-    sio = server_type(
+    sio = socketio.AsyncServer(
         async_mode="asgi",
         cors_allowed_origins=SOCKETIO_CORS_ORIGINS,
         ping_interval=SOCKETIO_PING_INTERVAL,

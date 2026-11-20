@@ -5,11 +5,44 @@
 
 use brz_socket_io::extract::SocketRef;
 use brz_socket_io::{EmitterError, EventEmitter, Server, SocketIo};
+use serde::de::{Error as _, IgnoredAny, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use super::{
     CHAT_NAMESPACE, EXECUTOR_NAMESPACE, RuntimeCallEvent, TERMINAL_NAMESPACE, TerminalRelay, fanout,
 };
+
+/// Keep Socket.IO's first-argument ACK contract without traversing escaped map
+/// keys through the parser's binary-placeholder visitor.
+struct RuntimeRpcAck(Value);
+
+impl<'de> Deserialize<'de> for RuntimeRpcAck {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct FirstArgument;
+
+        impl<'de> Visitor<'de> for FirstArgument {
+            type Value = RuntimeRpcAck;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a Socket.IO ACK with a JSON first argument")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut args: A) -> Result<Self::Value, A::Error> {
+                let raw: Box<serde_json::value::RawValue> = args
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("first ACK argument not found"))?;
+                while args.next_element::<IgnoredAny>()?.is_some() {}
+                serde_json::from_str(raw.get())
+                    .map(RuntimeRpcAck)
+                    .map_err(A::Error::custom)
+            }
+        }
+
+        // Socket.IO treats tuple types as the ACK argument list.
+        deserializer.deserialize_tuple(1, FirstArgument)
+    }
+}
 
 /// Roll back a newly joined room if executor admission fails or is cancelled.
 pub(crate) struct TerminalRoomBinding {
@@ -560,11 +593,16 @@ impl SocketEmitters {
         data: &Value,
         timeout: std::time::Duration,
     ) -> Result<Value, EmitterError> {
-        self.runtime_rpc
+        // The executor's RPC ACK is JSON. Decode its first argument as raw JSON
+        // before materializing the object: the Socket.IO parser's generic map
+        // visitor requires borrowed keys and rejects escaped workspace keys.
+        let ack: RuntimeRpcAck = self
+            .runtime_rpc
             .clone()
             .to(socket_id.to_owned())
             .request(data, timeout)
-            .await
+            .await?;
+        Ok(ack.0)
     }
 
     /// Deliver a device command and wait for its real acknowledgement.
