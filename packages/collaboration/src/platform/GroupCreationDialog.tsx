@@ -135,6 +135,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
             className="collaboration-group-create-close"
             data-testid="collaboration-group-create-close"
             aria-label={locale === 'zh-CN' ? '关闭' : 'Close'}
+            showTooltip={false}
             disabled={saving}
             onClick={() => {
               setFormOpen(false)
