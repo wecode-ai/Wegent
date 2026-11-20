@@ -188,6 +188,9 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   await expect(page.getByTestId('collaboration-issue-detail')).toHaveCount(0)
   await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-members').click()
+  await expect(page).toHaveURL(url => url.searchParams.get('section') === 'members', {
+    timeout: 10_000,
+  })
   await page.getByTestId('cloud-project-members-toggle').click()
   await page.getByTestId('cloud-member-search').fill(userName)
   await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {

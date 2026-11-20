@@ -34,12 +34,21 @@ impl RuntimeWorkRpcHandler {
         let (threads, mut complete) = self.read_codex_catalog(archived, limit).await;
         let stage_started_at = Instant::now();
         let closed_threads: HashSet<_> = self
-            .local_task_links(true)
-            .iter()
-            .flat_map(|link| {
-                crate::runtime_work::conversation_sessions::closed_sessions(link)
-                    .unwrap_or_default()
-            })
+            .store
+            .list_filtered_task_values(
+                true,
+                |link| {
+                    link.runtime_handle
+                        .get(crate::runtime_work::conversation_sessions::SESSIONS_KEY)
+                        .is_some()
+                },
+                |link| {
+                    crate::runtime_work::conversation_sessions::closed_sessions(link)
+                        .unwrap_or_default()
+                },
+            )
+            .into_iter()
+            .flatten()
             .map(|session| session.thread_id)
             .collect();
         for thread in threads {

@@ -2,7 +2,9 @@ import { performance } from 'node:perf_hooks'
 import { assert, readFile, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { runtimeTranscriptBlocks } from './runtime-transcript-evidence.mjs'
 
-export const MCP_URL_TIMEOUT_MS = 5_000
+// Manual URL cancellation shares this deadline with the real expiry case.
+// On CI the observed request-to-click interval exceeded five seconds.
+export const MCP_URL_TIMEOUT_MS = 12_000
 // The form stays pending across two full workbench reloads in the concurrent case.
 export const MCP_FORM_TIMEOUT_MS = 60_000
 
