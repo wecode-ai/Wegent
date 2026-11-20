@@ -3,6 +3,7 @@ import test from 'node:test'
 import { ConnectionRegistry } from '../plugin-runtime/connections.js'
 import { collectObservation } from '../plugin-runtime/connection-observations.js'
 import { createProvider } from './provider.js'
+import { bindGitProvider } from './runtime-bridge.js'
 
 const HEAD = 'a'.repeat(40)
 const OLD = new Date(Date.now() - 2 * 3600000).toISOString()
@@ -63,6 +64,7 @@ function fixture(platform) {
             ...state.nativeStatus,
           }
         else if (input.operation === 'checks') {
+          if (state.checkError) throw state.checkError
           const check = {
             id: 7,
             head_sha: HEAD,
@@ -354,26 +356,36 @@ test('GitHub aggregate merge status remains distinct from each successful check'
 test('PR waits observe a failure already present at activation and on later polls', async t => {
   const f = fixture('github')
   f.state.nativeStatus = { statusCheckRollup: { state: 'FAILURE' } }
+  const providerId = '@wegent/dsh-connection-git/github'
   const registry = new ConnectionRegistry({
     inventory: async () => [],
     satisfies: () => true,
-    context: () => f.ctx,
+    context: identity => identity,
   })
   t.after(
     await registry.register({ effect() {} }, new URL('./package.json', import.meta.url), {
-      github: createProvider('github'),
+      github: bindGitProvider(providerId, createProvider('github'), (method, input) => {
+        assert.equal(method, 'runtime.connections.git.read')
+        return f.ctx.git.read(input)
+      }),
       gitlab: createProvider('gitlab'),
     })
   )
   const source = {
     ...(await f.discover([pr(1)])),
-    providerId: '@wegent/dsh-connection-git/github',
+    providerId,
     enabledAfter: new Date().toISOString(),
   }
   const collect = (source, checkpoint) =>
     collectObservation(registry, source.providerId, { source, checkpoint })
   const waitSource = { ...source, observeCurrentStatus: true }
+  f.calls.length = 0
   const first = await collect(waitSource, {})
+  assert.deepEqual(
+    f.calls.map(call => call.operation),
+    ['change_request_status']
+  )
+  assert.equal(f.calls[0].repositoryId, source.id)
   const firstStatus = first.events.find(event => event.external.eventType === 'tracked.status')
   assert.equal(firstStatus?.external.payload.statusCheckRollup.state, 'FAILURE')
   assert.equal(firstStatus.external.payload.headRefOid, HEAD)
@@ -390,4 +402,50 @@ test('PR waits observe a failure already present at activation and on later poll
     historical.events.some(event => event.external.eventType === 'tracked.status'),
     false
   )
+})
+
+test('a later check timeout leaves the committed PR status readable', async () => {
+  const f = fixture('github')
+  f.state.changed = true
+  f.state.nativeStatus = { statusCheckRollup: { state: 'PENDING' } }
+  const source = {
+    ...(await f.discover([pr(1)])),
+    observeCurrentStatus: true,
+    enabledAfter: OLD,
+  }
+  f.calls.length = 0
+  const status = await f.step(source, {})
+  assert.equal(status.hasMore, false)
+  assert.equal(status.events[0].external.eventType, 'tracked.status')
+  assert.equal(status.resourceStates[0].data.statusCheckRollup.state, 'PENDING')
+  assert.deepEqual(
+    f.calls.map(call => call.operation),
+    ['change_request_status']
+  )
+
+  f.state.checkError = Object.assign(new Error('Timed out'), { code: 'request_timeout' })
+  await assert.rejects(f.step(source, status.nextCheckpoint), { code: 'request_timeout' })
+  assert.equal(
+    status.nextCheckpoint.resourceStates[status.resourceStates[0].topicId].data.headRefOid,
+    HEAD
+  )
+
+  delete f.state.checkError
+  const checks = await f.step(source, status.nextCheckpoint)
+  assert.equal(checks.hasMore, false)
+  assert.equal(checks.events[0].external.eventType, 'tracked.checks')
+  assert.equal(checks.events[0].external.payload.conclusion, 'failure')
+  assert.deepEqual(
+    f.calls.map(call => call.operation),
+    ['change_request_status', 'checks', 'checks']
+  )
+  assert.equal(f.calls[2].repositoryId, source.id)
+
+  const overdue = structuredClone(status.nextCheckpoint)
+  overdue.resourceStates[status.resourceStates[0].topicId].observedAt = OLD
+  f.state.checkError = Object.assign(new Error('Timed out'), { code: 'request_timeout' })
+  f.state.nativeStatus.statusCheckRollup.state = 'SUCCESS'
+  const refreshed = await f.step(source, overdue)
+  assert.equal(f.calls.at(-1).operation, 'change_request_status')
+  assert.equal(refreshed.resourceStates[0].data.statusCheckRollup.state, 'SUCCESS')
 })
