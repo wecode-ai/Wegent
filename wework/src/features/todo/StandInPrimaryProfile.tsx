@@ -158,7 +158,7 @@ export function StandInPrimaryProfile({
   return (
     <DialogSurface
       onClose={close}
-      active={!discard}
+      suspended={discard}
       render={
         <div
           ref={dialogRef}
