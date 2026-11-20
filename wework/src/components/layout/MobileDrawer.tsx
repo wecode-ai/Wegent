@@ -451,7 +451,7 @@ export function MobileDrawer({
                 </div>
                 <div className="space-y-1">
                   {chatTaskItems.length === 0 ? (
-                    runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                    runtimeWorkLoad && runtimeWork == null ? null : (
                       <div
                         data-testid="mobile-runtime-chat-empty"
                         className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
