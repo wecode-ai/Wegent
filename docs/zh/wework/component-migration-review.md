@@ -863,6 +863,11 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 - 协作活动流和会话状态复验通过。事项交接、分派活动、Stand-in 邮件和项目模板也在同轮通过。[协作活动流日志](https://github.com/wecode-ai/Wegent/actions/runs/44719861301/job/136234724890) · [事项与模板日志](https://github.com/wecode-ai/Wegent/actions/runs/44719861301/job/136234724846)
 - 后台队列再次运行至恢复和去重断言通过。后续执行归属并发的目标任务已完成，但首次查询在向渲染进程获取本地地址时超过原时限，完整场景仍待复验。[并发日志](https://github.com/wecode-ai/Wegent/actions/runs/44719861301/job/136234724920)
 
+## Linux 打包 Electron 复核（49e4339906）
+
+- 后台队列、暂停后恢复、按执行归属划分容量及并发完成验证通过，`runtime-task-queue` 整个检查点无断言错误。[队列日志](https://github.com/wecode-ai/Wegent/actions/runs/44723262421/job/136246226860)
+- 会话状态、协作活动流及本地小组互动通过。远程小组独立场景未能在 A 楼回合结束前观察到 B 楼发布回复，仍待复验。[协作活动流](https://github.com/wecode-ai/Wegent/actions/runs/44723262421/job/136246226655) · [本地小组](https://github.com/wecode-ai/Wegent/actions/runs/44723262421/job/136246226828) · [远程小组](https://github.com/wecode-ai/Wegent/actions/runs/44723262421/job/136246226697)
+
 ## 仍需真实验收的边界
 
 - 未逐一打开全部 234 个 source owner 或 45 个真实 Page。DSH 动态入口、委托表单、弹出工作台、进程视图、设备/插件/应用工作区仍需登录与原生 host 前提。
