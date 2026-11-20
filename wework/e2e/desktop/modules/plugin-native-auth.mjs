@@ -13,7 +13,6 @@ import { requestPluginExecutor, until } from './plugin-regression-fixture.mjs'
 const manageSites = '[data-testid="plugin-connection-manage-group:sites"]'
 const sourceAction = '[data-testid="plugin-connector-source-continue"]'
 const detailError = '[data-testid="plugin-detail-action-error"]'
-const confirmation = '[data-testid="confirmation-request-dialog"]'
 const logoutStepMs = 3_000
 
 async function openNativePluginDetail(control, installedId) {
@@ -41,25 +40,31 @@ async function withLogoutConfirmation(control, resultDir, run) {
   const main = (await client({ action: 'targets' })).find(
     target => target.type === 'window' && target.url.startsWith(mainOrigin + '/wework/app/')
   )
-  assert.ok(main, 'The main renderer must be available to observe Native logout')
+  assert.ok(main, 'The main renderer must be available for Native logout confirmation')
   const page = (method, params) => client({ action: 'command', target: main.id, method, params })
   const confirm = async beforeAccept => {
+    const dialog = '[data-testid="confirmation-request-dialog"][role="alertdialog"]'
     await control.command('clickWhenEnabled', sourceAction, { timeoutMs: logoutStepMs })
-    const message = await control.command('waitFor', confirmation, {
-      visible: true,
-      timeoutMs: logoutStepMs,
-    })
     try {
-      assert.match(message, /确定退出「[^\n]+」登录？/)
+      const message = await control.command('waitFor', dialog, {
+        text: '登录？',
+        visible: true,
+        timeoutMs: logoutStepMs,
+      })
+      assert.match(message, /确定退出「.+」登录？/, 'Native logout must ask for confirmation')
       await beforeAccept?.()
     } catch (error) {
-      await control.command('click', `${confirmation} [data-testid="confirmation-request-cancel"]`)
+      await control
+        .command('click', `${dialog} [data-testid="confirmation-request-cancel"]`)
+        .catch(() => {})
       throw error
     }
     await control.command(
       'clickWhenEnabled',
-      `${confirmation} [data-testid="confirmation-request-confirm"]`,
-      { timeoutMs: logoutStepMs }
+      `${dialog} [data-testid="confirmation-request-confirm"]`,
+      {
+        timeoutMs: logoutStepMs,
+      }
     )
   }
   try {

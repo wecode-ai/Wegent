@@ -3,9 +3,29 @@
 
 use super::{json, string_argument, TaskRuntime, Value};
 use crate::task_runtime::{store::task_provider, TaskProviderKind, TaskRuntimeError};
+use std::time::Duration;
 
 #[cfg(test)]
 mod tests;
+
+pub(super) async fn send_collaboration(request: reqwest::RequestBuilder) -> Result<Value, String> {
+    // The member can start speaking before its running activity is recorded.
+    // Retry only the backend's explicit readiness response with the same message ID.
+    for delay_ms in [100, 250, 500, 1_000, 2_000, 4_000] {
+        let response = request
+            .try_clone()
+            .ok_or("Collaboration comment request cannot be replayed")?
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        if response.status() != reqwest::StatusCode::TOO_EARLY {
+            return super::backend_json(response).await;
+        }
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+    }
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    super::backend_json(response).await
+}
 
 pub(super) fn create_schema() -> Value {
     json!({
