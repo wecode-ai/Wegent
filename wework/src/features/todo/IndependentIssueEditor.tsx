@@ -358,7 +358,7 @@ export function IndependentIssueEditor({
                 value={draft.description}
                 onChange={event => set('description', event.target.value)}
                 rows={2}
-                className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
+                className={`w-full resize-y rounded-lg px-3 py-2 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring ${shareDraft ? 'border-0 bg-muted/40' : 'border border-border bg-background'}`}
               />
             </label>
             <CollapsibleRoot className="group min-w-0">

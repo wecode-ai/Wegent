@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { verifyIssueCreationColumns } from '../modules/independent-issue-draft.mjs'
 import { switchPersonalPluginAccount } from '../modules/plugin-personal-uninstall-flow.mjs'
+import {
+  seedNativeTerminalHistory,
+  TERMINAL_HISTORY_TURN_COUNT,
+} from '../modules/terminal-history-search.mjs'
 import {
   assistantMessage,
   createSse,
@@ -32,6 +38,9 @@ export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workspacePath,
+  executorHome,
+  codexSqliteHome,
+  restartDesktopApp,
 }) {
   let cloud, colleague, colleagueToken, outsiderToken, project, restrictedProject
   async function request(
@@ -534,6 +543,34 @@ export function createDesktopScenario({
       await wait(control, selector('cloud-todo-detail-close'), { visible: false })
       await wait(control, selector('task-linked-issues'), { visible: true })
       await captureScreenshot(control, '10-task-share-back-to-conversation.png')
+
+      const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const sourceTaskId = snapshot.workbench.currentRuntimeTask.taskId
+      await restartDesktopApp(async () => {
+        const indexPath = join(executorHome, 'runtime-work', 'index.json')
+        const index = JSON.parse(await readFile(indexPath, 'utf8'))
+        const task = Object.values(index.tasks).find(item => item.local_task_id === sourceTaskId)
+        assert.ok(task?.thread_id, 'The completed source conversation must have native history')
+        seedNativeTerminalHistory(codexSqliteHome, task.thread_id)
+        delete task.runtime_handle?.completedTranscriptMessages
+        delete task.runtime_handle?.completedTranscriptThreadId
+        await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+      })
+      const sourceRow = selector(`runtime-local-task-row-${sourceTaskId}`)
+      await wait(control, sourceRow, { visible: true })
+      await click(control, sourceRow)
+      await wait(control, assistant, {
+        text: `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 1}`,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await click(control, share)
+      await wait(control, selector('task-issue-share-excerpt-content-0'), { text: prompt })
+      await captureScreenshot(control, '10a-task-share-real-history-start.png')
+      await click(control, selector('task-issue-share-all-excerpts'))
+      await wait(control, '[data-testid="task-issue-share-all-excerpts"][aria-expanded="true"]')
+      await wait(control, selector('task-issue-share-excerpts'), { text: 'Native search prompt' })
+      await click(control, selector('independent-issue-close'))
+
       await switchPersonalPluginAccount(control, { ...cloud, authToken: colleagueToken })
       const badge = selector('workspace-tab-issue-assignment-count')
       await wait(control, badge, { text: '0' })

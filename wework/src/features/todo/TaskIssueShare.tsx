@@ -59,20 +59,29 @@ function readShareHistory(read: ReadSharePage, tail: TaskIssueShareDraft['excerp
       throw new Error('Conversation history is unavailable')
     return page
   }
-  const start = readPage('start', 16)
+  const start = (async () => {
+    let page = await readPage('start', 16)
+    const excerpts = shareExcerpts(projectRuntimePaneTranscript(page).messages)
+    while (excerpts.length < 2 && page.hasMoreAfter && page.afterCursor) {
+      const cursor = page.afterCursor
+      page = await readPage(cursor, 16)
+      if (page.afterCursor === cursor) throw new Error('Transcript cursor did not advance')
+      excerpts.push(...shareExcerpts(projectRuntimePaneTranscript(page).messages))
+    }
+    return { page, excerpts }
+  })()
   const combine = (head: TaskIssueShareDraft['excerpts']) => [
     ...new Map([...head, ...tail].map(excerpt => [excerpt.id, excerpt])).values(),
   ]
-  const first = start.then(page =>
-    combine(shareExcerpts(projectRuntimePaneTranscript(page).messages))
-  )
+  const first = start.then(({ excerpts }) => combine(excerpts))
   let all: Promise<TaskIssueShareDraft['excerpts']> | undefined
   return {
     first,
     all: () =>
       (all ??= (async () => {
-        let page = await start
-        const excerpts = shareExcerpts(projectRuntimePaneTranscript(page).messages)
+        const initial = await start
+        let page = initial.page
+        const excerpts = [...initial.excerpts]
         while (page.hasMoreAfter && page.afterCursor) {
           const cursor = page.afterCursor
           page = await readPage(cursor, 60)

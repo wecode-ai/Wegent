@@ -43,7 +43,7 @@ export function TaskIssueShareExcerpts({
       aria-label={t('taskIssueShare.excerpts')}
       className="min-w-0"
     >
-      <div className="flex flex-wrap gap-x-2 px-2 pt-1">
+      <div className="flex flex-wrap gap-x-2">
         <Button
           variant="unstyled"
           showTooltip={false}
@@ -83,7 +83,7 @@ export function TaskIssueShareExcerpts({
             )
           })}
       </div>
-      <div className="grid max-h-48 gap-1.5 overflow-y-auto px-2 pb-1 pt-2">
+      <div className="grid max-h-48 gap-1.5 overflow-y-auto py-1">
         {displayed.map((excerpt, index) => {
           const checked = selected.includes(excerpt.id)
           const fromUser = excerpt.role === 'user'
@@ -97,8 +97,16 @@ export function TaskIssueShareExcerpts({
               aria-pressed={checked}
               data-testid="task-issue-share-excerpt"
               onClick={() => toggle(excerpt.id)}
-              className={`flex min-h-11 min-w-0 items-start gap-2 px-3 py-2 text-left text-sm hover:bg-muted md:min-h-8 ${fromUser ? 'max-w-[85%] justify-self-end rounded-2xl bg-muted' : 'rounded-lg'}`}
+              className={`group flex min-h-11 min-w-0 items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted aria-pressed:bg-muted md:min-h-8 ${fromUser ? 'max-w-[90%] justify-self-end bg-muted/60' : 'w-full'}`}
             >
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-text-secondary group-hover:border-text-primary'}`}
+              >
+                {checked && (
+                  <Check data-testid="task-issue-share-excerpt-check" className="size-3" />
+                )}
+              </span>
               <span className="sr-only">{t(`taskIssueShare.${excerpt.role}`)}</span>
               <span
                 data-testid={`task-issue-share-excerpt-content-${index}`}
@@ -106,13 +114,6 @@ export function TaskIssueShareExcerpts({
               >
                 {excerpt.content}
               </span>
-              {checked && (
-                <Check
-                  data-testid="task-issue-share-excerpt-check"
-                  aria-hidden="true"
-                  className="mt-0.5 size-4 shrink-0"
-                />
-              )}
             </Button>
           )
         })}
@@ -125,7 +126,7 @@ export function TaskIssueShareExcerpts({
         aria-expanded={showAll}
         disabled={loading}
         onClick={() => (showAll ? setShowAll(false) : void withAll(() => setShowAll(true)))}
-        className="flex min-h-11 w-full items-center justify-center gap-1 border-t border-border px-2 py-1 text-xs text-text-secondary hover:bg-muted md:min-h-8"
+        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 py-1 text-xs text-text-secondary before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border hover:text-text-primary md:min-h-8"
       >
         {t(
           loading

@@ -89,22 +89,26 @@ export function TaskIssueShareFiles({
         showTooltip={false}
         type="button"
         data-testid={selectionId}
+        aria-label={file.name}
         aria-pressed={selected}
         onClick={toggle}
-        className="relative block w-full min-w-0 rounded-md text-left hover:bg-muted/50 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-ring"
+        className="group relative block w-full min-w-0 overflow-hidden rounded-lg text-left ring-inset aria-pressed:ring-2 aria-pressed:ring-focus keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-ring"
       >
         <FileThumbnail file={file} />
-        {selected && (
-          <span className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-md bg-text-primary text-background">
+        <span
+          aria-hidden="true"
+          className={`absolute bottom-2 left-2 z-10 grid size-5 place-items-center rounded border ${selected ? 'border-text-primary bg-text-primary text-background' : 'border-text-secondary bg-background'}`}
+        >
+          {selected && (
             <Check
               data-testid="task-issue-share-selected-file"
               className="size-4"
               aria-hidden="true"
             />
-          </span>
-        )}
+          )}
+        </span>
         <span
-          className={`block truncate py-1 pl-1 text-xs ${file instanceof File ? 'min-h-11 pr-12 md:min-h-0 md:pr-8' : 'pr-1'}`}
+          className={`pointer-events-none absolute inset-x-0 bottom-0 truncate bg-background py-2 pl-9 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 ${file instanceof File ? 'pr-12 md:pr-8' : 'pr-2'}`}
           title={file.name}
         >
           {file.name}
@@ -181,7 +185,7 @@ export function TaskIssueShareFiles({
         />
       </div>
       {(children || conversationFiles.length > 0 || localFiles.length > 0) && (
-        <div className="grid min-w-0 gap-2 rounded-lg border border-border p-2">
+        <div className="grid min-w-0 gap-3">
           {children}
           {(conversationFiles.length > 0 || localFiles.length > 0) && (
             <div data-testid="task-issue-share-files">
