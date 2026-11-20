@@ -569,14 +569,24 @@ where
                 super::create::seam::dispatch_responses_device(&app, &mut request, &device_route)
                     .await
             {
-                if super::create::seam::is_subtask_not_dispatchable(&error)
-                    && publish_committed_device_cancellation(
-                        &app,
+                if super::create::seam::is_subtask_not_dispatchable(&error) {
+                    if publish_committed_device_terminal(&app, request.task_id, request.subtask_id)
+                        .await
+                    {
+                        return;
+                    }
+                    finalize_executor_failure(
+                        &consumer,
                         request.task_id,
                         request.subtask_id,
+                        request.user_id,
+                        request.message_id,
+                        (
+                            "Assistant subtask is no longer dispatchable",
+                            "EXECUTOR_DISPATCH_FAILED",
+                        ),
                     )
-                    .await
-                {
+                    .await;
                     return;
                 }
                 tracing::warn!(
@@ -590,10 +600,10 @@ where
     }
 }
 
-/// Publish the already committed cancellation when a supervisor loses the
-/// dispatch race to the cancel endpoint. The terminal path is idempotent, so a
-/// device callback that won concurrently keeps its committed outcome.
-pub(crate) async fn publish_committed_device_cancellation(
+/// Publish a terminal outcome that committed before device submission. The
+/// terminal path is idempotent, so a device callback that won concurrently
+/// keeps its committed outcome.
+pub(crate) async fn publish_committed_device_terminal(
     app: &AppState,
     task_id: i64,
     subtask_id: i64,
@@ -605,6 +615,64 @@ pub(crate) async fn publish_committed_device_cancellation(
     let Some(redis) = app.redis.as_ref() else {
         return false;
     };
+    let (_, subtask_table) =
+        match completion::resolve_tables(Some(app), crate::internal_callback::tables(app), task_id)
+            .await
+        {
+            Ok(tables) => tables,
+            Err(error) => {
+                tracing::warn!(%error, task_id, subtask_id, "device terminal table read failed");
+                return false;
+            }
+        };
+    match completion::read_terminal_result(&app.mysql, &subtask_table, task_id, subtask_id).await {
+        Ok(Some(terminal)) => {
+            let event_type = match terminal.status.as_str() {
+                "COMPLETED" => EventType::Done,
+                "FAILED" => EventType::Error,
+                "CANCELLED" => EventType::Cancelled,
+                _ => return false,
+            };
+            let mut event = ExecutionEvent::new(event_type, task_id, subtask_id);
+            event.error_code = terminal
+                .result
+                .as_ref()
+                .and_then(|result| result.get("error_type"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            event.result = terminal.result;
+            event.error = terminal.error;
+            return match crate::internal_callback::session::publish_callback_event(
+                redis, subtask_id, &event,
+            )
+            .await
+            {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        task_id,
+                        subtask_id,
+                        "device terminal callback replay failed"
+                    );
+                    false
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                task_id,
+                subtask_id,
+                "device terminal status read failed"
+            );
+            return false;
+        }
+    }
+
+    // A cancellation intent can win before the PENDING/RUNNING transition.
+    // Commit and publish that canonical cancellation when no producer started.
     let task = match app.task_store.get_task(task_id).await {
         Ok(task) => task,
         Err(error) => {
@@ -630,7 +698,11 @@ pub(crate) async fn publish_committed_device_cancellation(
         Ok(()) => {
             // The terminal write is idempotent. Replaying the callback closes the
             // race where a producer committed the cancellation without a stream reader.
-            match crate::internal_callback::publish_terminal_callback(redis, &event).await {
+            match crate::internal_callback::session::publish_callback_event(
+                redis, subtask_id, &event,
+            )
+            .await
+            {
                 Ok(_) => true,
                 Err(error) => {
                     tracing::warn!(

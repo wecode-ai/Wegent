@@ -499,17 +499,41 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     verify_non_chat_cancel_liveness(writer, &app).await?;
     verify_chat_cancel_waits_for_runtime_then_falls_back(writer, &app).await?;
     verify_cancel_callback_order(writer, &app).await?;
-    verify_device_cancel_dispatch_race(writer, &app).await?;
+    verify_device_dispatch_terminal_race(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
 }
 
-/// A device dispatch that loses the PENDING/RUNNING transition race to the
-/// cancel endpoint must publish the committed cancellation instead of waiting
-/// forever for a producer that never started.
-async fn verify_device_cancel_dispatch_race(
+/// A device dispatch that loses the PENDING/RUNNING transition race must
+/// publish the already committed terminal outcome instead of waiting forever.
+async fn verify_device_dispatch_terminal_race(
     writer: &MysqlService,
     app: &crate::state::AppState,
 ) -> anyhow::Result<()> {
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    for (kind, status, event_type) in [("done", "COMPLETED", "done"), ("error", "FAILED", "error")]
+    {
+        reset_callback_state(writer, "RUNNING").await?;
+        terminal_callback(app, kind, "committed outcome")
+            .await
+            .unwrap();
+        assert_eq!(
+            callback_statuses(writer).await?,
+            (status.into(), status.into())
+        );
+
+        // No producer will publish again. The current subscription must still
+        // receive the committed terminal even when the delivery idempotency
+        // marker was written by the original callback.
+        let mut subscription = redis.subscribe("callback:channel:43").await?;
+        assert!(crate::responses::dispatch::publish_committed_device_terminal(app, 12, 43).await);
+        let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
+            .await??
+            .expect("replayed terminal callback");
+        let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
+        assert_eq!(event["type"], event_type);
+        subscription.unsubscribe().await?;
+    }
+
     reset_callback_state(writer, "RUNNING").await?;
     assert!(
         crate::socketio::chat_control::mark_cancelling(app, 12, 43)
@@ -521,7 +545,7 @@ async fn verify_device_cancel_dispatch_race(
         ("CANCELLING".into(), "RUNNING".into())
     );
 
-    assert!(crate::responses::dispatch::publish_committed_device_cancellation(app, 12, 43).await);
+    assert!(crate::responses::dispatch::publish_committed_device_terminal(app, 12, 43).await);
     assert_eq!(
         callback_statuses(writer).await?,
         ("CANCELLED".into(), "CANCELLED".into())
