@@ -3077,6 +3077,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         attributeNames?: string[]
         waitForMatch?: boolean
         includeSelection?: boolean
+        clickSelector?: string
       }
       if (
         options.attributeNames !== undefined &&
@@ -3091,6 +3092,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           options.attributeNames ?? [],
           options.includeSelection === true
         )
+      if (options.clickSelector) {
+        const trigger = findDesktopControlElements(options.clickSelector)[0]
+        if (!trigger || !desktopControlElementEnabled(trigger)) {
+          throw new Error(`Unable to activate "${options.clickSelector}" before measuring`)
+        }
+        const observation = waitForDesktopControlElement(command, snapshot)
+        trigger.click()
+        return observation
+      }
       return options.waitForMatch === true
         ? waitForDesktopControlElement(command, snapshot)
         : snapshot()
