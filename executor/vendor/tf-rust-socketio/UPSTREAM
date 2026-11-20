@@ -17,3 +17,10 @@ One upstream documentation line also has trailing whitespace removed.
 ACK registration also prunes expired callbacks and releases failed sends in
 both clients. The asynchronous binary reader returns IncompletePacket at EOF.
 Executor transport tests cover captured-state release and transport-close delivery.
+
+Asynchronous clients also track their reader lifetime. Background dispatch
+clients do not retain the caller's lifetime; explicit callback client clones do.
+Disconnect releases the Engine.IO client and generator even after namespace
+rejection or failed close sends. Failed/cancelled setup and disconnect use a
+bounded cleanup guard. The vendor's test_async_lifetime suite uses local
+WebSockets, including a peer that ignores Engine.IO Close, without external services.

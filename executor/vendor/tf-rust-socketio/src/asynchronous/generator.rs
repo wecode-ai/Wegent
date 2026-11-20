@@ -28,6 +28,14 @@ impl<T> Stream for StreamGenerator<T> {
 }
 
 impl<T> StreamGenerator<T> {
+    /// Release the stream's captured transport even while socket handles live.
+    pub(crate) async fn clear(&self)
+    where
+        T: Send + 'static,
+    {
+        *self.inner.lock().await = Box::pin(futures_util::stream::empty());
+    }
+
     pub(crate) fn new(generator_stream: Generator<Result<T>>) -> Self {
         StreamGenerator {
             inner: Arc::new(Mutex::new(generator_stream)),

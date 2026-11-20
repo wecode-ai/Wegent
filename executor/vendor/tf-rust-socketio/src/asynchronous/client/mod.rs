@@ -4,3 +4,4 @@ pub(crate) mod builder;
 mod callback;
 #[allow(clippy::module_inception)]
 pub(crate) mod client;
+mod lifetime;
