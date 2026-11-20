@@ -96,6 +96,8 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(10_000),
+    }).catch(cause => {
+      throw new Error(`${method} ${path} failed`, { cause })
     })
     assert.ok(response.ok, `${method} ${path}: ${response.status}`)
     return response.json()
@@ -105,10 +107,9 @@ export function createDesktopScenario({ workbenchReadyTimeoutMs }) {
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', 'POST')
+      // The admin endpoint hashes passwords synchronously on the server.
       participants = []
-      // The admin endpoint hashes passwords synchronously. Avoid queuing all
-      // ten requests behind one another under the same per-request deadline.
-      for (let index = 0; index < 10; index += 1) {
+      for (let index = 0; index < 10; index++) {
         participants.push(
           await request('/api/admin/users', 'POST', {
             user_name: `project-invitee-${process.pid}-${index}`,

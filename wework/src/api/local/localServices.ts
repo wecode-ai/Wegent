@@ -2359,7 +2359,7 @@ export function createRuntimeWorkApiFromIpc(
         )
         const elapsedMs = Math.round(nowMs() - loadStartedAt)
         if (elapsedMs > 5000) {
-          console.warn(
+          console.info(
             `[Wework] Slow local runtime inventory ${JSON.stringify({
               elapsedMs,
               identityMs: Math.round(identityReadyAt - loadStartedAt),
