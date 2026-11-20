@@ -22,19 +22,22 @@ The shared `focus` control command establishes the focus prerequisite. In a back
 
 ## State ownership
 
-| Data                                       | Source of truth                                | Notes                                                                              |
-| ------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Project names, roots, and kinds            | Codex global state                             | Covers legacy roots, multi-root `local-projects`, and `remote-projects`            |
-| Project order, pins, and appearance        | Codex global state                             | Uses `project-order`, `pinned-project-ids`, and `project-appearances`              |
-| Task title, timestamps, and runtime status | Codex app-server + Wework remote summary cache | Task bodies are not cached; cached runtime status is always stopped                |
-| Task grouping, order, and pins             | Codex global state                             | Uses assignments, workspace hints, per-project thread order, and pinned thread IDs |
-| Expansion and scroll preferences           | Wework localStorage                            | UI-only preferences that do not affect Codex                                       |
+| Data                                       | Source of truth                                | Notes                                                                            |
+| ------------------------------------------ | ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| Project names, roots, and kinds            | Codex global state                             | Covers legacy roots, multi-root `local-projects`, and `remote-projects`          |
+| Project order, pins, and appearance        | Codex global state                             | Uses `project-order`, `pinned-project-ids`, and `project-appearances`            |
+| Task title, timestamps, and runtime status | Codex app-server + Wework remote summary cache | Task bodies are not cached; cached runtime status is always stopped              |
+| Task grouping and pins                     | Codex global state                             | Uses assignments, workspace hints, and pinned thread IDs                         |
+| Conversation recency                       | Wework local state + Codex app-server          | Wework records `recencyAt`; executor snapshots own `updatedAt` and runtime state |
+| Expansion and scroll preferences           | Wework localStorage                            | UI-only preferences that do not affect Codex                                     |
 
 Project UI ids normally derive from the state-owning device and project key. Resolved remote references use the target device and project key to preserve UI identity across synchronization; existing references retain their UI id during reconciliation. Data merging follows the project identity rules below rather than comparing numeric UI ids.
 
 A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
 
-New project tasks that have not entered the manual order appear before existing manually ordered tasks; multiple unordered tasks are sorted by their latest activity. Tasks with a manual order continue to follow `sidebarOrder`. This keeps an optimistic task without `sidebarOrder` at the top immediately, then preserves its position after Executor returns the persisted order instead of dropping it to the bottom.
+Ordinary conversations in a project sort only by `recencyAt`, falling back to `updatedAt` and then `createdAt`, newest first. Creating a conversation or sending a user message updates local `recencyAt` immediately; executor snapshots continue to own `updatedAt`. Legacy `threadIds`, task-level `sidebarOrder`, and other Codex fields remain untouched but do not affect Wework ordering.
+
+`queuePosition` controls execution order only. The sidebar may show “Queued / position N”, but the row keeps its activity position. Current, running, unread, and waiting conversations only force visibility: when outside the default preview, the list expands through that conversation's real activity position.
 
 The project list must not depend on the array order of any individual local, cloud, or cached response. Executor derives `projectSidebarOrder` from `project-order`; Wework preserves it in project summaries and the offline cache, then reapplies it after merging runtime work sources. Projects without persisted order keep their relative merge order, while ordered projects do not move because of task activity, request completion timing, or device reconnection.
 
@@ -183,6 +186,6 @@ Removing a cloud or remote project while its device is offline is local to the c
 - When the Cloud Work entry reports `Available`, clicking the row opens the dedicated Cloud work page. Its trailing settings action still opens Connections settings.
 - Clicking a project only expands or collapses its tasks and does not change the center pane.
 - Clicking a task or creating a project task changes the main content.
-- Projects, pinned projects, pinned tasks, and tasks within one project support semantic drag ordering.
-- Tasks can only be reordered within their current project. There is no cross-project drop target, and dragging never changes `thread-project-assignments`.
+- Projects, pinned projects, and pinned tasks support semantic drag ordering; ordinary project conversations do not.
+- Ordinary conversations can still be dragged to the workbench to create a split, but they do not exchange sidebar positions or write task-level `sidebarOrder`.
 - Ellipsis menus and context menus share the same project or task action set.

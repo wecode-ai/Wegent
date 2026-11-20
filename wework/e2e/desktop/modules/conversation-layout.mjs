@@ -369,7 +369,7 @@ async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) 
   const taskRow = `[data-testid="${taskRowTestId}"]`
   const renameMenuItem = `[data-testid="runtime-local-task-menu-rename-${taskId}"]`
   const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
-  const sortable = `[data-sidebar-sortable-id]:has(${taskRow})`
+  const draggable = `[data-pane-drag-id]:has(${taskRow})`
 
   await control.command('contextMenu', taskRow)
   await control.command('waitFor', renameMenuItem, {
@@ -384,7 +384,7 @@ async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) 
   const originalTitle = await control.command('getValue', renameInput)
   await control.command('press', renameInput, { key: 'Space' })
   assert.equal(
-    await control.command('getAttribute', sortable, { value: 'data-dragging' }),
+    await control.command('getAttribute', draggable, { value: 'data-dragging' }),
     '',
     'Typing a space in the conversation rename input started sidebar dragging'
   )
@@ -997,9 +997,7 @@ async function waitForNewTaskRow(
 async function assertNewTaskPrecedesExistingTask(control, newTaskRowTestId, existingTaskRowTestId) {
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   const candidateListTestIds = snapshot.testIds.filter(
-    testId =>
-      testId === 'runtime-chat-task-sortable-list' ||
-      testId.startsWith('project-runtime-task-sortable-')
+    testId => testId === 'runtime-chat-task-list' || testId.startsWith('project-runtime-task-list-')
   )
 
   for (const listTestId of candidateListTestIds) {

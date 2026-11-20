@@ -19,7 +19,6 @@ import type {
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
-  RuntimeProjectTaskReorderRequest,
   RuntimeTaskPinRequest,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -132,7 +131,6 @@ export interface DesktopSidebarProps {
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
-  onReorderRuntimeProjectTasks?: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
   onSetRuntimeTaskPinned?: (data: RuntimeTaskPinRequest) => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>

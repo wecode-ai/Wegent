@@ -130,18 +130,23 @@ question and answer submission flow to check that DOM composition events cause n
 stale value writes, focus loss, or input remounts. This automation does not verify
 the operating system's candidate window.
 
-## New Conversations and Manual Sidebar Order
+## Sidebar Conversation Recency
 
-Standalone conversations and project tasks share one ordering rule: when a manual
-order exists, new conversations absent from that order appear before ordered tasks,
-while ordered tasks retain their user-defined relative order. The executor returns
-`sidebarOrder` only for tasks included in the manual order. Refreshing or reloading
-the list must not append new conversations to the bottom. Model selection,
-reasoning effort, and prompt references do not change this rule.
+Standalone conversations and ordinary project conversations sort only by activity,
+newest first. `recencyAt` falls back to `updatedAt`, then `createdAt`. Creating a
+conversation or sending a user message updates local `recencyAt` immediately, before
+the executor response. Executor snapshots continue to own `updatedAt`. Refreshes,
+reloads, and offline caches must not restore an obsolete manual order.
 
-When a conversation is first dragged before another conversation, the persisted
-order must include both the moved conversation and its target. Otherwise, the
-target is treated as unordered and the drag result is lost.
+Task-level `sidebarOrder` does not affect Wework ordering, and ordinary project
+conversations no longer support drag reordering. Codex compatibility fields such as
+`threadIds` and `sidebarOrder` remain unchanged. Pinned conversations and projects
+keep their existing user-defined order.
+
+Current, running, unread, and waiting conversations only force visibility. When one
+is outside the default preview, the list expands through its real activity position
+instead of appending it before “Show more”. `queuePosition` controls execution order
+only; the sidebar may show the queue state but must not reorder rows from it.
 
 ## Latest Turn Identity
 
@@ -566,8 +571,8 @@ does not complete a turn. A synthetic done status would survive native binding, 
 streaming, and prematurely mark collaboration member activities successful.
 
 A queued marker does not establish that optional queuePosition metadata has rendered.
-Desktop E2E waits for the position element before reading it, then preserves numeric and
-ordering assertions. Waiting for the queued icon is not an equivalent prerequisite.
+Desktop E2E waits for the position element before reading it, then preserves its numeric
+assertion. The sidebar row order still follows activity.
 
 The streaming ingress reads only required metadata rather than copying the complete task
 and completed history for each text chunk. The lifecycle reducer filters unrelated events

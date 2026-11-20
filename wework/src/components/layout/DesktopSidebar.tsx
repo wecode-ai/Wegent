@@ -138,7 +138,6 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
     onCreatePermanentWorktree,
     onReorderRuntimeProjects,
     onSetRuntimeProjectAppearance,
-    onReorderRuntimeProjectTasks,
     openProjectEditor,
     onArchiveProjectConversations,
     onOpenLocalHarnessSession,
@@ -502,6 +501,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                             devices={devices}
                             task={task}
                             projectName={projectWork?.project.name}
+                            dragActivator
                             selected={
                               getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)
                                 ?.active ||
@@ -588,7 +588,6 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                             onReorderRuntimeProjects={onReorderRuntimeProjects}
                             onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                             onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-                            onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
                             onSetRuntimeTaskPinned={
                               onSetRuntimeTaskPinned
                                 ? setRuntimeTaskPinnedOptimistically
@@ -726,7 +725,6 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                               onReorderRuntimeProjects={onReorderRuntimeProjects}
                               onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                               onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-                              onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
                               onSetRuntimeTaskPinned={
                                 onSetRuntimeTaskPinned
                                   ? setRuntimeTaskPinnedOptimistically
@@ -815,7 +813,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                         )
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
-                          testId="runtime-chat-task-sortable-list"
+                          testId="runtime-chat-task-list"
                           className="space-y-0.5"
                           items={regularChatTaskItems}
                           getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -830,30 +828,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                             }),
                             title: task.title,
                           })}
-                          canDrag={({ task }) =>
-                            Boolean(getRuntimeTaskThreadId(task) && onReorderRuntimeProjectTasks)
-                          }
-                          onMove={async (moved, before) => {
-                            const movedThreadId = getRuntimeTaskThreadId(moved.task)
-                            if (!movedThreadId || !onReorderRuntimeProjectTasks) {
-                              throw new Error('Runtime task ordering is unavailable')
-                            }
-                            if (before && before.workspace.deviceId !== moved.workspace.deviceId) {
-                              throw new Error(
-                                'Tasks from different devices cannot be reordered together'
-                              )
-                            }
-                            const beforeThreadId = before
-                              ? getRuntimeTaskThreadId(before.task)
-                              : null
-                            await onReorderRuntimeProjectTasks({
-                              deviceId: moved.workspace.deviceId,
-                              projectKey: 'chats',
-                              threadId: movedThreadId,
-                              beforeThreadId,
-                              insertAtEnd: beforeThreadId === null,
-                            })
-                          }}
+                          sortable={false}
                           renderItem={({ workspace, task }) => (
                             <RuntimeTaskRow
                               nowMs={nowMs}
@@ -861,6 +836,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                               devices={devices}
                               task={task}
                               projectName={null}
+                              dragActivator
                               selected={
                                 getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)
                                   ?.active ||

@@ -145,6 +145,12 @@ describe('runtime message archival', () => {
         { onError, onQueued }
       )
       await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+      expect(dispatch).toHaveBeenCalledWith({
+        type: 'runtime_task_activity_recorded',
+        address,
+        at: expect.any(String),
+      })
+      dispatch.mockClear()
       archive()
 
       if (outcome === 'thrown') response.reject(new Error('Transport unavailable'))

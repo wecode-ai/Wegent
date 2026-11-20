@@ -218,6 +218,11 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
       task: RuntimeTaskSummary
     }
+  | {
+      type: 'runtime_task_activity_recorded'
+      address: RuntimeTaskAddress
+      at: string | number
+    }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
@@ -423,7 +428,7 @@ function mergeRuntimeTasks(
       const nextTask = nextById.get(task.taskId)
       if (nextTask) {
         return shouldReplaceRuntimeTaskProjection(task, nextTask)
-          ? mergeRuntimeTaskSnapshotMetadata(nextTask, task)
+          ? preserveRuntimeTaskActivity(task, mergeRuntimeTaskSnapshotMetadata(nextTask, task))
           : mergeRuntimeTaskListState(task, nextTask)
       }
       if (
@@ -444,12 +449,31 @@ function mergeRuntimeTasks(
   return merged
 }
 
+function preserveRuntimeTaskActivity(
+  local: RuntimeTaskSummary,
+  incoming: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  const localActivity = runtimeTaskActivityTime(local)
+  if (localActivity <= runtimeTaskActivityTime(incoming)) return incoming
+  return { ...incoming, recencyAt: local.recencyAt ?? localActivity }
+}
+
+function runtimeTaskActivityTime(task: RuntimeTaskSummary): number {
+  const value = task.recencyAt ?? task.updatedAt ?? task.createdAt
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const timestamp = value ? Date.parse(value) : 0
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
 function mergeRuntimeTaskListState(
   current: RuntimeTaskSummary,
   next: RuntimeTaskSummary
 ): RuntimeTaskSummary {
+  const currentActivity = runtimeTaskActivityTime(current)
+  const nextActivity = runtimeTaskActivityTime(next)
   return {
     ...mergeRuntimeTaskSnapshotMetadata(current, next),
+    ...(nextActivity > currentActivity ? { recencyAt: next.recencyAt ?? nextActivity } : {}),
     ...(next.threadId ? { threadId: next.threadId } : {}),
     ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
     ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
@@ -1493,6 +1517,13 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, action.task),
+      }
+    case 'runtime_task_activity_recorded':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
+          recencyAt: action.at,
+        }),
       }
     case 'runtime_tasks_archived':
       return {

@@ -161,7 +161,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
       notice: undefined,
     }
     setQueuedMessagesPaused(false)
-    await sendQueuedMessage(combinedMessage)
+    await sendQueuedMessage(combinedMessage, { recordActivity: Boolean(submittedInput) })
   }
 
   const clearQueuedMessages = () => {

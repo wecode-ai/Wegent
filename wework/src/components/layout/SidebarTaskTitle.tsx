@@ -6,6 +6,7 @@ interface SidebarTaskTitleProps {
   text: string
   testId: string
   textTestId?: string
+  dragActivator?: boolean
   shimmerTestId?: string
   className?: string
 }
@@ -14,6 +15,7 @@ export function SidebarTaskTitle({
   text,
   testId,
   textTestId,
+  dragActivator = false,
   shimmerTestId,
   className,
 }: SidebarTaskTitleProps) {
@@ -35,7 +37,7 @@ export function SidebarTaskTitle({
   return (
     <span
       ref={bindTitle}
-      data-sidebar-drag-activator={textTestId ? '' : undefined}
+      data-sidebar-drag-activator={dragActivator ? '' : undefined}
       data-testid={testId}
       className={cn('runtime-task-title relative min-w-0 flex-1', className)}
     >

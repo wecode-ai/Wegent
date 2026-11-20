@@ -7,6 +7,7 @@ import {
   mergeRuntimeTaskSnapshotMetadata,
   isRuntimeTurnRunningStatus,
 } from './projection'
+import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
 function reduceNativeSnapshot(
@@ -71,6 +72,13 @@ export function reduceRuntimeTaskLifecycle(
         expectedExecutorRunning: null,
       }
     case 'executor_snapshot_received': {
+      if (
+        state.executionPhase === 'idle' &&
+        state.task &&
+        isRuntimeTaskRecencyOnlyChange(state.task, event.task)
+      ) {
+        return state
+      }
       if (event.task.executionState || state.task?.executionState) {
         return reduceNativeSnapshot(state, event)
       }
@@ -420,6 +428,19 @@ export function reduceRuntimeTaskLifecycle(
     case 'marked_unread':
       return state.unread ? state : { ...state, unread: true }
   }
+}
+
+function isRuntimeTaskRecencyOnlyChange(
+  current: RuntimeTaskSummary,
+  incoming: RuntimeTaskSummary
+): boolean {
+  if (current.recencyAt === incoming.recencyAt) return false
+  const withoutRecency = (task: RuntimeTaskSummary) => {
+    const next = { ...task }
+    delete next.recencyAt
+    return next
+  }
+  return dequal(withoutRecency(current), withoutRecency(incoming))
 }
 
 function isQueuedTaskStatus(status: string | null | undefined): boolean {

@@ -970,6 +970,7 @@ export function OwnedWorkbenchProvider({
     stableUpgradeDevice: upgradeDevice,
     ...createWorkbenchProjectOperations(projectActions),
     stableSendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
+    stableRecordRuntimeTaskActivity: runtimeMessaging.recordRuntimeTaskActivity,
     stableInterruptAndSendRuntimePaneMessage: runtimeMessaging.interruptAndSendRuntimePaneMessage,
     stableSendRuntimePaneGuidance: runtimeMessaging.sendRuntimePaneGuidance,
     stableCompactRuntimePaneTask: runtimeMessaging.compactRuntimePaneTask,

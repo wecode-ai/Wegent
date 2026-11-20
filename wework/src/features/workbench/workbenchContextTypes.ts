@@ -193,6 +193,7 @@ export interface RuntimePaneActionOptions {
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
+  recordActivity?: boolean
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }
@@ -464,6 +465,7 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  recordRuntimeTaskActivity?: (address: RuntimeTaskAddress) => void
   interruptAndSendRuntimePaneMessage: (
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions

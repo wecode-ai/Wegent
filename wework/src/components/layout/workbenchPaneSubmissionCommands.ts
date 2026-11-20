@@ -44,6 +44,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
       codeCommentContexts,
       compactRuntimePaneTask,
       currentRuntimeTask,
+      recordRuntimeTaskActivity,
       goalDraftActive,
       input,
       inputRevision,
@@ -203,6 +204,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         if (paneIsBusy) {
           syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
           setGoalDraftActive(false)
+          recordRuntimeTaskActivity?.(currentRuntimeTask)
           setQueuedMessages(messages => [...messages, queuedMessage])
           return true
         }
@@ -513,6 +515,7 @@ export function createPaneSubmissionCommands(sessionOwner: PaneCommandContext) {
         }
         return sent
       }
+      if (currentRuntimeTask) recordRuntimeTaskActivity?.(currentRuntimeTask)
       setQueuedMessages(messages => [...messages, queuedMessage])
       clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
       if (options.guideWhenBusy) {

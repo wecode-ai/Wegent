@@ -130,6 +130,7 @@ export function RuntimeTaskRow({
   priorityReason,
   priorityLayout = false,
   statusInIndent = false,
+  dragActivator = false,
   splitGroup,
 }: {
   nowMs?: number
@@ -159,6 +160,7 @@ export function RuntimeTaskRow({
   priorityReason?: RuntimeTaskPriorityReason
   priorityLayout?: boolean
   statusInIndent?: boolean
+  dragActivator?: boolean
   splitGroup?: WorkbenchSplitGroupMembership
 }) {
   const { t } = useTranslation('common')
@@ -392,7 +394,7 @@ export function RuntimeTaskRow({
             workspacePath={taskWorkspacePath ? shortenSidebarHomePath(taskWorkspacePath) : null}
             hostLabel={hostLabel}
             hostId={hostId && hostId !== hostLabel ? hostId : null}
-            updatedLabel={task.updatedAt ? formatRelativeSidebarTime(task.updatedAt, nowMs) : null}
+            updatedLabel={formatRelativeSidebarTime(getRuntimeTaskTime(task), nowMs)}
             branchWarning={hasRuntimeTaskBranchWarning(task)}
             worktree={worktreeTask}
           />
@@ -456,6 +458,7 @@ export function RuntimeTaskRow({
                 text={task.title}
                 testId={`runtime-local-task-title-${task.taskId}`}
                 textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+                dragActivator={dragActivator}
                 shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
                 className="flex-none"
               />
@@ -478,6 +481,7 @@ export function RuntimeTaskRow({
               text={task.title}
               testId={`runtime-local-task-title-${task.taskId}`}
               textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+              dragActivator={dragActivator}
               shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
             />
           )}

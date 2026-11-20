@@ -25,77 +25,21 @@ export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
   return task.status?.trim().toLowerCase() === 'queued'
 }
 
+export function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
+  // Explicit interaction metadata is authoritative in the lifecycle store and may
+  // already reflect a newer reply than the list snapshot.
+  if (task.interactionStatus !== undefined) return false
+  const status = task.status?.trim().toLowerCase() ?? ''
+  return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
+    status.includes(value)
+  )
+}
+
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  const value = task.recencyAt ?? task.updatedAt ?? task.createdAt ?? task.completedAt
+  const value = task.recencyAt ?? task.updatedAt ?? task.createdAt
   if (value == null) return 0
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp
-}
-
-function compareRuntimeTasks(
-  left: RuntimeTaskSummary,
-  right: RuntimeTaskSummary,
-  useSidebarOrder: boolean
-) {
-  const leftOrder = left.sidebarOrder
-  const rightOrder = right.sidebarOrder
-  if (useSidebarOrder && leftOrder != null && rightOrder != null && leftOrder !== rightOrder) {
-    return leftOrder - rightOrder
-  }
-  if (useSidebarOrder && leftOrder != null && rightOrder == null) return 1
-  if (useSidebarOrder && leftOrder == null && rightOrder != null) return -1
-  return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
-}
-
-function getRuntimeTaskQueuePosition(task: RuntimeTaskSummary) {
-  if (!isRuntimeTaskQueued(task)) return null
-  if (!Number.isInteger(task.queuePosition) || Number(task.queuePosition) <= 0) return null
-  return Number(task.queuePosition)
-}
-
-function sortQueuedTasksWithinRecencyOrder<T>(
-  items: T[],
-  getTask: (item: T) => RuntimeTaskSummary,
-  getQueueKey: (item: T) => string
-) {
-  const sorted = [...items].sort((left, right) =>
-    compareRuntimeTasks(getTask(left), getTask(right), getQueueKey(left) === getQueueKey(right))
-  )
-  const queues = new Map<string, T[]>()
-
-  for (const item of sorted) {
-    const task = getTask(item)
-    if (getRuntimeTaskQueuePosition(task) === null) continue
-    const key = getQueueKey(item)
-    const queue = queues.get(key) ?? []
-    queue.push(item)
-    queues.set(key, queue)
-  }
-
-  for (const queue of queues.values()) {
-    queue.sort(
-      (left, right) =>
-        (getRuntimeTaskQueuePosition(getTask(left)) ?? 0) -
-        (getRuntimeTaskQueuePosition(getTask(right)) ?? 0)
-    )
-  }
-
-  const queueOffsets = new Map<string, number>()
-  return sorted.map(item => {
-    if (getRuntimeTaskQueuePosition(getTask(item)) === null) return item
-    const key = getQueueKey(item)
-    const offset = queueOffsets.get(key) ?? 0
-    queueOffsets.set(key, offset + 1)
-    return queues.get(key)?.[offset] ?? item
-  })
-}
-
-export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
-  return sortQueuedTasksWithinRecencyOrder(
-    tasks,
-    task => task,
-    () => 'local'
-  )
 }
 
 export function getRuntimeTaskRuntimeLabel(runtime: string) {
@@ -123,10 +67,8 @@ export function getRuntimeChatSidebarTaskItems(
 }
 
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
-  return sortQueuedTasksWithinRecencyOrder(
-    items,
-    item => item.task,
-    item => item.workspace.deviceId
+  return [...items].sort(
+    (left, right) => getRuntimeTaskSortTime(right.task) - getRuntimeTaskSortTime(left.task)
   )
 }
 
@@ -137,35 +79,28 @@ export function getVisibleRuntimeSidebarTaskItems(
   isAlwaysVisibleTask?: (item: RuntimeSidebarTaskItem) => boolean
 ) {
   const { pinnedItems, unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
-  const visibleUnpinnedItems = unpinnedItems.slice(
-    0,
-    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
-  )
-  const mostRecentItem = unpinnedItems.reduce<RuntimeSidebarTaskItem | undefined>(
-    (latest, item) =>
-      !latest || getRuntimeTaskSortTime(item.task) > getRuntimeTaskSortTime(latest.task)
-        ? item
-        : latest,
-    undefined
-  )
-  const alwaysVisibleItems = unpinnedItems.filter(
-    item =>
-      item === mostRecentItem ||
+  const previewCount = Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+  let visibleCount = previewCount
+  for (const [index, item] of unpinnedItems.entries()) {
+    if (
       item.task.taskId === alwaysVisibleTaskId ||
       isAlwaysVisibleTask?.(item) ||
       isRuntimeTaskQueued(item.task)
-  )
-  for (const item of alwaysVisibleItems) {
-    if (!visibleUnpinnedItems.some(visibleItem => visibleItem.task.taskId === item.task.taskId)) {
-      visibleUnpinnedItems.push(item)
+    ) {
+      visibleCount = Math.max(visibleCount, index + 1)
     }
   }
-  return [...pinnedItems, ...visibleUnpinnedItems]
+  return [...pinnedItems, ...unpinnedItems.slice(0, visibleCount)]
 }
 
-export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, totalCount: number) {
+export function getNextRuntimeSidebarTaskVisibleLimit(
+  currentLimit: number,
+  totalCount: number,
+  visibleCount = currentLimit
+) {
   return Math.min(
-    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, currentLimit) + RUNTIME_PROJECT_TASK_EXPAND_STEP,
+    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, currentLimit, visibleCount) +
+      RUNTIME_PROJECT_TASK_EXPAND_STEP,
     totalCount
   )
 }

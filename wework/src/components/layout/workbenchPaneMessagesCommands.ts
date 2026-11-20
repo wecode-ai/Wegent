@@ -543,10 +543,13 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     })
   }
 
-  const sendQueuedMessage = async (message: RuntimePaneQueuedMessage) => {
+  const sendQueuedMessage = async (
+    message: RuntimePaneQueuedMessage,
+    options?: { recordActivity?: boolean }
+  ) => {
     const { queueController } = sessionOwner.frame
 
-    await queueController?.send(message)
+    await queueController?.send(message, options)
   }
 
   const loadFullTranscriptForExport = async () => {

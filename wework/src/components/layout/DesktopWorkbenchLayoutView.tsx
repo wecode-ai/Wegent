@@ -73,7 +73,6 @@ export function DesktopWorkbenchLayoutView({
     onReorderRuntimeProjects,
     onSetRuntimeProjectPinned,
     onSetRuntimeProjectAppearance,
-    onReorderRuntimeProjectTasks,
     onSetRuntimeTaskPinned,
     onGetDeviceHomeDirectory,
     onGetProjectWorkspaceRoot,
@@ -229,7 +228,6 @@ export function DesktopWorkbenchLayoutView({
       onReorderRuntimeProjects={onReorderRuntimeProjects}
       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
       onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-      onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
       onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onListDeviceDirectories={onListDeviceDirectories}

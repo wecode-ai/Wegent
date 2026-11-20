@@ -155,6 +155,21 @@ describe('RuntimeConversationQueueController', () => {
     }
   })
 
+  test('records activity when new input explicitly resumes the queue', async () => {
+    const store = idleStore(taskA)
+    const send = acceptingTransport(store)
+    const item = message('resumed-with-input')
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+    const { controller } = attach(taskA, store, send)
+
+    await controller.send(item, { recordActivity: true })
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Object),
+      expect.objectContaining({ recordActivity: true })
+    )
+  })
+
   test('never replays an unconfirmed send when an idle replacement returns no receipt', async () => {
     const store = idleStore(taskA)
     const send = acceptingTransport(store)
@@ -669,6 +684,7 @@ describe('RuntimeConversationQueueController', () => {
     detach()
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[1]?.recordActivity).toBe(false)
     expect(controller.busyBlocks.has(item.id)).toBe(true)
     expect(getRuntimeConversationQueuedMessages(taskA)[0].status).toBe('queued')
 
@@ -691,6 +707,7 @@ describe('RuntimeConversationQueueController', () => {
     store.executorSettled(taskA)
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(2)
+    expect(send.mock.calls[1]?.[1]?.recordActivity).toBe(false)
     expect(getRuntimeConversationQueuedMessages(taskA)[0].status).toBe('failed')
     expect(controller.busyBlocks.has(item.id)).toBe(false)
 

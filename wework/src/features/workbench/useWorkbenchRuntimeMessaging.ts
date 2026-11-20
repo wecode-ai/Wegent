@@ -450,6 +450,17 @@ export function useWorkbenchRuntimeMessaging({
     ]
   )
 
+  const recordRuntimeTaskActivity = useCallback(
+    (address: RuntimeTaskAddress) => {
+      dispatch({
+        type: 'runtime_task_activity_recorded',
+        address,
+        at: new Date().toISOString(),
+      })
+    },
+    [dispatch]
+  )
+
   const blockRuntimeSendForUnavailableModel = useCallback(
     (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): boolean => {
       if (
@@ -525,6 +536,7 @@ export function useWorkbenchRuntimeMessaging({
         // Replies settle an existing native request and do not select a model.
         if (!userInputResponse && blockRuntimeSendForUnavailableModel(request.address, options))
           return false
+        if (options?.recordActivity !== false) recordRuntimeTaskActivity(request.address)
         if (optimisticUserMessage) {
           applyRuntimeConversationAction(request.address, {
             type: 'user_added',
@@ -634,6 +646,7 @@ export function useWorkbenchRuntimeMessaging({
       executorClient,
       lifecycleStore,
       prepareRuntimeSendRequest,
+      recordRuntimeTaskActivity,
       refreshWorkLists,
       reportError,
     ]
@@ -654,6 +667,7 @@ export function useWorkbenchRuntimeMessaging({
           reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
           return false
         }
+        recordRuntimeTaskActivity(request.address)
         lifecycleStore.sendRequested(outboundRequest.address)
         sendRequested = true
         const response =
@@ -678,6 +692,7 @@ export function useWorkbenchRuntimeMessaging({
       executorClient,
       lifecycleStore,
       prepareRuntimeSendRequest,
+      recordRuntimeTaskActivity,
       refreshWorkLists,
       reportError,
     ]
@@ -695,6 +710,7 @@ export function useWorkbenchRuntimeMessaging({
           modelId: outboundRequest.modelId,
         })
         if (!prepared) return false
+        recordRuntimeTaskActivity(request.address)
         lifecycleStore.sendRequested(outboundRequest.address)
         sendRequested = true
         const response = await executorClient.runtime.rollbackRuntimeTask(outboundRequest)
@@ -733,6 +749,7 @@ export function useWorkbenchRuntimeMessaging({
       executorClient,
       lifecycleStore,
       prepareRuntimeSendRequest,
+      recordRuntimeTaskActivity,
       refreshWorkLists,
     ]
   )
@@ -740,6 +757,7 @@ export function useWorkbenchRuntimeMessaging({
   const sendRuntimePaneGuidance = useCallback(
     async (request: RuntimeGuidanceRequest): Promise<RuntimePaneGuidanceResult> => {
       try {
+        recordRuntimeTaskActivity(request.address)
         let outboundRequest = request
         if (request.attachments?.length) {
           const preparedAttachments = await prepareRuntimeAttachmentsForDevice(
@@ -800,7 +818,14 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
     },
-    [executorClient, refreshWorkLists, reportError, services.attachmentApi, state.devices]
+    [
+      executorClient,
+      recordRuntimeTaskActivity,
+      refreshWorkLists,
+      reportError,
+      services.attachmentApi,
+      state.devices,
+    ]
   )
 
   const compactRuntimePaneTask = useCallback(
@@ -2124,6 +2149,7 @@ export function useWorkbenchRuntimeMessaging({
     createEphemeralRuntimeTask,
     createProjectRuntimeTask,
     pauseCurrentResponse,
+    recordRuntimeTaskActivity,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
   }

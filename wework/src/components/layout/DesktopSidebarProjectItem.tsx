@@ -20,7 +20,6 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
-import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 
@@ -45,7 +44,6 @@ import type {
   RuntimeProjectAppearanceRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
-  RuntimeProjectTaskReorderRequest,
   RuntimeTaskPinRequest,
   RuntimeTaskAddress,
 } from '@/types/api'
@@ -121,7 +119,6 @@ export function ProjectItem({
   onCreatePermanentWorktree,
   onSetRuntimeProjectPinned,
   onSetRuntimeProjectAppearance,
-  onReorderRuntimeProjectTasks,
   onSetRuntimeTaskPinned,
   onRenameProject,
   onOpenRuntimeTask,
@@ -158,7 +155,6 @@ export function ProjectItem({
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
-  onReorderRuntimeProjectTasks?: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
   onSetRuntimeTaskPinned?: (data: RuntimeTaskPinRequest) => Promise<void>
   onRenameProject: (project: ProjectWithTasks, projectWork?: RuntimeProjectWork) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -227,16 +223,23 @@ export function ProjectItem({
         prioritizedRuntimeTaskItems,
         runtimeTaskVisibleLimit,
         currentRuntimeTask?.taskId,
-        ({ workspace, task }) =>
-          lifecycleSnapshot.runningTaskKeys.has(
-            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+        ({ workspace, task }) => {
+          const lifecycleKey = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+          return (
+            lifecycleSnapshot.runningTaskKeys.has(lifecycleKey) ||
+            waitingTaskKeys.has(lifecycleKey) ||
+            isRuntimeTaskWaiting(task) ||
+            unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
           )
+        }
       ),
     [
       currentRuntimeTask?.taskId,
       lifecycleSnapshot.runningTaskKeys,
       prioritizedRuntimeTaskItems,
       runtimeTaskVisibleLimit,
+      unreadTaskKeys,
+      waitingTaskKeys,
     ]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
@@ -633,7 +636,7 @@ export function ProjectItem({
             ) : (
               <>
                 <SidebarSortableList
-                  testId={`project-runtime-task-sortable-${project.id}`}
+                  testId={`project-runtime-task-list-${project.id}`}
                   className="space-y-0.5"
                   items={visibleRuntimeTaskItems}
                   getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -648,35 +651,7 @@ export function ProjectItem({
                     }),
                     title: task.title,
                   })}
-                  canDrag={({ task }) =>
-                    Boolean(
-                      getRuntimeTaskThreadId(task) &&
-                      runtimeProjectWork?.project.key &&
-                      onReorderRuntimeProjectTasks
-                    )
-                  }
-                  onMove={async (moved, before) => {
-                    const projectKey = runtimeProjectWork?.project.key
-                    const deviceId =
-                      runtimeProjectWork?.project.stateDeviceId || moved.workspace.deviceId
-                    const movedThreadId = getRuntimeTaskThreadId(moved.task)
-                    if (!projectKey || !movedThreadId || !onReorderRuntimeProjectTasks) {
-                      throw new Error('Runtime task ordering is unavailable')
-                    }
-                    const firstHiddenTask = prioritizedRuntimeTaskItems.at(
-                      visibleRuntimeTaskItems.length
-                    )?.task
-                    const beforeThreadId =
-                      (before ? getRuntimeTaskThreadId(before.task) : null) ||
-                      (firstHiddenTask ? getRuntimeTaskThreadId(firstHiddenTask) : null)
-                    await onReorderRuntimeProjectTasks({
-                      deviceId,
-                      projectKey,
-                      threadId: movedThreadId,
-                      beforeThreadId,
-                      insertAtEnd: beforeThreadId === null,
-                    })
-                  }}
+                  sortable={false}
                   renderItem={({ workspace, task }) => (
                     <RuntimeTaskRow
                       nowMs={nowMs}
@@ -684,6 +659,7 @@ export function ProjectItem({
                       devices={devices}
                       task={task}
                       projectName={runtimeProjectWork?.project.name ?? project.name}
+                      dragActivator
                       selected={
                         getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)?.active ||
                         isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
@@ -725,7 +701,8 @@ export function ProjectItem({
                           setRuntimeTaskVisibleLimit(currentLimit =>
                             getNextRuntimeSidebarTaskVisibleLimit(
                               currentLimit,
-                              prioritizedRuntimeTaskItems.length
+                              prioritizedRuntimeTaskItems.length,
+                              visibleRuntimeTaskItems.length
                             )
                           )
                         }

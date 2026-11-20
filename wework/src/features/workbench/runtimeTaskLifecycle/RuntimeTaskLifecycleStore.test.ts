@@ -61,6 +61,30 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('confirms a pending turn from a recency-only running snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('recency-running-snapshot')
+    const runningTask = task({
+      running: true,
+      status: 'running',
+      turnStatus: 'running',
+      runtimeHandle: { lastTurnId: 'turn-1' },
+      recencyAt: 100,
+    })
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncRuntimeTask(address, runningTask)
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+
+    store.syncRuntimeWork(runtimeWork({ ...runningTask, recencyAt: 200 }))
+
+    expect(store.getTask(address)).toMatchObject({
+      turn: { phase: 'streaming' },
+      task: { recencyAt: 200 },
+    })
+  })
+
   test.each(['done', 'failed', 'cancelled'])(
     'settles a recovered %s historical turn with the latest transcript outcome',
     historicalStatus => {

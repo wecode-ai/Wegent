@@ -22,19 +22,22 @@ Wework 桌面端复用 Codex App 的侧栏状态语义。项目和实时任务�
 
 ## 状态所有权
 
-| 数据                     | 唯一来源                               | 说明                                                                      |
-| ------------------------ | -------------------------------------- | ------------------------------------------------------------------------- |
-| 项目名称、根目录和类型   | Codex global state                     | 支持传统目录项目、`local-projects` 多目录项目和 `remote-projects`         |
-| 项目顺序、置顶和外观     | Codex global state                     | 使用 `project-order`、`pinned-project-ids`、`project-appearances`         |
-| 任务标题、时间和运行状态 | Codex app-server + Wework 远程摘要缓存 | Wework 不缓存任务正文；离线缓存中的运行状态始终为停止                     |
-| 任务归属、顺序和置顶     | Codex global state                     | 使用 assignment、workspace hint、项目内 thread order 和 pinned thread IDs |
-| 展开状态和滚动偏好       | Wework localStorage                    | 仅保存不影响 Codex 的纯 UI 偏好                                           |
+| 数据                     | 唯一来源                               | 说明                                                              |
+| ------------------------ | -------------------------------------- | ----------------------------------------------------------------- |
+| 项目名称、根目录和类型   | Codex global state                     | 支持传统目录项目、`local-projects` 多目录项目和 `remote-projects` |
+| 项目顺序、置顶和外观     | Codex global state                     | 使用 `project-order`、`pinned-project-ids`、`project-appearances` |
+| 任务标题、时间和运行状态 | Codex app-server + Wework 远程摘要缓存 | Wework 不缓存任务正文；离线缓存中的运行状态始终为停止             |
+| 任务归属和置顶           | Codex global state                     | 使用 assignment、workspace hint 和 pinned thread IDs              |
+| 会话最近活动             | Wework 本地状态 + Codex app-server     | Wework 更新 `recencyAt`；执行器快照维护 `updatedAt` 和运行状态    |
+| 展开状态和滚动偏好       | Wework localStorage                    | 仅保存不影响 Codex 的纯 UI 偏好                                   |
 
 项目的 UI 标识通常由“状态所属设备 + project key”计算。能够解析目标的远程入口使用目标项目的设备与 key，以保持同步前后的 UI 标识；已有入口在合并中保留自己的 UI 标识。数据合并采用下文的项目身份规则，不比较 UI 数字 ID。
 
 任务的 UI 标识由“状态所属设备 + task ID”组成。实时列表刷新只按这个标识合并任务；标题、工作区路径和运行时类型都不是身份字段。不同任务可以具有相同标题，例如连续发送两个只有附件且没有文本的任务，因此前端和 Executor 都不能用这些展示字段推断任务重复。
 
-项目内尚未进入手动顺序的新任务排在已有手动排序任务之前；多个未排序任务按最近活动时间排列。已有手动顺序的任务继续按 `sidebarOrder` 稳定显示。这样，乐观创建阶段尚未获得 `sidebarOrder` 的新任务会立即出现在项目顶部，Executor 返回持久化顺序后不会落到列表底部。
+项目内普通会话统一按 `recencyAt`（缺失时依次使用 `updatedAt`、`createdAt`）从新到旧排列。新会话创建和已有会话收到用户消息时，Wework 先更新本地的 `recencyAt`，`updatedAt` 仍由执行器快照维护。旧的 `threadIds`、任务级 `sidebarOrder` 等 Codex 字段保留原值，但不参与 Wework 排序。
+
+`queuePosition` 只表示排队任务的执行先后，侧栏仍可显示“排队中 / 第 N 个”，列表位置不随它变化。当前、运行中、未读和等待中的会话只保证可见；超出默认预览范围时，列表展开到该会话的真实最近活动位置。
 
 项目列表同样不能依赖某一次本地、云端或缓存请求的数组顺序。Executor 按 `project-order` 生成 `projectSidebarOrder`，Wework 将其保存在项目摘要和离线缓存中，并在合并多个 runtime work 来源后重新按该字段排序。没有持久化顺序的项目保持合并时的相对顺序；已排序项目不会因任务活跃时间、请求完成先后或设备重连而移动。
 
@@ -180,6 +183,6 @@ Wework 向本地 Executor 同步远程项目描述时，每个非空批次对其
 - “云端工作”显示“可用”时，点击整行会打开独立的云端工作页面；行尾设置按钮仍打开“连接”设置。
 - 点击项目只展开或收起任务，不改变中间内容区。
 - 点击任务或新建项目任务才改变主内容。
-- 项目、置顶项目、置顶任务和项目内任务支持语义化拖拽排序。
-- 任务只允许在同一项目内排序，不提供跨项目放置目标，也不通过拖拽修改 `thread-project-assignments`。
+- 项目、置顶项目和置顶任务支持语义化拖拽排序；项目内普通会话不支持拖拽排序。
+- 普通会话仍可拖到工作台创建分屏，但不会在侧栏内交换位置，也不写入任务级 `sidebarOrder`。
 - 项目和任务的省略号菜单与右键菜单使用同一动作集合。

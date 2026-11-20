@@ -444,6 +444,10 @@ may reveal on hover/focus but must remain keyboard accessible.
   a short label, may start pointer sorting after at least `6px` of movement.
   Trailing actions and metadata must remain outside the activator. Preserve
   keyboard sorting on the sortable container.
+- Ordinary project conversations sort only by latest activity and are not
+  reorderable. Projects and pinned tasks keep their semantic sorting. A task row
+  may still be dragged to the workbench to create a split; that drag never changes
+  sidebar order.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
 - The desktop shell uses surface elevation. The title bar and task/conversation
   sidebar share one continuous base surface. In the 2026-11-15 Codex capture,

@@ -21,6 +21,7 @@ import {
   getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
 } from '@/components/layout/workbenchPaneIdentity'
+import { getRuntimeSidebarTaskItems } from '@/components/layout/runtimeTaskSidebarHelpers'
 import {
   getArchivedCleanupError,
   resetArchivedConversationsSettingsStateForTest,
@@ -1178,6 +1179,18 @@ function RuntimeRunningTasksProbe() {
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const runningTaskIds = [...lifecycle.runningTaskKeys].map(key => key.split('\0')[1])
   return <span data-testid="runtime-running-task-ids">{runningTaskIds.join('|') || 'none'}</span>
+}
+
+function RuntimeTaskRecencyProbe() {
+  const workspaces =
+    useWorkbench().state.runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []
+  return (
+    <span data-testid="runtime-task-recency-order">
+      {getRuntimeSidebarTaskItems(workspaces)
+        .map(item => item.task.taskId)
+        .join('|')}
+    </span>
+  )
 }
 
 const TOP_LEVEL_STREAM_ADDRESS: RuntimeTaskAddress = {
@@ -17072,6 +17085,105 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+  })
+
+  test('moves a conversation immediately when its reply is queued behind a running turn', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  available: true,
+                  workspacePath: '/workspace/project-alpha',
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: true,
+                      recencyAt: '2026-01-01T00:00:00.000Z',
+                    },
+                    {
+                      taskId: 'runtime-b',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime B',
+                      runtime: 'codex',
+                      running: false,
+                      recencyAt: '2026-02-01T00:00:00.000Z',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 2,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+        <RuntimeTaskRecencyProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'queued-reply-turn',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+    expect(screen.getByTestId('runtime-task-recency-order')).toHaveTextContent(
+      'runtime-b|runtime-a'
+    )
+
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-recency-order')).toHaveTextContent(
+        'runtime-a|runtime-b'
+      )
+    )
   })
 
   test('waits for the queued turn to start and drains the next item while another task is open', async () => {

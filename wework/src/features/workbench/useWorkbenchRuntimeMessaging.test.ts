@@ -46,10 +46,11 @@ function messagingFixture(
   const send = vi.fn().mockResolvedValue({ accepted: true })
   const compact = vi.fn().mockResolvedValue({ accepted: true })
   const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+  const dispatch = vi.fn()
   type Options = Parameters<typeof useWorkbenchRuntimeMessaging>[0]
   const options: Options = {
     state: { ...initialWorkbenchState, currentRuntimeTask: address },
-    dispatch: vi.fn(),
+    dispatch,
     executorClient: {
       runtime: { cancelRuntimeTask: cancel, sendRuntimeMessage: send, compactRuntimeTask: compact },
     } as unknown as Options['executorClient'],
@@ -74,7 +75,7 @@ function messagingFixture(
     refreshWorkLists: refresh,
   }
   const { result } = renderHook(() => useWorkbenchRuntimeMessaging(options))
-  return { address, store, cancel, send, compact, refresh, messaging: result.current }
+  return { address, store, cancel, send, compact, refresh, dispatch, messaging: result.current }
 }
 
 function cacheAsyncQuestion(
@@ -173,6 +174,36 @@ test('compaction renders only its native turn and remains active after an early 
     await sending
     store.remove(address)
     clearRuntimeConversationCacheForTests()
+  }
+})
+
+test('records activity before an existing conversation reply completes', async () => {
+  const { address, store, send, dispatch, messaging } = messagingFixture()
+  let finishSend!: (value: { accepted: boolean }) => void
+  send.mockReturnValueOnce(
+    new Promise(resolve => {
+      finishSend = resolve
+    })
+  )
+  const sending = messaging.sendRuntimePaneMessage({
+    address,
+    message: 'Continue',
+    modelId: 'test-model',
+  })
+  try {
+    await waitFor(() => expect(send).toHaveBeenCalledOnce())
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'runtime_task_activity_recorded',
+      address,
+      at: expect.any(String),
+    })
+
+    finishSend({ accepted: true })
+    await expect(sending).resolves.toBe(true)
+  } finally {
+    finishSend({ accepted: true })
+    await sending
+    store.remove(address)
   }
 })
 

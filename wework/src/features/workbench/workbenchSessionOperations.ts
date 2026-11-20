@@ -81,6 +81,9 @@ export interface WorkbenchSessionOperations {
   stableCheckoutEnvironmentBranch: WorkbenchPaneContextValue['checkoutEnvironmentBranch']
   stableCreateEnvironmentBranch: WorkbenchPaneContextValue['createEnvironmentBranch']
   stableSendRuntimePaneMessage: WorkbenchPaneContextValue['sendRuntimePaneMessage']
+  stableRecordRuntimeTaskActivity: NonNullable<
+    WorkbenchPaneContextValue['recordRuntimeTaskActivity']
+  >
   stableInterruptAndSendRuntimePaneMessage: WorkbenchPaneContextValue['interruptAndSendRuntimePaneMessage']
   stableSendRuntimePaneGuidance: WorkbenchPaneContextValue['sendRuntimePaneGuidance']
   stableCompactRuntimePaneTask: WorkbenchPaneContextValue['compactRuntimePaneTask']
@@ -313,6 +316,7 @@ export function createWorkbenchSessionOperations(
     stableSendRuntimePaneMessage: (
       ...args: Parameters<WorkbenchSessionOperations['stableSendRuntimePaneMessage']>
     ) => read().stableSendRuntimePaneMessage(...args),
+    stableRecordRuntimeTaskActivity: address => read().stableRecordRuntimeTaskActivity(address),
     stableInterruptAndSendRuntimePaneMessage: (
       ...args: Parameters<WorkbenchSessionOperations['stableInterruptAndSendRuntimePaneMessage']>
     ) => read().stableInterruptAndSendRuntimePaneMessage(...args),
