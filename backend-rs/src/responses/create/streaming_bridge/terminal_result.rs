@@ -27,14 +27,21 @@ impl Bridge {
                 return;
             }
         };
-        match completion::read_terminal_result(
+        let winner = completion::read_terminal_result(
             &self.mysql,
             &subtask_table,
             self.task_id,
             self.subtask_id,
         )
-        .await
-        {
+        .await;
+        self.finish_committed_winner_result(winner).await;
+    }
+
+    pub(super) async fn finish_committed_winner_result(
+        &mut self,
+        winner: brz_mysql::MysqlResult<Option<completion::StoredTerminal>>,
+    ) {
+        match winner {
             Ok(Some(completion::StoredTerminal {
                 status,
                 result,
@@ -42,8 +49,13 @@ impl Bridge {
             })) => {
                 self.dispatch_exit_unregister().await;
                 self.cleanup().await;
-                self.state
-                    .use_committed_result(&mut self.queue, result.as_ref());
+                if self.device_callback_mode() {
+                    self.state
+                        .use_callback_result(&mut self.queue, result.as_ref());
+                } else {
+                    self.state
+                        .use_committed_result(&mut self.queue, result.as_ref());
+                }
                 self.state.finish(
                     &mut self.queue,
                     if status == "FAILED" {
@@ -57,6 +69,10 @@ impl Bridge {
                 );
                 self.finished = true;
             }
+            // A Task can become CANCELLING while its subtask is still live.
+            // Keep the subscribed device reader for that producer's terminal
+            // callback instead of dispatching again or inventing an outcome.
+            Ok(None) if self.device_callback_mode() => {}
             Ok(None) => {
                 self.finish_persistence_error("The execution was already settled")
                     .await

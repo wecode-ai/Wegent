@@ -201,6 +201,25 @@ async function registeredDescribeHandler(t, client) {
   return registeredHandler(t, client, '/wework/executor/v1')
 }
 
+test('publishes a retryable local runtime status without a configured executor', async t => {
+  const key = 'WEWORK_MANAGED_EXECUTOR_UNAVAILABLE'
+  const previous = process.env[key]
+  process.env[key] = '1'
+  t.after(() => {
+    if (previous === undefined) delete process.env[key]
+    else process.env[key] = previous
+  })
+  const describe = await registeredHandler(t, {}, '/wework/executor/v1')
+  const request = executorEventRequest()
+  request.url = '/wework/executor/v1'
+  request.headers = { host: '127.0.0.1:3000', cookie: 'session=authenticated' }
+  const response = responseFixture()
+  await describe(request, response)
+  assert.equal(response.status, 503)
+  assert.equal(JSON.parse(response.body).error.code, 'runtime_not_ready')
+  assert.equal(ExecutorRuntimeClient.fromEnvironment.mock.callCount(), 0)
+})
+
 async function registeredHandler(t, client, path) {
   t.mock.method(ExecutorRuntimeClient, 'fromEnvironment', () => ({
     start: async () => {},

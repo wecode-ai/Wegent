@@ -115,6 +115,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
     onArchiveRuntimeTask,
     markAllPriorityTasksRead,
     openPriorityArchiveDialog,
+    isArchivingPriority,
     splitGroupMemberships,
     visibleUnreadRuntimeTaskKeys,
     imNotificationSettings,
@@ -400,7 +401,9 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                   Boolean(onMarkRuntimeTaskRead) && unreadPriorityTaskItems.length > 0
                 }
                 canArchivePriority={
-                  Boolean(onArchiveRuntimeTask) && priorityView.priorityItems.length > 0
+                  !isArchivingPriority &&
+                  Boolean(onArchiveRuntimeTask) &&
+                  priorityView.priorityItems.length > 0
                 }
                 onMarkAllAsRead={markAllPriorityTasksRead}
                 onArchivePriority={openPriorityArchiveDialog}
@@ -800,7 +803,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                     <div className="space-y-0.5 pb-2">
                       {standaloneLocalHarnessSessions.length === 0 &&
                       regularChatTaskItems.length === 0 ? (
-                        runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                        runtimeWorkLoad && props.runtimeWork == null ? null : (
                           <div
                             data-testid="runtime-chat-empty"
                             className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"

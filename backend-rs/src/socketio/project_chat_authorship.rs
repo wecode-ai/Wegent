@@ -166,6 +166,10 @@ fn shared_metadata(metadata: &Value, include_runtime: bool) -> serde_json::Map<S
     const SHARED_KEYS: &[&str] = &[
         "mentions",
         "stand_in_reply_to",
+        "collaboration_public_reply",
+        "collaboration_turn_start",
+        "collaboration_guidance",
+        "collaboration_execution_activity_id",
         "execution_dispatch",
         "activity_type",
         "dispatch_role",

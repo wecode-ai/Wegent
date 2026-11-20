@@ -1,6 +1,6 @@
 //! Native-only bridge for the existing local login UI. Never a model capability.
 
-use super::{AuthError, NativeAuthGateway};
+use super::{broker::ReconciliationRequest, AuthError, NativeAuthGateway};
 #[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
 use serde_json::{json, Value};
@@ -27,35 +27,45 @@ pub(super) fn start<T: super::PluginAuthTransport>(
     transport: T,
     connected: Arc<AtomicBool>,
     mut cancelled: watch::Receiver<bool>,
-    reconcile: mpsc::Sender<u64>,
+    reconcile: mpsc::Sender<ReconciliationRequest>,
 ) -> (mpsc::Sender<Request>, JoinHandle<()>) {
     let (sender, mut receiver) = mpsc::channel::<Request>(16);
     let task = tokio::spawn(async move {
         loop {
-            let request = tokio::select! {
+            let mut request = tokio::select! {
                 _ = cancelled.changed() => break,
                 request = receiver.recv() => match request { Some(value) => value, None => break },
             };
             if request.reply.is_closed() {
                 continue;
             }
-            let changed = (request.payload["action"] != "status")
-                .then(|| request.payload["installed_plugin_id"].as_u64())
-                .flatten();
+            let installed_id = request.payload["installed_plugin_id"].as_u64();
+            let action = request.payload["action"].as_str();
+            let scoped = if let Some(id) = installed_id {
+                transport.for_plugin(id, true)
+            } else {
+                transport.clone()
+            };
+            // Native login publishes its targeted registration while holding the write reservation.
+            let target = installed_id.filter(|_| {
+                action == Some("logout") || action == Some("login") && !scoped.uses_native_http()
+            });
             let result = if !transport.available(connected.load(Ordering::Acquire)) {
                 Err(AuthError("plugin_auth_backend_unavailable"))
             } else {
-                let gateway = NativeAuthGateway::new(transport.clone());
+                let gateway = NativeAuthGateway::new(scoped);
                 tokio::select! {
+                    biased;
                     _ = cancelled.changed() => break,
+                    _ = request.reply.closed() => continue,
                     result = gateway.call(
                         "plugin.auth.local_lifecycle", request.payload
                     ) => result,
                 }
             };
             if result.as_ref().is_ok_and(|result| result["status"] == "ok") {
-                if let Some(id) = changed {
-                    let _ = reconcile.try_send(id);
+                if let Some(id) = target {
+                    let _ = reconcile.try_send(ReconciliationRequest::Target(id));
                 }
             }
             let _ = request.reply.send(result);

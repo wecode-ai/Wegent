@@ -5,6 +5,7 @@
 pub(crate) use wegent_local_task_store::runner_routing;
 pub(crate) use wegent_local_task_store::{
     collaboration_member_profile_instructions, collaboration_member_system_prompt,
+    NATIVE_SUBAGENT_INSTRUCTIONS, PUBLIC_ISSUE_MESSAGE_INSTRUCTIONS,
 };
 use wegent_local_task_store::{credentials, model, store};
 

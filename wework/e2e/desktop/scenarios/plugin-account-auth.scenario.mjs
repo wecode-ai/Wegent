@@ -19,6 +19,7 @@ import {
 } from '../modules/shell-command-response.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { verifyPluginNativeAuth } from '../modules/plugin-native-auth.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
 import {
   inspectManagedPython,
@@ -113,6 +114,7 @@ export async function createDesktopScenario({
     await mkdir(join(dwsSourceRoot, name), { recursive: true })
   }
   let cloud
+  let nativeProxy
   let restartDesktopApp
   let command
   let businessWorkspace
@@ -194,8 +196,19 @@ export async function createDesktopScenario({
     requiresCloudEnvironment: true,
     requiresNativeCloudAuthorization: checkpoint === 'plugin-account-auth-password',
     requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
-    prepareApp: context => githubProtocol?.prepareApp(context),
-    cleanup: () => githubProtocol?.cleanup(),
+    async prepareCloud({ backendUrl }) {
+      if (checkpoint === 'plugin-account-auth-password') {
+        nativeProxy = await new TransportFaultProxy(backendUrl).start()
+      }
+    },
+    async prepareApp(context) {
+      if (nativeProxy) context.appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = nativeProxy.url
+      await githubProtocol?.prepareApp(context)
+    },
+    async cleanup() {
+      await githubProtocol?.cleanup()
+      await nativeProxy?.stop()
+    },
     codexConfigToml: githubConfig,
     appEnvironment: {
       ...(checkpoint === 'plugin-account-auth-password'
@@ -876,6 +889,7 @@ export async function createDesktopScenario({
         await verifyPluginNativeAuth({
           cloud,
           control,
+          proxy: nativeProxy,
           executorHome,
           homePath,
           sourceAuth,

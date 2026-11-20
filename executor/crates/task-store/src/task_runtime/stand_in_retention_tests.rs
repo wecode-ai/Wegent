@@ -443,10 +443,21 @@ fn opening_existing_database_adds_indexes_without_backfilling_payloads() {
             "stand_in_event",
             &Utc::now().to_rfc3339(),
         );
-        connection.execute_batch("DROP TABLE stand_in_history_refs; DROP TABLE stand_in_history; DROP INDEX ix_stand_in_history_retention").unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE stand_in_history_refs; DROP TABLE stand_in_history;
+             DROP INDEX ix_stand_in_history_retention; DROP INDEX ix_stand_in_live_work;
+             INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at)
+             VALUES ('legacy-pending','stand_in_event',json_object('status','pending','userId',7),
+                     CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+            )
+            .unwrap();
     }
     drop(store);
     let store = LocalTaskStore::open(&path).unwrap();
+    assert!(store.stand_in_has_due_work(7).unwrap());
+    assert!(!store.stand_in_has_due_work(8).unwrap());
+    assert!(store.unfinished_arrangement_users().unwrap().is_empty());
     let connection = store.connection().unwrap();
     let count: i64 = connection
         .query_row("SELECT count(*) FROM stand_in_history", [], |row| {

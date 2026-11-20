@@ -64,6 +64,33 @@ test('routing commits the native snapshot identity and structured decision', asy
   }
 })
 
+test('idle discovery requests no snapshot until the executor reports work', async () => {
+  const { runtime, calls, contexts, errors } = fixture()
+  contexts[0].needsProcessing = false
+  try {
+    await runtime.start()
+    await runtime.running
+    assert.deepEqual(
+      calls.map(call => call.method),
+      ['runtime.coordination.contexts']
+    )
+
+    contexts[0].needsProcessing = true
+    await runtime.wake()
+    assert.deepEqual(
+      calls.slice(1).map(call => call.method),
+      [
+        'runtime.coordination.contexts',
+        'runtime.coordination.snapshot',
+        'runtime.coordination.commit',
+      ]
+    )
+    assert.deepEqual(errors, [])
+  } finally {
+    runtime.stop()
+  }
+})
+
 test('project assessments use shared-context instructions without changing personal assessments', async () => {
   const f = fixture()
   f.contexts[0].kind = 'project'
@@ -199,6 +226,48 @@ test('a failed project does not stop the next authorized project', async () => {
     )
     assert.equal(calls.at(-1).params.contextId, 'project-b')
   } finally {
+    runtime.stop()
+  }
+})
+
+test('discovery and other contexts continue while a slow context holds its worker', async () => {
+  const slow = Promise.withResolvers()
+  const fast = Promise.withResolvers()
+  const blocked = Promise.withResolvers()
+  let discoveries = 0
+  let slowSnapshots = 0
+  const context = id => ({ id, revision: 'v1', enabled: true, needsProcessing: true })
+  const { runtime } = fixture({
+    async request(method, params) {
+      if (method === 'runtime.coordination.contexts') {
+        discoveries += 1
+        return { contexts: [context('slow'), context('fast')] }
+      }
+      if (method === 'runtime.coordination.snapshot' && params.contextId === 'slow') {
+        slowSnapshots += 1
+        slow.resolve()
+        await blocked.promise
+        return { skip: true }
+      }
+      if (method === 'runtime.coordination.snapshot') {
+        fast.resolve()
+        return { skip: true }
+      }
+      assert.fail(`Unexpected ${method}`)
+    },
+  })
+  try {
+    await runtime.start()
+    await slow.promise
+    await fast.promise
+    await runtime.discovery
+    const checked = runtime.wake()
+    assert.equal(discoveries, 2)
+    assert.equal(slowSnapshots, 1, 'A context must never run two workers concurrently')
+    blocked.resolve()
+    await checked
+  } finally {
+    blocked.resolve()
     runtime.stop()
   }
 })

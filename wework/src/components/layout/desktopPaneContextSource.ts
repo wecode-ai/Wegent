@@ -53,7 +53,14 @@ function readPaneContext(store: RuntimeTaskLifecycleStore, input: PaneContextObs
           runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
         }
       : currentRuntimeTask
-  return { currentRuntimeTask, runtimeTaskSummary, currentRuntimeConversationSource }
+  const lifecycleTask = store.selectTask(store.getSnapshot(), currentRuntimeTask)?.task
+  const eventTask = lifecycleTask ?? runtimeTaskSummary ?? currentRuntimeTask
+  return {
+    currentRuntimeTask,
+    runtimeTaskSummary,
+    currentRuntimeConversationSource,
+    connectionEventSubscriptions: eventTask?.runtimeHandle?.connectionEventSubscriptions,
+  }
 }
 
 /** One pane/account owns its live execution context and bound-address navigation. */

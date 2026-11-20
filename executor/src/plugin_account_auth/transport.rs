@@ -11,12 +11,41 @@ pub trait PluginAuthTransport: Clone + Send + Sync + 'static {
     fn available(&self, registered: bool) -> bool {
         registered
     }
+    fn for_plugin(&self, _installed_id: u64, _foreground: bool) -> Self {
+        self.clone()
+    }
+    fn uses_native_http(&self) -> bool {
+        false
+    }
     fn exchange<'a>(
         &'a self,
         operation: &'a str,
         payload: Value,
         timeout: Duration,
     ) -> PluginAuthFuture<'a>;
+}
+
+pub(super) fn completes_side_effect(operation: &str) -> bool {
+    matches!(
+        operation,
+        "plugin.auth.oauth.revoke_finish"
+            | "plugin.auth.transfer.abort"
+            | "plugin.auth.transfer.finish"
+    )
+}
+
+pub(super) fn is_write(operation: &str, payload: &Value) -> bool {
+    match operation {
+        "plugin.auth.execute"
+        | "plugin.auth.read"
+        | "plugin.auth.prepare"
+        | "plugin.auth.transfer.prepare"
+        | "plugin.auth.oauth.revocations"
+        | "session" => false,
+        "plugin.auth.automatic" => payload["prepare_only"] != true,
+        "plugin.auth.local_lifecycle" => payload["action"] != "status",
+        _ => true,
+    }
 }
 
 // Retain the released Socket protocol for cloud and legacy runtimes.

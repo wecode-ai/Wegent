@@ -17,20 +17,34 @@ pub(super) fn query(input: &Value) -> Result<Value, AppIpcError> {
     ))
     .map_err(|_| invalid("Invalid bundled GitHub status query"))?;
     Ok(
-        json!({"query":format!("query($owner:String!,$repository:String!,$number:Int!) {{ repository(owner:$owner,name:$repository) {{ pullRequest(number:$number) {{ {} }} }} }}",fields["fields"].as_str().unwrap()),
+        json!({"query":format!("query($owner:String!,$repository:String!,$number:Int!) {{ viewer {{ databaseId }} repository(owner:$owner,name:$repository) {{ databaseId pullRequest(number:$number) {{ {} }} }} }}",fields["fields"].as_str().unwrap()),
         "variables":{"owner":owner,"repository":repository,"number":input["number"]}}),
     )
 }
 
-pub(super) async fn read(instance: &str, input: &Value) -> Result<ApiReply, AppIpcError> {
+pub(super) async fn read(instance: &str, input: &Value) -> Result<(ApiReply, String), AppIpcError> {
     let mut response = api("github", instance, "POST", "graphql", Some(&query(input)?)).await?;
+    let (request, profile) = checked_pull_request(instance, input, &response.data)?;
+    response.data = request;
+    Ok((response, profile))
+}
+
+fn checked_pull_request(
+    instance: &str,
+    input: &Value,
+    response: &Value,
+) -> Result<(Value, String), AppIpcError> {
+    let account = response["data"]["viewer"]["databaseId"]
+        .as_u64()
+        .ok_or_else(|| invalid("Missing account ID"))?;
+    let profile = json!([instance, account.to_string()]).to_string();
+    verify_profile(input, &profile)?;
     let request = response
-        .data
         .pointer("/data/repository/pullRequest")
         .filter(|value| value.is_object())
         .filter(|value| value["number"] == input["number"])
         .filter(|_| {
-            response.data["errors"]
+            response["errors"]
                 .as_array()
                 .map_or(true, |errors| errors.is_empty())
         })
@@ -41,8 +55,10 @@ pub(super) async fn read(instance: &str, input: &Value) -> Result<ApiReply, AppI
                 "Cannot read the complete pull request status",
             )
         })?;
-    response.data = request;
-    Ok(response)
+    if let Some(expected) = input.get("repositoryId") {
+        verify_repository_id(&response["data"]["repository"]["databaseId"], expected)?;
+    }
+    Ok((request, profile))
 }
 
 #[cfg(test)]
@@ -59,6 +75,10 @@ mod tests {
         assert!(request["query"]
             .as_str()
             .unwrap()
+            .contains("viewer { databaseId }"));
+        assert!(request["query"]
+            .as_str()
+            .unwrap()
             .contains("mergeQueueEntry"));
         for input in [
             json!({"repository":"org/repo/extra","number":7}),
@@ -67,5 +87,30 @@ mod tests {
         ] {
             assert!(query(&input).is_err());
         }
+    }
+
+    #[test]
+    fn pull_request_status_requires_the_bound_account_and_repository() {
+        let instance = "https://github.com";
+        let profile = json!([instance, "7"]).to_string();
+        let input = json!({"number":1,"profile":profile,"repositoryId":"42"});
+        let mut response = json!({"data":{
+            "viewer":{"databaseId":7},
+            "repository":{"databaseId":42,"pullRequest":{"number":1,"state":"OPEN"}}
+        }});
+        let (status, observed_profile) = checked_pull_request(instance, &input, &response).unwrap();
+        assert_eq!(status["state"], "OPEN");
+        assert_eq!(observed_profile, profile);
+
+        response["data"]["repository"]["databaseId"] = json!(43);
+        assert!(checked_pull_request(instance, &input, &response).is_err());
+        response["data"]["repository"]["databaseId"] = json!(42);
+        response["data"]["viewer"]["databaseId"] = json!(8);
+        assert_eq!(
+            checked_pull_request(instance, &input, &response)
+                .unwrap_err()
+                .code,
+            "git_account_changed"
+        );
     }
 }

@@ -1100,3 +1100,48 @@ test('activity deduplication survives the generic thirty-day checkpoint cleanup'
   })
   assert.equal(next.events.length, 0)
 })
+
+test('the GitHub sidebar branch observes a PR that appears after registration', async () => {
+  const provider = createProvider('github')
+  const instance = 'https://github.com'
+  const profile = JSON.stringify([instance, '7'])
+  const branch = 'fix/failure'
+  const url = `${instance}/org/repo/pull/7`
+  let opened = false
+  const ctx = {
+    git: {
+      read: async ({ operation, number }) => {
+        if (operation === 'identity') return { profile, instance }
+        if (operation === 'repository') return { data: { id: 42, full_name: 'org/repo' } }
+        if (operation === 'api')
+          return {
+            data: opened ? [{ number: 7, state: 'open', head: { ref: branch } }] : [],
+          }
+        assert.equal(operation, 'change_request_status')
+        assert.equal(number, 7)
+        return { data: { number, url, headRefName: branch, state: 'OPEN' } }
+      },
+    },
+  }
+  const {
+    items: [source],
+  } = await provider.listResources(ctx, {
+    kind: 'repository',
+    query: JSON.stringify({ instance, repository: 'org/repo', branch }),
+  })
+  assert.equal(source.branch, branch)
+  await provider.validate(ctx, source)
+  const checkpoint = await provider.initialize(ctx, source)
+  const first = await provider.collect(ctx, { source, checkpoint })
+  assert.deepEqual(first.resourceStates, [])
+  opened = true
+  const second = await provider.collect(ctx, {
+    source,
+    checkpoint: first.nextCheckpoint,
+    force: true,
+  })
+  assert.deepEqual(
+    second.resourceStates.map(state => state.topicId),
+    [url]
+  )
+})

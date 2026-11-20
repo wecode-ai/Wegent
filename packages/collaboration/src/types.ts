@@ -399,6 +399,8 @@ export interface IssueHistoryAutomation {
 
 export interface SharedIssueAssignmentHistoryEntry {
   automation?: IssueHistoryAutomation;
+  by_agent_id?: string;
+  by_agent_name?: string;
   by_user_id: number;
   by_user_name?: string | null;
   to_type: "user" | "agent" | "team" | "group" | null;

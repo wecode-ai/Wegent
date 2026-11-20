@@ -300,7 +300,9 @@ async fn verify_batch_receipt_isolation(
     context: &Context<'_>,
     state: &crate::state::AppState,
 ) -> anyhow::Result<()> {
+    eprintln!("[plugin-local-sync] Inserting the batch receipt peer");
     context.mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) SELECT user_id,kind,namespace,'batch-receipt-peer',JSON_SET(json,'$.spec.installState','installed'),1,NOW(),NOW() FROM kinds WHERE id=?", (context.id,)).await?;
+    eprintln!("[plugin-local-sync] Reading the batch receipt peer");
     let row: StoredKind = context.mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='InstalledPlugin' AND namespace='default' AND name='batch-receipt-peer'", ()).await?;
     let peer = Context {
         mysql: context.mysql,
@@ -309,12 +311,14 @@ async fn verify_batch_receipt_isolation(
         device: context.device.clone(),
     };
     for registration in [false, true] {
+        eprintln!("[plugin-local-sync] Seeding pending batch rows (registration={registration})");
         context
             .set_intent(if registration { 81 } else { 80 }, true)
             .await?;
         for id in [context.id, peer.id] {
             context.mysql.execute("INSERT INTO plugin_device_installations (user_id,installed_kind_id,device_id,desired_release_id,actual_release_id,state,last_sync_at,updated_at) VALUES (81001,?,?,42,0,'pending',NOW(),NOW()) ON DUPLICATE KEY UPDATE desired_release_id=42,actual_release_id=0,state='pending'", (id, context.device.as_str())).await?;
         }
+        eprintln!("[plugin-local-sync] Fetching the batch snapshot (registration={registration})");
         let response = context
             .post(
                 81001,
@@ -331,6 +335,7 @@ async fn verify_batch_receipt_isolation(
         );
         result.desired_plugin_snapshot = Some(plan["payload"].clone());
         if registration {
+            eprintln!("[plugin-local-sync] Registering the batch snapshot intent");
             crate::plugins_installed::plugin_sync_protocol::register_plugin_snapshot_intent(
                 state,
                 81001,
@@ -339,6 +344,9 @@ async fn verify_batch_receipt_isolation(
             )
             .await?;
         }
+        eprintln!(
+            "[plugin-local-sync] Leasing the blocked batch row (registration={registration})"
+        );
         let revision = context.write_revision().await?;
         let lease = write_coordination::PluginWriteLease::acquire_installed(
             context.mysql,
@@ -347,6 +355,7 @@ async fn verify_batch_receipt_isolation(
             Some(&[context.id]),
         )
         .await?;
+        eprintln!("[plugin-local-sync] Recording the batch receipt (registration={registration})");
         let observed = async {
             let deadline = Instant::now() + Duration::from_secs(2);
             let outcome = if registration {
@@ -370,6 +379,7 @@ async fn verify_batch_receipt_isolation(
             };
             // Observe both rows before releasing A: B must have committed while A
             // remained blocked, and the timed-out A must not report false success.
+            eprintln!("[plugin-local-sync] Checking persisted batch rows (registration={registration})");
             let peer_state = peer.state().await?;
             let blocked_state = context.state().await?;
             let blocked_revision = context.write_revision().await?;
@@ -394,6 +404,7 @@ async fn verify_batch_receipt_isolation(
         assert_eq!(blocked_revision, revision);
         assert!(Instant::now() >= deadline);
     }
+    eprintln!("[plugin-local-sync] Removing the batch receipt peer");
     context
         .mysql
         .execute(

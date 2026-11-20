@@ -2232,17 +2232,6 @@ fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
                     .is_some_and(|value| !value.is_null())
                     .to_string(),
             ),
-            (
-                "failure_reason",
-                params["failureReason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error",
-                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
-            ),
         ],
     );
 }
@@ -2896,25 +2885,25 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
             ),
         ];
     };
-    let mcp_keys = config
-        .keys()
-        .filter(|key| key.starts_with("mcp_servers."))
-        .collect::<Vec<_>>();
-    let server_names = mcp_keys
-        .iter()
-        .filter_map(|key| {
-            key.strip_prefix("mcp_servers.")?
-                .split('.')
-                .next()
-                .map(|name| name.trim_matches('"').to_owned())
-        })
-        .filter(|name| !name.is_empty())
+    let servers = config.get("mcp_servers").and_then(Value::as_object);
+    let server_names = servers
+        .into_iter()
+        .flat_map(|servers| servers.keys().cloned())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>()
         .join(",");
     vec![
-        ("mcp_config_key_count", mcp_keys.len().to_string()),
+        (
+            "mcp_config_key_count",
+            servers
+                .into_iter()
+                .flat_map(|servers| servers.values())
+                .filter_map(Value::as_object)
+                .map(Map::len)
+                .sum::<usize>()
+                .to_string(),
+        ),
         ("mcp_server_names", server_names),
         ("reasoning_effort", reasoning_effort),
         (
@@ -3551,12 +3540,6 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
-        if let Some(error) = required_mcp_startup_failure(&message) {
-            if let Some(sender) = &options.notifications {
-                let _ = sender.send(message);
-            }
-            return Err(error);
-        }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         let active_turn_update = observed_active_turn_id(
@@ -3891,35 +3874,6 @@ fn latest_in_progress_turn_id(response: &Value) -> Option<String> {
         .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-}
-
-fn required_mcp_startup_failure(message: &Value) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
-        return None;
-    }
-    let params = message_params(message);
-    if params.get("name").and_then(Value::as_str)
-        != Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
-    {
-        return None;
-    }
-    let status = params
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(status, "failed" | "error") {
-        return None;
-    }
-    let reason = params
-        .get("failureReason")
-        .or_else(|| params.get("error"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    Some(match reason {
-        Some(reason) => format!("required project-space capability failed to connect: {reason}"),
-        None => format!("required project-space capability failed to connect ({status})"),
-    })
 }
 
 fn should_wait_for_goal_continuation(
@@ -4593,6 +4547,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         task_instructions.trim(),
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+        runtime_capabilities::mcp_environment::AVAILABILITY_INSTRUCTIONS,
         host_skills::INSTRUCTIONS,
         if crate::python_runtime::managed_python_bridge_configured() {
             crate::plugin_python::INSTRUCTIONS
@@ -4784,6 +4739,7 @@ struct CodexLaunchConfig {
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
+    mcp_unavailable: bool,
     runtime_policy_root: Option<PathBuf>,
     effort: Option<String>,
     summary: Option<String>,
@@ -4993,6 +4949,7 @@ fn configure_codex_router(
     routing_model_id: Option<String>,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
+    official_websocket: bool,
 ) {
     upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
@@ -5017,13 +4974,19 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
-    configure_codex_router_registration(launch_config, local_token, official_chatgpt);
+    configure_codex_router_registration(
+        launch_config,
+        local_token,
+        official_chatgpt,
+        official_websocket,
+    );
 }
 
 fn configure_codex_router_registration(
     launch_config: &mut CodexLaunchConfig,
     local_token: String,
     official_chatgpt: bool,
+    official_websocket: bool,
 ) {
     let provider = codex_model_catalog::PROVIDER_ID;
     launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
@@ -5037,10 +5000,10 @@ fn configure_codex_router_registration(
             .clone();
         launch_config
             .config_overrides
-            .extend(native_provider::official_proxy_overrides(format!(
-                "{}/{token}",
-                codex_router_base_url()
-            )));
+            .extend(native_provider::official_proxy_overrides(
+                format!("{}/{token}", codex_router_base_url()),
+                official_websocket,
+            ));
     } else {
         launch_config
             .config_overrides
@@ -6007,36 +5970,35 @@ fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn global_mcp_config_overrides(
+fn configure_global_mcps(
+    request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<Vec<String>, String> {
-    let mcps = runtime_capabilities::load_global_mcp_records()?;
-
-    let mut overrides = Vec::new();
-    let mut names = mcps.keys().collect::<Vec<_>>();
-    names.sort();
-    for name in names {
-        if name == crate::workbench_control::SERVER_NAME {
-            continue;
-        }
-        let Some(server) = mcps
-            .get(name)
-            .and_then(|record| record.get("server"))
-            .and_then(Value::as_object)
-        else {
-            continue;
-        };
-        let server = Value::Object(server.clone());
-        runtime_capabilities::mcp_environment::append_stdio_environment(
-            name,
-            &server,
-            thread_config,
-        )?;
-        if let Some(server) = server.as_object() {
-            overrides.extend(mcp_server_overrides(name, server));
-        }
-    }
-    Ok(overrides)
+) -> Result<bool, String> {
+    let records = runtime_capabilities::load_global_mcp_records();
+    let registry_unavailable = records.is_err();
+    let mcps = records.unwrap_or_else(|_| {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            "global_mcps",
+            "registry",
+        );
+        BTreeMap::new()
+    });
+    let requested = runtime_capabilities::collect_request_mcp_servers(request);
+    let mut servers = mcps
+        .into_iter()
+        // Requested definitions replace matching globals even when unavailable.
+        .filter(|(name, _)| !requested.contains_key(name))
+        .filter_map(|(name, record)| {
+            record
+                .get("server")
+                .and_then(Value::as_object)
+                .map(|server| (name, Value::Object(server.clone())))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let configured_count = servers.len();
+    runtime_capabilities::configure_codex_mcp_servers(&mut servers, request, thread_config)?;
+    Ok(registry_unavailable || configured_count != servers.len())
 }
 
 fn cdp_browser_mcp_config_overrides(
@@ -6063,8 +6025,14 @@ fn cdp_browser_mcp_config_overrides(
     if !crate::browser_mcp::bridge_is_available() {
         return Ok((overrides, BTreeMap::new()));
     }
-    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
-        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    let Some(endpoint) = crate::browser_mcp::http::browser_mcp_http_endpoint() else {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            server_name,
+            "endpoint",
+        );
+        return Ok((overrides, BTreeMap::new()));
+    };
     let auth_env_name = "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION";
     let env = BTreeMap::from([(
         auth_env_name.to_owned(),
@@ -6072,6 +6040,7 @@ fn cdp_browser_mcp_config_overrides(
     )]);
     overrides.extend([
         format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
         format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
@@ -6145,6 +6114,14 @@ fn computer_use_mcp_config_overrides(task_id: &str) -> Vec<String> {
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
     vec![
         format!(
+            "{}=false",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "required"
+            ])
+        ),
+        format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
@@ -6191,46 +6168,54 @@ fn configure_managed_wework_mcp(
     request: &ExecutionRequest,
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
-    let mut overrides = Vec::new();
-    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
-        .ok_or_else(|| "Wework MCP endpoint is not ready".to_owned())?;
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() else {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            "wework_space",
+            "endpoint",
+        );
+        launch.mcp_unavailable = true;
+        return Ok(());
+    };
     let env = BTreeMap::from([(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
-    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
-        launch.control_mcp_execution = crate::task_runtime::mcp_http::retain_control_mcp_context(
-            &config.headers["X-Wework-Mcp-Context"],
-        )?
-        .map(Arc::new);
-        append_managed_mcp_config(
-            crate::workbench_control::SERVER_NAME,
-            config,
-            &mut overrides,
-        );
+    let configs = runtime_capabilities::managed_mcp_configs(request)?;
+    for (name, config) in configs {
+        configure_managed_mcp_server(request, name, config, launch);
     }
-    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
-            config,
-            &mut overrides,
-        );
-    }
-    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
-            config,
-            &mut overrides,
-        );
-    }
-    append_managed_mcp_config(
-        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::space_mcp_client_config(request)?,
-        &mut overrides,
-    );
-    launch.config_overrides.extend(overrides);
     launch.env.extend(env);
     Ok(())
+}
+
+fn configure_managed_mcp_server(
+    request: &ExecutionRequest,
+    server_name: &str,
+    config: crate::task_runtime::mcp::SpaceMcpClientConfig,
+    launch: &mut CodexLaunchConfig,
+) {
+    if server_name == crate::workbench_control::SERVER_NAME {
+        let execution = config
+            .headers
+            .get("X-Wework-Mcp-Context")
+            .ok_or_else(|| "Wework control MCP context is unavailable".to_owned())
+            .and_then(|handle| crate::task_runtime::mcp_http::retain_control_mcp_context(handle));
+        match execution {
+            Ok(execution) => launch.control_mcp_execution = execution.map(Arc::new),
+            Err(_) => {
+                runtime_capabilities::mcp_environment::log_server_unavailable(
+                    request,
+                    server_name,
+                    "context",
+                );
+                launch.mcp_unavailable = true;
+                return;
+            }
+        }
+    }
+    append_managed_mcp_config(server_name, config, &mut launch.config_overrides);
 }
 
 fn append_managed_mcp_config(
@@ -6241,6 +6226,7 @@ fn append_managed_mcp_config(
     let key = toml_key_path(&["mcp_servers", server_name]);
     overrides.extend([
         format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
         format!("{key}.url={}", toml_value(&config.url)),
         format!(
             "{key}.tool_timeout_sec={}",
@@ -6302,65 +6288,6 @@ fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
             })
             .collect::<String>()
     ))
-}
-
-fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> {
-    let key = toml_key_path(&["mcp_servers", name]);
-    let server_type = server
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    if server_type == "stdio" || server.get("command").is_some() {
-        let Some(command) = server
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Vec::new();
-        };
-        let mut overrides = vec![format!("{key}.command={}", toml_value(command))];
-        if let Some(args) = server.get("args").and_then(Value::as_array) {
-            let args = args
-                .iter()
-                .filter_map(value_string)
-                .map(Value::String)
-                .collect::<Vec<_>>();
-            overrides.push(format!(
-                "{key}.args={}",
-                toml_json_value(&Value::Array(args))
-            ));
-        }
-        if let Some(names) = server.get("env_vars") {
-            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
-        }
-        return overrides;
-    }
-
-    let Some(url) = server
-        .get("url")
-        .or_else(|| server.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Vec::new();
-    };
-    let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
-    for (source_key, target_key) in [
-        ("bearer_token_env_var", "bearer_token_env_var"),
-        ("bearerTokenEnvVar", "bearer_token_env_var"),
-        ("oauth_client_id", "oauth_client_id"),
-        ("oauthClientId", "oauth_client_id"),
-        ("oauth_resource", "oauth_resource"),
-        ("oauthResource", "oauth_resource"),
-    ] {
-        if let Some(value) = server.get(source_key).and_then(value_string) {
-            overrides.push(format!("{key}.{target_key}={}", toml_value(&value)));
-        }
-    }
-    overrides
 }
 
 async fn prepare_codex_execution_request(
@@ -6496,10 +6423,19 @@ async fn prepare_codex_execution_request(
 }
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
-    if crate::browser_mcp::bridge_is_available() {
-        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+    if crate::browser_mcp::bridge_is_available()
+        && crate::browser_mcp::http::ensure_browser_mcp_http_endpoint()
+            .await
+            .is_err()
+    {
+        log_executor_event("browser MCP endpoint unavailable; execution continues", &[]);
     }
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint()
+        .await
+        .is_err()
+    {
+        log_executor_event("Wework MCP endpoint unavailable; execution continues", &[]);
+    }
     Ok(())
 }
 
@@ -7319,9 +7255,14 @@ fn append_thread_launch_params(
     let mut config = launch_config.thread_config.clone();
     for override_value in &launch_config.config_overrides {
         if let Some((key, value)) = config_override_entry(override_value) {
-            config.insert(key, value);
+            // The empty table clears saved definitions at child startup only.
+            // Thread RPC replaces the complete table after collecting this turn.
+            if key != "mcp_servers" || value != json!({}) {
+                config.insert(key, value);
+            }
         }
     }
+    mcp_config::consolidate_thread_config(&mut config);
     if !config.is_empty() {
         params.insert("config".to_owned(), Value::Object(config));
     }

@@ -289,11 +289,11 @@ mod tests {
             CODEX_WORKSPACE_PERMISSION_PROFILE
         );
         assert_eq!(
-            params["config"]["mcp_servers.internal.default_tools_approval_mode"],
+            params["config"]["mcp_servers"]["internal"]["default_tools_approval_mode"],
             "prompt"
         );
         assert_eq!(
-            params["config"]["mcp_servers.internal.url"],
+            params["config"]["mcp_servers"]["internal"]["url"],
             "https://internal.invalid/mcp"
         );
         assert!(params["config"]

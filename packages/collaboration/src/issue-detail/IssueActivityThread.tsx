@@ -12,7 +12,67 @@ export interface IssueActivityThreadModel<T> {
 export function groupIssueTimelineThreads(
   messages: ProjectChatMessage[],
 ): IssueActivityThreadModel<ProjectChatMessage>[] {
-  return groupIssueActivityThreads(messages).flatMap((thread) => {
+  const publishedResults = new Map<string, Set<string>>();
+  const startsByActivity = new Map<string, ProjectChatMessage>();
+  const byId = new Map(messages.map((message) => [message.messageId, message]));
+  for (const message of messages) {
+    const activity = message.metadata.collaboration_execution_activity_id;
+    if (typeof activity !== "string") continue;
+    if (message.metadata.collaboration_turn_start === true)
+      startsByActivity.set(activity, message);
+    const results = publishedResults.get(activity) ?? new Set<string>();
+    results.add(message.content);
+    publishedResults.set(activity, results);
+  }
+  const movedActivities = new Map<string, string>();
+  const startExecutions = new Map<string, ProjectChatMessage>();
+  for (const [activityId, start] of startsByActivity) {
+    const activity = byId.get(activityId);
+    const kind = activity?.metadata.activity_type;
+    if (
+      activity &&
+      (kind === "member_execution" || kind === "manager_execution")
+    ) {
+      movedActivities.set(activityId, start.messageId);
+      startExecutions.set(start.messageId, activity);
+    }
+  }
+  const timeline = messages
+    .filter(
+      (message) =>
+        !movedActivities.has(message.messageId) &&
+        (message.type !== "agent_status" ||
+          message.metadata.collaboration_guidance !== true),
+    )
+    .map((message) => {
+      const execution = startExecutions.get(message.messageId);
+      if (execution) {
+        return {
+          ...message,
+          runtimeAddress: execution.runtimeAddress,
+          status: execution.status,
+          metadata: {
+            ...message.metadata,
+            activity_type: execution.metadata.activity_type,
+            run_status: execution.metadata.run_status,
+            workflow_task_title: execution.metadata.workflow_task_title,
+          },
+        };
+      }
+      const root = movedActivities.get(message.rootMessageId ?? "");
+      const parent = movedActivities.get(message.replyToMessageId ?? "");
+      const mirrored =
+        startsByActivity.has(message.messageId) ||
+        publishedResults.get(message.messageId)?.has(message.content);
+      if (!root && !parent && !mirrored) return message;
+      return {
+        ...message,
+        content: mirrored ? "" : message.content,
+        rootMessageId: root ?? message.rootMessageId,
+        replyToMessageId: parent ?? message.replyToMessageId,
+      };
+    });
+  return groupIssueActivityThreads(timeline).flatMap((thread) => {
     if (thread.root.sender.type !== "user") return [thread];
     const discussion = {
       root: thread.root,
@@ -26,7 +86,11 @@ export function groupIssueTimelineThreads(
     >([[thread.root.messageId, discussion]]);
     for (const message of thread.replies) {
       const parent = parents.get(message.replyToMessageId ?? "") ?? discussion;
-      if (message.sender.type === "agent" && parent === discussion) {
+      if (
+        message.sender.type === "agent" &&
+        message.metadata.execution_dispatch !== "comment_only" &&
+        parent === discussion
+      ) {
         const execution = {
           root: message,
           replies: [] as ProjectChatMessage[],

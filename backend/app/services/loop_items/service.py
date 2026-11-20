@@ -1201,7 +1201,8 @@ class LoopItemService:
         *,
         commit: bool = True,
     ) -> dict[str, object]:
-        item = self.get(db, item_id, user_id)
+        # Use the same Issue-first lock order as assignment receipts and updates.
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.COMMENT)
         comment = LoopItemComment(
             cloud_project_id=item.cloud_project_id,
@@ -3637,6 +3638,7 @@ class LoopItemService:
         to_name: str | None,
         *,
         automation_context: dict[str, Any] | None = None,
+        actor_agent: ProjectChatAgent | None = None,
     ) -> None:
         """Record who assigned to whom. Run state lives in the execution table."""
 
@@ -3650,6 +3652,14 @@ class LoopItemService:
             {
                 "by_user_id": user_id,
                 **automation_history_actor(automation_context),
+                **(
+                    {
+                        "by_agent_id": str(actor_agent.id),
+                        "by_agent_name": actor_agent.title or actor_agent.name,
+                    }
+                    if actor_agent is not None
+                    else {}
+                ),
                 "to_type": to_type,
                 "to_id": to_id,
                 "to_name": to_name,

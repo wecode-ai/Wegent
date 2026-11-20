@@ -51,6 +51,48 @@ pub(super) fn claimed_event_ids(
 }
 
 impl LocalTaskStore {
+    pub fn stand_in_has_due_work(&self, user: i64) -> Result<bool, TaskRuntimeError> {
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM loop_items INDEXED BY ix_stand_in_live_work
+                 WHERE resource_type IN ('stand_in_action','stand_in_event')
+                   AND CASE WHEN json_valid(metadata)
+                            THEN json_extract(metadata,'$.status') IN ('pending','sending','failed')
+                            ELSE 0 END
+                   AND resource_type='stand_in_action'
+                   AND json_extract(metadata,'$.status') IN ('pending','sending')
+                   AND json_extract(metadata,'$.userId')=?1
+                   AND json_extract(metadata,'$.kind') IS NOT 'run_arrangement'
+             ) OR EXISTS (
+                SELECT 1 FROM loop_items AS intake INDEXED BY ix_stand_in_live_work
+                 WHERE intake.resource_type IN ('stand_in_action','stand_in_event')
+                   AND CASE WHEN json_valid(intake.metadata)
+                            THEN json_extract(intake.metadata,'$.status') IN ('pending','sending','failed')
+                            ELSE 0 END
+                   AND intake.resource_type='stand_in_event'
+                   AND json_extract(intake.metadata,'$.status')='pending'
+                   AND json_extract(intake.metadata,'$.userId')=?1
+                   AND (json_extract(intake.metadata,'$.notBefore') IS NULL
+                        OR julianday(json_extract(intake.metadata,'$.notBefore')) <= julianday('now'))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM loop_items AS action INDEXED BY ix_stand_in_live_work,
+                            json_each(action.metadata,'$.arguments.eventIds') AS event
+                        WHERE action.resource_type IN ('stand_in_action','stand_in_event')
+                          AND CASE WHEN json_valid(action.metadata)
+                                   THEN json_extract(action.metadata,'$.status') IN ('pending','sending','failed')
+                                   ELSE 0 END
+                          AND action.resource_type='stand_in_action'
+                          AND json_extract(action.metadata,'$.status') IN ('pending','sending','failed')
+                          AND json_extract(action.metadata,'$.userId')=?1
+                          AND json_extract(action.metadata,'$.kind') != 'run_arrangement'
+                          AND event.type='text' AND event.value=intake.id
+                   )
+             )",
+            [user],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Drain one batch of an explicit retry request, preserving original intent IDs.
     pub fn retry_failed_stand_in_routing(&self, user: i64) -> Result<usize, TaskRuntimeError> {
         let mut guard = self.connection()?;

@@ -3518,17 +3518,13 @@
 }
 
 .task-detail-execution-stop {
-  display: none;
+  display: flex;
   width: 28px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border-left: 1px solid rgb(var(--color-border));
   color: rgb(var(--color-text-muted));
-}
-
-.task-detail-execution-pill:not(.is-static):hover .task-detail-execution-stop {
-  display: flex;
 }
 
 .task-detail-execution-stop:hover:not(:disabled) {
