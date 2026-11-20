@@ -47,7 +47,7 @@ export function IssueCommentActionPicker({
               <span className="min-w-0 truncate">{selected?.label ?? value}</span>
             </>
           ) : (
-            <span>{placeholder}</span>
+            <span className="min-w-0 truncate">{placeholder}</span>
           )
         }
         options={options}

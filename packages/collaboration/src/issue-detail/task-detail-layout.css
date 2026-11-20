@@ -2731,10 +2731,8 @@
 .task-detail-comment-pending-actions {
   display: flex;
   align-items: center;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
+  flex: 1 1 0;
   min-width: 0;
-  max-width: 100%;
   gap: 6px;
 }
 
@@ -2852,6 +2850,7 @@
   }
   .task-detail-comment-pending-actions {
     flex-basis: 100%;
+    flex-wrap: wrap;
     order: 1;
     gap: 8px;
   }
