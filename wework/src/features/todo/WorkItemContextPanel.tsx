@@ -2,7 +2,7 @@ import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -30,6 +30,7 @@ interface WorkItemContextPanelProps {
   focusedCommentId?: string
   focusedCommentRequestKey?: string
   readFirst?: boolean
+  headerActions?: ReactNode
 }
 
 export function WorkItemContextPanel({
@@ -48,6 +49,7 @@ export function WorkItemContextPanel({
   focusedCommentId,
   focusedCommentRequestKey,
   readFirst,
+  headerActions,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
@@ -104,7 +106,8 @@ export function WorkItemContextPanel({
           onOpenRuntimeTask={onOpenRuntimeTask}
           onOpenChildTask={onOpenChildTask}
           headerActions={
-            onOpenBoard && (
+            headerActions ??
+            (onOpenBoard && (
               <ControlButton
                 variant="unstyled"
                 type="button"
@@ -115,7 +118,7 @@ export function WorkItemContextPanel({
                 {t('workbench.open_workspace', '打开工作空间')}
                 <ArrowUpRight className="h-3.5 w-3.5" />
               </ControlButton>
-            )
+            ))
           }
           selectedTaskId={currentTask?.taskId}
           deviceNamesById={deviceNamesById}

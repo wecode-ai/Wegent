@@ -70,7 +70,7 @@ export function RuntimeInteractionsPage({
   const twoPanes = useIsDesktop()
   const owner = useId()
   const list = useRef<HTMLElement>(null)
-  const heading = useRef<HTMLHeadingElement>(null)
+  const detailFocus = useRef<HTMLElement>(null)
   const [contextRowId, setContextRowId] = useState<string | null>(null)
   const [page] = useState(() =>
     createRuntimeInteractionsPageState(selectedId, twoPanes, interactions)
@@ -167,7 +167,7 @@ export function RuntimeInteractionsPage({
     (id: string, url: string) => page.setOriginalNavigation(id, url),
     [page]
   )
-  useFocusRequest(heading, JSON.stringify([twoPanes, showList, selected, viewed]), {
+  useFocusRequest(detailFocus, JSON.stringify([twoPanes, showList, selected, viewed]), {
     enabled: !twoPanes && !showList,
   })
   useFocusRequest(list, focusListVersion, {
@@ -263,38 +263,57 @@ export function RuntimeInteractionsPage({
   const quickReply = liveQuestion && canReplyToInteraction(liveQuestion) ? liveQuestion : null
   const showProcessing = Boolean(pendingQuestion && !pendingQuestion.project && !history)
   const showContext = Boolean(row && (contextRowId === row.id || !showProcessing))
+  const projectPreview = Boolean(row?.projectItem && showContext)
+  const openOriginal = row && (
+    <ControlButton
+      variant="ghost"
+      size="sm"
+      type="button"
+      data-testid="interaction-open-original"
+      className="shrink-0 text-text-secondary"
+      onClick={() =>
+        openWeworkScheme(
+          originalNavigation?.id === row.id ? originalNavigation.url : originalUrl(row)
+        )
+      }
+    >
+      {t('interactions.open_original')}
+      <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+    </ControlButton>
+  )
+  const detailTime = row && (
+    <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
+  )
   return (
     <main
       data-testid="runtime-interactions-page"
       className="flex h-full min-h-0 min-w-0 flex-col bg-background text-text-primary"
     >
-      <header className={cn('shrink-0 px-5 pb-4 pt-5', !twoPanes && !showList && 'hidden')}>
-        <div className="flex items-start justify-between gap-4">
-          <h1 className="text-heading-md font-medium">{t('interactions.title')}</h1>
-          <ControlButton
-            variant="ghost"
-            size="icon"
-            data-testid="interactions-refresh"
-            disabled={loading}
-            aria-label={t('notifications.refresh')}
-            onClick={() => void Promise.all([interactions.refresh(), projectIssues.refresh()])}
-            className="shrink-0 text-text-secondary"
-          >
-            <RefreshCw aria-hidden="true" className={cn('h-4 w-4', loading && 'animate-spin')} />
-          </ControlButton>
-        </div>
-      </header>
-      <div className="flex min-h-0 min-w-0 flex-1 border-t border-border">
+      <div className="flex min-h-0 min-w-0 flex-1">
         <section
           ref={list}
           aria-label={t(history ? 'interactions.history' : 'interactions.pending')}
           className={cn(
             'interaction-queue flex min-h-0 w-full shrink-0 flex-col bg-[rgb(var(--color-bg-subtle))]',
-            twoPanes && 'w-[clamp(17rem,29%,23rem)] border-r border-border',
+            twoPanes && 'w-[clamp(17rem,27%,21rem)] border-r border-border',
             !twoPanes && !showList && 'hidden'
           )}
         >
-          <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-1 px-4 py-2">
+          <header className="flex shrink-0 items-center justify-between gap-3 px-4 pb-1 pt-3">
+            <h1 className="text-heading-sm font-medium">{t('interactions.title')}</h1>
+            <ControlButton
+              variant="ghost"
+              size="icon"
+              data-testid="interactions-refresh"
+              disabled={loading}
+              aria-label={t('notifications.refresh')}
+              onClick={() => void Promise.all([interactions.refresh(), projectIssues.refresh()])}
+              className="shrink-0 text-text-secondary"
+            >
+              <RefreshCw aria-hidden="true" className={cn('h-4 w-4', loading && 'animate-spin')} />
+            </ControlButton>
+          </header>
+          <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-1 px-3 py-1">
             <h2
               tabIndex={-1}
               className="flex min-w-0 items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-sm font-medium outline-none"
@@ -390,17 +409,17 @@ export function RuntimeInteractionsPage({
                               />
                             </span>
                           </span>
-                          {!history && entry.source === 'project' && (
-                            <IssueWaitingTime since={entry.waitingSince ?? null} />
-                          )}
                           {entry.title && entry.question && entry.title !== entry.question && (
                             <span
                               data-testid="interaction-list-summary"
-                              className="block truncate text-sm text-text-secondary"
+                              className="block truncate text-xs text-text-secondary"
                               title={entry.projectItem ? entry.title : entry.question}
                             >
                               {entry.projectItem ? entry.title : entry.question}
                             </span>
+                          )}
+                          {!history && entry.source === 'project' && entry.waitingSince && (
+                            <IssueWaitingTime since={entry.waitingSince} />
                           )}
                         </span>
                       </ControlButton>
@@ -471,6 +490,13 @@ export function RuntimeInteractionsPage({
         >
           {!twoPanes && (
             <ControlButton
+              ref={
+                projectPreview
+                  ? element => {
+                      detailFocus.current = element
+                    }
+                  : undefined
+              }
               variant="unstyled"
               type="button"
               data-testid="interactions-back-to-list"
@@ -485,46 +511,39 @@ export function RuntimeInteractionsPage({
           )}
           {row ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <header className="flex shrink-0 flex-wrap items-start gap-x-4 gap-y-2 border-b border-border px-5 pb-4 pt-4">
-                <div className="min-w-0 flex-1 basis-52">
-                  <h2
-                    ref={heading}
-                    tabIndex={0}
-                    data-testid="interaction-question-heading"
-                    className="line-clamp-2 break-words text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                    title={row.projectItem ? row.question : row.title || row.question}
-                  >
-                    {row.projectItem ? row.question : row.title || row.question}
-                  </h2>
-                  <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
-                </div>
-                {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
-                  <ControlButton
-                    variant="unstyled"
-                    type="button"
-                    data-testid="interaction-discuss"
-                    disabled={interactions.busy.has(liveQuestion.id)}
-                    onClick={() => discussion.open(liveQuestion.task.address, liveQuestion.payload)}
-                    className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
-                  >
-                    {t('question_discussion.open')}
-                  </ControlButton>
-                )}
-                <ControlButton
-                  variant="unstyled"
-                  type="button"
-                  data-testid="interaction-open-original"
-                  className="flex min-h-11 shrink-0 self-start items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus sm:self-auto md:min-h-7"
-                  onClick={() =>
-                    openWeworkScheme(
-                      originalNavigation?.id === row.id ? originalNavigation.url : originalUrl(row)
-                    )
-                  }
-                >
-                  {t('interactions.open_original')}
-                  <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
-                </ControlButton>
-              </header>
+              {!projectPreview && (
+                <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-5 py-3">
+                  <div className="min-w-0 flex-1 basis-52">
+                    <h2
+                      ref={element => {
+                        detailFocus.current = element
+                      }}
+                      tabIndex={0}
+                      data-testid="interaction-question-heading"
+                      className="line-clamp-2 break-words text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                      title={row.projectItem ? row.question : row.title || row.question}
+                    >
+                      {row.projectItem ? row.question : row.title || row.question}
+                    </h2>
+                    {detailTime}
+                  </div>
+                  {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      data-testid="interaction-discuss"
+                      disabled={interactions.busy.has(liveQuestion.id)}
+                      onClick={() =>
+                        discussion.open(liveQuestion.task.address, liveQuestion.payload)
+                      }
+                      className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
+                    >
+                      {t('question_discussion.open')}
+                    </ControlButton>
+                  )}
+                  {openOriginal}
+                </header>
+              )}
               {showProcessing && (
                 <div className="shrink-0 border-b border-border px-5 py-2">
                   <div className="flex items-center gap-1">
@@ -550,7 +569,10 @@ export function RuntimeInteractionsPage({
               )}
               {showContext ? (
                 <div
-                  className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                  className={cn(
+                    'flex min-h-0 flex-1 flex-col overflow-hidden',
+                    projectPreview && 'notification-issue-preview'
+                  )}
                   data-testid="interaction-entity-container"
                 >
                   <WorkbenchErrorBoundary key={originalUrl(row)}>
@@ -562,6 +584,14 @@ export function RuntimeInteractionsPage({
                       url={originalUrl(row)}
                       address={row.address}
                       active={active && showContext}
+                      issueHeaderActions={
+                        projectPreview && (
+                          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2">
+                            {detailTime}
+                            {openOriginal}
+                          </div>
+                        )
+                      }
                     />
                   </WorkbenchErrorBoundary>
                 </div>

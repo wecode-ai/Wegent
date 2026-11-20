@@ -181,7 +181,7 @@ export function TagEditor({
               setOpen(false)
               commit(draft)
             }}
-            placeholder={tags.length === 0 ? placeholder : ''}
+            placeholder={placeholder}
             className={cn(controlInput, 'min-w-16 flex-1')}
           />
         )}

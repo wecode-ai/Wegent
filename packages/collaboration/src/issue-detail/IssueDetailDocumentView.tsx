@@ -345,8 +345,8 @@ export function IssueDetailDocumentView({ model }: { model: IssueDetailViewModel
                       ]}
                       disabled={fieldSaves.pendingFields.has('security')}
                       triggerContent={
-                        <span className="task-detail-state-security">
-                          <Eye aria-hidden="true" size={15} />
+                        <span className="inline-flex min-w-0 items-center gap-1.5">
+                          <Eye aria-hidden="true" className="shrink-0" size={15} />
                           <strong>{issueSecurityLabel}</strong>
                         </span>
                       }

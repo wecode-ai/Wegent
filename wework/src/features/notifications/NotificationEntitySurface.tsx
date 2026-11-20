@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { NotificationIssueEntity } from './NotificationIssueEntity'
 import { NotificationEntityContext } from './NotificationEntityContext'
@@ -18,6 +18,7 @@ export function NotificationEntitySurface({
   sourceMessageIds,
   onOriginalUrlChange,
   focusedRequest,
+  issueHeaderActions,
 }: {
   url: string
   address?: RuntimeTaskAddress
@@ -26,6 +27,7 @@ export function NotificationEntitySurface({
   sourceMessageIds?: string[]
   onOriginalUrlChange?: (interactionId: string, url: string) => void
   focusedRequest?: RequestUserInputPayload | null
+  issueHeaderActions?: ReactNode
 }) {
   const { state } = useWorkbench()
   const { t } = useTranslation('common')
@@ -48,9 +50,12 @@ export function NotificationEntitySurface({
 
   if (state.isBootstrapping) {
     return (
-      <p role="status" className="p-5 text-sm text-text-secondary">
-        {t('interactions.loading')}
-      </p>
+      <>
+        {issueHeaderActions}
+        <p role="status" className="p-5 text-sm text-text-secondary">
+          {t('interactions.loading')}
+        </p>
+      </>
     )
   }
 
@@ -102,13 +107,17 @@ export function NotificationEntitySurface({
           url={url}
           address={address}
           active={active}
+          headerActions={issueHeaderActions}
         />
       </NotificationEntityContext.Provider>
     )
   }
   return (
-    <p role="status" className="p-5 text-sm text-text-secondary">
-      {t('interactions.entity_unavailable')}
-    </p>
+    <>
+      {issueHeaderActions}
+      <p role="status" className="p-5 text-sm text-text-secondary">
+        {t('interactions.entity_unavailable')}
+      </p>
+    </>
   )
 }

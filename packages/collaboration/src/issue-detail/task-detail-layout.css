@@ -413,6 +413,14 @@
   padding-bottom: max(32px, env(safe-area-inset-bottom));
 }
 
+.notification-issue-preview .task-detail-workspace-panel .task-detail-left-inner {
+  max-width: 760px;
+}
+
+.notification-issue-preview .task-detail-primary-metadata .task-detail-tag-editor input {
+  flex: 0 1 9rem;
+}
+
 .task-detail-workspace-panel .task-detail-title {
   width: 100%;
   field-sizing: fixed;
