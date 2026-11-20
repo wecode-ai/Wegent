@@ -273,9 +273,8 @@ test('editing an individual answer cannot replace a grouped discussion payload',
     within(screen.getByTestId('entry-0')).getByTestId('request-user-input-custom-audience'),
     { target: { value: 'Only the owner' } }
   )
-  expect(
-    within(dialog()).getByTestId('question-discussion-question').querySelectorAll('option')
-  ).toHaveLength(2)
+  fireEvent.click(within(dialog()).getByTestId('question-discussion-question'))
+  expect(screen.getAllByRole('option')).toHaveLength(2)
   expect(
     latestStore.sessions[questionDiscussionKey(source, grouped)].payload.questions
   ).toHaveLength(2)
@@ -342,9 +341,8 @@ test('refills the exact owner of a grouped asynchronous question', async () => {
   setup(1, grouped)
   open()
   const secondId = grouped.questions![1].id!
-  fireEvent.change(within(dialog()).getByTestId('question-discussion-question'), {
-    target: { value: secondId },
-  })
+  fireEvent.click(within(dialog()).getByTestId('question-discussion-question'))
+  fireEvent.click(screen.getByRole('option', { name: '输出格式？' }))
   changeConclusion('PDF')
   apply()
   await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())

@@ -19,6 +19,7 @@ import { useComposerTransfers, type ComposerTransferServices } from './useCompos
 import { useComposerLinkEditing } from './useComposerLinkEditing'
 import { LinkEditPopover } from './LinkEditPopover'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
+import { Button as ControlButton } from '../markdown/Button'
 import type {
   ComposerSubmitOptions,
   ComposerFollowUpBehavior,
@@ -156,7 +157,8 @@ export function ComposerTextInput({
         error={transfers.transferError}
         action={
           dismissTransferErrorLabel && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-dismiss-transfer-error`}
               disabled={transfers.isTransferring}
@@ -164,7 +166,7 @@ export function ComposerTextInput({
               className="ml-2 rounded px-1 underline disabled:opacity-50"
             >
               {dismissTransferErrorLabel}
-            </button>
+            </ControlButton>
           )
         }
       />

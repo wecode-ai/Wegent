@@ -4,6 +4,7 @@ import { ComposerTextInput, type ComposerTextInputProps } from '../composer/Comp
 import { useComposerAttachments } from '../composer/useComposerAttachments'
 import type { MultiAttachmentUploadState } from '../composer/useComposerAttachments'
 import { useConversationTranslation } from './ConversationTranslation'
+import { Button as ControlButton } from '../markdown/Button'
 
 export interface RequestUserInputComposerServices {
   editorServices?: ComposerTextInputProps['editorServices']
@@ -123,7 +124,8 @@ export function RequestUserInputAnswerEditor({
         [...attachments.errors].map(([filename, error]) => (
           <div key={filename} role="alert">
             {filename}: {error}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`request-user-input-dismiss-file-error-${questionId}-${filename}`}
               onClick={() => {
@@ -133,7 +135,7 @@ export function RequestUserInputAnswerEditor({
               className="ml-2 rounded px-1 underline"
             >
               {translate('common.close')}
-            </button>
+            </ControlButton>
           </div>
         ))}
       <ComposerTextInput
