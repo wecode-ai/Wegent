@@ -26,7 +26,8 @@ export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, p
   const row = await storyUntil(
     source,
     value => value?.state.checkpoint?.after,
-    12_000,
+    // A newly saved source may just miss the 15-second collection tick.
+    20_000,
     'The all-message group must establish its collection checkpoint'
   )
   const staleStart = new Date(Date.now() - 30 * 60_000).toISOString()
