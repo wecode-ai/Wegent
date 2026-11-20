@@ -6,9 +6,9 @@ const USER_PREFERENCE_CONTEXT_KEY = 'wework.user-preferences'
 
 export function withUserPreferencePrompt<
   T extends { additionalContext?: RuntimeAdditionalContext },
->(request: T, prompt: string): T {
+>(request: T, prompt: string): T & { additionalContext: RuntimeAdditionalContext } {
   const value = prompt.trim()
-  if (!value) return request
+  if (!value) return request as T & { additionalContext: RuntimeAdditionalContext }
   if (value.length > USER_PREFERENCE_PROMPT_MAX_LENGTH) {
     throw new Error(
       `User preference prompt must be at most ${USER_PREFERENCE_PROMPT_MAX_LENGTH} characters`

@@ -49,6 +49,7 @@ import { interactionHistoryEntry, persistInteractionArchive } from './interactio
 import type { useInteractionDrafts } from './useInteractionDrafts'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
+import type { RuntimeGuidanceRequest } from '@/types/api'
 import {
   readInteractionHistory,
   readInteractionDismissal,
@@ -614,11 +615,11 @@ export function createRuntimeInteractionsSource(
               ).then(() => ({ accepted: true, error: undefined }))
             : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
               ? await api.guideRuntimeTask(
-                  withUserPreferencePrompt(
+                  withUserPreferencePrompt<RuntimeGuidanceRequest>(
                     {
                       address: live.task.address,
                       message,
-                      clientUserMessageId: id,
+                      clientGuidanceId: id,
                     },
                     userPreferencePrompt
                   )
