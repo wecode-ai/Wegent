@@ -5,7 +5,7 @@ import {
 import '@/i18n'
 import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -88,6 +88,7 @@ describe('DesktopSidebar event waits', () => {
     ['error', false, '事件继续执行遇到问题，请查看会话'],
     ['cancelled', false, null],
     ['armed', true, null],
+    ['pending', true, '事件已到达，等待继续'],
   ] as const)('event subscription sidebar status %s running=%s', async (status, running, label) => {
     renderSidebar({
       runtimeWork: {
@@ -130,4 +131,60 @@ describe('DesktopSidebar event waits', () => {
     if (label) expect(icon).toHaveAttribute('aria-label', label)
     else expect(icon).not.toBeInTheDocument()
   })
+})
+
+test('chat batch archive releases the sidebar while the request is pending', async () => {
+  const archive = Promise.withResolvers<void>()
+  const onArchiveChatConversations = vi.fn(() => archive.promise)
+  const onOpenSearch = vi.fn()
+  renderSidebar({
+    onArchiveChatConversations,
+    onOpenSearch,
+    runtimeWork: {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: '/repo/Wegent',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'first-chat',
+              title: 'First chat',
+              runtime: 'codex',
+              running: false,
+              status: 'done',
+            },
+            {
+              taskId: 'second-chat',
+              title: 'Second chat',
+              runtime: 'codex',
+              running: false,
+              status: 'done',
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    },
+  })
+  const menu = screen.getByTestId('runtime-chat-section-menu')
+  const action = 'runtime-chat-section-archive-all-chats'
+  const dialog = 'runtime-chat-section-archive-conversations-dialog'
+
+  await userEvent.click(menu)
+  expect(screen.getByTestId(action)).toBeEnabled()
+  await userEvent.click(screen.getByTestId(action))
+  await userEvent.click(screen.getByTestId(`${dialog}-confirm-button`))
+
+  expect(onArchiveChatConversations).toHaveBeenCalledOnce()
+  expect(screen.queryByTestId(`${dialog}-overlay`)).not.toBeInTheDocument()
+  await userEvent.click(screen.getByTestId('runtime-search-button'))
+  expect(onOpenSearch).toHaveBeenCalledOnce()
+  await userEvent.click(menu)
+  expect(screen.getByTestId(action)).toBeDisabled()
+
+  await act(async () => archive.resolve())
+  expect(screen.getByTestId(action)).toBeEnabled()
 })

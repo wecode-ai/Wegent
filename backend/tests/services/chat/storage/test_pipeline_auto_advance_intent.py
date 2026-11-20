@@ -4,10 +4,18 @@
 
 """Tests for routing automatic pipeline advancement through the shared send path."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.chat.storage.db import DatabaseHandler
+import pytest
+
+from app.services.chat import pipeline_advance
+from app.services.chat.storage.db import (
+    DatabaseHandler,
+    PipelineAutoAdvanceIntent,
+    TerminalPersistenceError,
+)
 
 
 def test_task_status_update_returns_auto_advance_intent_without_creating_subtasks() -> (
@@ -61,3 +69,49 @@ def test_task_status_update_returns_auto_advance_intent_without_creating_subtask
     assert result.auto_advance.advance_info["context_passing"] == "previous_bot"
     assert task_status.status == "PENDING"
     assert task_status.progress == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_handoff_invalidates_an_earlier_recovery_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intent = PipelineAutoAdvanceIntent(123, 5, 9, {})
+    clock = iter((100.0, 105.0))
+    scores: dict[str, float] = {}
+
+    async def add(_key: str, entries: dict[str, float]) -> None:
+        scores.update(entries)
+
+    @asynccontextmanager
+    async def redis_context():
+        yield SimpleNamespace(
+            zadd=add, zscore=AsyncMock(side_effect=lambda _key, member: scores[member])
+        )
+
+    @asynccontextmanager
+    async def held_lock(_name: str):
+        yield True
+
+    monkeypatch.setattr(
+        pipeline_advance, "time", SimpleNamespace(time=lambda: next(clock))
+    )
+    monkeypatch.setattr(
+        pipeline_advance.cache_manager, "_client_context", redis_context
+    )
+    monkeypatch.setattr(
+        pipeline_advance.distributed_lock, "acquire_watchdog_context_async", held_lock
+    )
+    resume = AsyncMock(side_effect=[RuntimeError("dispatch unavailable"), True])
+    load = MagicMock(return_value=intent)
+    monkeypatch.setattr(pipeline_advance, "_resume_auto_advance", resume)
+    monkeypatch.setattr(pipeline_advance, "_read_pending_handoff", load)
+
+    with pytest.raises(TerminalPersistenceError):
+        await pipeline_advance.advance_pipeline_stage_from_auto_completion(intent)
+    assert scores["123:9"] == 110.0
+
+    await pipeline_advance._recover_pipeline_handoff("123:9", 105.0)
+    load.assert_not_called()
+    await pipeline_advance._recover_pipeline_handoff("123:9", 110.0)
+    load.assert_called_once_with(123, 9)
+    assert resume.await_count == 2

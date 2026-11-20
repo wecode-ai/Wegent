@@ -165,6 +165,8 @@ Stand-in chats currently require the Codex runtime for operation approvals; the 
 
 ## DingTalk and collaboration sources
 
+The shared DSH EventBus schedules connection collection for the assistant, the GitHub and GitLab sidebar, and task subscriptions. The host combines duplicate collection requests, provider plugins read their resources, and the Executor stores each subscriber’s cursor and delivery receipts. A source collection is cancelled after 15 seconds. The conversation manages any model turn it has already accepted.
+
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
 
 Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.
@@ -201,6 +203,8 @@ All four combinations are supported, including immediate separate conversations 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
+
+Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
 
 Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible and existing connections can be removed when switching the stand-in execution device. New local project connections can only be added when executing on the current device.
 

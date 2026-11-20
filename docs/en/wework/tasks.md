@@ -69,6 +69,8 @@ Follow-up turns in Codex conversations receive a summary of subscriptions still 
 
 A matching event starts a new turn in an idle Codex conversation or guides the current turn in a running conversation. Sending a message also resumes a Goal that is waiting on an event subscription. Events wait for pending questions and approvals to be resolved before delivery.
 
+When a registered event wakes a local conversation, the Executor delivers and deduplicates it locally without fetching the cloud account profile again.
+
 In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.
 
 A signal icon in the composer and task sidebar marks connection event waits, such as waiting for GitHub checks to finish. Above the composer, **Waiting for events; resumes automatically** identifies the source. Triggered events appear as short attributed receipts rather than full model continuation instructions. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
@@ -266,11 +268,15 @@ After supervision starts, the right-side **Environment** panel shows its status 
 
 While a reply is retrying, the processing area distinguishes server overload, rate limiting, and reconnection, and shows attempt counts when supplied by the runtime. The status disappears when progress resumes. A terminal failure shows the relevant timeout, connection, or overload message below the reply, with **Retry** and **Switch model and retry** when available. Select **Error details** to expand the original diagnostics, or select it again to collapse them. Internal recovery information such as an app-server restart appears only in these details. A response timeout means no progress arrived within the stated interval; it does not establish that the model provider was slow.
 
+<a id="processing-activity"></a>
+
 ## Review the processing timeline
 
 The **Processed** section in an AI response displays tool calls from top to bottom by their actual creation time. Even when executor events arrive out of order, commands, file operations, and other tools created earlier remain above later activity so the timeline reflects the real execution sequence.
 
 Completed processing activity is summarized by type. Terminal commands and Node.js REPL JavaScript calls count as commands, MCP and other capabilities count as tools, and file reads or edits use their own categories. Expand the processing area, then select a row or its chevron to inspect the details. The collapsed row uses a readable short name; the detail view shows the full tool name, invocation input, and returned output. Status-only activity without input or output does not show an empty disclosure control.
+
+Expanding a successful connection event provider lookup shows the total number of providers and how many are ready. Select **Show full result** to view the catalog, including availability and subscription parameters.
 
 A plan generated in Plan mode remains part of the visible response instead of being placed inside the completed **Processed** disclosure. It stays directly visible after restoring a background task or reopening the conversation. Ordinary commands, file operations, and tool calls continue to use the summary and disclosure behavior described above.
 

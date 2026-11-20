@@ -1,6 +1,26 @@
 use super::super::tests::{context, seed, EnvGuard};
 use super::*;
 
+#[test]
+fn connection_provider_discovery_exposes_details_only_for_the_selected_provider() {
+    let github = json!({"id": "github", "displayName": "GitHub", "resourceKinds": ["repository"],
+        "availability": {"status": "ready"}, "assistance": {"observe": ["Wait for checks"]}});
+    let catalog = json!({"items": [github, {"id": "gitlab"}]});
+    let summary = connection_event_provider_catalog(catalog.clone(), None).unwrap();
+    assert_eq!(summary["items"][0]["id"], "github");
+    assert!(summary["items"][0].get("assistance").is_none());
+    assert_eq!(summary["_meta"]["connectionEventProviderCatalog"], catalog);
+
+    let selected = connection_event_provider_catalog(catalog.clone(), Some("github")).unwrap();
+    assert_eq!(selected, json!({"items": [github]}));
+    assert_eq!(
+        connection_event_provider_catalog(catalog, Some("missing"))
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+}
+
 fn seed_claude(handler: &RuntimeWorkRpcHandler, task: &str) -> RuntimeTaskLink {
     let mut link = seed(handler, task);
     link.runtime = "claude_code".into();

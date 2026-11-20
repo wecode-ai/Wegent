@@ -21,6 +21,10 @@ import {
 } from './workbenchSessionOperations'
 import { WorkspaceTabsSessionContext } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
+  type RuntimeCommandApprovalMode,
+} from '@wegent/chat-core/runtime-permission'
 import { createPersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
@@ -37,7 +41,7 @@ import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { WORKBENCH_NEW_CHAT_REQUEST_EVENT } from '@/lib/workbenchComposerFocus'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 import type { LocalDeviceApp, PluginPathComponent, User } from '@/types/api'
-import { useContext, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   getProjectWorkPreferenceKey,
   resolveProjectWorkPreferenceScope,
@@ -437,6 +441,16 @@ export function OwnedWorkbenchProvider({
     resolvedServices,
     modelSelectionMutationQueueRef,
   })
+  const persistNewChatCommandApproval = useCallback(
+    (mode: RuntimeCommandApprovalMode) => {
+      const selection = latestUserPreferencesRef.current?.wework_new_chat_model_selection
+      persistNewChatModelSelection({
+        ...(selection ?? { modelName: '', modelType: null }),
+        options: { ...selection?.options, [RUNTIME_COMMAND_APPROVAL_OPTION]: mode },
+      })
+    },
+    [latestUserPreferencesRef, persistNewChatModelSelection]
+  )
   const handleBlockedModelSelection = useHandleBlockedModelSelection({ dispatch })
   const handleBlockedModelSelect = useHandleBlockedModelSelect({ dispatch })
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
@@ -457,6 +471,7 @@ export function OwnedWorkbenchProvider({
     fallbackWhenConfiguredModelUnavailable: !state.currentRuntimeTask,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
+    onScopedCommandApprovalChange: persistNewChatCommandApproval,
     onSelectionBlocked: handleBlockedModelSelection,
   })
   const { refreshModels } = modelSelection
