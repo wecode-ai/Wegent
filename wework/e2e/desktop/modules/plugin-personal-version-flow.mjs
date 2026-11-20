@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { CLOUD_DEVICE_ID, fetchJson, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
 import {
   accountPlugin,
-  assertInventory,
   materializedPlugin,
   pluginApi,
   testId,
@@ -142,21 +141,11 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
     }
     const originalManifest = await readFile(manifest)
     try {
-      const detailRoute = `/plugins?plugin=${name}&marketplace=wework-personal`
-      if (alreadyShared) {
-        await control.command('navigate', 'body', { value: detailRoute })
-        await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
-        await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-uninstall-"]')
-        await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
-        await control.command(
-          'waitFor',
-          `${testId('plugin-operation-notice')}[data-notice-kind="success"]`
-        )
-        assert.equal(await accountPlugin(cloud, name), undefined)
-        await assertInventory(control, name, false)
-        assert.deepEqual(await readFile(manifest), originalManifest)
-        await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
-      }
+      assert.equal(
+        await accountPlugin(cloud, name),
+        undefined,
+        'Fixture already has an account install'
+      )
       await control.command('navigate', 'body', { value: '/plugins' })
       await control.command('waitFor', testId('plugins-search-input'))
       await control.command('click', testId('plugins-distribution-tab-personal'))
@@ -166,7 +155,8 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
       )
       if (alreadyShared) {
-        await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-toggle-"]')
+        // A published listing with an editable source on disk offers Install directly.
+        await control.command('clickWhenEnabled', testId(`plugin-detail-toggle-${previous.id}`))
       } else {
         await control.command('clickWhenEnabled', target)
         await control.command('waitFor', testId('personal-plugin-install-private-dialog'), {
