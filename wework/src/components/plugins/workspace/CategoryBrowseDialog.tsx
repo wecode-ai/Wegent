@@ -1,4 +1,5 @@
 import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
+import type { ComponentProps } from 'react'
 import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
@@ -12,6 +13,7 @@ export function CategoryBrowseDialog({
   isReconciling,
   installingMarketplacePluginIds,
   isLocallyUninstalling,
+  accountInstallState,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -23,6 +25,7 @@ export function CategoryBrowseDialog({
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
+  accountInstallState?: ComponentProps<typeof MarketplaceCardGrid>['accountInstallState']
   allowPendingRetry: boolean
   showPendingAsSyncing?: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -78,6 +81,7 @@ export function CategoryBrowseDialog({
             isReconciling={isReconciling}
             installingMarketplacePluginIds={installingMarketplacePluginIds}
             isLocallyUninstalling={isLocallyUninstalling}
+            accountInstallState={accountInstallState}
             allowPendingRetry={allowPendingRetry}
             showPendingAsSyncing={showPendingAsSyncing}
             labels={rowLabels}

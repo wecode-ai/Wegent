@@ -40,7 +40,11 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { PluginMarketplaceState } from './marketplaceWorkspaceHelpers'
 import type { PluginCatalogInput } from './pluginCatalogState'
 import { usePersonalPluginAccountInstall } from './usePersonalPluginAccountInstall'
-import { readPersonalPluginPackageVersion } from './personalPluginInstallSource'
+import {
+  isPersonalPluginInstallSource,
+  readPersonalPluginPackageVersion,
+  type PersonalPluginInstallSource,
+} from './personalPluginInstallSource'
 
 interface PublishingInput {
   setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
@@ -221,27 +225,30 @@ export function usePluginWorkspacePublishing({
     return cloudPluginId
   }
 
+  const readPersonalInstallSource = async (source: PersonalPluginInstallSource) =>
+    source.installed ??
+    toInstalledPluginItem(
+      await localPluginApi.readMarketplacePluginDetail(
+        {
+          id: WEWORK_PERSONAL_MARKETPLACE_ID,
+          name: WEWORK_PERSONAL_MARKETPLACE_ID,
+          path: source.marketplacePath,
+        },
+        source.key,
+        { refresh: true }
+      )
+    )
+
   const personalInstallation = usePersonalPluginAccountInstall({
     available: canInstallForAccount,
     accountIdentity,
     api: accountPluginApi,
     catalog,
     detailSourceKey: personalDetailSourceKey,
+    observeCatalog: installedPlugins.some(isPersonalPluginInstallSource),
     t,
     preparePrivate: async ({ source, isCurrent }) => {
-      const plugin =
-        source.installed ??
-        toInstalledPluginItem(
-          await localPluginApi.readMarketplacePluginDetail(
-            {
-              id: WEWORK_PERSONAL_MARKETPLACE_ID,
-              name: WEWORK_PERSONAL_MARKETPLACE_ID,
-              path: source.marketplacePath,
-            },
-            source.key,
-            { refresh: true }
-          )
-        )
+      const plugin = await readPersonalInstallSource(source)
       if (!isCurrent()) return null
       const file = await localPluginApi.packageCreatedPlugin(plugin.raw)
       if (!isCurrent()) return null
@@ -249,9 +256,9 @@ export function usePluginWorkspacePublishing({
       if (!version) throw new Error(t('workbench.plugins_personal_install_version_missing'))
       return { plugin, file, version }
     },
-    publishPrivate: async ({ source, isCurrent }, { plugin, file, version }) => {
+    publishPrivate: async ({ isAccountCurrent }, { plugin, file, version }) => {
       const completed = await uploadPersonalRelease(plugin, file, undefined, version)
-      if (!isCurrent()) return null
+      if (!isAccountCurrent()) return null
       if (completed.submission.status !== 'approved' || !completed.plugin?.latestReleaseId) {
         throw new Error(
           completed.submission.reviewNote || t('workbench.plugins_personal_install_upload_failed')
@@ -260,11 +267,22 @@ export function usePluginWorkspacePublishing({
       if (completed.plugin.latestReleaseId !== completed.submission.releaseId) {
         throw new Error(t('workbench.plugins_version_submit_superseded'))
       }
-      if (source.installed) await integratePersonalPublication(plugin, completed, isCurrent)
       return {
         pluginId: Number(completed.plugin.id),
         releaseId: completed.plugin.latestReleaseId,
       }
+    },
+    linkSource: async ({ source, isSourceCurrent }, release, publishedSource) => {
+      const plugin = publishedSource ?? (await readPersonalInstallSource(source))
+      await localPluginApi.linkPersonalPluginRelease(
+        plugin.raw,
+        release.pluginId,
+        release.releaseId,
+        {
+          isCurrent: isSourceCurrent,
+          accountInstall: publishedSource ? 'updateRelease' : 'keepRelease',
+        }
+      )
     },
   })
 

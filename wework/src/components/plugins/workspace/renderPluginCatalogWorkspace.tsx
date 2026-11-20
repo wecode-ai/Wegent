@@ -8,6 +8,8 @@ import { PluginCreateMenu } from '../PluginCreateMenu'
 import { AddMarketDialog } from '../workspace/AddMarketDialog'
 import { CategoryBrowseDialog } from '../workspace/CategoryBrowseDialog'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
+import type { PluginMarketplaceItem } from '@/types/api'
+import { personalPluginInstallSource } from './personalPluginInstallSource'
 
 export function renderPluginCatalogWorkspace({
   sidebarCollapsed,
@@ -75,7 +77,14 @@ export function renderPluginCatalogWorkspace({
   addMarketplace,
   pluginShareDialog,
   pluginPublishDialog,
+  installedPlugins,
+  personalInstallation,
 }: PluginsWorkspaceViewContext) {
+  const accountInstallState = (item: PluginMarketplaceItem) => {
+    const source = personalPluginInstallSource(installedPlugins, item)
+    if (source?.key === personalInstallation.busySourceKey) return 'installing'
+    if (source?.installed && personalInstallation.needsInstall(source)) return 'needed'
+  }
   return (
     <main
       data-testid="plugins-workspace"
@@ -225,6 +234,7 @@ export function renderPluginCatalogWorkspace({
           isReconciling={reconciliationBlocksActions}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
+          accountInstallState={accountInstallState}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
           showPendingAsSyncing={localInventoryReady && deviceCloudConnected}
           rowLabels={marketplaceRowLabels}
@@ -246,6 +256,7 @@ export function renderPluginCatalogWorkspace({
           isReconciling={reconciliationBlocksActions}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
+          accountInstallState={accountInstallState}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
           showPendingAsSyncing={localInventoryReady && deviceCloudConnected}
           rowLabels={marketplaceRowLabels}

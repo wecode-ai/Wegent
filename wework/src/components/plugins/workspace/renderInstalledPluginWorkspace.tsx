@@ -132,6 +132,8 @@ export function renderInstalledPluginWorkspace({
         selectedPlugin
       )
     const personalSource = personalPluginInstallSource([selectedPlugin])
+    const installForAccount = personalInstallation.actionFor(personalSource)
+    const installingForAccount = personalSource?.key === personalInstallation.busySourceKey
     return (
       <>
         <PluginDetailView
@@ -142,12 +144,18 @@ export function renderInstalledPluginWorkspace({
           primaryActionLabel={
             selectedUninstalling
               ? t('workbench.plugins_uninstalling', '正在卸载')
-              : t('workbench.plugins_try_now', '立即对话')
+              : installForAccount
+                ? installingForAccount
+                  ? t('workbench.plugins_installing')
+                  : t('workbench.plugins_install_plugin')
+                : t('workbench.plugins_try_now', '立即对话')
           }
-          primaryActionDisabled={selectedUninstalling}
-          onAccountInstall={personalInstallation.actionFor(personalSource)}
-          accountInstallBusy={personalInstallation.busy}
-          accountInstallDisabled={headerBusy || selectedUninstalling || reconciliationBlocksActions}
+          primaryActionIcon={installForAccount ? 'install' : 'try'}
+          primaryActionDisabled={
+            selectedUninstalling ||
+            (Boolean(installForAccount) &&
+              (headerBusy || reconciliationBlocksActions || installingForAccount))
+          }
           shareActionLabel={t('workbench.plugins_share', '分享')}
           shareActionDisabled={headerBusy || personalInstallation.busy}
           onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
@@ -211,6 +219,10 @@ export function renderInstalledPluginWorkspace({
           }
           onToggle={() => {
             if (isInstalledPluginUninstalling(selectedPlugin)) return
+            if (installForAccount) {
+              installForAccount()
+              return
+            }
             if (!tryPluginInChat(selectedPlugin.raw)) {
               setPluginDetailActionError({
                 pluginId: selectedPlugin.id,
@@ -249,7 +261,6 @@ export function renderInstalledPluginWorkspace({
         {publicationProgressDrawer}
         {pluginOperationNoticeOverlay}
         {pluginOverlayDialogs}
-        {personalInstallation.dialog}
       </>
     )
   }

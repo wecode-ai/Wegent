@@ -315,6 +315,7 @@ export function usePluginsWorkspaceController({
     if (isReconcilingPlugins) return
     setBrowsingCategoryKey(null)
     catalog.refresh(true)
+    personalInstallation.refreshAccountCatalog()
   }
 
   const refreshLocalMarketplace = (options?: { reloadCatalog: boolean }) => {
@@ -646,6 +647,7 @@ export function usePluginsWorkspaceController({
     ensureMarketplaceConnectors,
     rollbackInstalledPluginAfterAuthFailure,
     ensureLocalConnectorsAfterInstall,
+    personalInstallation,
   })
   const requiredConnections = useMemo(
     () =>

@@ -1,5 +1,8 @@
 import type { InstalledPlugin, InstalledPluginListResponse } from '@/types/api'
 import { isLocalPluginUninstallCleanupError } from '@/api/local/pluginUninstallError'
+import { toInstalledPluginItem } from './installedPluginPresentation'
+import { isPersonalPluginInstallSource } from './workspace/personalPluginInstallSource'
+import { reservePersonalPluginMutation } from './workspace/pluginWorkspaceOperations'
 import {
   isCloudManagedInstalledPlugin,
   isIndependentPublishedSource,
@@ -9,6 +12,7 @@ import {
 } from './installedPluginMerge'
 
 interface PluginUninstallOperations {
+  personalSourceKey?: string
   readLocalInstalled(): Promise<InstalledPluginListResponse>
   readCloudInstalled(): Promise<InstalledPluginListResponse>
   isCurrent(): boolean
@@ -19,7 +23,7 @@ interface PluginUninstallOperations {
 
 type AccountUninstallOperations = Pick<
   PluginUninstallOperations,
-  'readCloudInstalled' | 'isCurrent' | 'uninstallCloud'
+  'personalSourceKey' | 'readCloudInstalled' | 'isCurrent' | 'uninstallCloud'
 >
 
 export interface PluginUninstallOutcome {
@@ -118,6 +122,16 @@ export async function uninstallAccountPlugin(
   deviceId: string | undefined,
   operations: AccountUninstallOperations
 ): Promise<void> {
+  return runPersonalPluginUninstall(operations.personalSourceKey, () =>
+    uninstallAccountPluginById(cloudPluginId, deviceId, operations)
+  )
+}
+
+async function uninstallAccountPluginById(
+  cloudPluginId: string | number,
+  deviceId: string | undefined,
+  operations: AccountUninstallOperations
+) {
   assertCurrent(operations)
   const pluginId =
     typeof cloudPluginId === 'string' && /^[1-9]\d*$/.test(cloudPluginId)
@@ -133,6 +147,20 @@ export async function uninstallAccountPlugin(
     await operations.uninstallCloud(currentId, deviceId)
   } finally {
     assertCurrent(operations)
+  }
+}
+
+async function runPersonalPluginUninstall<T>(
+  sourceKey: string | undefined,
+  uninstall: () => Promise<T>
+): Promise<T> {
+  if (!sourceKey) return uninstall()
+  const finish = reservePersonalPluginMutation(sourceKey)
+  if (!finish) throw new Error('PLUGIN_PERSONAL_MUTATION_IN_PROGRESS')
+  try {
+    return await uninstall()
+  } finally {
+    finish()
   }
 }
 
@@ -198,6 +226,21 @@ async function resolveAccountUninstall(
 }
 
 export async function uninstallPluginIdentities(
+  plugin: InstalledPlugin | null,
+  id: string | number,
+  deviceId: string | undefined,
+  operations: PluginUninstallOperations
+): Promise<PluginUninstallOutcome> {
+  const sourceKey =
+    plugin && isPersonalPluginInstallSource(toInstalledPluginItem(plugin))
+      ? plugin.spec.source.pluginKey
+      : operations.personalSourceKey
+  return runPersonalPluginUninstall(sourceKey, () =>
+    uninstallResolvedPluginIdentities(plugin, id, deviceId, operations)
+  )
+}
+
+async function uninstallResolvedPluginIdentities(
   plugin: InstalledPlugin | null,
   id: string | number,
   deviceId: string | undefined,

@@ -198,10 +198,11 @@ export function renderMarketplacePluginWorkspace({
       )
 
     const personalSource = personalPluginInstallSource(installedPlugins, selectedMarketplacePlugin)
-    const accountInstall = resolveMarketplacePluginLock(selectedMarketplacePlugin)
-      ? undefined
-      : personalInstallation.actionFor(personalSource)
-    const primaryInstallsForAccount = !isInstalled && Boolean(accountInstall)
+    const installingForAccount = personalSource?.key === personalInstallation.busySourceKey
+    const installForAccount =
+      isInstalled && !resolveMarketplacePluginLock(selectedMarketplacePlugin)
+        ? personalInstallation.actionFor(personalSource)
+        : undefined
     const accountInstallDisabled =
       isActionPending || reconciliationBlocksActions || isUploadingPlugin || pluginPublishPreparing
     return (
@@ -211,9 +212,6 @@ export function renderMarketplacePluginWorkspace({
           detailLoading={marketplaceDetailLoading}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           usableOnThisDevice={isInstalled}
-          onAccountInstall={isInstalled ? accountInstall : undefined}
-          accountInstallBusy={personalInstallation.busy}
-          accountInstallDisabled={accountInstallDisabled}
           accessRole={selectedMarketplacePlugin.accessRole}
           versionSubmission={versionSubmission.actionFor(packableCreated, ownedListing)}
           pluginVisibility={selectedMarketplacePlugin.visibility}
@@ -331,10 +329,10 @@ export function renderMarketplacePluginWorkspace({
                 : isInstalling
                   ? t('workbench.plugins_installing', '正在安装')
                   : t('workbench.plugins_syncing_installation', '同步中...')
-              : primaryInstallsForAccount
-                ? personalInstallation.busy
+              : installForAccount
+                ? installingForAccount
                   ? t('workbench.plugins_installing')
-                  : t('workbench.plugins_install')
+                  : t('workbench.plugins_install_plugin')
                 : canUpdate
                   ? t('workbench.plugins_update', '更新')
                   : isInstalled
@@ -350,10 +348,12 @@ export function renderMarketplacePluginWorkspace({
                           })
                         : t('workbench.plugins_install_plugin', '安装插件')
           }
-          primaryActionIcon={marketplacePrimaryIcon}
+          primaryActionIcon={
+            installForAccount && !primaryActionPending ? 'install' : marketplacePrimaryIcon
+          }
           primaryActionDisabled={
             primaryActionPending ||
-            (primaryInstallsForAccount && (accountInstallDisabled || personalInstallation.busy))
+            (Boolean(installForAccount) && (accountInstallDisabled || installingForAccount))
           }
           tertiaryActionLabel={
             selectedMarketplacePlugin.accessRole === 'recipient' &&
@@ -373,8 +373,8 @@ export function renderMarketplacePluginWorkspace({
           onToggle={() => {
             if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
               return
-            if (!isInstalled && accountInstall) {
-              if (!accountInstallDisabled) accountInstall()
+            if (installForAccount) {
+              if (!accountInstallDisabled) installForAccount()
               return
             }
             if (canUpdate) {
@@ -432,7 +432,6 @@ export function renderMarketplacePluginWorkspace({
         {publicationProgressDrawer}
         {pluginOperationNoticeOverlay}
         {pluginOverlayDialogs}
-        {personalInstallation.dialog}
       </>
     )
   }

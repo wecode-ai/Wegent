@@ -27,6 +27,7 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
   isReconciling,
   isInstalling,
   isUninstalling,
+  needsAccountInstall,
   allowPendingRetry,
   showPendingAsSyncing = true,
   labels,
@@ -66,7 +67,10 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
       deviceState === 'uninstalling' ||
       (deviceState === 'pending' && showPendingAsSyncing))
   const showInstalledState =
-    shouldShowInstalledMarketplaceActions(item, isLoggedIn) && !showFailedState && !showSyncingState
+    !needsAccountInstall &&
+    shouldShowInstalledMarketplaceActions(item, isLoggedIn) &&
+    !showFailedState &&
+    !showSyncingState
   const uninstallPending = isUninstalling || deviceState === 'uninstalling'
   const actionPending = isInstalling || uninstallPending || showSyncingState
   const pendingLabel = isUninstalling

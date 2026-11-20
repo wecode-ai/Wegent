@@ -19,6 +19,7 @@ import { type InstalledPluginItem } from '../PluginManagementRows'
 import { marketplaceItemMarketplaceId } from '../pluginDistribution'
 import { toInstalledPluginItem } from '../workspace/marketplaceWorkspaceHelpers'
 import { TERMINAL_PUBLICATION_STATUSES } from './pluginPublicationState'
+import { reservePersonalPluginMutation } from './pluginWorkspaceOperations'
 import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
 
 export function usePluginWorkspaceDeletion({
@@ -108,9 +109,19 @@ export function usePluginWorkspaceDeletion({
 
   const confirmDeletePersonalPlugin = async () => {
     const isCurrent = capturePluginScope()
-    if (!pendingPersonalPluginDelete || isDeletingPersonalPlugin) return
+    if (!isCurrent() || !pendingPersonalPluginDelete || isDeletingPersonalPlugin) return
     const pending = pendingPersonalPluginDelete
     if (pending.cloudPluginId !== null && !pending.impact) return
+    const finishMutation = reservePersonalPluginMutation(pending.pluginName)
+    if (!finishMutation) {
+      setPendingPersonalPluginDelete(null)
+      catalog.showNotice({
+        id: 'personal-plugin-mutation-in-progress',
+        kind: 'error',
+        message: t('workbench.plugins_reconciliation_busy'),
+      })
+      return
+    }
     setIsDeletingPersonalPlugin(true)
     const attempt = beginOperation('plugin.delete')
     try {
@@ -252,6 +263,7 @@ export function usePluginWorkspaceDeletion({
           : t('workbench.plugins_delete_failed', '删除插件失败，请稍后重试'),
       })
     } finally {
+      finishMutation()
       if (isCurrent()) setIsDeletingPersonalPlugin(false)
     }
   }

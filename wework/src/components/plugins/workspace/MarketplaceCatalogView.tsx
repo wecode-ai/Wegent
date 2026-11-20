@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode, type Ref, type RefObject } from 'react'
+import { memo, useMemo, type ComponentProps, type ReactNode, type Ref, type RefObject } from 'react'
 import { Boxes, RefreshCw } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
@@ -51,6 +51,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isReconciling,
   installingMarketplacePluginIds,
   isLocallyUninstalling,
+  accountInstallState,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -93,6 +94,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
+  accountInstallState?: ComponentProps<typeof MarketplaceCardGrid>['accountInstallState']
   allowPendingRetry: boolean
   showPendingAsSyncing: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -393,6 +395,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                       isReconciling={isReconciling}
                       installingMarketplacePluginIds={installingMarketplacePluginIds}
                       isLocallyUninstalling={isLocallyUninstalling}
+                      accountInstallState={accountInstallState}
                       allowPendingRetry={allowPendingRetry}
                       showPendingAsSyncing={showPendingAsSyncing}
                       labels={rowLabels}

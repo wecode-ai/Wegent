@@ -85,6 +85,57 @@ describe('local plugin source isolation', () => {
     })
   })
 
+  test.each([false, true])(
+    'passes the existing-release link guard to Native when device changed=%s',
+    async deviceChanged => {
+      const api = createLocalCodexPluginApi()
+      const { items } = await api.listInstalledPlugins({ requireComplete: true })
+      const plugin = items.find(item => item.spec.source.pluginKey === 'personal-tool')!
+      const originalRequest = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.links.link') return null
+        return originalRequest(method, params)
+      })
+      vi.spyOn(api, 'ensureCreatedPluginInWeworkPersonal').mockImplementation(async () => {
+        if (deviceChanged) mocks.deviceId = 'device-b'
+        return {
+          pluginName: 'personal-tool',
+          marketplacePath: '/personal',
+          pluginPath: '/personal/plugins/personal-tool',
+          migrated: false,
+        }
+      })
+      const link = api.linkPersonalPluginRelease(plugin, 17, 42, {
+        isCurrent: () => mocks.deviceId === 'device-a',
+        accountInstall: 'keepRelease',
+      })
+      if (deviceChanged) {
+        await expect(link).rejects.toThrow('Plugin account changed')
+      } else {
+        await link
+      }
+      const writes = mocks.request.mock.calls.filter(
+        ([method]) => method === 'executor.plugins.links.link'
+      )
+      expect(writes).toEqual(
+        !deviceChanged
+          ? [
+              [
+                'executor.plugins.links.link',
+                {
+                  marketplacePath: '/personal',
+                  localPluginName: 'personal-tool',
+                  cloudPluginId: 17,
+                  cloudReleaseId: 42,
+                  accountInstall: 'keepRelease',
+                },
+              ],
+            ]
+          : []
+      )
+    }
+  )
+
   function consumeSnapshot(state: LocalCodexPluginsState, expected: string[]) {
     expected = [...expected].sort()
     const local = resolveLocalPluginInventory(

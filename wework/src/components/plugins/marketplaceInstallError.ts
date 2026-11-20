@@ -11,6 +11,9 @@ export function humanizeMarketplacePluginError(
   operation: 'install' | 'uninstall' = 'install'
 ): string {
   const trimmed = stripExecutorPrefix(message.trim())
+  if (trimmed === 'PLUGIN_PERSONAL_MUTATION_IN_PROGRESS') {
+    return t('workbench.plugins_reconciliation_busy', '正在检查安装状态，请完成后再操作')
+  }
   if (
     trimmed === 'PLUGIN_UNINSTALL_PREFLIGHT_FAILED' ||
     /account install id is unavailable/i.test(trimmed)

@@ -27,6 +27,25 @@ export function ownedPersonalPluginListings(items: PluginMarketplaceItem[], key:
   )
 }
 
+export function ownedPersonalPluginSourceKey(item: PluginMarketplaceItem | null | undefined) {
+  if (item?.visibility !== 'personal' || item.accessRole !== 'owner') return
+  return item.localPersonalSource?.pluginName ?? item.name
+}
+
+export function personalPluginDiskSource(
+  key: string,
+  name: string,
+  marketplacePath: unknown
+): PersonalPluginInstallSource | null {
+  if (
+    typeof marketplacePath !== 'string' ||
+    !marketplacePath.trim() ||
+    getInitializedBundledPluginMarketplace()?.defaultPluginNames?.includes(key)
+  )
+    return null
+  return { key, name, installed: null, marketplacePath }
+}
+
 export function personalPluginInstallSource(
   installedPlugins: InstalledPluginItem[],
   listing?: PluginMarketplaceItem
@@ -64,19 +83,7 @@ export function personalPluginInstallSource(
     isPersonalMarketplaceId(marketplaceItemMarketplaceId(listing) ?? '')
       ? listing.manifest.marketplacePath
       : undefined)
-  if (
-    typeof marketplacePath !== 'string' ||
-    !marketplacePath.trim() ||
-    getInitializedBundledPluginMarketplace()?.defaultPluginNames?.includes(pluginName)
-  )
-    return null
-
-  return {
-    key: pluginName,
-    name: listing.displayName || pluginName,
-    installed: null,
-    marketplacePath,
-  }
+  return personalPluginDiskSource(pluginName, listing.displayName || pluginName, marketplacePath)
 }
 
 export async function readPersonalPluginPackageVersion(file: File): Promise<string | null> {
