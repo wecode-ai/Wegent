@@ -228,13 +228,12 @@ pub(crate) fn responses_to_responses(
         }
     }
 
-    if let Some(tools) = result.get("tools").and_then(Value::as_array) {
+    if let Some(tools) = if bridge_namespace_tools || bridge_tool_search {
+        Some(&effective_tools)
+    } else {
+        result.get("tools").and_then(Value::as_array)
+    } {
         if !tools.is_empty() {
-            let tools = if bridge_namespace_tools {
-                effective_tools.as_slice()
-            } else {
-                tools.as_slice()
-            };
             result["tools"] = Value::Array(responses_tools(
                 tools,
                 &context,
@@ -295,6 +294,15 @@ pub(super) fn convert_responses_input_items(
     let mut pending_tool_image_content = Vec::new();
     for item in items {
         let item_type = item.get("type").and_then(Value::as_str);
+        // Native server searches may omit call_id. Their discovered tools have
+        // already been included in the effective catalog.
+        if bridge_tool_search
+            && matches!(item_type, Some("tool_search_call" | "tool_search_output"))
+            && item["execution"] == "server"
+            && item["call_id"].is_null()
+        {
+            continue;
+        }
         if !is_tool_output_item(item_type) {
             flush_tool_image_content_to_responses(&mut converted, &mut pending_tool_image_content);
         }
