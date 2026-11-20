@@ -2736,6 +2736,15 @@
   border-radius: 6px;
 }
 
+@media (min-width: 768px) {
+  @container issue-comment (min-width: 360px) {
+    .task-detail-new-comment[data-workflow='true'] .task-detail-new-comment-actions {
+      /* Let the mode label shrink before moving the staged actions to a new row. */
+      flex-wrap: nowrap;
+    }
+  }
+}
+
 .task-detail-comment-pending-actions {
   --comment-action-size: 28px;
   --comment-picker-min-width: 0px;
