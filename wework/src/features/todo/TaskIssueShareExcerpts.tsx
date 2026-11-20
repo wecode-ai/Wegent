@@ -143,7 +143,10 @@ export function TaskIssueShareExcerpts({
                 ? 'taskIssueShare.recentExcerpts'
                 : 'taskIssueShare.expandPreview'
         )}
-        <ChevronDown className={`size-3.5 ${showAll ? 'rotate-180' : ''}`} aria-hidden="true" />
+        <ChevronDown
+          className={`size-3.5 ${loadEarlier || showAll ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
       </Button>
       {failed && (
         <p role="alert" className="px-2 py-1 text-xs text-destructive">
