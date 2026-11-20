@@ -21,8 +21,8 @@
 //! The chat-shell upstream is the deployment's `CHAT_SHELL_URL`.
 mod device;
 
-pub(super) use device::dispatch_responses_device;
 use device::{dispatch_device_turn, resolve_device_route_id};
+pub(crate) use device::{dispatch_responses_device, enqueue_responses_device};
 
 use std::io;
 use std::pin::Pin;

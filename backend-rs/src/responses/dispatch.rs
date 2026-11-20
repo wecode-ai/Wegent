@@ -171,6 +171,14 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     MemorySave(crate::responses::create::memory_context::SaveRequest),
     /// An automatic handoff is acknowledged only after its destination accepts.
     Pipeline(Box<DispatchJob<M, R>>, oneshot::Sender<Result<(), String>>),
+    /// A device turn accepted after its callback reader exists. The supervisor
+    /// owns submission so dropping the client stream cannot cancel the
+    /// transition from PENDING to RUNNING or the later `task:execute` publish.
+    Device {
+        request: Box<ExecutionRequest>,
+        device_route: String,
+        consumer: Box<ConsumerState<M, R>>,
+    },
 }
 
 /// The production job type (`AppState`'s specialization).
@@ -210,6 +218,16 @@ impl<M: Mysql, R: Redis> DispatchJob<M, R> {
                 subtask_id: 0,
                 request_id: String::new(),
                 target: "memory".to_string(),
+            },
+            Self::Device {
+                request,
+                device_route,
+                ..
+            } => JobContext {
+                task_id: request.task_id,
+                subtask_id: request.subtask_id,
+                request_id: request.request_id.clone(),
+                target: format!("device:{device_route}"),
             },
         }
     }
@@ -521,6 +539,118 @@ where
         DispatchJob::Pipeline(..) => unreachable!("nested pipeline dispatch"),
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;
+        }
+        DispatchJob::Device {
+            mut request,
+            device_route,
+            consumer,
+        } => {
+            let Some(app) = consumer.app.upgrade() else {
+                finalize_executor_failure(
+                    &consumer,
+                    request.task_id,
+                    request.subtask_id,
+                    request.user_id,
+                    request.message_id,
+                    (
+                        "Application stopped before device dispatch",
+                        "EXECUTOR_DISPATCH_FAILED",
+                    ),
+                )
+                .await;
+                tracing::warn!(
+                    task_id = request.task_id,
+                    subtask_id = request.subtask_id,
+                    "application stopped before device dispatch"
+                );
+                return;
+            };
+            if let Err(error) =
+                super::create::seam::dispatch_responses_device(&app, &mut request, &device_route)
+                    .await
+            {
+                if super::create::seam::is_subtask_not_dispatchable(&error)
+                    && publish_committed_device_cancellation(
+                        &app,
+                        request.task_id,
+                        request.subtask_id,
+                    )
+                    .await
+                {
+                    return;
+                }
+                tracing::warn!(
+                    task_id = request.task_id,
+                    subtask_id = request.subtask_id,
+                    ?error,
+                    "background device dispatch failed"
+                );
+            }
+        }
+    }
+}
+
+/// Publish the already committed cancellation when a supervisor loses the
+/// dispatch race to the cancel endpoint. The terminal path is idempotent, so a
+/// device callback that won concurrently keeps its committed outcome.
+pub(crate) async fn publish_committed_device_cancellation(
+    app: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+) -> bool {
+    use crate::internal_callback::{
+        completion,
+        event::{EventType, ExecutionEvent},
+    };
+    let Some(redis) = app.redis.as_ref() else {
+        return false;
+    };
+    let task = match app.task_store.get_task(task_id).await {
+        Ok(task) => task,
+        Err(error) => {
+            tracing::warn!(%error, task_id, subtask_id, "device cancellation status read failed");
+            return false;
+        }
+    };
+    let Some(task) = task else {
+        return false;
+    };
+    let Some(payload) = completion::task_column::<brz_mysql::Json<Value>>(&task, "json") else {
+        return false;
+    };
+    if !matches!(
+        payload.0.pointer("/status/status").and_then(Value::as_str),
+        Some("CANCELLING" | "CANCELLED")
+    ) {
+        return false;
+    }
+    let mut event = ExecutionEvent::new(EventType::Cancelled, task_id, subtask_id);
+    event.result = Some(serde_json::json!({}));
+    match crate::internal_callback::process_dispatch_failure(app, event.clone()).await {
+        Ok(()) => {
+            // The terminal write is idempotent. Replaying the callback closes the
+            // race where a producer committed the cancellation without a stream reader.
+            match crate::internal_callback::publish_terminal_callback(redis, &event).await {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        task_id,
+                        subtask_id,
+                        "device cancellation callback replay failed"
+                    );
+                    false
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                task_id,
+                subtask_id,
+                "device cancellation callback publish failed"
+            );
+            false
         }
     }
 }

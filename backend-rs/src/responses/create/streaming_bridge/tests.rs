@@ -251,7 +251,7 @@ fn callback_bridge(payloads: Vec<Vec<u8>>) -> (Bridge, std::sync::Arc<std::sync:
         response: None,
         subscription: Some(subscription),
         callback_dispatch: None,
-        callback_dispatch_attempted: true,
+        callback_dispatch_settled: true,
         frames: SseFrames::default(),
         poll,
         queue,
@@ -538,6 +538,89 @@ async fn an_unsettled_device_dispatch_keeps_its_reader_for_cancellation() {
     assert!(body.contains("取消时已提交的回复🙂"), "{body}");
     assert!(!body.contains("response.failed"), "{body}");
     assert!(!*connected.lock().unwrap());
+}
+
+#[tokio::test]
+async fn a_nondispatchable_device_turn_fails_when_no_producer_exists() {
+    let (mut bridge, connected) = callback_bridge(Vec::new());
+    bridge.mode = Mode::Callback {
+        target: CallbackDispatchTarget::Device {
+            route: "test-device".to_owned(),
+        },
+    };
+    bridge.callback_dispatch_settled = false;
+
+    bridge
+        .fail(BridgeFailure::dispatch(&FastApiError::detail(
+            brz_http_server::StatusCode::CONFLICT,
+            "Assistant subtask is no longer dispatchable",
+        )))
+        .await;
+
+    let body = drain(&mut bridge).await;
+    assert!(body.contains("response.failed"), "{body}");
+    assert!(
+        body.contains("Assistant subtask is no longer dispatchable"),
+        "{body}"
+    );
+    assert!(!*connected.lock().unwrap());
+}
+
+#[tokio::test]
+async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
+    use super::super::callback_source::test_support::ScriptedSubscriptions;
+
+    let fixture =
+        crate::sql_test_support::mysql_rows::MysqlRows::start_results(|_| (Vec::new(), Vec::new()))
+            .await;
+    let mut app = crate::app_test_support::app(fixture.mysql.clone());
+    {
+        let state = std::sync::Arc::get_mut(&mut app).expect("uniquely owned test app");
+        state.callback_subscriptions =
+            Some(std::sync::Arc::new(ScriptedSubscriptions::new(Vec::new())));
+    }
+    let request = ExecutionRequest {
+        task_id: TEST_TASK_ID,
+        subtask_id: TEST_SUBTASK_ID,
+        message_id: Some(2),
+        prompt: json!("hello"),
+        model_config: json!({"model_id": "test-model"}),
+        ..ExecutionRequest::default()
+    };
+    let input = BridgeInput {
+        model_string: "test-model",
+        previous_response_id: None,
+        request_id: "request-id",
+        created_at: TEST_CREATED_AT,
+        target_url: None,
+    };
+    let bridge = test_bridge(
+        &app,
+        &request,
+        &input,
+        CallbackDispatchTarget::Device {
+            route: "test-device".to_owned(),
+        },
+    )
+    .expect("callback bridge");
+    drop(
+        app.responses_dispatch
+            .reserve()
+            .expect("reserve the only admission slot"),
+    );
+    let body = super::body_stream(bridge).expect("SSE body");
+    let failure = tokio::time::timeout(Duration::from_secs(1), drain_stream(body))
+        .await
+        .expect("queue rejection must finish the stream");
+    assert!(failure.contains("response.failed"), "{failure}");
+}
+
+async fn drain_stream(mut body: BodyStream) -> String {
+    let mut text = String::new();
+    while let Some(chunk) = futures_util::StreamExt::next(&mut body).await {
+        text.push_str(&String::from_utf8_lossy(&chunk.expect("body chunk")));
+    }
+    text
 }
 
 #[tokio::test]

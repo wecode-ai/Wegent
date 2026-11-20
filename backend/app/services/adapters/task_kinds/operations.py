@@ -1233,9 +1233,41 @@ class TaskOperationsMixin:
                 "status": "CANCELLING",
             }
 
-        # Check if this is a Chat Shell task
+        # Check if this is a Chat Shell task. Responses API tasks use the same
+        # source label even when execution is placed on a traditional device.
         is_chat_shell = self._is_chat_shell_task(db, task_id)
-        logger.info(f"Task {task_id} is_chat_shell={is_chat_shell}")
+        device_id = self._device_execution_id(db, task_id)
+        logger.info(
+            f"Task {task_id} is_chat_shell={is_chat_shell}, " f"device_id={device_id}"
+        )
+
+        if device_id:
+            # Device execution has its own WebSocket cancellation path. Keep a
+            # one-shot handoff on the task so the background route can resolve
+            # the runtime device without trusting the caller's shell label.
+            task = task_stores.task_store.get_by_id_for_update(
+                db, task_id=task_id, owner_user_id=user_id
+            )
+            if not task or not task.json:
+                raise HTTPException(status_code=404, detail="Task not found")
+            task_crd = Task.model_validate(task.json)
+            if not task_crd.metadata.labels:
+                task_crd.metadata.labels = {}
+            task_crd.metadata.labels["lastDeviceCancelId"] = device_id
+            if task_crd.status:
+                task_crd.status.status = "CANCELLING"
+                task_crd.status.errorMessage = ""
+                task_crd.status.updatedAt = datetime.now()
+                task_crd.status.completedAt = None
+            task_stores.task_store.update_json(
+                db, task=task, payload=task_crd.model_dump(mode="json")
+            )
+            db.commit()
+            if background_task_runner:
+                background_task_runner(self._call_device_cancel, task_id)
+            else:
+                await self._call_device_cancel(task_id)
+            return {"message": "Cancel request accepted", "status": "CANCELLING"}
 
         if is_chat_shell:
             return await self._cancel_chat_shell_task(
@@ -1245,6 +1277,16 @@ class TaskOperationsMixin:
             return await self._cancel_executor_task(
                 db, task_id, user_id, background_task_runner
             )
+
+    @staticmethod
+    def _device_execution_id(db: Session, task_id: int) -> Optional[str]:
+        """Read the Task's immutable traditional-device placement."""
+        task = task_stores.task_store.get_active_task(db, task_id=task_id)
+        if not task or not task.json:
+            return None
+        task_crd = Task.model_validate(task.json)
+        device_id = (task_crd.spec.device_id or "").strip()
+        return device_id or None
 
     def _is_chat_shell_task(self, db: Session, task_id: int) -> bool:
         """Check if a task is a Chat Shell task."""
@@ -1374,6 +1416,114 @@ class TaskOperationsMixin:
         except Exception as e:
             logger.error(
                 f"Error calling executor_manager to cancel task {task_id}: {str(e)}"
+            )
+
+    async def _call_device_cancel(self, task_id: int):
+        """Send a queued task cancellation to its selected traditional device."""
+        from app.db.session import SessionLocal
+        from app.services.device.runtime_route import runtime_route_resolver
+
+        subtask = None
+        try:
+            with SessionLocal() as db:
+                task = task_stores.task_store.get_by_id_for_update(db, task_id=task_id)
+                if not task or not task.json:
+                    return
+                task_crd = Task.model_validate(task.json)
+                labels = task_crd.metadata.labels or {}
+                submitted_device_id = str(labels.pop("lastDeviceCancelId", "") or "")
+                task_crd.metadata.labels = labels
+                task_stores.task_store.update_json(
+                    db, task=task, payload=task_crd.model_dump(mode="json")
+                )
+                db.commit()
+                owner_user_id = task.user_id
+                subtask = (
+                    task_stores.subtask_store.get_latest_assistant_for_user_by_statuses(
+                        db,
+                        task_id=task_id,
+                        user_id=owner_user_id,
+                        statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+                    )
+                )
+            if not submitted_device_id or not subtask:
+                await self._finalize_missed_device_cancel(
+                    task_id, subtask.id if subtask else None
+                )
+                return
+            if subtask.status == SubtaskStatus.PENDING:
+                await self._finalize_missed_device_cancel(task_id, subtask.id)
+                return
+            route = await runtime_route_resolver.resolve(
+                user_id=owner_user_id,
+                submitted_device_id=submitted_device_id,
+            )
+            from app.core.socketio import get_sio
+
+            await get_sio().emit(
+                "task:cancel",
+                {"task_id": task_id, "subtask_id": subtask.id},
+                room=f"device:{owner_user_id}:{route.runtime_device_id}",
+                namespace="/local-executor",
+            )
+            logger.info(
+                "[DEVICE_CANCEL] task_id=%s subtask_id=%s device_id=%s",
+                task_id,
+                subtask.id,
+                route.runtime_device_id,
+            )
+        except Exception as e:
+            logger.error(
+                "Error cancelling device task %s: %s", task_id, str(e), exc_info=True
+            )
+            await self._finalize_missed_device_cancel(
+                task_id, subtask.id if subtask else None
+            )
+
+    async def _finalize_missed_device_cancel(
+        self, task_id: int, subtask_id: Optional[int]
+    ):
+        """Commit and publish cancellation when device delivery is impossible."""
+        from app.db.session import SessionLocal
+        from app.services.chat.operations.cancel import (
+            finalize_stuck_cancellation,
+            publish_task_cancelled_events,
+        )
+        from app.services.chat.storage import session_manager
+
+        try:
+            with SessionLocal() as db:
+                subtask = (
+                    task_stores.subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+                    if subtask_id is not None
+                    else None
+                )
+                task = task_stores.task_store.get_by_id(db, task_id=task_id)
+                owner_user_id = (
+                    subtask.user_id
+                    if subtask is not None
+                    else task.user_id if task is not None else 0
+                )
+                finalized = finalize_stuck_cancellation(db, task_id=task_id)
+            if finalized:
+                await publish_task_cancelled_events(task_id, finalized, owner_user_id)
+                from shared.models import EventType, ExecutionEvent
+
+                for finalized_subtask_id in finalized:
+                    event = ExecutionEvent(
+                        type=EventType.CANCELLED.value,
+                        task_id=task_id,
+                        subtask_id=finalized_subtask_id,
+                        result={"value": ""},
+                    )
+                    await session_manager.publish_callback_event(
+                        finalized_subtask_id, event
+                    )
+        except Exception:
+            logger.exception(
+                "Could not finalize undeliverable device cancellation: task_id=%s, subtask_id=%s",
+                task_id,
+                subtask_id,
             )
 
     async def _call_chat_shell_cancel(self, subtask_id: int):

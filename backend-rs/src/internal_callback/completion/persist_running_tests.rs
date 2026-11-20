@@ -270,7 +270,9 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
         &format!("mysql://root@{address}/{}?ssl-mode=disabled", schema.name),
         &replica.url,
         "running-transition-lag",
-        MysqlServiceOptions::default().with_query_timeout(Duration::from_secs(5)),
+        MysqlServiceOptions::default()
+            .with_query_timeout(Duration::from_secs(5))
+            .with_acquire_timeout(Duration::from_secs(5)),
     )?;
     let status_query = "SELECT status FROM subtasks WHERE id = ?";
     assert!(
@@ -497,7 +499,42 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     verify_non_chat_cancel_liveness(writer, &app).await?;
     verify_chat_cancel_waits_for_runtime_then_falls_back(writer, &app).await?;
     verify_cancel_callback_order(writer, &app).await?;
+    verify_device_cancel_dispatch_race(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
+}
+
+/// A device dispatch that loses the PENDING/RUNNING transition race to the
+/// cancel endpoint must publish the committed cancellation instead of waiting
+/// forever for a producer that never started.
+async fn verify_device_cancel_dispatch_race(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    reset_callback_state(writer, "RUNNING").await?;
+    assert!(
+        crate::socketio::chat_control::mark_cancelling(app, 12, 43)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLING".into(), "RUNNING".into())
+    );
+
+    assert!(crate::responses::dispatch::publish_committed_device_cancellation(app, 12, 43).await);
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+
+    terminal_callback(app, "done", "late outcome")
+        .await
+        .unwrap();
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    Ok(())
 }
 
 async fn reset_callback_state(writer: &MysqlService, parent_status: &str) -> anyhow::Result<()> {

@@ -1819,11 +1819,31 @@ async def cancel_response(
     )
     is_chat_shell = source_label == "chat_shell"
 
+    device_id = (task_crd.spec.device_id or "").strip()
     logger.info(
-        f"[CANCEL] task_id={task_id}, source={source_label}, is_chat_shell={is_chat_shell}"
+        f"[CANCEL] task_id={task_id}, source={source_label}, "
+        f"is_chat_shell={is_chat_shell}, device_id={device_id or None}"
     )
 
-    if is_chat_shell:
+    if device_id:
+        # Responses API tasks use source=chat_shell even when their immutable
+        # placement is a traditional device. Let the cancel service route by
+        # that placement before taking the Chat Shell stream branch below.
+        try:
+            await task_kinds_service.cancel_task(
+                db=db,
+                task_id=task_id,
+                user_id=current_user.id,
+                background_task_runner=background_tasks.add_task,
+            )
+        except HTTPException as e:
+            if e.status_code == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response '{response_id}' not found",
+                )
+            raise
+    elif is_chat_shell:
         # For Chat Shell tasks, use session_manager to cancel the stream
         # Find running assistant subtask
         running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(

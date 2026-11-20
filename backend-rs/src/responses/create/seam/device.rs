@@ -230,3 +230,29 @@ pub(crate) async fn dispatch_responses_device(
     }
     Ok(())
 }
+
+/// Admit a device Responses turn to the startup-owned supervisor after the
+/// callback reader exists. The request path can then be cancelled without
+/// cancelling the RUNNING transition or the subsequent `task:execute` emit.
+pub(crate) fn enqueue_responses_device(
+    state: &AppState,
+    request: &ExecutionRequest,
+    device_route: &str,
+) -> Result<(), FastApiError> {
+    if state
+        .responses_dispatch
+        .submit(crate::responses::dispatch::DefaultDispatchJob::Device {
+            request: Box::new(request.clone()),
+            device_route: device_route.to_owned(),
+            consumer: Box::new(crate::responses::dispatch::ConsumerState::from_app(state)),
+        })
+    {
+        return Ok(());
+    }
+    tracing::error!(
+        task_id = request.task_id,
+        subtask_id = request.subtask_id,
+        "device dispatch queue unavailable"
+    );
+    Err(FastApiError::internal())
+}

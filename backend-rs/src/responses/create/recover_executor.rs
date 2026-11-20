@@ -147,10 +147,14 @@ pub(crate) async fn recover_executor_if_needed(
     if !shell_supports_recovery(&request_shell_type(request)) {
         return Ok(false);
     }
-    let restore_fork_workspace = has_fork_workspace_archive(request.fork_runtime.as_ref());
-    if device_id.is_some_and(|id| !id.is_empty()) && restore_fork_workspace {
+    // Device placement replaces the subtask's executor binding during dispatch.
+    // Recovering the managed executor first would allocate and probe a server
+    // executor that this turn cannot use, and can fail the turn before the
+    // selected online device is reached.
+    if device_id.is_some_and(|id| !id.is_empty()) {
         return Ok(false);
     }
+    let restore_fork_workspace = has_fork_workspace_archive(request.fork_runtime.as_ref());
     let tables = state.task_store.table_templates();
     let binding = if pipeline {
         read_pipeline_binding(&state.mysql, tables, request.task_id, request.subtask_id).await

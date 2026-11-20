@@ -133,6 +133,7 @@ enum Mode {
 
 /// The callback source is shared; placement determines how the turn is submitted.
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 enum CallbackDispatchTarget {
     Executor { url: Option<String> },
     Device { route: String },
@@ -163,7 +164,7 @@ struct Bridge {
     /// `Mode::Callback`: the executor-manager dispatch issued after the
     /// subscription exists (`openapi_responses.py:1365-1370`).
     callback_dispatch: Option<(CallbackDispatchTarget, ExecutionRequest)>,
-    callback_dispatch_attempted: bool,
+    callback_dispatch_settled: bool,
     frames: SseFrames,
     poll: tokio::time::Interval,
     queue: VecDeque<Bytes>,
@@ -179,6 +180,16 @@ struct Bridge {
     terminal: bool,
     finished: bool,
     failed_terminal: bool,
+}
+
+#[cfg(test)]
+fn test_bridge(
+    state: &AppState,
+    request: &ExecutionRequest,
+    input: &BridgeInput<'_>,
+    target: CallbackDispatchTarget,
+) -> Result<Bridge, FastApiError> {
+    Bridge::new(state, request, input, Mode::Callback { target })
 }
 
 impl Bridge {
@@ -242,7 +253,7 @@ impl Bridge {
             response: None,
             subscription: None,
             callback_dispatch,
-            callback_dispatch_attempted: false,
+            callback_dispatch_settled: false,
             frames: SseFrames::default(),
             poll,
             queue,
@@ -434,7 +445,7 @@ impl Bridge {
         };
         let channel = callback_channel(self.subtask_id);
         let dispatch = self.callback_dispatch.as_mut();
-        let attempted = &mut self.callback_dispatch_attempted;
+        let settled = &mut self.callback_dispatch_settled;
         let request_id = &self.request_id;
         let dispatch_app = app.as_ref();
         callback::subscribe_before_dispatch(
@@ -446,8 +457,7 @@ impl Bridge {
                     let Some((target, request)) = dispatch else {
                         return Ok(());
                     };
-                    *attempted = true;
-                    match target {
+                    let result = match target {
                         CallbackDispatchTarget::Executor { url } => {
                             super::seam::dispatch_executor_after_subscribe(
                                 dispatch_app,
@@ -458,10 +468,14 @@ impl Bridge {
                             .await
                         }
                         CallbackDispatchTarget::Device { route } => {
-                            super::seam::dispatch_responses_device(dispatch_app, request, route)
-                                .await
+                            super::seam::enqueue_responses_device(dispatch_app, request, route)
+                                .map_err(|_| FastApiError::internal())
                         }
+                    };
+                    if result.is_ok() {
+                        *settled = true;
                     }
+                    result
                 });
                 dispatch
             },
@@ -754,7 +768,8 @@ impl Bridge {
     /// carries its own `classify_error` code, which the FAILED completion
     /// persists as `result.error_type`.
     async fn fail_with_order(&mut self, failure: BridgeFailure, order: FailureOrder) {
-        if self.device_callback_mode() && failure.terminal_winner {
+        if self.device_callback_mode() && self.callback_dispatch_settled && failure.terminal_winner
+        {
             self.finish_committed_winner().await;
             return;
         }
@@ -765,7 +780,7 @@ impl Bridge {
         } = failure;
         if self.callback_mode() {
             if self.device_callback_mode()
-                && !self.callback_dispatch_attempted
+                && !self.callback_dispatch_settled
                 && let Some(app) = self.app.upgrade()
                 && let Some((_, request)) = self.callback_dispatch.as_ref()
             {
