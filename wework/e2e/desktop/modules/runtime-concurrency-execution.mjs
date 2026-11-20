@@ -174,9 +174,13 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         assert.equal(lowered.categories.personal.queued, 1)
         release('personal', 1)
         await waitRequested(promptFor('personal', 2))
-        for (const kind of ['personal', 'standIn', 'agent'])
-          for (const index of [1, 2]) release(kind, index)
-        for (const taskId of taskIds) await waitForCompletedThread(taskId)
+        // After checking capacity under contention, settle each held turn with its own receipt.
+        for (const kind of ['personal', 'standIn', 'agent']) {
+          for (const index of [1, 2]) {
+            release(kind, index)
+            await waitForCompletedThread(taskIdFor(kind, index))
+          }
+        }
         await waitForValue(
           capacity,
           state => state.active === 0 && state.queued === 0,
