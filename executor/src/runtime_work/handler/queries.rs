@@ -138,29 +138,35 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let prefer_cached = bool_field(payload, "preferCached").unwrap_or(false);
         let pending_only = bool_field(payload, "pendingOnly").unwrap_or(false);
+        let awaits_user = |link: &RuntimeTaskLink| {
+            matches!(
+                link.interaction_status.as_deref(),
+                Some("waitingForUserInput" | "awaitingUserReply")
+            )
+        };
         let stage_started_at = Instant::now();
         let (collected_links, catalog_complete) = if prefer_cached {
-            (self.collect_cached_links(false), false)
+            (
+                self.collect_cached_links(false, |link| !pending_only || awaits_user(link)),
+                false,
+            )
         } else {
             self.collect_query_links(false).await
         };
+        let candidate_count = collected_links.len();
         log_runtime_work_list_diagnostic(
             "links_collected",
             started_at,
             stage_started_at,
-            &[("links", collected_links.len().to_string())],
+            &[("links", candidate_count.to_string())],
         );
         let stage_started_at = Instant::now();
         let links = if pending_only {
-            collected_links
-                .into_iter()
-                .filter(|link| {
-                    matches!(
-                        link.interaction_status.as_deref(),
-                        Some("waitingForUserInput" | "awaitingUserReply")
-                    )
-                })
-                .collect()
+            if prefer_cached {
+                collected_links
+            } else {
+                collected_links.into_iter().filter(awaits_user).collect()
+            }
         } else {
             self.visible_links_for_projects(collected_links, project_index)
         };
@@ -192,6 +198,8 @@ impl RuntimeWorkRpcHandler {
                 ("elapsed_ms", elapsed_ms(started_at)),
                 ("workspaces", workspaces.len().to_string()),
                 ("tasks", task_count.to_string()),
+                ("pending_only", pending_only.to_string()),
+                ("candidate_tasks", candidate_count.to_string()),
             ],
         );
         // Pending decisions are framework-owned state, not a provider discovery request.
@@ -867,7 +875,7 @@ impl RuntimeWorkRpcHandler {
                     )
                     && local_link.as_ref().is_some_and(|link| {
                         link.runtime != "codex"
-                            && (!transcript_snapshot_messages(link).is_empty()
+                            && (transcript_snapshot_message_refs(link).next().is_some()
                                 || !completed_transcript_messages(link).is_empty())
                     }) =>
             {

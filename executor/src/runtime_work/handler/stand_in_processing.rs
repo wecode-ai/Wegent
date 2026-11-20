@@ -90,6 +90,11 @@ fn log_intake_failure(event: &Value, error: &AppIpcError) {
     );
 }
 
+fn stand_in_owns_work(link: &RuntimeTaskLink, user: i64) -> bool {
+    let origin = &link.runtime_handle["origin"];
+    origin["initiatedBy"] == "stand_in" && origin["userId"] == user
+}
+
 fn waits_for_user(link: &RuntimeTaskLink) -> bool {
     link.interaction_status
         .as_deref()
@@ -417,13 +422,16 @@ impl RuntimeWorkRpcHandler {
 
     fn coordinator_work(&self, user: i64) -> Vec<RuntimeTaskLink> {
         self.store
-            .list_task_summaries(false)
-            .into_iter()
-            .filter(|link| {
-                let origin = &link.runtime_handle["origin"];
-                origin["initiatedBy"] == "stand_in" && origin["userId"] == user
+            .list_filtered_task_summaries(false, |link| stand_in_owns_work(link, user))
+    }
+
+    fn coordinator_work_by_id(&self, user: i64, id: &str) -> Option<RuntimeTaskLink> {
+        self.store
+            .read_task(id, |link| {
+                (link.status != "archived" && stand_in_owns_work(link, user))
+                    .then(|| link.list_summary())
             })
-            .collect()
+            .flatten()
     }
 
     fn observe_stand_in_work(
@@ -433,29 +441,43 @@ impl RuntimeWorkRpcHandler {
         state: &mut Value,
     ) -> Result<(), AppIpcError> {
         let mut observed = state["observed"].as_object().cloned().unwrap_or_default();
-        for link in self.coordinator_work(user) {
-            let signature = json!([
-                link.turn_status,
-                link.interaction_status,
-                link.completed_at,
-                link.status
-            ]);
-            let changed = observed.get(&link.local_task_id).map_or_else(
+        let work_states = self.store.list_filtered_task_values(
+            false,
+            |link| stand_in_owns_work(link, user),
+            |link| {
+                (
+                    link.local_task_id.clone(),
+                    link.created_at,
+                    json!([
+                        link.turn_status,
+                        link.interaction_status,
+                        link.completed_at,
+                        link.status
+                    ]),
+                    link.runtime_handle["origin"]["standInId"].clone(),
+                )
+            },
+        );
+        for (task_id, created_at, signature, role_id) in work_states {
+            let changed = observed.get(&task_id).map_or_else(
                 || {
                     state["observedSince"]
                         .as_i64()
-                        .is_some_and(|since| link.created_at >= since)
-                        && (link.turn_status.is_some()
-                            || link.interaction_status.is_some()
-                            || link.completed_at.is_some()
-                            || matches!(link.status.as_str(), "done" | "failed" | "cancelled"))
+                        .is_some_and(|since| created_at >= since)
+                        && (!signature[0].is_null()
+                            || !signature[1].is_null()
+                            || !signature[2].is_null()
+                            || matches!(
+                                signature[3].as_str(),
+                                Some("done" | "failed" | "cancelled")
+                            ))
                 },
                 |previous| *previous != signature,
             );
             if changed {
-                store.enqueue_stand_in_event(user, json!(["work-state",link.local_task_id,signature]), json!({"kind":"work_state","taskId":link.local_task_id,"state":signature,"roleIds":[link.runtime_handle["origin"]["standInId"]]})).map_err(settings_error)?;
+                store.enqueue_stand_in_event(user, json!(["work-state",task_id,signature]), json!({"kind":"work_state","taskId":task_id,"state":signature,"roleIds":[role_id]})).map_err(settings_error)?;
             }
-            observed.insert(link.local_task_id, signature);
+            observed.insert(task_id, signature);
         }
         state["observed"] = json!(observed);
         if !state["observedSince"].is_i64() {
@@ -699,17 +721,13 @@ impl RuntimeWorkRpcHandler {
             "ignore_events" | "defer_events" => {}
             "schedule_followup" => {
                 let id = required(args, "taskId")?;
-                if !self
-                    .coordinator_work(user)
-                    .iter()
-                    .any(|link| link.local_task_id == id)
-                {
+                let Some(link) = self.coordinator_work_by_id(user, id) else {
                     return Err(AppIpcError::new(
                         "permission_denied",
                         "Target is not an active stand-in work",
                     ));
-                }
-                store.enqueue_stand_in_event(user,json!(["followup",action["id"]]),json!({"kind":"followup","taskId":id,"notBefore":args["at"],"reason":args["reason"],"roleIds":[self.local_task_link(id).map(|link| link.runtime_handle["origin"]["standInId"].clone()).unwrap_or(Value::Null)]})).map_err(settings_error)?;
+                };
+                store.enqueue_stand_in_event(user,json!(["followup",action["id"]]),json!({"kind":"followup","taskId":id,"notBefore":args["at"],"reason":args["reason"],"roleIds":[link.runtime_handle["origin"]["standInId"]]})).map_err(settings_error)?;
             }
             _ => {
                 return Err(AppIpcError::new(

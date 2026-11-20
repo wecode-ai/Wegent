@@ -120,7 +120,7 @@ mod coordination_arrangements;
 #[path = "stand_in_telemetry.rs"]
 pub mod stand_in_telemetry;
 
-const LOCAL_SCHEMA_VERSION: i64 = 11;
+const LOCAL_SCHEMA_VERSION: i64 = 12;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";

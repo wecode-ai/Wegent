@@ -113,6 +113,7 @@ impl RuntimeWorkRpcHandler {
 
         self.merge_local_task_links(
             archived,
+            |_| true,
             &mut links,
             &discovered_thread_ids,
             &discovered_local_task_ids,
@@ -125,11 +126,13 @@ impl RuntimeWorkRpcHandler {
     pub(in crate::runtime_work::handler) fn collect_cached_links(
         &self,
         archived: bool,
+        matches_task: impl Fn(&RuntimeTaskLink) -> bool,
     ) -> Vec<RuntimeTaskLink> {
         let started_at = Instant::now();
         let mut links = Vec::new();
         self.merge_local_task_links(
             archived,
+            matches_task,
             &mut links,
             &HashSet::new(),
             &HashSet::new(),
@@ -141,13 +144,16 @@ impl RuntimeWorkRpcHandler {
     fn merge_local_task_links(
         &self,
         archived: bool,
+        matches_task: impl Fn(&RuntimeTaskLink) -> bool,
         links: &mut Vec<RuntimeTaskLink>,
         discovered_thread_ids: &HashSet<String>,
         discovered_local_task_ids: &HashSet<String>,
         started_at: Instant,
     ) {
         let stage_started_at = Instant::now();
-        for mut link in self.local_task_links(true) {
+        for mut link in self.store.list_filtered_task_summaries(true, |link| {
+            (link.status == "archived") == archived && matches_task(link)
+        }) {
             if self.archived_link_is_deleted(&link) {
                 continue;
             }
@@ -155,10 +161,6 @@ impl RuntimeWorkRpcHandler {
                 || (link.runtime_handle["origin"]["type"] == "stand_in_coordinator"
                     && link.interaction_status.is_none())
             {
-                continue;
-            }
-            let link_archived = link.status == "archived";
-            if link_archived != archived {
                 continue;
             }
             if is_cached_codex_link_hidden(&link, discovered_thread_ids) {

@@ -78,6 +78,14 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             ON loop_items(cloud_project_id, path);
         CREATE INDEX IF NOT EXISTS ix_loop_items_resource_type
             ON loop_items(resource_type);
+        CREATE INDEX IF NOT EXISTS ix_loop_items_bound_runtime_task
+            ON loop_items(device_id, task_id)
+            WHERE resource_type = 'execution' AND unlinked_at IS NULL AND loop_item_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ix_loop_items_unfinished_arrangement_user
+            ON loop_items(resource_type, json_extract(metadata,'$.userId'))
+            WHERE resource_type='stand_in_action' AND json_valid(metadata)
+              AND json_extract(metadata,'$.kind')='run_arrangement'
+              AND json_extract(metadata,'$.status') IN ('pending','sending');
         CREATE INDEX IF NOT EXISTS ix_loop_items_project_space
             ON loop_items(project_space);
         CREATE INDEX IF NOT EXISTS ix_loop_items_deleted_at
