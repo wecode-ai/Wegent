@@ -1,7 +1,6 @@
 import { useActivityExecutionDisplayStatus } from './useActivityExecutionStatus'
 import { useMemo, type ComponentProps } from 'react'
 import { createCollaborationTranslator, IssueChatMessage } from '@wegent/collaboration'
-import { isPublicStandInMessage } from './issueActivityRole'
 import { MarkdownServicesProvider, useMarkdownServices } from '@wegent/collaboration/markdown'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -31,7 +30,8 @@ export function ChatMessage({
       <IssueChatMessage
         {...props}
         showInlineExecutionStatus={
-          props.showInlineExecutionStatus && !isPublicStandInMessage(props.message)
+          props.showInlineExecutionStatus &&
+          props.message.metadata.execution_dispatch !== 'comment_only'
         }
         executionStatus={status}
         translate={useActivityTranslate()}

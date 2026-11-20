@@ -377,7 +377,8 @@ export function useTaskActivityController({
   }
   function cardHasExecution(card: TaskReplyCard) {
     return [card.root, ...card.replies].some(
-      message => message.sender.type === 'agent' && !isPublicStandInMessage(message)
+      message =>
+        message.sender.type === 'agent' && message.metadata.execution_dispatch !== 'comment_only'
     )
   }
   function cardReplyLabel(card: TaskReplyCard) {
@@ -580,7 +581,13 @@ export function useTaskActivityController({
     return address
   }
   function taskSummaryForMessage(message: ProjectChatMessage): ExecutionTaskSummary | undefined {
-    return issueTaskSummaryForMessage(message, taskBindings, task.title, onOpenTask)
+    return issueTaskSummaryForMessage(
+      message,
+      taskBindings,
+      task.title,
+      onOpenTask,
+      issueTimeline && project.project_store === 'backend' ? onOpenRuntimeTask : undefined
+    )
   }
   function deviceNameForMessage(message: ProjectChatMessage): string | null {
     const deviceId = message.runtimeAddress?.deviceId

@@ -504,7 +504,7 @@ impl RuntimeWorkRpcHandler {
             .update_stand_in_dispatch(user, work_id, &ids, "sending", None)
             .map_err(settings_error)?;
         let result = if self.local_task_link(task_id).is_some() {
-            self.send_message(payload.take()).await
+            self.send_message_from_event(payload.take()).await
         } else {
             self.create_task(payload.take()).await
         };
