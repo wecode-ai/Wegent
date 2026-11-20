@@ -29,6 +29,10 @@ CANDIDATE_KEY = "_web_refresh"
 RETENTION_SECONDS = 24 * 60 * 60
 
 
+class WebDraftExpired(ValueError):
+    """A staged body must be fetched again before indexing."""
+
+
 def content_hash(content: str) -> str:
     """Use the same UTF-8 body semantics at creation and every refresh entry."""
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -139,6 +143,8 @@ def abandon_candidate(document: KnowledgeDocument, generation: int) -> bool:
         return False
     config = dict(document.source_config or {})
     config.pop(CANDIDATE_KEY, None)
+    if previous_draft := candidate.get("previous_draft"):
+        config[CANDIDATE_KEY] = {**previous_draft, "generation": generation}
     document.source_config = config
     document.index_status = DocumentIndexStatus(candidate["previous_index_status"])
     return True
@@ -160,13 +166,26 @@ def prepare_web_reindex_candidate(
     draft = (document.source_config or {}).get(CANDIDATE_KEY) or {}
     use_draft = (
         draft.get("draft") is True
-        and draft.get("generation") == generation - 1
         and draft.get("url") == (document.source_config or {}).get("url")
         and draft.get("config_fingerprint") == config_fingerprint(kb, document, db)
     )
-    attachment = db.get(
-        SubtaskContext, draft["attachment_id"] if use_draft else document.attachment_id
-    )
+    attachment_id = draft.get("attachment_id") if use_draft else document.attachment_id
+    attachment = db.get(SubtaskContext, attachment_id) if attachment_id else None
+    if use_draft:
+        record = (
+            (attachment.type_data or {}).get("web_index_version")
+            if attachment
+            else None
+        )
+        if (
+            draft.get("expired")
+            or record is None
+            or datetime.fromisoformat(record["not_before"])
+            <= datetime.now(timezone.utc)
+        ):
+            raise WebDraftExpired(
+                "Staged web body has expired; refresh the page before indexing"
+            )
     body = (
         context_service.get_attachment_binary_data(db, attachment)
         if attachment
@@ -219,7 +238,11 @@ def prepare_web_reindex_candidate(
         "file_size": len(body),
         "content_hash": content_hash(body.decode("utf-8")),
         "metadata": draft.get("metadata", {}) if use_draft else {},
+        "body_unchanged": not use_draft
+        or draft.get("content_hash")
+        == config.get("webAutoUpdate", {}).get("content_hash"),
         "delete_spec": delete_spec,
+        **({"previous_draft": draft} if use_draft else {}),
     }
     document.source_config = config
     db.commit()
@@ -321,12 +344,19 @@ def publish_candidate(
         # A first index becomes ready independently of the user's status switch.
         document.is_active = True
         document.status = DocumentStatus(config.get("web_user_status") or "enabled")
+    body_changed = not candidate.get("body_unchanged") and candidate[
+        "content_hash"
+    ] != config.get("webAutoUpdate", {}).get("content_hash")
     retire_attachment(
         db,
         document.attachment_id,
         [
             config[key]
-            for key in ("converted_attachment_id", "summary_attachment_id")
+            for key in (
+                ("converted_attachment_id", "summary_attachment_id")
+                if body_changed
+                else ()
+            )
             if isinstance(config.get(key), int) and config[key] > 0
         ],
     )
@@ -346,10 +376,15 @@ def publish_candidate(
             else None
         )
     )
-    document.summary = None
+    if body_changed:
+        document.summary = None
     # Derived content belongs to the replaced body. Summary can be regenerated
     # after commit when explicitly requested by the caller.
-    for key in ("converted_attachment_id", "summary", "summary_attachment_id"):
+    for key in (
+        ("converted_attachment_id", "summary", "summary_attachment_id")
+        if body_changed
+        else ()
+    ):
         config.pop(key, None)
     config.update(candidate["metadata"])
     config["published_generation"] = generation

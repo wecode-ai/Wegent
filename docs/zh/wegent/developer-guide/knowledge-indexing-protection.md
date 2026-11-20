@@ -55,12 +55,17 @@ HTTP、PDF、浏览器导航、重定向和 iframe 的目标域名也需获得�
 单次复用 `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`（默认 10000）和既有时间预算，
 时间预算不超过清理间隔；耗尽预算保存 cursor，下次继续。删除失败保留记录重试，
 不回滚已发布内容。当前版本、活跃候选不会被回收；失效候选和暂存草稿到期可回收。
+抓取、派发或索引失败保留已有草稿供重试；草稿过期后清除附件引用，重建索引会明确提示重新抓取，不能悄悄使用旧正文。
 如果原 Retriever 资源被删除或其定义发生变化，清理会保留记录并记录告警，不能猜测新存储位置。
 
 ### 启用与回退边界
 
 - 默认全局和每个 KB 均关闭。在 Rust 调度进程与 Python worker 的部署配置中设置
   `WEB_AUTO_UPDATE_SCHEDULE_ENABLED=true` 后，维护者／创建者可在知识库编辑窗口开启网页定时刷新。
+  未配置 `WEGENT_RS_JOB_ALLOWLIST` 时自动启用网页扫描和已有的超时恢复、附件清理任务。
+  显式 allowlist 必须包含 `app.tasks.web_auto_update_tasks.scan_web_documents`、
+  `app.tasks.knowledge_tasks.scan_stale_index_tasks` 和 `app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans`；缺少依赖会在启动时报告配置错误。
+  Rust 派发和 Python worker 使用同一个 `CELERY_BROKER_URL`（仅支持 Redis 传输，未设置时使用 `REDIS_URL`）；结果订阅连接保持独立。
 - 每日扫描固定为 **04:00 UTC（北京时间 12:00）**，不依赖宿主机时区。
   扫描复用 `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS`（默认 10000）和
   `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS`（默认 2700 秒）；cursor 跨次保留。

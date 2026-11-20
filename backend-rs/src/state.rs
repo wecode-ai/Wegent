@@ -74,6 +74,8 @@ pub struct AppState {
     /// request (`index_document_task.delay(...)`). Its subscriber keeps the
     /// result-backend lane off the shared Redis writer session.
     pub celery: crate::CeleryBroker,
+    /// Celery task transport; may use a different Redis server or database.
+    pub celery_publisher: Option<brz_redis::RedisService>,
     /// Process-owned Socket.IO Redis-adapter subscription used by migrated
     /// handlers that perform an interactive `sio.call` round trip.
     pub socketio_rpc: Option<std::sync::Arc<crate::socketio_rpc::SocketIoRpc>>,

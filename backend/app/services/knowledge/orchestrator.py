@@ -23,10 +23,12 @@ import base64
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.core.config import settings
+from app.core.distributed_lock import DistributedLockUnavailableError
 from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentIndexStatus,
@@ -2740,6 +2742,7 @@ class KnowledgeOrchestrator:
         except Exception as exc:
             from app.schemas.knowledge import DocumentProcessingStage
             from app.services.knowledge.processing_errors import build_processing_error
+            from app.services.knowledge.web_publication import WebDraftExpired
 
             mark_document_index_enqueue_failed(
                 db=db,
@@ -2747,12 +2750,18 @@ class KnowledgeOrchestrator:
                 generation=generation,
                 error=build_processing_error(
                     stage=DocumentProcessingStage.DISPATCH,
-                    code="index_dispatch_failed",
+                    code=(
+                        "web_draft_expired"
+                        if isinstance(exc, WebDraftExpired)
+                        else "index_dispatch_failed"
+                    ),
                     message=(
-                        "The indexing task could not be submitted. "
+                        str(exc)
+                        if isinstance(exc, WebDraftExpired)
+                        else "The indexing task could not be submitted. "
                         "Please retry later."
                     ),
-                    retryable=True,
+                    retryable=not isinstance(exc, WebDraftExpired),
                     generation=generation,
                 ),
             )
@@ -3177,6 +3186,9 @@ class KnowledgeOrchestrator:
         except WebRefreshBusy as exc:
             db.rollback()
             return response(code="REFRESH_BUSY", message=str(exc))
+        except (DistributedLockUnavailableError, RedisError) as exc:
+            db.rollback()
+            return response(code="REFRESH_FAILED", message=str(exc))
         except ValueError as exc:
             db.rollback()
             return response(

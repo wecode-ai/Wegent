@@ -11,6 +11,7 @@
 //!
 //! `GET /api/knowledge-bases/{id}/web-auto-update` — read the current state.
 
+use brz_mysql::{FromMysqlRow, Mysql, MysqlTransaction};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -37,16 +38,36 @@ async fn set_web_auto_update(
     let enabled = enabled_from_body(&body)?;
     let user_id = i64::from(user.id);
     require_manage(state, kb_id, user_id).await?;
-    let json_bool = if enabled { "true" } else { "false" };
-    state
-        .mysql
-        .execute(
-            "UPDATE kinds SET json = JSON_SET(json, '$.spec.webAutoUpdateEnabled', CAST(? AS JSON)), updated_at = NOW() WHERE id = ? AND kind = 'KnowledgeBase' AND is_active = true",
-            (json_bool, kb_id),
-        )
-        .await
-        .map_err(|_| FastApiError::unhandled())?;
+    save_web_auto_update(&state.mysql, kb_id, enabled).await?;
     Ok(WebAutoUpdateResponse { enabled })
+}
+
+async fn save_web_auto_update(
+    mysql: &impl Mysql,
+    kb_id: i64,
+    enabled: bool,
+) -> Result<(), FastApiError> {
+    let json_bool = if enabled { "true" } else { "false" };
+    #[derive(FromMysqlRow)]
+    struct ActiveKnowledgeBase {
+        id: i64,
+    }
+    let exists = mysql.with_transaction(async |transaction| {
+        let active: Option<ActiveKnowledgeBase> = transaction.fetch_optional(
+            "SELECT id FROM kinds WHERE id=? AND kind='KnowledgeBase' AND is_active=true FOR UPDATE", (kb_id,)
+        ).await?;
+        let Some(active) = active else { return Ok(false); };
+        transaction.execute(
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.webAutoUpdateEnabled', CAST(? AS JSON)), updated_at = NOW() WHERE id = ? AND kind = 'KnowledgeBase' AND is_active = true",
+            (json_bool, active.id),
+        ).await?;
+        Ok(true)
+    }).await
+        .map_err(|_| FastApiError::unhandled())?;
+    if !exists {
+        return Err(FastApiError::not_found("Knowledge base not found"));
+    }
+    Ok(())
 }
 
 fn enabled_from_body(body: &Value) -> Result<bool, FastApiError> {
@@ -139,6 +160,38 @@ async fn require_manage(state: &AppState, kb_id: i64, user_id: i64) -> Result<()
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn setting_write_handles_disappeared_kb_and_idempotent_zero_row_updates() {
+        use wegent_backend_test_support::mysql_rows::{MysqlRows, Value};
+        for (active, enabled) in [(false, true), (true, false), (true, true)] {
+            let fixture = MysqlRows::start_results(move |sql| {
+                if sql.starts_with("SELECT id FROM kinds") {
+                    let row = vec![("id", Value::I64(1))];
+                    (row.clone(), if active { vec![row] } else { vec![] })
+                } else {
+                    (vec![], vec![])
+                }
+            })
+            .await;
+            // The protocol fixture returns zero affected rows for writes.
+            let result = save_web_auto_update(&fixture.mysql, 1, enabled).await;
+            if active {
+                result.unwrap();
+            } else {
+                assert_eq!(
+                    result.unwrap_err().status(),
+                    brz_http_server::StatusCode::NOT_FOUND
+                );
+                assert!(
+                    !fixture
+                        .queries()
+                        .iter()
+                        .any(|sql| sql.starts_with("UPDATE kinds"))
+                );
+            }
+        }
+    }
 
     #[test]
     fn switch_requires_an_explicit_json_boolean() {

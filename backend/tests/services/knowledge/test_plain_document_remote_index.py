@@ -268,7 +268,7 @@ def test_stale_generation_task_never_reaches_the_index_gateway(
         "app.services.knowledge.indexing.get_rag_gateway", return_value=gateway
     )
     monkeypatch.setattr(
-        "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+        "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
         lambda *args, **kwargs: _lock_context(True),
     )
     monkeypatch.setattr(

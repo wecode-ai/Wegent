@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
     default_retry_delay=settings.KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS,
 )
 @trace_sync(span_name="knowledge.web_auto_refresh", tracer_name="knowledge.tasks")
-def refresh_web_document_task(self, document_id: int, expected_generation: int):
+def refresh_web_document_task(
+    self, document_id: int, expected_generation: int, document_lock_retries: int = 0
+):
     if not settings.WEB_AUTO_UPDATE_SCHEDULE_ENABLED:
         return {"status": "disabled"}
     try:
@@ -86,15 +88,19 @@ def refresh_web_document_task(self, document_id: int, expected_generation: int):
                 "expires": deadline,
                 "max_retries": ceil(86400 / base_delay),
             }
-        elif self.request.retries >= self.max_retries:
+        elif document_lock_retries >= self.max_retries:
             logger.info("Web refresh busy retry exhausted: document_id=%s", document_id)
             return {"status": "skipped", "reason": "busy_retry_exhausted"}
+        else:
+            document_lock_retries += 1
+            retry_options["max_retries"] = self.request.retries + self.max_retries
         raise self.retry(
             exc=exc,
             countdown=delay,
             **retry_options,
             kwargs={
                 "document_id": document_id,
+                "document_lock_retries": document_lock_retries,
                 "expected_generation": (
                     exc.generation
                     if exc.generation is not None

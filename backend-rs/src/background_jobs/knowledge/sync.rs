@@ -654,7 +654,7 @@ pub(super) async fn submit_python(
     expires: Option<i64>,
 ) -> Result<()> {
     let redis = state
-        .redis
+        .celery_publisher
         .as_ref()
         .context("External document task broker is unavailable")?;
     let id = super::super::client::random_id()?;

@@ -15,7 +15,7 @@ pub(super) mod sources;
 pub(crate) mod state;
 mod store;
 mod summary;
-mod sync;
+pub(crate) mod sync;
 
 use std::{sync::Arc, time::Duration};
 

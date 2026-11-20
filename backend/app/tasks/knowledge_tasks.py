@@ -388,12 +388,7 @@ def index_document_task(
         return result
 
     lock_name = get_document_index_lock_name(document_id)
-    lease_context = (
-        distributed_lock.owned_watchdog_context
-        if publication_generation is not None
-        else distributed_lock.acquire_watchdog_context
-    )
-    with lease_context(
+    with distributed_lock.owned_watchdog_context(
         lock_name,
         expire_seconds=KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS,
         extend_interval_seconds=KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS,

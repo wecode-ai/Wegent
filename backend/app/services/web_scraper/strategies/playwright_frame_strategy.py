@@ -19,6 +19,8 @@ from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
     admit_fetch_domain,
+    fetch_domain_admission,
+    install_page_domain_admission,
     redact_url_for_logging,
 )
 
@@ -189,11 +191,13 @@ class PlaywrightFrameExtractionStrategy:
 
         resources.browser = await playwright.chromium.launch(**launch_kwargs)
         resources.context = await resources.browser.new_context(
-            **self._context_kwargs(profile)
+            **self._context_kwargs(profile),
+            **({"service_workers": "block"} if fetch_domain_admission.get() else {}),
         )
         await self._install_guard_route(resources.context, guard)
 
         resources.page = await resources.context.new_page()
+        await install_page_domain_admission(resources.page)
         response = await resources.page.goto(
             url,
             wait_until=self._normalize_wait_until(policy.wait_until),

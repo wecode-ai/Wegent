@@ -55,15 +55,18 @@ test('web auto update persists through the real settings UI and enforces KB role
     await page.getByTestId('nav-all-item').click()
     await page.getByTestId(`edit-kb-${kbId}`).click()
     const toggle = page.getByTestId('knowledge-web-auto-update')
-    await expect(toggle).toBeEnabled()
-    await expect(toggle).toBeChecked()
-    const saved = page.waitForResponse(
-      response =>
-        new URL(response.url()).pathname === new URL(endpoint).pathname &&
-        response.request().method() === 'PUT'
-    )
-    await toggle.click()
-    expect((await saved).status()).toBe(200)
+    await expect(toggle, 'Load web auto-update setting').toBeEnabled({ timeout: 10_000 })
+    await expect(toggle, 'Read persisted enabled value').toBeChecked({ timeout: 5_000 })
+    await test.step('Save web auto-update setting', async () => {
+      const saved = page.waitForResponse(
+        response =>
+          new URL(response.url()).pathname === new URL(endpoint).pathname &&
+          response.request().method() === 'PUT',
+        { timeout: 10_000 }
+      )
+      await toggle.click()
+      expect((await saved).status()).toBe(200)
+    })
     await expect(toggle).not.toBeChecked()
     await page.reload()
     await page.getByTestId(`edit-kb-${kbId}`).click()

@@ -66,6 +66,7 @@ export function WebAutoUpdateSetting({ knowledgeBaseId }: { knowledgeBaseId: num
           </Button>
         )}
         <Switch
+          className="relative after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-11 after:-translate-x-1/2 after:-translate-y-1/2"
           aria-label={t('document.webAutoUpdate.label')}
           data-testid="knowledge-web-auto-update"
           checked={checked}

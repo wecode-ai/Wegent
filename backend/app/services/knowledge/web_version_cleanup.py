@@ -104,13 +104,43 @@ def cleanup_retired_versions(db: Session) -> dict:
                         db.query(KnowledgeDocument)
                         .filter(KnowledgeDocument.id == document_id)
                         .populate_existing()
+                        .with_for_update()
                         .first()
                     )
                     referenced = _still_referenced(document, record["doc_ref"])
-                    db.rollback()
                     if referenced:
+                        db.rollback()
                         protected += 1
                         continue
+                    if document is not None:
+                        config = dict(document.source_config or {})
+                        candidate = config.get("_web_refresh") or {}
+                        draft = (
+                            candidate
+                            if candidate.get("draft")
+                            else candidate.get("previous_draft") or {}
+                        )
+                        if (
+                            draft.get("draft")
+                            and draft.get("doc_ref") == record["doc_ref"]
+                        ):
+                            expired = {
+                                **draft,
+                                "expired": True,
+                                "attachment_id": None,
+                            }
+                            config["_web_refresh"] = (
+                                expired
+                                if candidate.get("draft")
+                                else {**candidate, "previous_draft": expired}
+                            )
+                            document.source_config = config
+                            if not lease.owned():
+                                db.rollback()
+                                deferred += 1
+                                continue
+                            db.commit()
+                    db.rollback()
                     try:
                         spec = DeleteRuntimeSpec.model_validate(
                             {

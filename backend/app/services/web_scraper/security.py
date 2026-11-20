@@ -20,25 +20,40 @@ async def admit_fetch_domain(url: str) -> None:
 
 
 async def install_page_domain_admission(page, context=None, **kwargs):
-    """Per-page routing avoids leaking one crawl's domain leases into another."""
+    """Pause actual Chromium document requests, including every redirect hop."""
     admission = fetch_domain_admission.get()
     if admission is not None:
+        session = await page.context.new_cdp_session(page)
 
-        async def admit_route(route, request):
-            if request.resource_type == "document":
-                if not WebScraperUrlGuard().is_allowed_fetch_url(request.url):
-                    await route.abort()
-                    return
-                try:
-                    await admission(request.url)
-                except Exception:
-                    # The admission owner records the failure; abort promptly
-                    # instead of leaving browser navigation waiting on a route.
-                    await route.abort()
-                    return
-            await route.continue_()
+        async def admit_request(event):
+            request_id = event["requestId"]
+            url = event["request"]["url"]
+            try:
+                WebScraperUrlGuard().validate_initial_url(url)
+                await admission(url)
+            except Exception:
+                await session.send(
+                    "Fetch.failRequest",
+                    {"requestId": request_id, "errorReason": "BlockedByClient"},
+                )
+                return
+            await session.send("Fetch.continueRequest", {"requestId": request_id})
 
-        await page.route("**/*", admit_route)
+        session.on("Fetch.requestPaused", admit_request)
+        await session.send("Network.enable")
+        await session.send("Network.setBypassServiceWorker", {"bypass": True})
+        await session.send(
+            "Fetch.enable",
+            {
+                "patterns": [
+                    {
+                        "urlPattern": "*",
+                        "resourceType": "Document",
+                        "requestStage": "Request",
+                    }
+                ]
+            },
+        )
     return page
 
 

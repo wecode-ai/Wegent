@@ -157,6 +157,12 @@ class DistributedLock:
                 lease.release()
             except redis.exceptions.LockNotOwnedError:
                 logger.warning("Lease %s expired before release", lock_name)
+            except redis.exceptions.RedisError:
+                logger.warning(
+                    "Unable to release lease %s; allowing it to expire",
+                    lock_name,
+                    exc_info=True,
+                )
 
     def acquire(self, lock_name: str, expire_seconds: int = 60) -> bool:
         """

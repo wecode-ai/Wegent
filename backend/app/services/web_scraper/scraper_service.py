@@ -175,7 +175,9 @@ class WebScraperService:
     @trace_async(
         span_name="web_scraper.scrape_url",
         tracer_name="web_scraper",
-        extract_attributes=lambda self, url: {"url": redact_url_for_logging(url)},
+        extract_attributes=lambda self, url, **kwargs: {
+            "url": redact_url_for_logging(url)
+        },
     )
     async def scrape_url(
         self, url: str, *, allow_short_content: bool = False

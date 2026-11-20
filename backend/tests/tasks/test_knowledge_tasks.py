@@ -67,8 +67,9 @@ def _session_factory():
 
 
 @pytest.mark.parametrize("exhausted", [False, True])
+@pytest.mark.parametrize("prior_domain_retries", [0, 2])
 def test_web_busy_retry_is_bounded_without_changing_publication(
-    test_db, test_user, monkeypatch, exhausted
+    test_db, test_user, monkeypatch, exhausted, prior_domain_retries
 ):
     from celery.exceptions import Retry
 
@@ -96,24 +97,30 @@ def test_web_busy_retry_is_bounded_without_changing_publication(
         "app.tasks.web_auto_update_tasks.SessionLocal", lambda: nullcontext(test_db)
     )
     busy = WebRefreshBusy("Domain is busy")
-    busy.generation = 3
     monkeypatch.setattr(
         "app.tasks.web_auto_update_tasks.refresh_web_document",
         AsyncMock(side_effect=busy),
     )
     retry = MagicMock(side_effect=Retry())
     monkeypatch.setattr(refresh_web_document_task, "retry", retry)
-    refresh_web_document_task.push_request(
-        retries=refresh_web_document_task.max_retries if exhausted else 0
-    )
+    refresh_web_document_task.push_request(retries=prior_domain_retries)
     try:
         if exhausted:
-            result = refresh_web_document_task.run(document.id, 3)
+            result = refresh_web_document_task.run(
+                document.id,
+                3,
+                document_lock_retries=refresh_web_document_task.max_retries,
+            )
             assert result == {"status": "skipped", "reason": "busy_retry_exhausted"}
             retry.assert_not_called()
         else:
             with pytest.raises(Retry):
                 refresh_web_document_task.run(document.id, 3)
+            assert retry.call_args.kwargs["kwargs"] == {
+                "document_id": document.id,
+                "expected_generation": 3,
+                "document_lock_retries": 1,
+            }
             assert (
                 retry.call_args.kwargs["countdown"]
                 == settings.KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS
@@ -176,6 +183,8 @@ def test_web_domain_wait_preserves_deadline_and_allows_batch_progress(
 
     monkeypatch.setattr(tasks, "datetime", Clock)
     monkeypatch.setattr(tasks, "uniform", lambda a, b: 0)
+    monkeypatch.setattr(tasks.refresh_web_document_task, "default_retry_delay", 15)
+    monkeypatch.setattr(tasks.refresh_web_document_task, "max_retries", 1)
     monkeypatch.setattr(tasks.settings, "WEB_AUTO_UPDATE_SCHEDULE_ENABLED", True)
     monkeypatch.setattr(tasks, "SessionLocal", lambda: nullcontext(test_db))
     # Retain Celery's real retry/signature construction; replace only transport.
@@ -251,10 +260,17 @@ def test_web_domain_wait_preserves_deadline_and_allows_batch_progress(
                 result = task.run(document_id, expected_generation)
             except Retry as retry:
                 assert retry.sig.options["expires"] == deadline
+                assert retry.sig.kwargs["document_id"] == document_id
                 generation = retry.sig.kwargs["expected_generation"]
                 assert generation == expected_generation + 1
                 heappush(
-                    pending, (when + retry.when, document_id, retries + 1, generation)
+                    pending,
+                    (
+                        when + retry.when,
+                        retry.sig.kwargs["document_id"],
+                        retry.sig.options["retries"],
+                        generation,
+                    ),
                 )
             else:
                 if expires_soon:
@@ -305,7 +321,7 @@ def test_index_document_task_retries_when_lock_is_held(
 
     with _task_request_context(retries=0):
         with patch(
-            "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+            "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
             return_value=_lock_context(False),
         ):
             with pytest.raises(RuntimeError, match="retry-called"):
@@ -327,7 +343,7 @@ def test_index_document_task_skips_after_lock_retry_exhaustion(
     with _task_request_context(retries=index_document_task.max_retries):
         with (
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(False),
             ),
             patch(
@@ -356,7 +372,7 @@ def test_index_document_task_cleans_up_after_lock_retry_exhaustion(
     with _task_request_context(retries=index_document_task.max_retries):
         with (
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(False),
             ),
             patch(
@@ -388,7 +404,7 @@ def test_index_document_task_marks_skip_result_as_failed():
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -445,7 +461,7 @@ def test_index_document_task_routes_indexing_through_gateway():
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -535,7 +551,7 @@ def test_index_document_task_enqueues_summary_after_finalize(
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -600,7 +616,7 @@ def test_index_document_task_deletes_late_index_after_document_deletion():
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -644,7 +660,20 @@ def test_index_document_task_deletes_late_index_after_document_deletion():
 def test_web_index_invalidations_never_use_logical_document_compensation(outcome):
     """Old versioned workers cannot change another owner's state or index."""
     lease = MagicMock()
-    lease.owned.return_value = outcome != "lost_lease"
+    lease.owned.return_value = True
+
+    def index(**kwargs):
+        if outcome == "lost_lease":
+            lease.owned.return_value = False
+        return {"status": "success"}
+
+    index_mock = MagicMock(side_effect=index)
+    fail_mock = MagicMock(
+        side_effect=AssertionError("Lost owner must not fail the candidate")
+    )
+    cleanup_mock = MagicMock(
+        side_effect=AssertionError("Version cleanup must use its persisted ledger")
+    )
     with ExitStack() as stack:
         for target, replacement in {
             "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context": MagicMock(
@@ -658,26 +687,20 @@ def test_web_index_invalidations_never_use_logical_document_compensation(outcome
                     should_execute=outcome != "deleted", reason="document_not_found"
                 )
             ),
-            "app.services.knowledge.indexing.run_document_indexing": MagicMock(
-                return_value={
-                    "status": "skipped" if outcome == "lost_lease" else "success"
-                }
-            ),
+            "app.services.knowledge.indexing.run_document_indexing": index_mock,
             "app.services.knowledge.web_publication.publish_candidate": MagicMock(
                 return_value=False
             ),
-            "app.services.knowledge.index_state_machine.mark_document_index_failed": MagicMock(
-                side_effect=AssertionError("Lost owner must not fail the candidate")
-            ),
-            "app.tasks.knowledge_tasks._cleanup_late_index_or_retry": MagicMock(
-                side_effect=AssertionError(
-                    "Version cleanup must use its persisted ledger"
-                )
-            ),
+            "app.services.knowledge.index_state_machine.mark_document_index_failed": fail_mock,
+            "app.tasks.knowledge_tasks._cleanup_late_index_or_retry": cleanup_mock,
         }.items():
             stack.enter_context(patch(target, replacement))
         result = index_document_task.run(**_task_kwargs(), publication_generation=5)
 
+    fail_mock.assert_not_called()
+    cleanup_mock.assert_not_called()
+    if outcome != "deleted":
+        index_mock.assert_called_once()
     assert result["status"] == "skipped"
     assert (
         result["reason"]
@@ -697,7 +720,7 @@ def test_index_document_task_compensates_a_late_index_after_a_failed_write():
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -748,7 +771,7 @@ def test_index_document_task_retries_a_failed_late_index_cleanup():
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -799,7 +822,7 @@ def test_index_document_task_owns_a_failed_cleanup_outside_a_worker():
     with _task_request_context(retries=0), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -851,7 +874,7 @@ def test_index_document_task_reports_an_exhausted_late_index_cleanup():
     ):
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )
@@ -902,7 +925,7 @@ def test_index_document_task_retry_only_cleans_a_deleted_document():
     with _task_request_context(retries=1), ExitStack() as stack:
         stack.enter_context(
             patch(
-                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context",
                 return_value=_lock_context(True),
             )
         )

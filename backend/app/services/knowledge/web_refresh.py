@@ -25,6 +25,7 @@ from app.services.knowledge.web_publication import (
     CANDIDATE_KEY,
     abandon_candidate,
     attach_version_record,
+    candidate_for,
     config_fingerprint,
     content_hash,
     resource_revision,
@@ -168,6 +169,7 @@ async def _refresh_unindexed_body(
     from app.services.knowledge.attachment_cleanup import delete_attachment_best_effort
 
     doc_id, generation = document.id, document.index_generation
+    initial_index_status = document.index_status
     url = document.source_config["url"]
     fingerprint = config_fingerprint(kb, document, db)
     user_state = (document.is_active, document.status)
@@ -184,7 +186,7 @@ async def _refresh_unindexed_body(
     document, kb = _context(db, doc_id, user, False)
     if (
         document.index_generation != generation
-        or document.index_status != DocumentIndexStatus.NOT_INDEXED
+        or document.index_status != initial_index_status
         or document.source_config.get("url") != url
         or config_fingerprint(kb, document, db) != fingerprint
         or (document.is_active, document.status) != user_state
@@ -254,7 +256,14 @@ async def refresh_web_document(
         retrieval = (kb.json or {}).get("spec", {}).get("retrievalConfig") or {}
         if (
             not automatic
-            and document.index_status == DocumentIndexStatus.NOT_INDEXED
+            and not (document.source_config or {}).get("published_generation")
+            and (
+                document.index_status == DocumentIndexStatus.NOT_INDEXED
+                or (
+                    document.index_status == DocumentIndexStatus.FAILED
+                    and not document.is_active
+                )
+            )
             and (
                 not trigger_indexing
                 or not retrieval.get("retriever_name")
@@ -278,6 +287,7 @@ async def refresh_web_document(
             index_owner_user_id=owner_id,
         )
         revision = resource_revision(db, kb)["retriever"]
+        previous_draft = (document.source_config or {}).get(CANDIDATE_KEY) or {}
         decision = prepare_document_index_enqueue(
             db, doc_id, allow_if_success=True, expected_generation=expected_generation
         )
@@ -286,6 +296,11 @@ async def refresh_web_document(
         generation = decision.generation
         db.refresh(document)
         candidate = {
+            **(
+                {"previous_draft": previous_draft}
+                if previous_draft.get("draft")
+                else {}
+            ),
             "generation": generation,
             "url": url,
             "automatic": automatic,
@@ -351,6 +366,8 @@ async def refresh_web_document(
             document, kb = _context(db, doc_id, user, automatic)
             if (
                 document.index_generation != generation
+                or document.index_status != DocumentIndexStatus.QUEUED
+                or candidate_for(document, generation) is None
                 or config_fingerprint(kb, document, db) != fingerprint
                 or document.source_config.get("url") != url
                 or candidate["user_state"]
@@ -372,6 +389,8 @@ async def refresh_web_document(
             ):
                 state["webAutoUpdate"].pop("last_error_code", None)
                 state.pop(CANDIDATE_KEY, None)
+                if previous_draft.get("draft"):
+                    state[CANDIDATE_KEY] = {**previous_draft, "generation": generation}
                 updated = (
                     db.query(KnowledgeDocument)
                     .filter(
@@ -434,6 +453,7 @@ async def refresh_web_document(
             if not trigger_indexing:
                 # Preparing a draft never changes the body paired with a live index.
                 document.index_status = decision.previous_status
+                candidate.pop("previous_draft", None)
                 candidate["draft"] = True
                 document.source_config = {
                     **document.source_config,

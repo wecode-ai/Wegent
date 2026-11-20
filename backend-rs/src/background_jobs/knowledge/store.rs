@@ -478,7 +478,12 @@ fn apply_failure(
             .filter(|status| matches!(*status, "success" | "failed" | "not_indexed"))
             .unwrap_or("failed")
             .into();
+        let previous_draft = candidate.get("previous_draft").cloned();
         doc.source_config.remove("_web_refresh");
+        if let Some(mut draft) = previous_draft {
+            draft["generation"] = doc.generation.into();
+            doc.source_config.insert("_web_refresh".into(), draft);
+        }
         doc.source_config.insert("processing_error".into(), error);
         return "web_candidate_abandoned";
     }
@@ -609,8 +614,25 @@ mod tests {
         assert_eq!(doc.status, "disabled");
         assert_eq!(doc.attachment_id, 10);
         assert_eq!(doc.source_config["published_generation"], 2);
-        assert_eq!(doc.chunks.unwrap()["content"], "served");
+        assert_eq!(doc.chunks.as_ref().unwrap()["content"], "served");
         assert!(!doc.source_config.contains_key("_web_refresh"));
+        doc.index_status = "indexing".into();
+        doc.source_config.insert("_web_refresh".into(), serde_json::json!({
+            "generation": 3, "previous_index_status": "success",
+            "previous_draft": {"draft": true, "generation": 1, "attachment_id": 15, "doc_ref": "1@1"}
+        }));
+        assert_eq!(
+            apply_failure(
+                &mut doc,
+                serde_json::json!({"code":"timeout"}),
+                false,
+                false
+            ),
+            "web_candidate_abandoned"
+        );
+        assert_eq!(doc.source_config["_web_refresh"]["attachment_id"], 15);
+        assert_eq!(doc.source_config["_web_refresh"]["generation"], 3);
+        assert_eq!(doc.attachment_id, 10);
     }
 
     #[test]

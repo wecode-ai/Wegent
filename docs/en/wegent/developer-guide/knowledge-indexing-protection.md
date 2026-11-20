@@ -76,7 +76,10 @@ reusing `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS` (10000) and the existing time budg
 capped by the cleanup interval. It saves the cursor when its budget expires and addresses
 the exact original version/store, retains failures for retry, and never rolls back
 a successful publication. Published versions and running candidates are protected;
-invalidated candidates and unconsumed drafts become collectible. If the original
+invalidated candidates and unconsumed drafts become collectible. Failed fetches,
+dispatches and indexing preserve a staged draft for retry. Expiry invalidates its
+attachment reference and explicitly requires another refresh before reindexing.
+If the original
 Retriever resource disappears or changes, cleanup retains its record and logs a
 warning instead of guessing the new storage location.
 
@@ -85,6 +88,10 @@ warning instead of guessing the new storage location.
 - Both deployment and KB switches default to off. Set
   `WEB_AUTO_UPDATE_SCHEDULE_ENABLED=true` in the Rust scheduler and Python worker
   deployments, then enable web updates in the KB edit dialog as creator/Maintainer.
+  Without `WEGENT_RS_JOB_ALLOWLIST`, this opt-in also enables the existing stale-recovery and attachment-cleanup jobs.
+  An explicit allowlist must include `app.tasks.web_auto_update_tasks.scan_web_documents`,
+  `app.tasks.knowledge_tasks.scan_stale_index_tasks`, and `app.tasks.knowledge_tasks.cleanup_knowledge_attachment_orphans`; missing dependencies fail startup with a configuration error.
+  Rust publication and Python workers use the same `CELERY_BROKER_URL` (Redis transport only, falling back to `REDIS_URL`). Result subscriptions remain separate.
 - The fixed daily scan is **04:00 UTC (12:00 Beijing)**, independent of host time
   zone. It reuses `EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS` (10000 by default) and
   `EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS` (2700), preserving a cursor between runs.

@@ -227,6 +227,12 @@ def _prepare_document_index_enqueue(
 
         if abandon_candidate(document, document.index_generation):
             current_status = document.index_status
+        if current_status in ACTIVE_INDEX_STATUSES:
+            current_status = (
+                DocumentIndexStatus.SUCCESS
+                if (document.source_config or {}).get("published_generation")
+                else DocumentIndexStatus.FAILED
+            )
 
     superseded_attachment_ids = None
     previous_snapshot_status = current_status
@@ -657,7 +663,22 @@ def mark_document_index_failed(
 
     if abandon_candidate(document, generation):
         _persist_attempt_failure(document, generation, candidate)
+        event_kb_id = document.kind_id
         db.commit()
+        from shared.event_reporting.catalogs.knowledge import emit_index_event
+
+        emit_index_event(
+            "knowledge.index.generation.terminal",
+            kb_id=event_kb_id,
+            document_id=document_id,
+            status="failure",
+            operation_id=generation,
+            data={
+                "generation": generation,
+                "preservation_reason": "web_publication_preserved",
+                "retry_scheduled": False,
+            },
+        )
         return True
     cleanup_attachment_ids = restore_external_refresh_snapshot(
         document,
