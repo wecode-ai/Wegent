@@ -1,29 +1,26 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { ReactNode } from 'react'
-import { formatIssueTimestamp } from '@wegent/collaboration'
 
 export function IssueTimelineActions({
   rootId,
-  createdAt,
   replyLabel,
   active,
   onReply,
   children,
 }: {
   rootId: string
-  createdAt: string
   replyLabel: string
   active: boolean
   onReply?: () => void
   children?: ReactNode
 }) {
+  if (!onReply && !children) return null
   return (
     <div className="task-detail-thread-actions">
-      <time dateTime={createdAt} className="text-xs text-text-secondary">
-        {formatIssueTimestamp(createdAt)}
-      </time>
       {children}
       {onReply ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
           aria-expanded={active}
@@ -31,7 +28,7 @@ export function IssueTimelineActions({
           onClick={onReply}
         >
           {replyLabel}
-        </button>
+        </ControlButton>
       ) : null}
     </div>
   )

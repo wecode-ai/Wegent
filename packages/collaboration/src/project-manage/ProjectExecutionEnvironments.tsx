@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ChevronRight } from 'lucide-react'
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
 import {
   useCallback,
   useMemo,
@@ -304,7 +304,10 @@ function ExecutionEnvironmentEditor({
           }))
         )
         setSetupSteps(
-          (initialConfig?.setup_steps ?? []).map(step => ({ ...step, id: draftId('setup') }))
+          (initialConfig?.setup_steps ?? []).map(step => ({
+            ...step,
+            id: draftId('setup'),
+          }))
         )
         setObservedConfiguration(incomingConfiguration)
       }
@@ -885,29 +888,21 @@ function ExecutionEnvironmentEditor({
             </div>
           ) : null}
           {presentation === 'page' && (
-            <details
+            <CollapsibleRoot
               open={preparationOpen}
               className="group mt-6 border-t border-border"
               data-testid={`${testIdPrefix}-preparation`}
-              onToggle={event => {
-                setPreparationOpen(event.currentTarget.open)
-                if (
-                  event.currentTarget.open &&
-                  repositoryOptions === null &&
-                  !repositoriesLoadFailed
-                ) {
+              onOpenChange={open => {
+                setPreparationOpen(open)
+                if (open && repositoryOptions === null && !repositoriesLoadFailed) {
                   void loadRepositoryOptions()
                 }
               }}
             >
-              <summary
-                className="flex min-h-11 cursor-pointer list-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+              <CollapsibleTrigger
+                className="flex min-h-11 items-center gap-3 py-4 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
                 data-testid={`${testIdPrefix}-preparation-toggle`}
               >
-                <ChevronRight
-                  className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
-                  aria-hidden="true"
-                />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium">
                     {translate('todo.execution_environment_preparation', '项目准备')}
@@ -936,57 +931,59 @@ function ExecutionEnvironmentEditor({
                     )}
                   </span>
                 ) : null}
-              </summary>
-              <ProjectEnvironmentConfiguration
-                {...{
-                  testIdPrefix,
-                  translate,
-                  canManage,
-                  saving,
-                  workspacePolicy,
-                  repositories,
-                  setupSteps,
-                  repositoryOptions,
-                  repositoriesByUrl,
-                  repositoriesLoadFailed,
-                  branchesByRepository,
-                  loadRepositoryOptions,
-                  loadBranches,
-                  selectRepository,
-                  updateRepository,
-                  updateRepositoryUrl,
-                  removeRepository,
-                  addRepository,
-                  updateSetupStep,
-                  configurationError,
-                  configurationConflict,
-                  configurationNotice,
-                  refreshConfiguration,
-                  configurationSaved,
-                  configurationDirty,
-                  saveConfiguration,
-                }}
-                onWorkspacePolicyChange={value => {
-                  setWorkspacePolicy(value)
-                  markConfigurationDirty()
-                }}
-                addSetupStep={() => {
-                  setSetupSteps(current => [
-                    ...current,
-                    {
-                      id: draftId('setup'),
-                      command: '',
-                      working_directory: '',
-                    },
-                  ])
-                  markConfigurationDirty()
-                }}
-                removeSetupStep={id => {
-                  setSetupSteps(current => current.filter(step => step.id !== id))
-                  markConfigurationDirty()
-                }}
-              />
-            </details>
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <ProjectEnvironmentConfiguration
+                  {...{
+                    testIdPrefix,
+                    translate,
+                    canManage,
+                    saving,
+                    workspacePolicy,
+                    repositories,
+                    setupSteps,
+                    repositoryOptions,
+                    repositoriesByUrl,
+                    repositoriesLoadFailed,
+                    branchesByRepository,
+                    loadRepositoryOptions,
+                    loadBranches,
+                    selectRepository,
+                    updateRepository,
+                    updateRepositoryUrl,
+                    removeRepository,
+                    addRepository,
+                    updateSetupStep,
+                    configurationError,
+                    configurationConflict,
+                    configurationNotice,
+                    refreshConfiguration,
+                    configurationSaved,
+                    configurationDirty,
+                    saveConfiguration,
+                  }}
+                  onWorkspacePolicyChange={value => {
+                    setWorkspacePolicy(value)
+                    markConfigurationDirty()
+                  }}
+                  addSetupStep={() => {
+                    setSetupSteps(current => [
+                      ...current,
+                      {
+                        id: draftId('setup'),
+                        command: '',
+                        working_directory: '',
+                      },
+                    ])
+                    markConfigurationDirty()
+                  }}
+                  removeSetupStep={id => {
+                    setSetupSteps(current => current.filter(step => step.id !== id))
+                    markConfigurationDirty()
+                  }}
+                />
+              </CollapsiblePanel>
+            </CollapsibleRoot>
           )}
         </section>
       </div>

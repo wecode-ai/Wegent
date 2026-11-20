@@ -170,6 +170,7 @@ export async function createDesktopScenario({
         )
         await downloadGate.waitForRequest(uiTimeoutMs)
         await chat.start(control)
+        await chat.waitForShellCommandRequest()
         await control.command('waitFor', '[data-testid="plugin-python-runtime-notice"]', {
           text: '托管环境继续准备',
         })

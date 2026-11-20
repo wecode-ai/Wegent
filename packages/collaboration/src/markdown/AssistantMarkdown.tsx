@@ -1,3 +1,6 @@
+import { math } from '@streamdown/math'
+import type { Element } from 'hast'
+import 'katex/dist/katex.min.css'
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
 import { MarkdownLinkScope } from './markdownLinkScope'
 import { Fragment, createContext, memo, useContext, useMemo } from 'react'
@@ -5,44 +8,42 @@ import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
 import { Streamdown, defaultRemarkPlugins, type ExtraProps, type StreamdownProps } from 'streamdown'
 import remarkBreaks from 'remark-breaks'
-import { math } from '@streamdown/math'
-import type { Element } from 'hast'
-import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
-import 'katex/dist/katex.min.css'
-import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
-import {
-  classifyMarkdownLink,
-  transformMarkdownUrl,
-  type MarkdownLinkTarget,
-} from './assistantMarkdownLinks'
-import { protectComposerReferenceLinks } from './composerReferenceMarkdown'
+import { Tooltip } from "../controls/Tooltip"
+import { AssistantFollowup } from './AssistantFollowup'
 import { AssistantMarkdownImage } from './AssistantMarkdownImage'
+import { Button as ControlButton } from './Button'
+import { ComposerLinkChip } from './ComposerLinkChip'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
-import { MarkdownTable } from './MarkdownTable'
-import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
-import { diagramKind } from './diagramLayout'
-import {
-  hasMarkdownReferenceDefinitions,
-  splitStaticMarkdownChunks,
-} from './assistantMarkdownWindowing'
-import { useBufferedStreamingText } from './useBufferedStreamingText'
-import { splitCodexInlineVisualizations } from './codex-directives'
-import { getRecognizedLink } from './link-preview'
-import { Tooltip } from '../issue-detail/Tooltip'
 import { useMarkdownServices, type MarkdownFileOpenOptions } from './MarkdownServices'
+import { MarkdownTable } from './MarkdownTable'
 import { WindowedMarkdownChunk } from './WindowedMarkdownChunk'
 import {
-  remarkAssistantAnnotations,
   rehypeAssistantAnnotations,
+  remarkAssistantAnnotations,
 } from './assistantAnnotationMarkdown'
 import {
   stripUnsupportedContentReferenceCitations,
   type AssistantFileCitation,
 } from './assistantAnnotations'
-import { AssistantFollowup } from './AssistantFollowup'
+import {
+  classifyMarkdownLink,
+  transformMarkdownUrl,
+  type MarkdownLinkTarget,
+} from './assistantMarkdownLinks'
+import {
+  hasMarkdownReferenceDefinitions,
+  splitStaticMarkdownChunks,
+} from './assistantMarkdownWindowing'
+import { splitCodexInlineVisualizations } from './codex-directives'
+import { protectComposerReferenceLinks } from './composerReferenceMarkdown'
+import { diagramKind } from './diagramLayout'
+import { getRecognizedLink } from './link-preview'
+import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { preprocessCjkEmphasis } from './preprocessCjkEmphasis'
+import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -694,7 +695,8 @@ function AssistantMarkdownLink({
         testId="assistant-markdown-link-tooltip"
         className="min-w-0 max-w-full !shrink align-baseline"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className={ASSISTANT_MARKDOWN_LINK_CLASS}
           data-testid="assistant-markdown-link"
@@ -722,14 +724,15 @@ function AssistantMarkdownLink({
               ({lineLabel})
             </span>
           ) : null}
-        </button>
+        </ControlButton>
       </Tooltip>
     )
   }
 
   if (target.kind === 'internal') {
     return (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className={ASSISTANT_MARKDOWN_LINK_CLASS}
         data-testid="assistant-markdown-link"
@@ -738,7 +741,7 @@ function AssistantMarkdownLink({
       >
         {icon}
         <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{linkContent}</span>
-      </button>
+      </ControlButton>
     )
   }
 

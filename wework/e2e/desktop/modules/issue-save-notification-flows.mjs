@@ -3,6 +3,18 @@ import assert from 'node:assert/strict'
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const ERROR = `${CONTENT} [data-testid="cloud-todo-save-error"]`
 
+export async function setAssignmentNotification(control, notify) {
+  const toggle = '[data-testid="cloud-todo-assignee-notify"][role="checkbox"]'
+  await control.command('waitFor', toggle, { visible: true })
+  const current = await control.command('getAttribute', toggle, { value: 'aria-checked' })
+  assert.ok(
+    current === 'true' || current === 'false',
+    'The notification checkbox must expose its state'
+  )
+  if (current !== String(notify)) await control.command('clickWhenEnabled', toggle)
+  await control.command('waitFor', `${toggle}[aria-checked="${notify}"]`)
+}
+
 async function saveSilently(control, testId) {
   await control.command('click', `${CONTENT} [data-testid="${testId}-options"]`)
   await control.command('click', `[data-testid="${testId}-without-notification"]`, {
@@ -59,11 +71,7 @@ export async function verifySilentIssueSaves({
   }
   const selectAssignee = async userId => {
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-assignee"]`)
-    const notify = '[data-testid="cloud-todo-assignee-notify"]'
-    await control.command('waitFor', notify)
-    if (Number(await control.command('getElementCount', `${notify}:checked`)) > 0)
-      await control.command('click', notify)
-
+    await setAssignmentNotification(control, false)
     await control.command(
       'clickWhenEnabled',
       `[data-testid="cloud-todo-detail-assignee-option-user:${userId}"]`,

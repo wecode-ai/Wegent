@@ -393,6 +393,23 @@ export function createDesktopScenario({
         openFromMenu: true,
         expectedProjectCount: 0,
       })
+      const openPendingContext = async () => {
+        if (issueFixture) return
+        await control.command(
+          'clickWhenEnabled',
+          `${page} [data-testid="interaction-show-context"]`,
+          {
+            visible: true,
+          }
+        )
+      }
+      if (!issueFixture) {
+        await control.command('waitFor', `${page} [data-testid="interaction-reply"]`, {
+          visible: true,
+        })
+        await captureScreenshot(control, '05-request-processing.png')
+      }
+      await openPendingContext()
       const questionTime = await verifyInteractionTime(control, page)
       await control.command('waitFor', page, { text: CONTEXT })
       if (issueFixture) {
@@ -572,8 +589,8 @@ export function createDesktopScenario({
         )
         const questionRegion = `${page} [data-testid="interaction-question-heading"]`
         assert.ok(
-          (await control.command('getText', questionRegion)).includes(QUESTION),
-          'The measured original question region must contain the pending question'
+          (await control.command('getText', questionRegion)).trim(),
+          'The selected item must have a readable detail title'
         )
         const narrowElements = {}
         for (const [name, selector] of Object.entries({ questionRegion, input, submit })) {
@@ -614,7 +631,7 @@ export function createDesktopScenario({
             questionBounds.right <= entity.viewportWidth &&
             questionBounds.bottom <= entity.viewportHeight &&
             questionBounds.scrollWidth <= questionBounds.clientWidth + 1,
-          'The original question must be readable inside the narrow detail viewport'
+          'The detail title must be readable inside the narrow viewport'
         )
         assert.equal(narrowElements.submit.length, 1, 'The pending entity must have one submit')
         const [submitBounds] = narrowElements.submit
@@ -635,6 +652,8 @@ export function createDesktopScenario({
         await captureScreenshot(control, '05c-narrow-inbox-list.png')
         await verifyInteractionTime(control, page, { visible: 'list', expected: questionTime })
         await control.command('click', `${page} [data-testid="interaction-list-item"]`)
+        await openPendingContext()
+        await control.command('waitFor', input, { visible: true })
         assert.equal(await control.command('getValue', input), ANSWER)
       } finally {
         await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousSize) })
@@ -643,6 +662,7 @@ export function createDesktopScenario({
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
       await verifyPendingInteractionsTab(control, 1, { expectedProjectCount: 0 })
       await verifyInteractionTime(control, page, { expected: questionTime })
+      await openPendingContext()
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       assert.equal(await control.command('getValue', input), ANSWER)
       await captureScreenshot(control, '06-draft-survives-reload.png')

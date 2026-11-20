@@ -1,4 +1,7 @@
 {
+  "homePage": {
+    "workspaceComingSoon": "Multi-platform workspace — coming soon."
+  },
   "personalHome": {
     "backToIssues": "Back to issues",
     "codeWorkspace": "Code workspace (optional)",
@@ -2993,6 +2996,7 @@
     "plugins_local_auth_cancelled": "Authorization was cancelled",
     "plugins_local_auth_logout_confirm": "Log out of {{name}}? You will need to authorize again.",
     "plugins_local_auth_logout_failed": "Failed to log out",
+    "plugins_local_auth_busy": "Plugin authorization is temporarily busy. Try again shortly.",
     "plugins_local_auth_logout_cleanup_failed": "Account access was revoked, but local credentials could not be cleared. Click Log out again to retry cleanup.",
     "plugins_local_auth_poll_failed": "Failed to check authorization status",
     "plugins_local_auth_health_failed": "Could not confirm the plugin login status. Check the connection and try again; this does not mean you need to sign in again.",
@@ -4488,6 +4492,9 @@
     "remote_task_access_save_failed": "Could not save the setting. Remote task access has not changed.",
     "agent_creator_environment_automatic": "Choose from project environments",
     "agent_creator_environment_configured": "Environment configured; expand to view",
+    "codex_personality_read_failed": "Could not load the communication style. Try again.",
+    "codex_personality_save_failed": "Could not save the communication style. Try again.",
+    "reorder_item": "Reorder {{name}}",
     "codex_home_check_title": "Check Codex configuration",
     "codex_home_check_loading": "Reading this device’s configuration. You can retry the check.",
     "codex_home_check_recovery": "Use the error below to repair the device configuration or local runtime, then retry the check.",

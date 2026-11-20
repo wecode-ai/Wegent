@@ -19,7 +19,11 @@ import type { CollaborationAgent, CollaborationMember } from '../types'
 import { IssueActivityThread, type IssueActivityThreadModel } from './IssueActivityThread'
 
 function isExecutionMessage(message: ProjectChatMessage) {
-  return message.sender.type === 'agent' && message.metadata.execution_dispatch !== 'comment_only'
+  return (
+    message.sender.type === 'agent' &&
+    (message.metadata.execution_dispatch !== 'comment_only' ||
+      message.metadata.collaboration_turn_start === true)
+  )
 }
 
 function ActivityMessage({

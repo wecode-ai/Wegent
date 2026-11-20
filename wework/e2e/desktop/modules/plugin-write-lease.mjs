@@ -1,24 +1,31 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { until } from './plugin-regression-fixture.mjs'
+import { redisCliBinary } from './shared.mjs'
 
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
+const run = promisify(execFile)
+
+async function installedPluginName(cloud, installedId, userId) {
+  const rows = await cloud.queryDatabase(
+    "SELECT name FROM kinds WHERE id=%s AND user_id=%s AND kind='InstalledPlugin' AND namespace='default'",
+    [installedId, userId]
+  )
+  assert.equal(rows.length, 1)
+  return rows[0].name
+}
 
 /** A separate process owns a real token-checked lease, never a fake response. */
 export async function holdPluginWriteLease(cloud, item, userId = 1) {
   const installedId = typeof item === 'number' ? item : item?.installedId
   let name
   if (installedId) {
-    const rows = await cloud.queryDatabase(
-      "SELECT name FROM kinds WHERE id=%s AND user_id=%s AND kind='InstalledPlugin' AND namespace='default'",
-      [installedId, userId]
-    )
-    assert.equal(rows.length, 1)
-    name = rows[0].name
+    name = await installedPluginName(cloud, installedId, userId)
   } else {
     assert.ok(item?.pluginId, 'A lease fixture needs its target plugin')
     const rows = await cloud.queryDatabase(
@@ -31,6 +38,74 @@ export async function holdPluginWriteLease(cloud, item, userId = 1) {
     name = `${slug.slice(0, 89)}-${digest}`
   }
   return holdPluginCoordinationFault(cloud, 'lease', userId, name)
+}
+
+export async function observePausedPluginWrites(cloud, installedId, userId = 1) {
+  assert.ok(cloud.redis?.pid && Number.isSafeInteger(cloud.redisPort))
+  const name = await installedPluginName(cloud, installedId, userId)
+  const key = `wegent:plugin-write:${userId}:${name}`
+  const pauseBarrier = `${key}:pause-barrier`
+  const monitor = await holdPluginCoordinationFault(cloud, 'observe-lease', userId, name)
+  const redis = async (...command) => {
+    try {
+      const { stdout } = await run(
+        redisCliBinary(),
+        ['-h', '127.0.0.1', '-p', String(cloud.redisPort), ...command],
+        { timeout: 1000 }
+      )
+      return stdout.trim()
+    } catch {
+      throw new Error(`The isolated Redis did not complete ${command[0]} ${command[1] ?? ''}`)
+    }
+  }
+  let closed = false
+  let paused = false
+  let pausing
+  let pauseOffset
+  const resume = async () => {
+    if (!paused) return
+    assert.equal(await redis('CLIENT', 'UNPAUSE'), 'OK')
+    paused = false
+  }
+  return {
+    async pause() {
+      assert.ok(!closed, 'The Redis pause fixture was already released')
+      paused = true
+      // The timeout is a fail-safe if the runner dies. The HTTP events decide when to resume.
+      pausing = redis('CLIENT', 'PAUSE', '8000', 'WRITE')
+      assert.equal(await pausing, 'OK')
+      // A read-only marker puts earlier activity before this test's paused writes.
+      assert.ok((await redis('ECHO', pauseBarrier)) === pauseBarrier)
+      await monitor.waitFor('pause-barrier', 1000)
+      pauseOffset = monitor.events.indexOf('pause-barrier') + 1
+    },
+    async resumeAfterTimeouts(attempts) {
+      assert.ok(paused && pauseOffset > 0, 'The Redis write pause did not reach its barrier')
+      await resume()
+      await until(
+        () => monitor.events.slice(pauseOffset).filter(event => event === 'lease-set').length,
+        count => count >= attempts,
+        'Redis did not execute the queued Native logout SET attempts after resuming',
+        1500
+      )
+      await until(
+        () => redis('EXISTS', key),
+        count => count === '0',
+        'The timed-out Native logout left a Redis lease after its SET was observed',
+        1500
+      )
+    },
+    async release() {
+      closed = true
+      try {
+        // The confirmation callback may still be waiting on the PAUSE command.
+        await pausing?.catch(() => {})
+        await resume()
+      } finally {
+        await monitor.release()
+      }
+    },
+  }
 }
 
 export async function holdInstalledPluginRow(cloud, installedId, userId = 1) {
@@ -73,9 +148,15 @@ export async function holdPluginScanLock(cloud, path, executorHome) {
 
 export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId, scan) {
   assert.ok(
-    ['lease', 'user-row', 'device-row', 'plugin-row', 'redis-unavailable', 'scan-lock'].includes(
-      mode
-    )
+    [
+      'lease',
+      'observe-lease',
+      'user-row',
+      'device-row',
+      'plugin-row',
+      'redis-unavailable',
+      'scan-lock',
+    ].includes(mode)
   )
   const redisUrl = `redis://127.0.0.1:${cloud.redisPort}/0`
   assert.equal(cloud.backendEnv.REDIS_URL, redisUrl)
@@ -96,7 +177,9 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
         WEWORK_E2E_PLUGIN_REDIS_PORT: String(cloud.redisPort),
         WEWORK_E2E_PLUGIN_USER_ID: String(userId),
         ...(recordId ? { WEWORK_E2E_DEVICE_RECORD_ID: String(recordId) } : {}),
-        ...(mode === 'lease' ? { WEWORK_E2E_PLUGIN_NAME: String(recordId) } : {}),
+        ...(['lease', 'observe-lease'].includes(mode)
+          ? { WEWORK_E2E_PLUGIN_NAME: String(recordId) }
+          : {}),
         WEWORK_E2E_PLUGIN_FAULT: mode,
         ...(scan
           ? {
@@ -136,7 +219,7 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
       failure = new Error('The Redis lease helper returned invalid diagnostics')
     }
   })
-  const waitFor = async event => {
+  const waitFor = async (event, timeoutMs) => {
     await until(
       () => {
         if (failure) throw failure
@@ -146,7 +229,8 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
         return events
       },
       values => values.includes(event),
-      `Redis lease helper never reported ${event}`
+      `Redis lease helper never reported ${event}`,
+      timeoutMs
     )
     return eventDetails.get(event)
   }

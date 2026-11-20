@@ -18,7 +18,11 @@ import {
   WORKBENCH_COMPOSER_FOCUS_EVENT,
   type WorkbenchComposerFocusDetail,
 } from '@/lib/workbenchComposerFocus'
-import { createBufferedComposerModel, BUFFERED_COMPOSER_FOCUS_GUARD } from './bufferedComposerModel'
+import {
+  BUFFERED_COMPOSER_AUTO_FOCUS_GUARD,
+  BUFFERED_COMPOSER_FOCUS_GUARD,
+  createBufferedComposerModel,
+} from './bufferedComposerModel'
 import type { Ref } from 'react'
 export interface BufferedChatInputInsertion {
   id: number
@@ -120,7 +124,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     onFocused: consumeRequest,
   })
   useEditorFocusRequest(model.target, scopeKey, {
-    ...BUFFERED_COMPOSER_FOCUS_GUARD,
+    ...BUFFERED_COMPOSER_AUTO_FOCUS_GUARD,
     enabled: Boolean(autoFocus && !props.disabled),
   })
   useDOMEvent<CustomEvent<WorkbenchComposerFocusDetail>>(

@@ -1,3 +1,5 @@
+import { TabsList, TabsRoot, TabsTab } from '../controls/Tabs'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -5,13 +7,12 @@ import {
   useCallback,
   useState,
   useSyncExternalStore,
-  type KeyboardEvent,
   type ReactNode,
   type Ref,
 } from 'react'
 import { FlatProjectViewSwitcher } from './FlatProjectViewSwitcher'
-import { ProjectViewMenu } from './ProjectViewMenu'
 import { ProjectViewLabel } from './ProjectViewLabel'
+import { ProjectViewMenu } from './ProjectViewMenu'
 import { projectViewMessages } from './projectViewMessages'
 import {
   buildProjectViewNavigation,
@@ -37,21 +38,6 @@ export interface ProjectViewSwitcherProps<
   selectionMemory?: ProjectViewSelectionMemory
   selectionKey?: string
   onChange(view: View): void
-}
-
-function navigateTabs(event: KeyboardEvent<HTMLElement>) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-  const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-  const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
-  const next =
-    event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? tabs.length - 1
-        : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-  event.preventDefault()
-  tabs[next]?.focus()
-  tabs[next]?.click()
 }
 
 export function ProjectViewSwitcher<View extends CollaborationProjectView>(
@@ -141,37 +127,40 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
       data-testid="project-view-switcher"
       data-compact={compact}
     >
-      <div
-        className="project-view-switcher-primary"
-        role="tablist"
-        aria-label={primaryLabel}
-        onKeyDown={navigateTabs}
+      <TabsRoot
+        value={selectedGroup.id}
+        onValueChange={next => {
+          const group = groups.find(group => group.id === next)
+          if (group) selectGroup(group)
+        }}
+        render={<div className="contents" />}
       >
-        {groups.map(group => (
-          <button
-            key={group.id}
-            type="button"
-            role="tab"
-            className="project-view-switcher-tab"
-            data-testid={
-              group.id === 'work' ? group.entries[0].option.testId : `collaboration-tab-${group.id}`
-            }
-            aria-selected={group.id === selectedGroup.id}
-            aria-current={group.id === selectedGroup.id ? 'page' : undefined}
-            tabIndex={group.id === selectedGroup.id ? 0 : -1}
-            onClick={() => selectGroup(group)}
-          >
-            {group.id === 'work' ? (
-              <ProjectViewLabel
-                option={{ ...group.entries[0].option, label: messages.work }}
-                selected={group.id === selectedGroup.id}
-              />
-            ) : (
-              messages[group.id]
-            )}
-          </button>
-        ))}
-      </div>
+        <TabsList className="project-view-switcher-primary" aria-label={primaryLabel}>
+          {groups.map(group => (
+            <TabsTab
+              value={group.id}
+              key={group.id}
+              type="button"
+              className="project-view-switcher-tab"
+              data-testid={
+                group.id === 'work'
+                  ? group.entries[0].option.testId
+                  : `collaboration-tab-${group.id}`
+              }
+              aria-current={group.id === selectedGroup.id ? 'page' : undefined}
+            >
+              {group.id === 'work' ? (
+                <ProjectViewLabel
+                  option={{ ...group.entries[0].option, label: messages.work }}
+                  selected={group.id === selectedGroup.id}
+                />
+              ) : (
+                messages[group.id]
+              )}
+            </TabsTab>
+          ))}
+        </TabsList>
+      </TabsRoot>
       {selectedGroup.id !== 'work' && (
         <div
           className="project-view-switcher-secondary"
@@ -187,31 +176,34 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
               onChange={onChange}
             />
           ) : (
-            <div
-              className="project-view-switcher-tabs"
-              role="tablist"
-              aria-label={messages[selectedGroup.id]}
-              onKeyDown={navigateTabs}
+            <TabsRoot
+              value={value}
+              onValueChange={next => {
+                if (next) onChange(next)
+              }}
+              render={<div className="contents" />}
             >
-              {secondary.map((option, index) => {
-                const selected = selectedEntry.id === selectedGroup.entries[index].id
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="tab"
-                    className="project-view-switcher-tab project-view-switcher-subtab"
-                    data-testid={option.testId}
-                    aria-selected={selected}
-                    aria-current={selected ? 'page' : undefined}
-                    tabIndex={selected ? 0 : -1}
-                    onClick={() => onChange(option.id)}
-                  >
-                    <ProjectViewLabel option={option} selected={selected} />
-                  </button>
-                )
-              })}
-            </div>
+              <TabsList
+                className="project-view-switcher-tabs"
+                aria-label={messages[selectedGroup.id]}
+              >
+                {secondary.map((option, index) => {
+                  const selected = selectedEntry.id === selectedGroup.entries[index].id
+                  return (
+                    <TabsTab
+                      value={option.id}
+                      key={option.id}
+                      type="button"
+                      className="project-view-switcher-tab project-view-switcher-subtab"
+                      data-testid={option.testId}
+                      aria-current={selected ? 'page' : undefined}
+                    >
+                      <ProjectViewLabel option={option} selected={selected} />
+                    </TabsTab>
+                  )
+                })}
+              </TabsList>
+            </TabsRoot>
           )}
           {selectedEntry.segments && (
             <div
@@ -220,7 +212,8 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
               aria-label={messages.timeline}
             >
               {selectedEntry.segments.map(option => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={option.id}
                   type="button"
                   data-testid={option.testId}
@@ -228,7 +221,7 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
                   onClick={() => onChange(option.id)}
                 >
                   <ProjectViewLabel option={option} selected={option.id === resolvedView} />
-                </button>
+                </ControlButton>
               ))}
             </div>
           )}

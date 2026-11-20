@@ -700,7 +700,8 @@ export function createConversationScrollState(
       if (autoLoadedTranscriptGapKeys.has(gapKey)) return
       autoLoadedTranscriptGapKeys.add(gapKey)
     }
-    preserveScrollPositionForNextLayout()
+    // Automatic gap hydration preserves the current viewport intent, just like history prefetch.
+    if (reason === 'click' || state.mode === 'read') preserveScrollPositionForNextLayout()
     const owner = {}
     gapLoadOwner = owner
     publish({ loadingTranscriptGapKey: gapKey })

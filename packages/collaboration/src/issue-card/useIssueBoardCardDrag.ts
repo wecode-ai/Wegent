@@ -1,29 +1,15 @@
-import { useDraggable, useDroppable } from '@dnd-kit/core'
-import { useCallback, useContext } from 'react'
-import { CSS } from '@dnd-kit/utilities'
+import { useContext, useMemo } from 'react'
 import { ProjectBoardCardContext } from '../project-board/projectBoardCardContext'
+import { useProjectBoardCardTransfer } from '../project-board/projectBoardTransferContext'
 
 export function useIssueBoardCardDrag(id: string, enabled: boolean) {
   const column = useContext(ProjectBoardCardContext)
-  const cardId = JSON.stringify([column?.groupBy, column?.columnKey, id])
-  const data = { ...column, itemId: id }
-  const drag = useDraggable({ id: cardId, data, disabled: !enabled })
-  const drop = useDroppable({ id: `todo-card:${cardId}`, data, disabled: !enabled })
-  const setDraggableRef = drag.setNodeRef
-  const setDroppableRef = drop.setNodeRef
-  const setNodeRef = useCallback(
-    (node: HTMLElement | null) => {
-      setDraggableRef(node)
-      setDroppableRef(node)
-    },
-    [setDraggableRef, setDroppableRef]
+  const columnKey = column?.columnKey
+  const groupBy = column?.groupBy
+  const data = useMemo(
+    () => ({ columnKey, groupBy, itemId: id }),
+    [columnKey, groupBy, id],
   )
-  return {
-    setNodeRef,
-    style: { transform: CSS.Translate.toString(drag.transform) },
-    buttonProps: enabled ? { ...drag.listeners, ...drag.attributes } : {},
-    dragging: enabled && drag.isDragging,
-    boardDragging: Boolean(drag.active),
-    dropTarget: enabled && drop.isOver,
-  }
+  const key = JSON.stringify([groupBy, columnKey, id])
+  return useProjectBoardCardTransfer(key, data, enabled)
 }

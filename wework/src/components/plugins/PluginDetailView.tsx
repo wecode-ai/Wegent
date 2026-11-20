@@ -1,41 +1,35 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import {
-  ArrowUpCircle,
-  ArrowRight,
-  ExternalLink,
-  MessageCircle,
-  MoreHorizontal,
-  Plus,
-  Share2,
-} from 'lucide-react'
-import { useRef, useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { Button } from '@/components/ui/button'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import type { PluginPublicationRequestItem } from '@/types/api'
-import type { InstalledPluginItem } from './PluginManagementRows'
+import { Button } from '@/components/ui/button'
 import { useOptionalAppearance } from '@/features/appearance'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { PluginPublicationRequestItem } from '@/types/api'
+import { Switch } from '@wegent/collaboration/controls/Switch'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, ArrowUpCircle, ExternalLink, MessageCircle, Plus, Share2 } from 'lucide-react'
+import { useState } from 'react'
+import { BundledPluginUpdateNotice } from './BundledPluginUpdateNotice'
+import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 import { formatPluginVersion } from './plugin-display'
 import { PluginConnectorSection } from './PluginConnectorSection'
-import { PluginSourceAvatar } from './PluginSourceAvatar'
-import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
-import { PluginPublicationProgressCard } from './PluginPublicationProgressCard'
-import { BundledPluginUpdateNotice } from './BundledPluginUpdateNotice'
-import { installedPluginMarketplaceId } from './pluginDistribution'
 import { PluginDetailLoadingSkeleton } from './PluginDetailLoadingSkeleton'
+import type { DetailComponentItem } from './pluginDetailPresentation'
 import {
-  type DetailComponentItem,
-  formatManifestValue,
   buildComponentItems,
+  componentIcon,
+  componentTypeLabel,
+  detailRows,
+  formatManifestValue,
   installedPluginLogo,
+  pluginCapabilitySummary,
   pluginDisplayDescription,
   pluginGuideDisplayPrompt,
   pluginGuideExamples,
-  pluginCapabilitySummary,
-  componentTypeLabel,
-  componentIcon,
-  detailRows,
 } from './pluginDetailPresentation'
+import { installedPluginMarketplaceId } from './pluginDistribution'
+import type { InstalledPluginItem } from './PluginManagementRows'
+import { PluginPublicationProgressCard } from './PluginPublicationProgressCard'
+import { PluginSourceAvatar } from './PluginSourceAvatar'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
@@ -166,17 +160,8 @@ export function PluginDetailView({
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
-  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
-  const actionMenuRef = useRef<HTMLDivElement>(null)
 
-  useDocumentEvent(
-    'mousedown',
-    event => {
-      if (!actionMenuRef.current?.contains(event.target as Node)) setIsActionMenuOpen(false)
-    },
-    { enabled: isActionMenuOpen }
-  )
   const raw = plugin.raw
   const isInstalled = usableOnThisDevice ?? raw.spec.installState === 'installed'
   const hasMaterializedOutdatedRelease =
@@ -257,14 +242,15 @@ export function PluginDetailView({
           <p className="text-xs leading-4 text-text-muted">{accessScopeSummary}</p>
         </div>
         {accessRole === 'owner' && onManageAccess && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="plugin-detail-manage-access"
             className="h-8 rounded-lg bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
             onClick={onManageAccess}
           >
             {manageAccessLabel || t('workbench.plugins_manage_access', '管理权限')}
-          </button>
+          </ControlButton>
         )}
       </div>
     </section>
@@ -299,26 +285,13 @@ export function PluginDetailView({
               </p>
             )}
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoUpdateEnabled}
+          <Switch
+            checked={autoUpdateEnabled}
             aria-label={t('workbench.plugin_detail_auto_update', '自动更新')}
             disabled={autoUpdateSaving}
             data-testid={`plugin-auto-update-toggle-${plugin.id}`}
-            className={[
-              'relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:cursor-not-allowed disabled:opacity-40',
-              autoUpdateEnabled ? 'bg-text-primary' : 'bg-border',
-            ].join(' ')}
-            onClick={() => onAutoUpdateChange(!autoUpdateEnabled)}
-          >
-            <span
-              className={[
-                'absolute left-1 top-1 h-4 w-4 rounded-full bg-background shadow-sm transition-transform',
-                autoUpdateEnabled ? 'translate-x-4' : 'translate-x-0',
-              ].join(' ')}
-            />
-          </button>
+            onCheckedChange={() => onAutoUpdateChange(!autoUpdateEnabled)}
+          />
         </div>
       </section>
     )
@@ -333,86 +306,59 @@ export function PluginDetailView({
     showUninstall || Boolean(onEditAction) || showMenuCopy || Boolean(onDeleteAction)
 
   const actionMenu = showActionMenu ? (
-    <div ref={actionMenuRef} className="relative">
-      <button
-        type="button"
-        aria-label={t('workbench.plugins_actions', '插件操作')}
-        aria-expanded={isActionMenuOpen}
-        data-testid={`plugin-detail-actions-${plugin.id}`}
-        className="plugin-detail-action-menu"
-        onClick={() => setIsActionMenuOpen(open => !open)}
-      >
-        <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
-      </button>
-      {isActionMenuOpen && (
-        <div
-          data-testid={`plugin-detail-actions-menu-${plugin.id}`}
-          className="absolute right-0 top-[calc(100%+7px)] z-30 min-w-[10.5rem] rounded-xl border border-border/30 bg-background p-1 shadow-lg"
-        >
-          {onEditAction && (
-            <button
-              type="button"
-              data-testid={`plugin-detail-edit-${plugin.id}`}
-              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface"
-              onClick={() => {
-                setIsActionMenuOpen(false)
-                onEditAction()
-              }}
-            >
-              {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
-            </button>
-          )}
-          {showMenuCopy && (
-            <button
-              type="button"
-              disabled={tertiaryActionDisabled}
-              data-testid={`plugin-detail-menu-copy-${plugin.id}`}
-              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface disabled:opacity-40"
-              onClick={() => {
-                setIsActionMenuOpen(false)
-                onTertiaryAction?.()
-              }}
-            >
-              {tertiaryActionLabel}
-            </button>
-          )}
-          {showUninstall && (
-            <button
-              type="button"
-              data-testid={`plugin-detail-uninstall-${plugin.id}`}
-              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10 wework:text-red-600 wework:hover:bg-red-50"
-              onClick={() => {
-                setIsActionMenuOpen(false)
-                onUninstall()
-              }}
-            >
-              {t('workbench.plugins_uninstall', '卸载')}
-            </button>
-          )}
-          {onDeleteAction && (
-            <>
-              <div className="my-1 border-t border-border/30" />
-              <button
-                type="button"
-                disabled={deleteActionDisabled}
-                data-testid={`plugin-detail-delete-${plugin.id}`}
-                className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40 wework:text-red-600 wework:hover:bg-red-50"
-                onClick={() => {
-                  setIsActionMenuOpen(false)
-                  onDeleteAction()
-                }}
-              >
-                {deleteActionLabel || t('workbench.plugins_delete_plugin', '删除插件')}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <ActionMenu
+      ariaLabel={t('workbench.plugins_actions', '插件操作')}
+      testId={`plugin-detail-actions-${plugin.id}`}
+      menuTestId={`plugin-detail-actions-menu-${plugin.id}`}
+      items={[
+        ...(onEditAction
+          ? [
+              {
+                testId: `plugin-detail-edit-${plugin.id}`,
+                label: editActionLabel || t('workbench.plugins_continue_editing', '继续编辑'),
+                onSelect: onEditAction,
+              },
+            ]
+          : []),
+        ...(showMenuCopy
+          ? [
+              {
+                testId: `plugin-detail-menu-copy-${plugin.id}`,
+                label: tertiaryActionLabel,
+                disabled: tertiaryActionDisabled,
+                onSelect: onTertiaryAction,
+              },
+            ]
+          : []),
+        ...(showUninstall
+          ? [
+              {
+                testId: `plugin-detail-uninstall-${plugin.id}`,
+                label: t('workbench.plugins_uninstall', '卸载'),
+                danger: true,
+                onSelect: onUninstall,
+              },
+            ]
+          : []),
+        ...(onDeleteAction
+          ? [
+              { id: 'delete-separator', label: '', separator: true },
+              {
+                testId: `plugin-detail-delete-${plugin.id}`,
+                label: deleteActionLabel || t('workbench.plugins_delete_plugin', '删除插件'),
+                danger: true,
+                disabled: deleteActionDisabled,
+                onSelect: onDeleteAction,
+              },
+            ]
+          : []),
+      ]}
+    />
   ) : null
   const actionDisabled = primaryActionDisabled || (isInstalled && !plugin.enabled)
   const primaryActionButton = (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={`plugin-detail-toggle-${plugin.id}`}
       disabled={actionDisabled}
@@ -421,11 +367,12 @@ export function PluginDetailView({
     >
       {PrimaryActionIcon ? <PrimaryActionIcon className="h-4 w-4" /> : null}
       {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '立即对话')}
-    </button>
+    </ControlButton>
   )
   const shareActionButton =
     shareActionLabel && onShareAction ? (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         disabled={shareActionDisabled}
         data-testid={'plugin-detail-share-' + plugin.id}
@@ -434,7 +381,7 @@ export function PluginDetailView({
       >
         <Share2 className="h-4 w-4" />
         {shareActionLabel}
-      </button>
+      </ControlButton>
     ) : null
 
   const capabilityItems = componentItems.filter(item => item.type !== 'connector')
@@ -460,7 +407,8 @@ export function PluginDetailView({
         {guideExamples.map((guide, index) => {
           const displayPrompt = pluginGuideDisplayPrompt(plugin.name, guide.prompt)
           return (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={guide.id}
               type="button"
               data-testid={`plugin-prompt-${index}`}
@@ -497,7 +445,7 @@ export function PluginDetailView({
               <span className="plugin-task-example-arrow" aria-hidden="true">
                 <ArrowRight className="h-[18px] w-[18px]" />
               </span>
-            </button>
+            </ControlButton>
           )
         })}
       </div>
@@ -511,14 +459,15 @@ export function PluginDetailView({
         className="sticky top-0 z-40 border-b border-border/30 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
         dragRegionClassName="hidden md:block"
         left={
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="plugin-detail-back-button"
             className="plugin-route-back-button"
             onClick={onBack}
           >
             ‹ {resolvedBackLabel}
-          </button>
+          </ControlButton>
         }
       />
       <div className="mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-14 pt-7 sm:px-8">
@@ -704,40 +653,27 @@ export function PluginDetailView({
                         ].join(' ')}
                       >
                         {item.type === 'skill' ? (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             data-testid={`plugin-skill-open-${item.name}`}
                             className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                             onClick={() => setSelectedSkill(item)}
                           >
                             {rowBody}
-                          </button>
+                          </ControlButton>
                         ) : (
                           <div className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3">
                             {rowBody}
                           </div>
                         )}
                         {item.toggleable && isInstalled && !shareRecipient && (
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={enabled}
+                          <Switch
+                            checked={enabled}
                             aria-label={item.name}
                             data-testid={`plugin-component-toggle-${item.componentKey}`}
-                            className={[
-                              'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
-                              enabled ? 'bg-primary wework:bg-emerald-500' : 'bg-border',
-                            ].join(' ')}
-                            onClick={() => onComponentToggle(item.componentKey, !enabled)}
-                          >
-                            <span
-                              className={[
-                                'absolute left-[3px] top-[3px] h-4 w-4 rounded-full shadow-sm transition-transform wework:bg-white',
-                                enabled ? 'bg-primary-contrast' : 'bg-background',
-                                enabled ? 'translate-x-4' : 'translate-x-0',
-                              ].join(' ')}
-                            />
-                          </button>
+                            onCheckedChange={() => onComponentToggle(item.componentKey, !enabled)}
+                          />
                         )}
                       </div>
                     )
@@ -780,7 +716,8 @@ export function PluginDetailView({
                       {t('workbench.plugin_detail_origin_personal', '个人原件')}
                     </dt>
                     <dd>
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="plugin-detail-open-origin-personal"
                         className="inline-flex items-center gap-1 text-focus hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20 wework:text-blue-600"
@@ -789,7 +726,7 @@ export function PluginDetailView({
                         {originPersonalActionLabel ||
                           t('workbench.plugin_detail_view_origin_personal', '查看个人创建版本')}
                         <ArrowRight className="h-3.5 w-3.5" />
-                      </button>
+                      </ControlButton>
                     </dd>
                   </div>
                 ) : null}

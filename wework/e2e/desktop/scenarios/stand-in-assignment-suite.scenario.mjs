@@ -38,6 +38,14 @@ export function createDesktopScenario(options) {
       await conversations.verify(control)
       active = delegation
       await delegation.verify(control)
+      // Finish the delegation view before reloading the notification inbox.
+      const issueDetail =
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-issue-detail"]'
+      await control.command(
+        'clickWhenEnabled',
+        `${issueDetail} [data-testid="cloud-todo-detail-close"]`
+      )
+      await control.command('waitFor', issueDetail, { visible: false })
       active = notifications
       await notifications.verify(control)
       const popover = '[data-testid="wework-notifications-popover"]'

@@ -233,6 +233,7 @@ mod resource_library_team_icons;
 pub(crate) use wegent_resource_store::resource_refs;
 mod responses;
 use wegent_runtime_check as runtime_check;
+mod runtime_model_auth;
 mod runtime_profiles;
 mod runtime_transcript_search;
 mod runtime_work;

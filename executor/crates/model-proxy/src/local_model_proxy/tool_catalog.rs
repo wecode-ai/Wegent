@@ -1,6 +1,15 @@
 //! Reconstruct native incremental tool declarations for stateless protocol adapters.
 use serde_json::Value;
 
+// Unlinked server searches record catalog discovery without a client tool exchange.
+pub(super) fn is_unlinked_server_tool_search(item: &Value) -> bool {
+    matches!(
+        item["type"].as_str(),
+        Some("tool_search_call" | "tool_search_output")
+    ) && item["execution"] == "server"
+        && item["call_id"].is_null()
+}
+
 pub(super) fn effective_tools(body: &Value) -> Vec<Value> {
     let mut tools = body
         .get("tools")

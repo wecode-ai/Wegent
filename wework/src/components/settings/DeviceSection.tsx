@@ -1,3 +1,33 @@
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import {
+  cloudDeviceRestartKey,
+  useWorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  isCloudDevice,
+  isDeviceInteractiveSessionEnabled,
+  isRemoteDevice,
+  supportsCloudLifecycleActions,
+  supportsCloudSessions,
+  supportsDeviceMetrics,
+  supportsRemoteSessions,
+} from '@/lib/device-capabilities'
+import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
+import { cn } from '@/lib/utils'
+import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   AlertCircle,
   Check,
@@ -13,36 +43,8 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import {
-  createAsyncResource,
-  getIdleResourceSnapshot,
-  subscribeIdleResource,
-} from '@wegent/chat-core/async-resource'
-import { deviceSurfaceExtension } from '@extensions/device-surface'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useTranslation } from '@/hooks/useTranslation'
-import { ActionMenu } from '@/components/common/ActionMenu'
-import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
-import {
-  cloudDeviceRestartKey,
-  useWorkbenchCloudDeviceRestarts,
-} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
-import { openExternalUrl } from '@/lib/external-links'
-import { isImeEnterEvent } from '@/lib/ime'
-import { cn } from '@/lib/utils'
-import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
-import {
-  isCloudDevice,
-  isDeviceInteractiveSessionEnabled,
-  isRemoteDevice,
-  supportsCloudLifecycleActions,
-  supportsCloudSessions,
-  supportsDeviceMetrics,
-  supportsRemoteSessions,
-} from '@/lib/device-capabilities'
-import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
-import { DeviceVersionBadge } from './DeviceVersionBadge'
 import { DeviceActionButton } from './DeviceActionButton'
+import { DeviceVersionBadge } from './DeviceVersionBadge'
 import {
   createSettingsDeviceApi,
   createSettingsRemoteTerminalClientFactory,
@@ -107,7 +109,8 @@ function DeviceIconActionButton({
   disabled?: boolean
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       aria-label={label}
@@ -117,7 +120,7 @@ function DeviceIconActionButton({
       className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-3.5 w-3.5" />
-    </button>
+    </ControlButton>
   )
 }
 
@@ -179,7 +182,8 @@ function ConfirmDeleteDeviceDialog({
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cancel-delete-device-button"
             onClick={onCancel}
@@ -187,8 +191,9 @@ function ConfirmDeleteDeviceDialog({
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             取消
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="confirm-delete-device-button"
             onClick={onConfirm}
@@ -197,7 +202,7 @@ function ConfirmDeleteDeviceDialog({
           >
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             确认删除
-          </button>
+          </ControlButton>
         </div>
       </div>
     </div>
@@ -292,7 +297,8 @@ function CloudDeviceConnectionInfoDialog({
               <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
                 {row.value}
               </div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`copy-connection-info-${row.key}`}
                 onClick={() => copyValue(row.key, row.value)}
@@ -300,20 +306,22 @@ function CloudDeviceConnectionInfoDialog({
               >
                 <Copy className="h-3.5 w-3.5" />
                 <span>{copiedKey === row.key ? '已复制' : '复制'}</span>
-              </button>
+              </ControlButton>
             </div>
           ))}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             关闭
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="copy-connection-info-all"
             onClick={() => copyValue('all', formatCloudDeviceConnectionInfo(info))}
@@ -321,7 +329,7 @@ function CloudDeviceConnectionInfoDialog({
           >
             <Copy className="h-3.5 w-3.5" />
             {copiedKey === 'all' ? '已复制' : '复制全部'}
-          </button>
+          </ControlButton>
         </div>
       </div>
     </div>
@@ -360,23 +368,26 @@ function DeviceCard({
   const inputRef = useRef<HTMLInputElement>(null)
   const restart = cloudRestarts?.progress[cloudDeviceRestartKey(device)]
   const isRestartTarget = restart?.device.device_id === device.device_id
+  const { device_id: deviceId } = device
+  const { apiBaseUrl, isConnected, serviceKey, token } = cloudConnection
   const metricsResource = useMemo(
     () =>
       createAsyncResource(
-        device.device_id,
+        `${serviceKey}:${deviceId}`,
         async signal => {
           await Promise.resolve()
           signal.throwIfAborted()
-          return createSettingsDeviceApi(cloudConnection).getMetrics(device.device_id)
+          return createSettingsDeviceApi({ apiBaseUrl, isConnected, token }).getMetrics(deviceId)
         },
         {
+          refreshOnSubscribe: true,
           refreshIntervalMs: 30_000,
           failure(error) {
             console.error('Failed to load device metrics:', error)
           },
         }
       ),
-    [cloudConnection, device]
+    [apiBaseUrl, deviceId, isConnected, serviceKey, token]
   )
   const metricsEnabled = supportsDeviceMetrics(device) && device.status !== 'offline'
   const metricsSnapshot = useSyncExternalStore(
@@ -519,7 +530,7 @@ function DeviceCard({
           <div className="flex min-w-0 items-center gap-2">
             {editing ? (
               <div className="flex items-center gap-1">
-                <input
+                <ControlInput
                   ref={inputRef}
                   type="text"
                   value={editName}
@@ -532,7 +543,8 @@ function DeviceCard({
                   disabled={saving}
                   className="h-6 w-48 rounded border border-primary bg-background px-1.5 text-sm text-text-primary outline-none"
                 />
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={saving}
@@ -540,15 +552,16 @@ function DeviceCard({
                   className="rounded p-0.5 text-primary hover:bg-primary/10"
                 >
                   <Check className="h-3.5 w-3.5" />
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={handleCancelEdit}
                   aria-label={t('common.cancel')}
                   className="rounded p-0.5 text-text-muted hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-3.5 w-3.5" />
-                </button>
+                </ControlButton>
               </div>
             ) : (
               <div className="group flex min-w-0 items-center gap-1.5">
@@ -559,14 +572,15 @@ function DeviceCard({
                 >
                   {displayName}
                 </h3>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={handleStartEdit}
                   aria-label={t('workbench.edit')}
                   className="rounded p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-secondary"
                 >
                   <Pencil className="h-3 w-3" />
-                </button>
+                </ControlButton>
               </div>
             )}
             <DeviceVersionBadge
@@ -737,7 +751,8 @@ function DeviceCard({
                 <span className="truncate text-xs text-text-muted">{terminalSession.path}</span>
               )}
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="settings-device-terminal-close-button"
               onClick={() => setTerminalSession(null)}
@@ -745,7 +760,7 @@ function DeviceCard({
               aria-label="关闭终端"
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
           <div className="min-h-0 flex-1">
             <RemoteTerminal

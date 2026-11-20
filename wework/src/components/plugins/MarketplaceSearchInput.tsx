@@ -1,3 +1,5 @@
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Search, X } from 'lucide-react'
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 
@@ -74,9 +76,9 @@ export const MarketplaceSearchInput = forwardRef<
   )
 
   return (
-    <label className="relative min-w-0 flex-1 md:w-[300px] md:flex-none">
+    <label className="relative min-w-0 flex-1">
       <span className="sr-only">{label}</span>
-      <input
+      <ControlInput
         ref={attachInput}
         value={inputValue}
         onChange={event => {
@@ -104,7 +106,8 @@ export const MarketplaceSearchInput = forwardRef<
         className="plugin-market-search-input"
       />
       {inputValue ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="plugins-search-clear-button"
           className="plugin-market-search-clear"
@@ -113,7 +116,7 @@ export const MarketplaceSearchInput = forwardRef<
           onClick={() => clearQuery({ focus: true })}
         >
           <X aria-hidden="true" />
-        </button>
+        </ControlButton>
       ) : (
         <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
       )}

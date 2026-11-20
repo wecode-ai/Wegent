@@ -1,3 +1,4 @@
+import { sdkSelectValue } from '../test/selectControl'
 // @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -43,6 +44,9 @@ async function click(name: string) {
   await act(async () => element(name).click())
 }
 async function change(name: string, value: string) {
+  const target = element<HTMLElement>(name)
+  if (target.getAttribute('role') === 'combobox') return sdkSelectValue(target, value)
+  if (!(target instanceof HTMLInputElement)) throw new Error(`Expected input ${name}`)
   await act(async () => {
     const target = element<HTMLInputElement | HTMLSelectElement>(name)
     if (target instanceof HTMLInputElement) {
@@ -283,7 +287,7 @@ it('keeps a created profile and binding when an older catalog refresh resolves l
   expect(element('current').textContent).toContain(created.name)
   await act(async () => finishRead(runtimeCatalog()))
   expect(element('current').textContent).toContain(created.name)
-  expect(element<HTMLSelectElement>('profile').value).toBe(created.id)
+  expect(await sdkSelectValue(element<HTMLElement>('profile'))).toBe(created.id)
   expect(api.runtimeProfiles.create).toHaveBeenCalledOnce()
   expect(api.runtimeProfiles.setProjectDefault).toHaveBeenCalledExactlyOnceWith(
     'project-1',
@@ -313,7 +317,7 @@ it('does not bind a profile created for a project that has already been left', a
     })
   )
   expect(api.runtimeProfiles.setProjectDefault).not.toHaveBeenCalled()
-  expect(element<HTMLSelectElement>('profile').value).toBe('')
+  expect(await sdkSelectValue(element<HTMLElement>('profile'))).toBe('')
   expect(element<HTMLSelectElement>('profile').disabled).toBe(false)
   expect(container.textContent).not.toContain('Old project profile')
 })

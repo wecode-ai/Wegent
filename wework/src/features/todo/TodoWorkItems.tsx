@@ -1,4 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Switch } from '@wegent/collaboration/controls/Switch'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Check,
   ChevronDown,
@@ -12,21 +17,19 @@ import {
   Signal,
   X,
 } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import type { TodoDetailItem, TodoViewState } from './todoViewTypes'
+import { useMemo, useState } from 'react'
 import { todoStateColors } from './todoStateColors'
-import {
-  countActiveTodoFilters,
-  DEFAULT_TODO_FILTERS,
-  type TodoAssigneeFilter,
-  type TodoDisplaySettings,
-  type TodoFilters,
-  type TodoLayout,
-  type TodoOrder,
-  type TodoPriorityFilter,
-  type TodoUpdatedFilter,
+import type { TodoDetailItem, TodoViewState } from './todoTypes'
+import type {
+  TodoAssigneeFilter,
+  TodoDisplaySettings,
+  TodoFilters,
+  TodoLayout,
+  TodoOrder,
+  TodoPriorityFilter,
+  TodoUpdatedFilter,
 } from './todoViewSettings'
+import { countActiveTodoFilters, DEFAULT_TODO_FILTERS } from './todoViewSettings'
 
 interface TodoWorkItemsProps {
   items: TodoDetailItem[]
@@ -185,7 +188,8 @@ function TodoFilterBar({
         />
       </div>
       {activeCount > 0 && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="todo-filter-clear"
           onClick={() => onChange(DEFAULT_TODO_FILTERS)}
@@ -193,7 +197,7 @@ function TodoFilterBar({
         >
           <RotateCcw className="h-3.5 w-3.5" />
           {t('todo.clear_all', '清除全部')}
-        </button>
+        </ControlButton>
       )}
     </div>
   )
@@ -214,24 +218,20 @@ function FilterSelect({
 }) {
   const selected = options.find(option => option.value === value)?.label ?? value
   return (
-    <label className="relative flex h-[30px] items-center gap-1.5 rounded-md border border-border bg-muted px-2 pr-7 text-xs text-text-secondary">
-      <span className="text-text-muted">{label}</span>
-      <span className="font-semibold text-text-primary">{selected}</span>
-      <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-text-muted" />
-      <select
-        data-testid={testId}
-        value={value}
-        onChange={event => onChange(event.target.value)}
-        className="absolute inset-0 cursor-pointer appearance-none opacity-0"
-        aria-label={`${label}: ${selected}`}
-      >
-        {options.map(option => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <SelectField
+      testId={testId}
+      accessibleLabel={label + ': ' + selected}
+      value={value}
+      options={options}
+      onChange={onChange}
+      triggerContent={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="text-text-secondary">{label}</span>
+          <span className="truncate">{selected}</span>
+        </span>
+      }
+      className="shrink-0"
+    />
   )
 }
 
@@ -254,7 +254,8 @@ function TodoDisplayPanel({
         <span className="text-xs font-semibold text-text-primary">
           {t('todo.display_settings', '显示设置')}
         </span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="todo-display-close"
           onClick={onClose}
@@ -262,7 +263,7 @@ function TodoDisplayPanel({
           aria-label={t('workbench.close', '关闭')}
         >
           <X className="h-3.5 w-3.5" />
-        </button>
+        </ControlButton>
       </header>
       <div className="space-y-3 px-3.5 py-3">
         <DisplaySection title={t('todo.card_properties', '卡片显示属性')}>
@@ -313,7 +314,8 @@ function TodoDisplayPanel({
               ['priority', t('todo.order_priority', '优先级')],
             ] as Array<[TodoOrder, string]>
           ).map(([value, label]) => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={value}
               type="button"
               data-testid={`todo-display-order-${value}`}
@@ -325,7 +327,7 @@ function TodoDisplayPanel({
             >
               {label}
               {display.order === value && <Check className="h-3.5 w-3.5" />}
-            </button>
+            </ControlButton>
           ))}
         </DisplaySection>
       </div>
@@ -357,30 +359,12 @@ function DisplayToggle({
   onChange: (checked: boolean) => void
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
+    <Switch
+      checked={checked}
+      aria-label={label}
       data-testid={testId}
-      onClick={() => onChange(!checked)}
-      className="flex h-7 w-full items-center justify-between text-xs text-text-secondary"
-    >
-      {label}
-      <span
-        className={cn(
-          'relative h-[17px] w-[30px] rounded-full bg-border transition-colors',
-          checked && 'bg-primary'
-        )}
-      >
-        <span
-          className={cn(
-            'absolute left-0.5 top-0.5 h-[13px] w-[13px] rounded-full bg-background transition-transform',
-            checked && 'bg-primary-contrast',
-            checked && 'translate-x-[13px]'
-          )}
-        />
-      </span>
-    </button>
+      onCheckedChange={() => onChange(!checked)}
+    />
   )
 }
 
@@ -473,7 +457,8 @@ function TodoColumn({
         data-testid={`todo-column-${state}`}
         className="flex w-10 shrink-0 flex-col items-center rounded-md bg-muted py-2"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`todo-column-expand-${state}`}
           onClick={onToggleCollapsed}
@@ -481,7 +466,7 @@ function TodoColumn({
           aria-label={t('todo.expand_column', '展开列')}
         >
           <ChevronRight className="h-3.5 w-3.5 text-text-secondary" />
-        </button>
+        </ControlButton>
         <span className="mt-2 h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.color }} />
         <span className="mt-2 font-mono text-xs text-text-muted">{items.length}</span>
         <span className="mt-2 [writing-mode:vertical-rl] text-xs font-semibold text-text-secondary">
@@ -512,7 +497,8 @@ function TodoColumn({
           <span className="font-mono text-xs text-text-muted">{items.length}</span>
         </div>
         <div className="flex items-center gap-1.5 text-text-muted">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`todo-column-add-${state}`}
             onClick={() => setQuickCreateOpen(true)}
@@ -520,8 +506,9 @@ function TodoColumn({
             aria-label={t('todo.create_action', '新建任务')}
           >
             <Plus className="h-3.5 w-3.5" />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`todo-column-more-${state}`}
             onClick={() => setMenuOpen(value => !value)}
@@ -530,7 +517,7 @@ function TodoColumn({
             aria-label={t('workbench.more', '更多')}
           >
             <Ellipsis className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
         </div>
       </header>
       {menuOpen && (
@@ -538,7 +525,8 @@ function TodoColumn({
           data-testid={`todo-column-menu-${state}`}
           className="absolute right-0 top-8 z-10 w-36 rounded-md border border-border bg-popover p-1 shadow-lg"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`todo-column-menu-add-${state}`}
             onClick={() => {
@@ -549,8 +537,9 @@ function TodoColumn({
           >
             <Plus className="h-3.5 w-3.5" />
             {t('todo.create_action', '新建任务')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`todo-column-menu-collapse-${state}`}
             onClick={() => {
@@ -561,13 +550,15 @@ function TodoColumn({
           >
             <ChevronDown className="h-3.5 w-3.5" />
             {t('todo.collapse_column', '收起列')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <div className="space-y-2.5">
         {quickCreateOpen && (
           <div className="flex items-center rounded-lg border border-primary/40 bg-surface p-2 shadow-sm">
-            <input
+            <ControlInput
+              density="compact"
+              appearance="plain"
               autoFocus
               data-testid={`todo-quick-create-${state}`}
               value={quickCreateTitle}
@@ -583,9 +574,10 @@ function TodoColumn({
                 if (!quickCreateTitle.trim()) setQuickCreateOpen(false)
               }}
               placeholder={t('todo.quick_create_placeholder', '输入事项标题，回车创建')}
-              className="h-8 min-w-0 flex-1 bg-transparent px-1 text-xs text-text-primary outline-none placeholder:text-text-muted"
+              className="min-w-0 flex-1 text-xs placeholder:text-text-muted"
             />
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`todo-quick-create-submit-${state}`}
               onMouseDown={event => event.preventDefault()}
@@ -595,7 +587,7 @@ function TodoColumn({
               aria-label={t('todo.add', '添加')}
             >
               <Check className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </div>
         )}
         {items.map(item => (
@@ -607,7 +599,8 @@ function TodoColumn({
             onMoveItem={onMoveItem}
           />
         ))}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`todo-column-bottom-add-${state}`}
           onClick={() => setQuickCreateOpen(true)}
@@ -615,7 +608,7 @@ function TodoColumn({
         >
           <Plus className="h-3.5 w-3.5" />
           {t('todo.add_work_item', '添加工作空间')}
-        </button>
+        </ControlButton>
       </div>
     </section>
   )
@@ -657,7 +650,8 @@ function TodoList({
                   {t(meta.labelKey, meta.fallback)}
                   <span className="font-mono text-xs text-text-muted">{stateItems.length}</span>
                 </span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`todo-list-add-${state}`}
                   onClick={() => setQuickCreateState(state)}
@@ -665,11 +659,12 @@ function TodoList({
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {t('todo.create_action', '新建任务')}
-                </button>
+                </ControlButton>
               </header>
               {quickCreateState === state && (
                 <div className="border-b border-border bg-surface px-3 py-2">
-                  <input
+                  <ControlInput
+                    density="compact"
                     autoFocus
                     data-testid={`todo-list-quick-create-${state}`}
                     value={quickCreateTitle}
@@ -686,7 +681,7 @@ function TodoList({
                       }
                     }}
                     placeholder={t('todo.quick_create_placeholder', '输入事项标题，回车创建')}
-                    className="h-8 w-full rounded-md border border-primary/40 bg-background px-3 text-xs outline-none"
+                    className="w-full border-primary/40 text-xs"
                   />
                 </div>
               )}
@@ -696,7 +691,9 @@ function TodoList({
                 </div>
               ) : (
                 stateItems.map(item => (
-                  <button
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
                     key={item.id}
                     type="button"
                     data-testid={`todo-list-item-${item.id}`}
@@ -716,7 +713,7 @@ function TodoList({
                     <span className="text-text-muted">
                       {display.showUpdated ? formatShortDate(item.updatedAt) : '—'}
                     </span>
-                  </button>
+                  </ControlButton>
                 ))
               )}
             </section>
@@ -750,7 +747,9 @@ function TodoCard({
       : children.filter(child => child.state !== 'completed').slice(0, 2)
   const fileCount = item.attachments?.length ?? 0
   return (
-    <button
+    <ControlButton
+      variant="outline"
+      size="sm"
       type="button"
       draggable={Boolean(onMoveItem && item.kind === 'draft')}
       onDragStart={event => {
@@ -830,7 +829,7 @@ function TodoCard({
           </span>
         )}
       </span>
-    </button>
+    </ControlButton>
   )
 }
 

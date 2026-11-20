@@ -1,6 +1,7 @@
-import { Circle, LoaderCircle } from 'lucide-react'
 import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Circle, LoaderCircle } from 'lucide-react'
 import {
   projectScopeOf,
   selectExperienceTaskState,
@@ -50,7 +51,8 @@ export function ProjectList({
             {group.map(({ project, source, count, waiting, running }) => {
               const Icon = running && !waiting ? LoaderCircle : Circle
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={project.key}
                   type="button"
                   className="experience-project-list-row"
@@ -82,7 +84,7 @@ export function ProjectList({
                       }
                     />
                   </span>
-                </button>
+                </ControlButton>
               )
             })}
           </section>

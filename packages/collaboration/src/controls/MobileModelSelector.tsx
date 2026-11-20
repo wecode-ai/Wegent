@@ -1,11 +1,18 @@
-import { isolateModalBackground } from './dialogAccessibility'
-import { Check, Cloud, Search, X } from 'lucide-react'
-import { useCallback, useRef, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import type { ModelOptions, UnifiedModel } from '@wegent/chat-core/models'
+import { Check, Cloud, Search, X } from 'lucide-react'
+import { useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 import { useCollaborationPortalTheme } from '../theme'
+import { DialogSurface } from './DialogSurface'
 import { ModelAutomaticReasoningOption } from './ModelAutomaticReasoningOption'
+import { TextField as ControlInput } from './TextField'
+import {
+  codexProviderId,
+  isCloudModel,
+  modelCompatibilityDisabledMessage,
+} from './model-selector-utils'
 import {
   getModelDisplayLabel,
   groupModelsByFamily,
@@ -13,12 +20,6 @@ import {
   modelSelectionKey,
   type ModelControlConfig,
 } from './model-ui'
-import {
-  codexProviderId,
-  isCloudModel,
-  modelCompatibilityDisabledMessage,
-} from './model-selector-utils'
-import { handleMobileModelSelectorDialogKeyDown } from './model-selector-mobile-utils'
 
 interface MobileModelSelectorProps {
   translate: CollaborationTranslate
@@ -65,16 +66,7 @@ export function MobileModelSelector({
 }: MobileModelSelectorProps) {
   const portalTheme = useCollaborationPortalTheme()
   const mobileMenuRef = useRef<HTMLDivElement>(null)
-  const attachCloseButton = useCallback((button: HTMLButtonElement | null) => {
-    if (!button) return
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    button.focus()
-    const restoreBackground = isolateModalBackground(button.closest<HTMLElement>('[role="dialog"]'))
-    return () => {
-      restoreBackground?.()
-      previous?.focus()
-    }
-  }, [])
+  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const resolveControlLabel = (key: string, fallback: string) => t(key, fallback)
 
   return createPortal(
@@ -83,17 +75,18 @@ export function MobileModelSelector({
       className={`${portalTheme.className} fixed inset-0 z-modal bg-black/25`}
       onClick={() => closeMenu()}
     >
-      <div
-        ref={mobileMenuRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="model-selector-mobile-title"
-        data-testid="model-selector-menu"
-        data-mobile="true"
-        className="absolute inset-x-0 bottom-0 flex h-[82dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]"
-        onClick={event => event.stopPropagation()}
-        onKeyDown={event =>
-          handleMobileModelSelectorDialogKeyDown(event, mobileMenuRef.current, closeMenu)
+      <DialogSurface
+        onClose={closeMenu}
+        initialFocus={() => mobileCloseButtonRef.current}
+        render={
+          <div
+            ref={mobileMenuRef}
+            aria-labelledby="model-selector-mobile-title"
+            data-testid="model-selector-menu"
+            data-mobile="true"
+            className="absolute inset-x-0 bottom-0 flex h-[82dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]"
+            onClick={event => event.stopPropagation()}
+          />
         }
       >
         <div className="mx-auto mt-3 h-1 w-11 rounded-full bg-border" />
@@ -107,27 +100,29 @@ export function MobileModelSelector({
             </h2>
             <p className="mt-1 truncate text-xs text-text-muted">{buttonLabel}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
-            ref={attachCloseButton}
+            ref={mobileCloseButtonRef}
             data-testid="model-selector-close-button"
             aria-label={t('workbench.close_menu')}
             onClick={() => closeMenu()}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
           >
             <X className="h-5 w-5" />
-          </button>
+          </ControlButton>
         </div>
 
         <div className="px-5">
           <label className="flex h-11 items-center gap-3 rounded-2xl bg-surface px-4 text-text-secondary">
             <Search className="h-5 w-5 shrink-0" />
-            <input
+            <ControlInput
+              appearance="plain"
               data-testid="model-selector-search-input"
               value={mobileQuery}
               onChange={event => setMobileQuery(event.target.value)}
               placeholder={t('workbench.search_models')}
-              className="min-w-0 flex-1 bg-transparent text-base leading-5 text-text-primary outline-none placeholder:text-text-muted"
+              className="min-w-0 flex-1 text-base leading-5 placeholder:text-text-muted"
             />
           </label>
         </div>
@@ -143,7 +138,8 @@ export function MobileModelSelector({
               {familyGroups.map(group => {
                 const active = group.config.id === activeGroup?.config.id
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     key={group.config.id}
                     type="button"
                     data-testid={`model-family-${group.config.id}`}
@@ -154,7 +150,7 @@ export function MobileModelSelector({
                     ].join(' ')}
                   >
                     {group.config.label}
-                  </button>
+                  </ControlButton>
                 )
               })}
             </div>
@@ -182,7 +178,8 @@ export function MobileModelSelector({
                       )
                     : undefined
                   return (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={modelSelectionKey(model)}
                       type="button"
                       data-testid={`model-option-${getModelOptionId?.(model) ?? model.name}`}
@@ -226,7 +223,7 @@ export function MobileModelSelector({
                         </span>
                       </span>
                       {selected && <Check className="h-5 w-5 shrink-0 text-text-primary" />}
-                    </button>
+                    </ControlButton>
                   )
                 })}
               </div>
@@ -243,24 +240,28 @@ export function MobileModelSelector({
         </div>
 
         <div className="flex shrink-0 gap-3 border-t border-border bg-background/95 px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="model-selector-auto-button"
             onClick={() => handleSelectModel(null)}
             className="h-11 flex-1 rounded-full border border-border bg-background text-sm font-semibold text-text-primary"
           >
             {t('workbench.model_auto_select')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="model-selector-confirm-button"
             onClick={() => closeMenu()}
             className="h-11 flex-1 rounded-full bg-text-primary text-sm font-semibold text-background"
           >
             {t('workbench.use_current_model')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

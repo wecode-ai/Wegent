@@ -1,10 +1,10 @@
-import * as Popover from '@radix-ui/react-popover'
+import type { MenuPosition } from '@/components/common/ActionMenu'
+import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
 import { ChevronRight } from 'lucide-react'
 import { Fragment, useState } from 'react'
-import type { MenuPosition } from '@/components/common/ActionMenu'
-import { workspaceFileBreadcrumbs } from './workspaceFileBreadcrumbModel'
-import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
 import { WorkspaceDirectoryPicker } from './WorkspaceDirectoryPicker'
+import { workspaceFileBreadcrumbs } from './workspaceFileBreadcrumbModel'
 
 export function WorkspaceFileBreadcrumbs({
   path,
@@ -37,56 +37,71 @@ export function WorkspaceFileBreadcrumbs({
                   <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
                 </>
               )}
-              <Popover.Root
+              <Popover
                 open={openPath === crumb.path}
-                onOpenChange={open =>
+                onOpenChange={(open, details) => {
+                  const target = details.event?.target
+                  if (
+                    details.reason === 'outside-press' &&
+                    target instanceof Element &&
+                    target.closest(
+                      '[data-testid="workspace-file-context-menu"], [data-testid="workspace-file-open-with-submenu"]'
+                    )
+                  ) {
+                    details.cancel()
+                    return
+                  }
                   setOpenPath(current =>
                     open ? crumb.path : current === crumb.path ? null : current
                   )
-                }
+                }}
               >
-                <Popover.Trigger asChild>
-                  <button
-                    type="button"
-                    data-testid={
-                      file
-                        ? 'workspace-file-name-button'
-                        : `workspace-file-breadcrumb-${crumb.path}`
-                    }
-                    title={crumb.path}
-                    onContextMenu={event => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      onPathContextMenu(crumb.path, !file, {
-                        left: event.clientX,
-                        top: event.clientY,
-                      })
-                    }}
-                    onKeyDown={event => {
-                      if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')))
-                        return
-                      event.preventDefault()
-                      event.stopPropagation()
-                      const rect = event.currentTarget.getBoundingClientRect()
-                      onPathContextMenu(crumb.path, !file, { left: rect.left, top: rect.bottom })
-                    }}
-                    className="flex h-7 shrink-0 items-center whitespace-nowrap rounded px-1 text-sm hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-primary"
-                  >
-                    <span
-                      className={
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      data-testid={
                         file
-                          ? 'font-medium text-text-primary'
-                          : index === 0
-                            ? 'text-text-primary'
-                            : undefined
+                          ? 'workspace-file-name-button'
+                          : `workspace-file-breadcrumb-${crumb.path}`
                       }
-                    >
-                      {crumb.label}
-                    </span>
-                  </button>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Content
+                      title={crumb.path}
+                      onContextMenu={event => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        onPathContextMenu(crumb.path, !file, {
+                          left: event.clientX,
+                          top: event.clientY,
+                        })
+                      }}
+                      onKeyDown={event => {
+                        if (
+                          !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
+                        )
+                          return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        onPathContextMenu(crumb.path, !file, { left: rect.left, top: rect.bottom })
+                      }}
+                      className="flex h-7 shrink-0 items-center whitespace-nowrap rounded px-1 text-sm hover:bg-muted data-[open]:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-primary"
+                    />
+                  }
+                >
+                  <span
+                    className={
+                      file
+                        ? 'font-medium text-text-primary'
+                        : index === 0
+                          ? 'text-text-primary'
+                          : undefined
+                    }
+                  >
+                    {crumb.label}
+                  </span>
+                </PopoverTrigger>
+                <>
+                  <PopoverContent
                     data-testid={
                       file ? 'workspace-file-siblings-menu' : 'workspace-file-directory-menu'
                     }
@@ -94,16 +109,7 @@ export function WorkspaceFileBreadcrumbs({
                     align="start"
                     sideOffset={1}
                     collisionPadding={8}
-                    className="z-popover h-80 max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] rounded-lg border border-border bg-popover p-1 text-text-primary shadow-sm outline-none"
-                    onInteractOutside={event => {
-                      if (
-                        event.target instanceof Element &&
-                        event.target.closest(
-                          '[data-testid="workspace-file-context-menu"], [data-testid="workspace-file-open-with-submenu"]'
-                        )
-                      )
-                        event.preventDefault()
-                    }}
+                    className="z-popover h-80 max-h-[var(--available-height)] w-80 max-w-[calc(100vw-1rem)] rounded-lg border border-border bg-popover p-1 text-text-primary shadow-sm outline-none"
                   >
                     <WorkspaceDirectoryPicker
                       directoryPath={crumb.directoryPath}
@@ -117,9 +123,9 @@ export function WorkspaceFileBreadcrumbs({
                       }}
                       onPathContextMenu={onPathContextMenu}
                     />
-                  </Popover.Content>
-                </Popover.Portal>
-              </Popover.Root>
+                  </PopoverContent>
+                </>
+              </Popover>
             </Fragment>
           )
         })}

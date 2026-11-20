@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react'
-import * as Popover from '@radix-ui/react-popover'
+import { Popover, PopoverContent, PopoverTrigger } from '../controls/Popover'
 import { CornerDownRight } from 'lucide-react'
-import type { CollaborationIssue } from '../types'
+import { useRef, useState } from 'react'
+import { SearchableSelect } from '../controls/SearchableSelect'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import type { CollaborationIssue } from '../types'
 import type { CommentAssignment } from './useCommentAssignment'
-import { IssueDetailSearchableSelect } from './IssueDetailControls'
 
 /** Any visible comment can seed a child; mentions never confer authority. */
 export function IssueCommentChildAction({
@@ -22,6 +23,7 @@ export function IssueCommentChildAction({
 }) {
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState('')
+  const [form, setForm] = useState<HTMLDivElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState(false)
   const [error, setError] = useState('')
@@ -65,24 +67,27 @@ export function IssueCommentChildAction({
   }
   if (!assignment.createChild || !body.trim()) return null
   return (
-    <Popover.Root
+    <Popover
       open={open}
       onOpenChange={next => {
         if (!busy) setOpen(next)
       }}
     >
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          data-testid={`issue-comment-create-child-${messageId}`}
-          className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary md:min-h-7"
-        >
-          <CornerDownRight className="h-3.5 w-3.5" />
-          {t('todo.create_child_issue')}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            data-testid={`issue-comment-create-child-${messageId}`}
+            className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary md:min-h-7"
+          />
+        }
+      >
+        <CornerDownRight className="h-3.5 w-3.5" />
+        {t('todo.create_child_issue')}
+      </PopoverTrigger>
+      <>
+        <PopoverContent
+          ref={setForm}
           side="bottom"
           align="end"
           collisionPadding={12}
@@ -93,7 +98,8 @@ export function IssueCommentChildAction({
           <p className="mb-3 line-clamp-3 whitespace-pre-wrap text-sm text-text-secondary">
             {body}
           </p>
-          <IssueDetailSearchableSelect
+          <SearchableSelect
+            portalContainer={form}
             testId={`issue-comment-child-assignee-${messageId}`}
             accessibleLabel={t('todo.comment_assign_to')}
             value={target}
@@ -113,7 +119,9 @@ export function IssueCommentChildAction({
             </p>
           )}
           <div className="mt-3 flex justify-end">
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               disabled={busy}
               data-testid={`issue-comment-child-confirm-${messageId}`}
@@ -121,10 +129,10 @@ export function IssueCommentChildAction({
               className="min-h-11 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-50 md:min-h-8"
             >
               {t(busy ? 'todo.saving' : 'todo.create_child_issue')}
-            </button>
+            </ControlButton>
           </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      </>
+    </Popover>
   )
 }

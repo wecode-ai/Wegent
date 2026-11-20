@@ -103,9 +103,9 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const projectMenusBeforeCreate = new Set(
+  const projectRowsBeforeCreate = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('project-menu-')
+      testId.startsWith('project-row-')
     )
   )
   await control.command('click', '[data-testid="projects-create-button"]')
@@ -122,7 +122,7 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -145,12 +145,12 @@ async function createCloudProjectFixture(control, workspacePath) {
     'The cloud checkpoint folder picker did not retain the workspace path'
   )
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  const projectMenuTestId = await waitForStableCloudProjectMenu(
+  const projectRowTestId = await waitForStableCloudProjectRow(
     control,
-    projectMenusBeforeCreate,
+    projectRowsBeforeCreate,
     'The cloud checkpoint project was not shown in the sidebar'
   )
-  const projectUiId = projectMenuTestId.slice('project-menu-'.length)
+  const projectUiId = projectRowTestId.slice('project-row-'.length)
   const projectRowSelector = `[data-testid="project-row-${projectUiId}"]`
   await control.command(
     'clickWhenEnabled',
@@ -198,25 +198,25 @@ async function verifyCloudProjectCreationSources(
   const homePath = join(resultDir, 'cloud-executor-home')
   await cloudEnvironment.createOfflineLocalSidebarAlias()
 
-  const createProjectAndSnapshotMenus = async sourceTestId => {
-    const previousMenus = new Set(
+  const createProjectAndSnapshotRows = async sourceTestId => {
+    const previousRows = new Set(
       JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-        testId.startsWith('project-menu-')
+        testId.startsWith('project-row-')
       )
     )
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-remote-option"]')
     await control.command('waitFor', '[data-testid="standalone-remote-device-select"]')
-    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    await control.command('select', '[data-testid="standalone-remote-device-select"]', {
       value: CLOUD_DEVICE_ID,
     })
     await control.command('clickWhenEnabled', `[data-testid="${sourceTestId}"]`, {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    return previousMenus
+    return previousRows
   }
 
-  const blankMenus = await createProjectAndSnapshotMenus('remote-project-source-blank')
+  const blankRows = await createProjectAndSnapshotRows('remote-project-source-blank')
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -227,12 +227,12 @@ async function verifyCloudProjectCreationSources(
     value: 'cloud-blank-project',
   })
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  const blankProjectMenu = await waitForStableCloudProjectMenu(
+  const blankProjectRow = await waitForStableCloudProjectRow(
     control,
-    blankMenus,
+    blankRows,
     'Creating a blank cloud project did not add it to the sidebar'
   )
-  const projectId = blankProjectMenu.slice('project-menu-'.length)
+  const projectId = blankProjectRow.slice('project-row-'.length)
   await openRuntimeProjectEditor(control, projectId)
   await control.command('waitFor', '[data-testid="add-local-project-folders"]', { enabled: true })
   assert.equal(
@@ -366,7 +366,7 @@ async function verifyCloudProjectCreationSources(
   await control.command('click', '[data-testid="close-local-project-edit-dialog"]')
 
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspacePath })
-  const gitMenus = await createProjectAndSnapshotMenus('remote-project-source-git')
+  const gitRows = await createProjectAndSnapshotRows('remote-project-source-git')
   await waitForControlValue(
     control,
     '[data-testid="remote-project-git-parent-input"]',
@@ -389,7 +389,7 @@ async function verifyCloudProjectCreationSources(
   const clonedProjectPath = join(homePath, basename(workspacePath))
   await waitForGitCloneProject(
     control,
-    gitMenus,
+    gitRows,
     clonedProjectPath,
     'Cloning a Git cloud project did not add it to the sidebar'
   )
@@ -400,52 +400,33 @@ async function verifyCloudProjectCreationSources(
   await verifyGitCloneDeviceRecovery(control, workspacePath, cloudEnvironment)
 }
 
-async function waitForCloudProject(control, previousProjectMenus, message) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    if (
-      snapshot.testIds.some(
-        testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
-      )
-    ) {
-      return snapshot
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(message)
-}
-
-async function waitForStableCloudProjectMenu(control, previousProjectMenus, message) {
+async function waitForStableCloudProjectRow(control, previousProjectRows, message) {
   const startedAt = Date.now()
   let candidate = null
   let candidateSince = 0
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     const current = snapshot.testIds.filter(
-      testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
+      testId => testId.startsWith('project-row-') && !previousProjectRows.has(testId)
     )
-    const projectMenuTestId = current.length === 1 ? current[0] : null
-    if (projectMenuTestId !== candidate) {
-      candidate = projectMenuTestId
+    const projectRowTestId = current.length === 1 ? current[0] : null
+    if (projectRowTestId !== candidate) {
+      candidate = projectRowTestId
       candidateSince = Date.now()
-    } else if (
-      projectMenuTestId &&
-      Date.now() - candidateSince >= COMPOSER_READY_STABILITY_MS * 2
-    ) {
-      return projectMenuTestId
+    } else if (projectRowTestId && Date.now() - candidateSince >= COMPOSER_READY_STABILITY_MS * 2) {
+      return projectRowTestId
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
 }
 
-async function waitForGitCloneProject(control, previousProjectMenus, targetPath, message) {
+async function waitForGitCloneProject(control, previousProjectRows, targetPath, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     const projectAdded = snapshot.testIds.some(
-      testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
+      testId => testId.startsWith('project-row-') && !previousProjectRows.has(testId)
     )
     const clonePending = snapshot.testIds.includes('remote-project-git-form')
     const targetExists = await access(targetPath)

@@ -301,7 +301,7 @@ fn runtime_generated_user_message(payload: &Value) -> Option<Value> {
     let source = payload.get("source").filter(|value| value.is_object())?;
     if !matches!(
         string_field(source, "source").as_deref(),
-        Some("im" | "connection_event")
+        Some("im" | "connection_event" | "connection_work")
     ) {
         return None;
     }

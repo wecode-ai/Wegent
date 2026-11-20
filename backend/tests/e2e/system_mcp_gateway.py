@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
+from chat_mcp_fault_isolation import ChatMcpFaultIsolation
 from redis import Redis
 from sqlalchemy.engine import make_url
 
@@ -209,6 +210,9 @@ if __name__ == "__main__":
     report_dir = Path(os.environ["E2E_REPORT_DIR"])
     report_dir.mkdir(parents=True, exist_ok=True)
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(SystemMcpGateway)
+    suite.addTests(
+        unittest.defaultTestLoader.loadTestsFromTestCase(ChatMcpFaultIsolation)
+    )
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     report = {
         "sha": os.environ["E2E_TEST_SHA"],
@@ -218,7 +222,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 4
+        and result.testsRun >= 7
         and not result.skipped,
     }
     (report_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")

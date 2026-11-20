@@ -6,9 +6,26 @@ import {
   assistantMessage,
   mcpToolRequestEvents,
   requestContainsToolOutput,
+  selectedToolCall,
+  selectTool,
+  toolOutputText,
 } from './response-protocol.mjs'
 
 const roundSummary = '两个评论线程的处理结果已分别回复。'
+
+function guidedToolResult(body, callId) {
+  let outputId = callId
+  for (let waitIndex = 1; requestContainsToolOutput(body, outputId); waitIndex += 1) {
+    const cellId = toolOutputText(body, outputId)?.match(/^Script running with cell ID (\S+)/)?.[1]
+    if (!cellId) return { complete: true }
+    outputId = `${callId}-wait-${waitIndex}`
+    if (!requestContainsToolOutput(body, outputId)) {
+      const wait = selectTool(body, 'wait', { cell_id: cellId, yield_time_ms: 1000 })
+      return { complete: false, events: selectedToolCall(outputId, wait) }
+    }
+  }
+  return { complete: false }
+}
 
 export function createGuidedReplies({
   marker,
@@ -51,24 +68,35 @@ export function createGuidedReplies({
     },
     async modelEvents(body, requestText, scope, listComments) {
       if (!requestText.includes(firstQuestion)) return null
-      if (requestContainsToolOutput(body, answerA)) {
+      const completedAnswer = guidedToolResult(body, answerA)
+      if (completedAnswer.events) return completedAnswer.events
+      if (completedAnswer.complete) {
         return [assistantMessage(roundSummary)]
       }
-      if (!requestContainsToolOutput(body, listCall)) {
-        if (!requestContainsToolOutput(body, `${listCall}-search`)) {
+      const list = guidedToolResult(body, listCall)
+      if (list.events) return list.events
+      if (!list.complete) {
+        const search = guidedToolResult(body, `${listCall}-search`)
+        if (search.events) return search.events
+        if (!search.complete) {
           enterFirstTurn()
           await listAllowed
         }
         return toolEvents(body, 'list_board_item_comments', listCall, scope)
       }
       assert.ok(requestText.includes(secondQuestion), 'B 楼引导必须进入已在运行的 A 楼主会话')
+      const second = guidedToolResult(body, answerB)
+      if (second.events) return second.events
       const rows = await listComments()
-      const secondDone = requestContainsToolOutput(body, answerB)
+      const secondDone = second.complete
       if (secondDone) await answerAAllowed
       const question = secondDone ? firstQuestion : secondQuestion
       const target = readThreads(rows, question)
       assert.ok(target?.id, `找不到待回复的评论：${question}`)
-      return toolEvents(body, 'add_board_item_comment', secondDone ? answerA : answerB, {
+      const replyCall = secondDone ? answerA : answerB
+      const search = guidedToolResult(body, `${replyCall}-search`)
+      if (search.events) return search.events
+      return toolEvents(body, 'add_board_item_comment', replyCall, {
         ...scope,
         reply_to_comment_id: target.id,
         body: secondDone ? firstAnswer : secondAnswer,

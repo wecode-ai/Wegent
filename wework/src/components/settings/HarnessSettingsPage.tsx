@@ -1,19 +1,28 @@
-import { ChevronDown, FolderOpen, RotateCcw, SquareTerminal } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
-import { createHarnessSettingsEditor } from './harnessSettingsEditor'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   defaultLocalHarnessPreferences,
-  localHarnessLabel,
   LOCAL_HARNESS_IDS,
+  localHarnessLabel,
   type ClaudeCodePermissionMode,
   type LocalHarnessId,
 } from '@/lib/local-harness'
 import { listLocalHarnesses, type LocalHarnessDescriptor } from '@/lib/local-terminal'
 import { openNativeExecutablePicker } from '@/lib/native-executable-picker'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, FolderOpen, RotateCcw, SquareTerminal } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createHarnessSettingsEditor } from './harnessSettingsEditor'
 import {
   SettingsGroup,
   SettingsPage,
@@ -126,7 +135,8 @@ export function HarnessSettingsPage() {
               className="overflow-hidden rounded-2xl border border-border bg-surface/70"
             >
               <div className={`flex items-center ${expanded ? 'border-b border-border' : ''}`}>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`harness-settings-toggle-${id}`}
                   aria-expanded={expanded}
@@ -162,7 +172,7 @@ export function HarnessSettingsPage() {
                     }`}
                     aria-hidden="true"
                   />
-                </button>
+                </ControlButton>
                 <div className="flex min-h-14 shrink-0 items-center px-4">
                   <SettingsSwitch
                     data-testid={`harness-enabled-${id}`}
@@ -192,7 +202,7 @@ export function HarnessSettingsPage() {
                       'workbench.harness_executable_path_description',
                       '选择可执行文件路径；未指定时从 PATH 和工具默认安装目录中检测。'
                     )}
-                    control={
+                    children={
                       <div className="flex w-72 min-w-0 items-center gap-1.5 max-sm:w-full">
                         <span
                           data-testid={`harness-executable-path-${id}`}
@@ -201,17 +211,20 @@ export function HarnessSettingsPage() {
                         >
                           {resolvedExecutable}
                         </span>
-                        <button
+                        <ControlButton
+                          variant="outline"
+                          size="sm"
                           type="button"
                           data-testid={`harness-executable-select-${id}`}
                           onClick={() => void selectExecutable(id, label, descriptor)}
-                          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm text-text-primary hover:bg-muted"
+                          className="shrink-0"
                         >
                           <FolderOpen className="h-4 w-4" aria-hidden="true" />
                           {t('workbench.harness_executable_select', '选择…')}
-                        </button>
+                        </ControlButton>
                         {draft.preference.executablePath ? (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             data-testid={`harness-executable-reset-${id}`}
                             aria-label={t('workbench.harness_executable_reset', '恢复自动检测')}
@@ -220,7 +233,7 @@ export function HarnessSettingsPage() {
                             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
                           >
                             <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                          </button>
+                          </ControlButton>
                         ) : null}
                       </div>
                     }
@@ -232,37 +245,42 @@ export function HarnessSettingsPage() {
                         'workbench.harness_permission_mode_description',
                         '启动 Claude Code 时应用；危险绕过模式会跳过权限确认。'
                       )}
-                      control={
-                        <select
-                          data-testid="harness-permission-mode-claude_code"
-                          value={draft.preference.permissionMode}
-                          onChange={event =>
-                            updateDraft(id, current => ({
-                              ...current,
-                              preference: {
-                                ...current.preference,
-                                permissionMode: event.target.value as ClaudeCodePermissionMode,
-                              },
-                            }))
-                          }
-                          className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm text-text-primary outline-none keyboard:focus:border-focus"
+                      children={
+                        <SelectRoot
+                          value={normalizeSelectValue(draft.preference.permissionMode)}
+                          onValueChange={selectedValue => {
+                            if (selectedValue !== null)
+                              return updateDraft(id, current => ({
+                                ...current,
+                                preference: {
+                                  ...current.preference,
+                                  permissionMode: selectedValue as ClaudeCodePermissionMode,
+                                },
+                              }))
+                          }}
                         >
-                          <option value="default">
-                            {t('workbench.harness_permission_default', '默认')}
-                          </option>
-                          <option value="acceptEdits">
-                            {t('workbench.harness_permission_accept_edits', '自动接受编辑')}
-                          </option>
-                          <option value="plan">
-                            {t('workbench.harness_permission_plan', '计划模式')}
-                          </option>
-                          <option value="auto">
-                            {t('workbench.harness_permission_auto', '自动模式')}
-                          </option>
-                          <option value="bypass">
-                            {t('workbench.harness_permission_bypass', '跳过权限确认（危险）')}
-                          </option>
-                        </select>
+                          <SelectTrigger
+                            aria-label={t('workbench.harness_permission_mode')}
+                            data-testid="harness-permission-mode-claude_code"
+                          />
+                          <SelectContent>
+                            <SelectItem value="default">
+                              {t('workbench.harness_permission_default', '默认')}
+                            </SelectItem>
+                            <SelectItem value="acceptEdits">
+                              {t('workbench.harness_permission_accept_edits', '自动接受编辑')}
+                            </SelectItem>
+                            <SelectItem value="plan">
+                              {t('workbench.harness_permission_plan', '计划模式')}
+                            </SelectItem>
+                            <SelectItem value="auto">
+                              {t('workbench.harness_permission_auto', '自动模式')}
+                            </SelectItem>
+                            <SelectItem value="bypass">
+                              {t('workbench.harness_permission_bypass', '跳过权限确认（危险）')}
+                            </SelectItem>
+                          </SelectContent>
+                        </SelectRoot>
                       }
                     />
                   ) : null}
@@ -273,15 +291,15 @@ export function HarnessSettingsPage() {
                       '每行一个参数，任务提示词会由 Wework 按工具协议追加。'
                     )}
                     className="items-start"
-                    control={
-                      <textarea
+                    children={
+                      <ControlTextarea
                         data-testid={`harness-args-${id}`}
                         value={draft.argsText}
                         onChange={event =>
                           updateDraft(id, current => ({ ...current, argsText: event.target.value }))
                         }
                         rows={3}
-                        className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none keyboard:focus:border-focus max-sm:w-full"
+                        className="w-72 resize-y text-code max-sm:w-full"
                       />
                     }
                   />
@@ -292,15 +310,15 @@ export function HarnessSettingsPage() {
                       '每行一个 NAME=VALUE；内容只保存在当前设备。'
                     )}
                     className="items-start"
-                    control={
-                      <textarea
+                    children={
+                      <ControlTextarea
                         data-testid={`harness-env-${id}`}
                         value={draft.envText}
                         onChange={event =>
                           updateDraft(id, current => ({ ...current, envText: event.target.value }))
                         }
                         rows={3}
-                        className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none keyboard:focus:border-focus max-sm:w-full"
+                        className="w-72 resize-y text-code max-sm:w-full"
                       />
                     }
                   />
@@ -317,25 +335,27 @@ export function HarnessSettingsPage() {
           className="mt-4 text-sm text-text-secondary"
         >
           <p>{t('workbench.harness_settings_detection_failed')}</p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="harness-settings-retry-detection"
             onClick={() => void detection.reload()}
             className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
           >
             {t('common.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {state.status.kind === 'failed' && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="harness-settings-retry-save"
           onClick={editor.retry}
           className="mt-4 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
         >
           {t('common.retry')}
-        </button>
+        </ControlButton>
       )}
       {status ? (
         <p data-testid="harness-settings-status" className="mt-4 text-sm text-text-secondary">

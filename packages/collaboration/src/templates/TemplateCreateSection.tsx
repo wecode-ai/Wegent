@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -144,7 +145,7 @@ export function TemplateCreateSection({
       <div className="collaboration-template-page-heading">
         <h3>{document ? `${m.selected} · ${document.spec.displayName}` : m.title}</h3>
         <div className="collaboration-template-actions">
-          <button
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-template-choice"
             data-testid="project-create-choose-template"
@@ -152,9 +153,9 @@ export function TemplateCreateSection({
             onClick={showCatalog}
           >
             {m.discover}
-          </button>
+          </ControlButton>
           {document && (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-template-choice"
               data-testid="project-create-configure-template"
@@ -162,10 +163,10 @@ export function TemplateCreateSection({
               onClick={showBindings}
             >
               {m.configureSelection}
-            </button>
+            </ControlButton>
           )}
           {document && (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-template-choice"
               data-testid="project-create-clear-template"
@@ -178,7 +179,7 @@ export function TemplateCreateSection({
               }}
             >
               {m.clearSelection}
-            </button>
+            </ControlButton>
           )}
         </div>
       </div>
@@ -211,7 +212,7 @@ export function TemplateCreateSection({
                   backLabel={m.returnToProject}
                   testId="project-create-template-configuration"
                   footer={
-                    <button
+                    <ControlButton variant="unstyled"
                       type="button"
                       className="collaboration-primary-button"
                       data-testid="project-create-template-configuration-apply"
@@ -219,7 +220,7 @@ export function TemplateCreateSection({
                       onClick={leave}
                     >
                       {m.confirmConfiguration}
-                    </button>
+                    </ControlButton>
                   }
                 >
                   {bindings}

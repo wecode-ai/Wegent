@@ -1,24 +1,27 @@
-import { lazy, Suspense, useState } from 'react'
-import type { ReactNode } from 'react'
-import { Menu } from 'lucide-react'
-import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
+import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
+import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { getRuntimeConfig } from '@/config/runtime'
-import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
-import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Menu } from 'lucide-react'
+import { lazy } from 'react'
+import { Suspense } from 'react'
+import { useState } from 'react'
+import type { ReactNode } from 'react'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -229,7 +232,8 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
         {isMobile && (
           <>
             <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
@@ -237,7 +241,7 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
-              </button>
+              </ControlButton>
             </header>
             <MobileDrawer
               open={drawerOpen}

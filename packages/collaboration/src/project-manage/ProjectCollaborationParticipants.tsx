@@ -2,135 +2,98 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { TabsRoot, TabsList, TabsPanel, TabsTab } from '../controls/Tabs'
+import { useState, type ReactNode } from 'react'
 
-export type ParticipantTab = "members" | "agents" | "groups";
+export type ParticipantTab = 'members' | 'agents' | 'groups'
 
 export function CollaborationParticipantsTabs({
+  className,
   agentsContent,
   agentsLabel,
   ariaLabel,
   groupsContent,
   groupsLabel,
-  initialTab = "agents",
+  initialTab = 'agents',
   membersContent,
   membersLabel,
-  testIdPrefix = "collaboration-participants",
-  tabOrder = ["agents", "members", "groups"],
+  testIdPrefix = 'collaboration-participants',
+  tabOrder = ['agents', 'members', 'groups'],
   onTabChange,
 }: {
-  agentsContent: ReactNode;
-  agentsLabel: string;
-  ariaLabel: string;
-  groupsContent: ReactNode;
-  groupsLabel: string;
-  initialTab?: ParticipantTab;
-  membersContent?: ReactNode;
-  membersLabel?: string;
-  testIdPrefix?: string;
-  tabOrder?: readonly ParticipantTab[];
-  onTabChange?(tab: ParticipantTab): void;
+  className?: string
+  agentsContent: ReactNode
+  agentsLabel: string
+  ariaLabel: string
+  groupsContent: ReactNode
+  groupsLabel: string
+  initialTab?: ParticipantTab
+  membersContent?: ReactNode
+  membersLabel?: string
+  testIdPrefix?: string
+  tabOrder?: readonly ParticipantTab[]
+  onTabChange?(tab: ParticipantTab): void
 }) {
-  const [selectedTab, setSelectedTab] = useState<ParticipantTab>(initialTab);
-  const tabRefs = useRef<Record<ParticipantTab, HTMLButtonElement | null>>({
-    agents: null,
-    members: null,
-    groups: null,
-  });
+  const [selectedTab, setSelectedTab] = useState<ParticipantTab>(initialTab)
   const availableTabs: Array<{ id: ParticipantTab; label: string }> = [
     {
-      id: "agents",
+      id: 'agents',
       label: agentsLabel,
     },
     ...(membersContent && membersLabel
       ? [
           {
-            id: "members" as const,
+            id: 'members' as const,
             label: membersLabel,
           },
         ]
       : []),
     {
-      id: "groups",
+      id: 'groups',
       label: groupsLabel,
     },
-  ];
-  const tabs = tabOrder.flatMap((id) =>
-    availableTabs.filter((tab) => tab.id === id),
-  );
+  ]
+  const tabs = tabOrder.flatMap(id => availableTabs.filter(tab => tab.id === id))
   const content = {
     members: membersContent,
     agents: agentsContent,
     groups: groupsContent,
-  }[selectedTab];
-  const selectAndFocusTab = (tab: ParticipantTab) => {
-    setSelectedTab(tab);
-    onTabChange?.(tab);
-    tabRefs.current[tab]?.focus();
-  };
-  const handleTabKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    currentTab: ParticipantTab,
-  ) => {
-    const currentIndex = tabs.findIndex((tab) => tab.id === currentTab);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") {
-      nextIndex = (currentIndex + 1) % tabs.length;
-    } else if (event.key === "ArrowLeft") {
-      nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = tabs.length - 1;
-    }
-    if (nextIndex === null) return;
-    event.preventDefault();
-    selectAndFocusTab(tabs[nextIndex].id);
-  };
-
+  }
+  const value = tabs.some(tab => tab.id === selectedTab) ? selectedTab : tabs[0]?.id
   return (
-    <>
-      <div
-        aria-label={ariaLabel}
-        className="mb-6 flex gap-1 border-b border-border"
-        role="tablist"
-      >
-        {tabs.map((tab) => (
-          <button
-            aria-controls={`${testIdPrefix}-panel-${tab.id}`}
-            aria-selected={selectedTab === tab.id}
-            className={
-              selectedTab === tab.id
-                ? "-mb-px border-b-2 border-text-primary px-3 py-2 text-sm font-medium text-text-primary"
-                : "px-3 py-2 text-sm font-normal text-text-muted hover:text-text-primary"
-            }
-            data-testid={`${testIdPrefix}-tab-${tab.id}`}
-            id={`${testIdPrefix}-tab-${tab.id}`}
+    <TabsRoot
+      className={className}
+      value={value}
+      onValueChange={next => {
+        if (next !== null) {
+          setSelectedTab(next)
+          onTabChange?.(next)
+        }
+      }}
+    >
+      <TabsList aria-label={ariaLabel} className="mb-6">
+        {tabs.map(tab => (
+          <TabsTab
             key={tab.id}
-            onClick={() => {
-              setSelectedTab(tab.id);
-              onTabChange?.(tab.id);
-            }}
-            onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
-            ref={(element) => {
-              tabRefs.current[tab.id] = element;
-            }}
-            role="tab"
-            tabIndex={selectedTab === tab.id ? 0 : -1}
-            type="button"
+            value={tab.id}
+            id={`${testIdPrefix}-tab-${tab.id}`}
+            data-testid={`${testIdPrefix}-tab-${tab.id}`}
+            className="-mb-px"
           >
             {tab.label}
-          </button>
+          </TabsTab>
         ))}
-      </div>
-      <div
-        aria-labelledby={`${testIdPrefix}-tab-${selectedTab}`}
-        data-testid={`${testIdPrefix}-panel-${selectedTab}`}
-        id={`${testIdPrefix}-panel-${selectedTab}`}
-        role="tabpanel"
-      >
-        {content}
-      </div>
-    </>
-  );
+      </TabsList>
+      {tabs.map(tab => (
+        <TabsPanel
+          key={tab.id}
+          value={tab.id}
+          id={`${testIdPrefix}-panel-${tab.id}`}
+          data-testid={`${testIdPrefix}-panel-${tab.id}`}
+        >
+          {content[tab.id]}
+        </TabsPanel>
+      ))}
+    </TabsRoot>
+  )
 }

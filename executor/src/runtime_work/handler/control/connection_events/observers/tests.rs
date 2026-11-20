@@ -73,8 +73,11 @@ fn missing_source_authentication_is_reported_without_creating_an_observer() {
             handler.configure_connection_host(json!({"url":format!("http://{address}/wework/connections/v1/rpc"),"token":"a".repeat(64)})).unwrap();
             let ipc = crate::local::app_ipc::AppIpcServer::new()
                 .with_runtime_work_handler(handler.clone());
-            let failure = command(&ipc, "start", json!({"consumerKey":"ui-auth","generation":"one","discovery":{"providerId":"git","kind":"repository","query":"{}"}})).await.unwrap_err();
-            assert_eq!(failure.code, "connector_auth_required");
+            let failure = command(&ipc, "start", json!({"consumerKey":"ui-auth","generation":"one","discovery":{"providerId":"git","kind":"repository","query":"{}"}})).await.unwrap();
+            assert_eq!(failure["success"], false);
+            assert_eq!(failure["exit_code"], 1);
+            assert_eq!(failure["error"], "connector_auth_required");
+            assert_eq!(failure["stderr"], "Authorize this connection before observing the resource");
             assert_eq!(calls.lock().unwrap().len(), 1);
             assert!(handler.read_ui_observer(&observer_id("control-test-device", "ui-auth", "one")).unwrap().is_null());
             assert!(handler.command_journal.lock().unwrap().is_empty());

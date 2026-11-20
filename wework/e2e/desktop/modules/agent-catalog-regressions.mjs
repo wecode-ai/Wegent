@@ -47,10 +47,19 @@ export async function readCloudDefaultWithoutOpeningRuntime(control, prefix, dia
       timeoutMs,
     }
   )
-  const options = `[data-testid="${prefix}-model"] option:not([value=""]):not([value="user_select"]):not(:disabled)`
-  await control.command('waitFor', `${options}:checked`, { timeoutMs })
-  const value = await control.command('getAttribute', `${options}:checked`, { value: 'value' })
-  assert.equal(value, await control.command('getAttribute', options, { value: 'value' }))
+  const trigger = `[data-testid="${prefix}-model"]`
+  const options = `[data-testid="${prefix}-model-menu"] [role="option"]:not([data-value=""]):not([data-value="user_select"]):not([aria-disabled="true"])`
+  await control.command(
+    'waitFor',
+    `${trigger}[data-value]:not([data-value=""]):not([data-value="user_select"])`,
+    { timeoutMs }
+  )
+  const value = await control.command('getAttribute', trigger, { value: 'data-value' })
+  await control.command('clickWhenEnabled', trigger, { timeoutMs })
+  await control.command('waitFor', `${options}[aria-selected="true"]`, { timeoutMs })
+  assert.equal(value, await control.command('getAttribute', options, { value: 'data-value' }))
+  await control.command('press', trigger, { key: 'Escape' })
+  await control.command('waitFor', `${trigger}[aria-expanded="false"]`, { timeoutMs })
   const identity = JSON.parse(value)
   assert.equal(identity[1], 'cloud', 'Creation must default to the first cloud model')
   return {
@@ -209,7 +218,7 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
   )
   await control.command(
     'waitFor',
-    `[data-testid="cloud-project-chat-agent-model"] option[value='${model.value}']:checked`,
+    `[data-testid="cloud-project-chat-agent-model"][data-value='${model.value}']`,
     { timeoutMs }
   )
   await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')

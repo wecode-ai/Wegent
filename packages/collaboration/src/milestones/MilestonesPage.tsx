@@ -1,3 +1,6 @@
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 import './milestones.css'
 import { Flag } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
@@ -99,14 +102,15 @@ export function MilestonesPage({
       <div className="mx-auto w-full max-w-6xl" data-testid="milestones-content">
         <header className="mb-6 space-y-4">
           {active ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-8"
               data-testid="milestones-back"
               onClick={() => setSelected(null)}
             >
               ← {m.back}
-            </button>
+            </ControlButton>
           ) : (
             <div>
               <h1 className="heading-medium">{m.title}</h1>
@@ -124,7 +128,8 @@ export function MilestonesPage({
                 aria-label={m.title}
               >
                 {(['open', 'closed'] as const).map(value => (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="min-h-11 rounded-md px-3 text-sm text-text-secondary aria-pressed:bg-background aria-pressed:text-text-primary aria-pressed:shadow-sm md:min-h-8"
                     data-testid={`milestones-${value}`}
@@ -139,11 +144,12 @@ export function MilestonesPage({
                     <span className="ml-2 text-xs text-text-muted">
                       {query.items.filter(item => item.state === value).length}
                     </span>
-                  </button>
+                  </ControlButton>
                 ))}
               </div>
               {canManage ? (
-                <button
+                <ControlButton
+                  variant="primary"
                   type="button"
                   data-testid="milestone-create"
                   className={primaryButtonClass}
@@ -153,7 +159,7 @@ export function MilestonesPage({
                   }}
                 >
                   {m.new}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ) : null}
@@ -161,7 +167,8 @@ export function MilestonesPage({
         {query.error || failed ? (
           <p role="alert" className="mb-3 text-sm text-red-600">
             {m.error}{' '}
-            <button
+            <ControlButton
+              variant="outline"
               type="button"
               className={buttonClass}
               data-testid="milestones-retry"
@@ -173,7 +180,7 @@ export function MilestonesPage({
               }}
             >
               {editing ? m.discardAndRefresh : m.retry}
-            </button>
+            </ControlButton>
           </p>
         ) : null}
         {query.loading ? <p role="status">{m.loading}</p> : null}
@@ -204,7 +211,8 @@ export function MilestonesPage({
             <span className="min-w-0 max-w-full break-words">
               {deleting.title}: {m.confirm}
             </span>
-            <button
+            <ControlButton
+              variant="destructive"
               type="button"
               className={buttonClass}
               data-testid="milestone-delete-confirm"
@@ -214,8 +222,9 @@ export function MilestonesPage({
               }
             >
               {m.remove}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="outline"
               type="button"
               className={buttonClass}
               data-testid="milestone-delete-cancel"
@@ -223,7 +232,7 @@ export function MilestonesPage({
               onClick={() => setDeleting(null)}
             >
               {m.cancel}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
         {!query.loading &&
@@ -253,14 +262,15 @@ export function MilestonesPage({
             </div>
             {(active.archived_issues ?? 0) > 0 && onOpenArchive ? (
               <div className="my-3">
-                <button
+                <ControlButton
+                  variant="outline"
                   type="button"
                   className={buttonClass}
                   data-testid="milestone-view-archive"
                   onClick={onOpenArchive}
                 >
                   {m.viewArchive}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             <div key={active.id}>
@@ -287,14 +297,15 @@ export function MilestonesPage({
                   data-testid={`milestone-${item.id}`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`milestone-open-${item.id}`}
                       onClick={() => setSelected(item.id)}
                       className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
                     >
                       {item.title}
-                    </button>
+                    </ControlButton>
                     {item.due_on ? (
                       <span className="text-xs text-text-muted">
                         {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ''}
@@ -302,7 +313,8 @@ export function MilestonesPage({
                     ) : null}
                     {canManage ? (
                       <div className="ml-auto flex gap-2">
-                        <button
+                        <ControlButton
+                          variant="outline"
                           type="button"
                           className={buttonClass}
                           data-testid={`milestone-edit-${item.id}`}
@@ -310,8 +322,9 @@ export function MilestonesPage({
                           onClick={() => setEditing(item)}
                         >
                           {m.edit}
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="outline"
                           type="button"
                           className={buttonClass}
                           data-testid={`milestone-state-${item.id}`}
@@ -329,8 +342,9 @@ export function MilestonesPage({
                           }
                         >
                           {item.state === 'open' ? m.close : m.reopen}
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="destructive-ghost"
                           type="button"
                           className={buttonClass}
                           data-testid={`milestone-delete-${item.id}`}
@@ -338,7 +352,7 @@ export function MilestonesPage({
                           onClick={() => setDeleting(item)}
                         >
                           {m.remove}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : null}
                   </div>
@@ -387,7 +401,7 @@ function MilestoneForm({
     >
       <label className="block text-sm">
         {m.name}
-        <input
+        <ControlInput
           data-testid="milestone-title"
           name="title"
           required
@@ -398,7 +412,7 @@ function MilestoneForm({
       </label>
       <label className="block text-sm">
         {m.description}
-        <textarea
+        <ControlTextarea
           data-testid="milestone-description"
           name="description"
           defaultValue={milestone?.description ?? ''}
@@ -407,7 +421,7 @@ function MilestoneForm({
       </label>
       <label className="block text-sm">
         {m.due}
-        <input
+        <ControlInput
           data-testid="milestone-due"
           name="due_on"
           type="date"
@@ -416,15 +430,17 @@ function MilestoneForm({
         />
       </label>
       <div className="flex gap-2">
-        <button
+        <ControlButton
+          variant="primary"
           type="submit"
           data-testid="milestone-save"
           disabled={busy}
           className={primaryButtonClass}
         >
           {m.save}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="outline"
           type="button"
           data-testid="milestone-cancel"
           disabled={busy}
@@ -432,7 +448,7 @@ function MilestoneForm({
           onClick={onCancel}
         >
           {m.cancel}
-        </button>
+        </ControlButton>
       </div>
     </form>
   )

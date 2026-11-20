@@ -1,5 +1,6 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { IssueHeaderContext } from './IssueHeaderContext'
-import * as Popover from '@radix-ui/react-popover'
+import { PopoverClose } from '../controls/Popover'
 import { Copy, Folder, Maximize2, Minimize2, X } from 'lucide-react'
 import { IssuePropertiesPopover } from './IssuePropertiesPopover'
 import { IssueSaveButton } from './IssueSaveButton'
@@ -137,7 +138,8 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
             </span>
           </IssueHeaderContext>
           {item && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               aria-label={t('todo.copy_issue_id', '复制任务编号')}
               title={t('todo.copy_issue_id', '复制任务编号')}
@@ -145,7 +147,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               className="flex h-6 w-6 items-center justify-center rounded-md text-text-secondary transition hover:bg-muted hover:text-text-primary"
             >
               <Copy className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           )}
           {!isCreate &&
           (issueDirty || fieldSaves.pending || fieldSaves.saved || fieldSaves.error) ? (
@@ -178,25 +180,28 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
               label={t('common.actions', '操作')}
               testIdPrefix="cloud-todo-issue-actions"
             >
-              <Popover.Close asChild>
-                <button
-                  className="task-detail-more-menu-danger"
-                  data-testid="cloud-todo-detail-delete"
-                  onClick={() => {
-                    propertiesTriggerRef.current?.focus()
-                    props.onDelete?.()
-                  }}
-                  type="button"
-                >
-                  {props.deleteLabel ?? t('todo.delete_issue', '删除任务')}
-                </button>
-              </Popover.Close>
+              <PopoverClose
+                render={
+                  <button
+                    className="task-detail-more-menu-danger"
+                    data-testid="cloud-todo-detail-delete"
+                    onClick={() => {
+                      propertiesTriggerRef.current?.focus()
+                      props.onDelete?.()
+                    }}
+                    type="button"
+                  />
+                }
+              >
+                {props.deleteLabel ?? t('todo.delete_issue', '删除任务')}
+              </PopoverClose>
             </IssuePropertiesPopover>
           ) : null}
           {twoColumn && !isCreate && !workspacePanel ? (
             <>
               {(editable || canAssign) && (descriptionDirty || savingDescription) ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-save"
                   disabled={savingDescription}
@@ -204,14 +209,15 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                   className="mr-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                 >
                   {savingDescription ? t('todo.saving', '保存中…') : t('common.save', '保存')}
-                </button>
+                </ControlButton>
               ) : null}
             </>
           ) : null}
           {showPanelControls ? (
             <>
               {showFullscreenControl ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={
                     isCreate ? 'cloud-todo-create-fullscreen' : 'cloud-todo-detail-fullscreen'
@@ -241,9 +247,10 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                   ) : (
                     <Maximize2 className="h-4 w-4" />
                   )}
-                </button>
+                </ControlButton>
               ) : null}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={isCreate ? 'cloud-todo-modal-close' : 'cloud-todo-detail-close'}
                 onClick={onClose}
@@ -255,7 +262,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                 }
               >
                 <X className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </>
           ) : null}
         </header>
@@ -317,7 +324,8 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                 ) : (
                   <>
                     {(editable || canAssign) && descriptionDirty && (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="cloud-todo-save"
                         disabled={savingDescription}
@@ -327,7 +335,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
                         {savingDescription
                           ? t('todo.saving_issue', '正在保存…')
                           : t('common.save', '保存')}
-                      </button>
+                      </ControlButton>
                     )}
                   </>
                 )}

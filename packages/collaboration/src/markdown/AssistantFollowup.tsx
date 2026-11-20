@@ -1,7 +1,8 @@
+import { Check, Copy } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Tooltip } from "../controls/Tooltip"
+import { Button as ControlButton } from './Button'
 import { useMarkdownServices } from './MarkdownServices'
-import { Tooltip } from '../issue-detail/Tooltip'
 
 export function AssistantFollowup({ prompt, children }: { prompt?: string; children: ReactNode }) {
   const { copyText, translate } = useMarkdownServices()
@@ -9,7 +10,8 @@ export function AssistantFollowup({ prompt, children }: { prompt?: string; child
   if (!prompt) return <span>{children}</span>
   return (
     <Tooltip label={translate(`followup.${status}`)}>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="assistant-followup-copy"
         aria-label={translate(`followup.${status}`)}
@@ -29,7 +31,7 @@ export function AssistantFollowup({ prompt, children }: { prompt?: string; child
         ) : (
           <Copy aria-hidden className="h-3.5 w-3.5" />
         )}
-      </button>
+      </ControlButton>
       <span className="sr-only" role="status">
         {status === 'idle' ? '' : translate(`followup.${status}`)}
       </span>

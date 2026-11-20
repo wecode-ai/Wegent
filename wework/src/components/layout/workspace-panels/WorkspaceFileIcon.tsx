@@ -21,7 +21,15 @@ const iconColors = Object.fromEntries(
 )
 let sprite: Document | undefined
 
-export function WorkspaceFileIcon({ path, testId }: { path: string; testId: string }) {
+export function WorkspaceFileIcon({
+  path,
+  testId,
+  colored = true,
+}: {
+  path: string
+  testId: string
+  colored?: boolean
+}) {
   const icon = resolver.resolveIcon('file-tree-icon-file', path.replace(/\\/g, '/'))
   sprite ??= new DOMParser().parseFromString(getBuiltInSpriteSheet('complete'), 'text/html')
   const symbol = sprite.getElementById(icon.name)!
@@ -32,7 +40,7 @@ export function WorkspaceFileIcon({ path, testId }: { path: string; testId: stri
       data-file-icon={icon.token}
       aria-hidden="true"
       className="h-4 w-4 shrink-0"
-      style={icon.token ? { color: iconColors[icon.token] } : undefined}
+      style={colored && icon.token ? { color: iconColors[icon.token] } : undefined}
       viewBox={symbol.getAttribute('viewBox')!}
       // Only bundled Pierre icon markup is rendered here, never file contents.
       dangerouslySetInnerHTML={{ __html: symbol.innerHTML }}

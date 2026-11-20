@@ -1,3 +1,8 @@
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -36,7 +41,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
       <div className="collaboration-group-rule-editor">
         <label className="block text-sm text-text-secondary">
           <span className="mb-1 block">{messages.groupRule}</span>
-          <textarea
+          <ControlTextarea
             ref={ruleEditorRef}
             data-testid="collaboration-group-detail-instructions"
             value={draftInstructions}
@@ -54,7 +59,8 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
           />
         </label>
         <div className="collaboration-group-rule-editor-toolbar">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-secondary-button"
             aria-expanded={mentionOpen}
@@ -63,7 +69,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
             onClick={() => setMentionOpen(current => !current)}
           >
             @ {locale === 'zh-CN' ? '提及成员' : 'Mention'}
-          </button>
+          </ControlButton>
         </div>
         {mentionOpen ? (
           <div
@@ -76,7 +82,8 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
               )
               if (!candidate) return null
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={candidate.value}
                   type="button"
                   data-testid={`collaboration-group-rule-mention-${candidate.kind}-${candidate.id}`}
@@ -85,7 +92,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
                   <span>{candidate.name.slice(0, 1).toUpperCase()}</span>
                   <strong>{candidate.name}</strong>
                   <small>{member.responsibility}</small>
-                </button>
+                </ControlButton>
               )
             })}
           </div>
@@ -99,7 +106,8 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
             <small>{messages.stagesHint}</small>
           </h3>
           {canManage ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="collaboration-secondary-button"
               data-testid="collaboration-group-stage-add"
@@ -119,7 +127,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
               }
             >
               + {messages.addStage}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {draftStages.length ? (
@@ -132,7 +140,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
               >
                 <header>
                   <span>{index + 1}</span>
-                  <input
+                  <ControlInput
                     value={stage.name}
                     disabled={!canManage}
                     aria-label={`${messages.stages} ${index + 1}`}
@@ -150,7 +158,8 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
                     }
                   />
                   {canManage ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-link-button collaboration-resource-remove"
                       aria-label={messages.remove}
@@ -161,7 +170,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
                       }
                     >
                       {messages.remove}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </header>
                 <div>
@@ -169,7 +178,7 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
                     <span className="mb-1 block">
                       {locale === 'zh-CN' ? '阶段说明' : 'Stage description'}
                     </span>
-                    <textarea
+                    <ControlTextarea
                       data-testid={`collaboration-group-stage-description-${stage.id}`}
                       aria-label={`${messages.stages} ${index + 1} ${locale === 'zh-CN' ? '说明' : 'description'}`}
                       value={stage.description}
@@ -195,18 +204,19 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
                   </label>
                   <label className="block min-w-0 text-xs text-text-secondary">
                     <span className="mb-1 block">{locale === 'zh-CN' ? '执行者' : 'Executor'}</span>
-                    <select
-                      data-testid={`collaboration-group-stage-assignee-${stage.id}`}
-                      value={
+                    <SelectRoot
+                      value={normalizeSelectValue(
                         stage.assignee &&
-                        executableDraftMemberIds.has(`${stage.assignee.kind}:${stage.assignee.id}`)
+                          executableDraftMemberIds.has(
+                            `${stage.assignee.kind}:${stage.assignee.id}`
+                          )
                           ? `${stage.assignee.kind}:${stage.assignee.id}`
                           : ''
-                      }
+                      )}
                       disabled={!canManage}
-                      aria-label={`${messages.stages} ${index + 1} ${locale === 'zh-CN' ? '执行者' : 'executor'}`}
-                      onChange={event => {
-                        const [kind, id] = event.target.value.split(':')
+                      onValueChange={selectedValue => {
+                        if (selectedValue === null) return
+                        const [kind, id] = selectedValue.split(':')
                         const member = draftMembers.find(
                           candidate => candidate.kind === kind && candidate.id === id
                         )
@@ -222,16 +232,22 @@ export function GroupRulesSection({ model }: { model: GroupConfigurationModel })
                         )
                       }}
                     >
-                      <option value="">{messages.leaderAssignment}</option>
-                      {executableDraftMembers.map(member => (
-                        <option
-                          key={`${member.kind}:${member.id}`}
-                          value={`${member.kind}:${member.id}`}
-                        >
-                          @{displayName(member.kind, member.id)}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger
+                        data-testid={`collaboration-group-stage-assignee-${stage.id}`}
+                        aria-label={`${messages.stages} ${index + 1} ${locale === 'zh-CN' ? '执行者' : 'executor'}`}
+                      />
+                      <SelectContent>
+                        <SelectItem value="">{messages.leaderAssignment}</SelectItem>
+                        {executableDraftMembers.map(member => (
+                          <SelectItem
+                            key={`${member.kind}:${member.id}`}
+                            value={String(`${member.kind}:${member.id}`)}
+                          >
+                            @{displayName(member.kind, member.id)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectRoot>
                   </label>
                 </div>
               </div>

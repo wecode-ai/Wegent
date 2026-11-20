@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     future::Future,
     io::Write,
@@ -25,10 +25,11 @@ use crate::{
     agent_session,
     emitter::ResponsesEventBuilder,
     interactive_mcp::{
-        deferred_proxy_exception_failure, deferred_proxy_response_decision,
+        deferred_proxy_response_decision, deferred_proxy_unavailable, parse_mcp_tool_name,
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
+        MCP_UNAVAILABLE_MESSAGE,
     },
-    logging::{log_executor_event, push_error_fields, task_fields},
+    logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     runner::{streaming::StreamingEventDispatcher, AgentEngine, EventSink, ExecutionOutcome},
     stream::{
@@ -471,7 +472,7 @@ async fn handle_retryable_api_errors(
 }
 
 async fn handle_deferred_mcp_loop(
-    base_spec: CommandSpec,
+    mut base_spec: CommandSpec,
     request: ExecutionRequest,
     mut summary: crate::stream::ClaudeStreamSummary,
     timeout_seconds: u64,
@@ -481,12 +482,26 @@ async fn handle_deferred_mcp_loop(
     let mut mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
     // Claude expands these references in its child environment. The executor's
     // deferred HTTP proxy must use the same execution bindings, only in memory.
-    if let Err(message) =
-        wegent_mcp_runtime::mcp_environment::resolve_context(&mut mcp_servers, base_spec.envs())
+    if let Some(servers) = mcp_servers
+        .get_mut("mcpServers")
+        .and_then(Value::as_object_mut)
     {
-        return ExecutionOutcome::Failed { message };
+        servers.retain(|name, server| {
+            let available =
+                wegent_mcp_runtime::mcp_environment::resolve_context(server, base_spec.envs())
+                    .is_ok();
+            if !available {
+                wegent_mcp_runtime::mcp_environment::log_server_unavailable(
+                    &request,
+                    name,
+                    "deferred_context",
+                );
+            }
+            available
+        });
     }
     let mut retry_count = 0;
+    let mut unavailable_servers = HashSet::new();
     let mut stale_answer_defer_drained = false;
     let fields = task_fields(&request.task_id, &request.subtask_id);
 
@@ -531,28 +546,30 @@ async fn handle_deferred_mcp_loop(
         proxy_fields.push(("tool_use_id", deferred_tool_use.id.clone()));
         proxy_fields.push(("tool_name", deferred_tool_use.name.clone()));
         log_executor_event("deferred mcp proxy started", &proxy_fields);
-        let proxy_result =
+        let server_name = parse_mcp_tool_name(&deferred_tool_use.name)
+            .map(|name| name.server_name)
+            .unwrap_or_else(|| deferred_tool_use.name.clone());
+        let decision = if unavailable_servers.contains(&server_name) {
+            deferred_proxy_unavailable(&deferred_tool_use, "service_disabled")
+        } else {
             match proxy_deferred_mcp_tool(&deferred_tool_use, &mcp_servers, client_version).await {
-                Ok(proxy_result) => proxy_result,
+                Ok(proxy_result) => deferred_proxy_response_decision(
+                    &proxy_result,
+                    summary.stop_reason.as_deref().unwrap_or("tool_deferred"),
+                    summary.usage.clone(),
+                    retry_count,
+                    MAX_DEFERRED_MCP_RETRIES,
+                ),
                 Err(error) => {
-                    let decision = deferred_proxy_exception_failure(&deferred_tool_use, &error);
-                    let mut failed_fields = proxy_fields.clone();
-                    push_error_fields(&mut failed_fields, &error);
-                    log_executor_event("deferred mcp proxy failed", &failed_fields);
-                    return ExecutionOutcome::Failed {
-                        message: decision
-                            .user_error
-                            .unwrap_or_else(|| "交互式表单生成失败".to_owned()),
-                    };
+                    wegent_mcp_runtime::mcp_environment::log_server_unavailable(
+                        &request,
+                        &server_name,
+                        "deferred_call",
+                    );
+                    deferred_proxy_unavailable(&deferred_tool_use, &error)
                 }
-            };
-        let decision = deferred_proxy_response_decision(
-            &proxy_result,
-            summary.stop_reason.as_deref().unwrap_or("tool_deferred"),
-            summary.usage.clone(),
-            retry_count,
-            MAX_DEFERRED_MCP_RETRIES,
-        );
+            }
+        };
         match decision.action {
             DeferredMcpResponseAction::CompleteWaitingForUser => {
                 log_executor_event("deferred mcp proxy waiting for user", &fields);
@@ -564,23 +581,20 @@ async fn handle_deferred_mcp_loop(
                         .unwrap_or_else(|| "tool_deferred".to_owned()),
                 };
             }
-            DeferredMcpResponseAction::Fail => {
-                log_executor_event("deferred mcp proxy invalid form", &fields);
-                return ExecutionOutcome::Failed {
-                    message: decision
-                        .user_error
-                        .unwrap_or_else(|| "模型给出的表单格式不对".to_owned()),
-                };
-            }
-            DeferredMcpResponseAction::Retry => {
+            DeferredMcpResponseAction::ContinueWithoutServer | DeferredMcpResponseAction::Retry => {
+                if decision.action == DeferredMcpResponseAction::ContinueWithoutServer
+                    && unavailable_servers.insert(server_name.clone())
+                {
+                    base_spec = without_mcp_tools(base_spec, &server_name);
+                }
                 let Some(retry_query) = decision.retry_query else {
-                    return ExecutionOutcome::Failed {
-                        message: "模型给出的表单格式不对".to_owned(),
+                    return ExecutionOutcome::Completed {
+                        content: MCP_UNAVAILABLE_MESSAGE.to_owned(),
                     };
                 };
                 let Some(session_id) = summary.session_id.clone() else {
-                    return ExecutionOutcome::Failed {
-                        message: "模型给出的表单格式不对".to_owned(),
+                    return ExecutionOutcome::Completed {
+                        content: MCP_UNAVAILABLE_MESSAGE.to_owned(),
                     };
                 };
                 retry_count += 1;
@@ -608,6 +622,20 @@ async fn handle_deferred_mcp_loop(
                 }
             }
         }
+    }
+}
+
+fn without_mcp_tools(mut spec: CommandSpec, server: &str) -> CommandSpec {
+    let pattern = format!("mcp__{server}__*");
+    if let Some(index) = spec
+        .args()
+        .windows(2)
+        .position(|args| args[0] == "--disallowedTools")
+    {
+        spec.replace_arg(index + 1, format!("{},{}", spec.args()[index + 1], pattern));
+        spec
+    } else {
+        spec.arg("--disallowedTools").arg(pattern)
     }
 }
 
@@ -668,7 +696,13 @@ fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
     }
     spec.args()
         .windows(2)
-        .find_map(|window| (window[0] == "--mcp-config").then(|| read_json_file(&window[1])))
+        .find_map(|window| {
+            (window[0] == "--mcp-config").then(|| {
+                serde_json::from_str::<Value>(&window[1])
+                    .ok()
+                    .or_else(|| read_json_file(&window[1]))
+            })
+        })
         .flatten()
 }
 

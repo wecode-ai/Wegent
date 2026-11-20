@@ -259,7 +259,7 @@ async function verifyOfflineRemoteProjectRemoval({
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -764,7 +764,7 @@ export async function verifyRemoteDockerCommandFlow(
     await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]')
     await control.command('clickWhenEnabled', '[data-testid="project-create-remote-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]')
-    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    await control.command('select', '[data-testid="standalone-remote-device-select"]', {
       value: REMOTE_DOCKER_DEVICE_ID,
     })
     await control.command('clickWhenEnabled', '[data-testid="remote-project-source-git"]')
@@ -901,12 +901,12 @@ export async function verifyRemoteDockerCommandFlow(
       false,
       'Device setup did not advance to project creation'
     )
+    const deviceSelector = '[data-testid="standalone-remote-device-select"]'
+    const showDevices = () =>
+      control.command('setExpanded', deviceSelector, { value: 'true', visible: true })
+    await showDevices()
     const existingOption = `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
-    assert.equal(
-      Number(await control.command('getElementCount', `${existingOption}:not(:disabled)`)),
-      1,
-      'The existing remote device was not selectable before disconnecting'
-    )
+    await control.command('waitFor', existingOption, { visible: true, enabled: true })
     await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
     await waitForWorkbenchDeviceStatus(
       control,
@@ -914,11 +914,8 @@ export async function verifyRemoteDockerCommandFlow(
       'offline',
       'The workbench catalog did not publish the disconnected remote device'
     )
-    assert.equal(
-      Number(await control.command('getElementCount', `${existingOption}:disabled`)),
-      1,
-      'The open project picker kept the disconnected device selectable'
-    )
+    await showDevices()
+    await control.command('waitFor', `${existingOption}[aria-disabled="true"]`, { visible: true })
     assert.equal(
       await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
       generatedDeviceId,
@@ -1086,7 +1083,7 @@ export async function verifyDisabledRemoteSessionCapabilities(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: deviceId,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -1321,12 +1318,13 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="standalone-remote-device-select"]')
   await control.command(
     'waitFor',
     `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`,
-    { text: 'Remote Docker', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    { text: 'Remote Docker', visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -1339,7 +1337,7 @@ async function verifyCloudProjectFlow(
     'The remote Docker device was not selectable from the real desktop device picker'
   )
   await captureVerificationScreenshot(control, 'cloud-01-remote-docker-device-selected.png')
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
   await waitForControlValue(
@@ -1371,20 +1369,21 @@ async function verifyCloudProjectFlow(
       value.testIds.some(testId => testId.startsWith('project-device-status-')),
     'The real cloud project was not shown with its remote device status'
   )
-  await control.command('waitFor', '[data-testid^="project-menu-"]', {
+  const remoteFolderIconPrefix = 'project-remote-folder-icon-'
+  await control.command('waitFor', `[data-testid^="${remoteFolderIconPrefix}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS * 2,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  const projectMenuTestIds = projectSnapshot.testIds.filter(testId =>
-    testId.startsWith('project-menu-')
+  const remoteFolderIcons = projectSnapshot.testIds.filter(testId =>
+    testId.startsWith(remoteFolderIconPrefix)
   )
   assert.equal(
-    projectMenuTestIds.length,
+    remoteFolderIcons.length,
     1,
-    'The cloud flow did not expose exactly one remote project'
+    `The cloud flow did not expose exactly one remote project: ${remoteFolderIcons.join(', ')}`
   )
-  const preservedProjectId = projectMenuTestIds[0].slice('project-menu-'.length)
+  const preservedProjectId = remoteFolderIcons[0].slice(remoteFolderIconPrefix.length)
   await control.command(
     'waitFor',
     `[data-testid="project-remote-folder-icon-${preservedProjectId}"]`,
@@ -1650,7 +1649,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {

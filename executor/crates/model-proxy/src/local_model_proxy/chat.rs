@@ -21,7 +21,7 @@ use crate::logging::log_executor_event;
 
 #[path = "tool_catalog.rs"]
 mod tool_catalog;
-use tool_catalog::effective_tools;
+use tool_catalog::{effective_tools, is_unlinked_server_tool_search};
 
 mod custom_tools;
 pub(crate) use custom_tools::CustomToolConversion;

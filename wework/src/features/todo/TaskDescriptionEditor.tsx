@@ -1,4 +1,21 @@
+import { useOptionalAppearance } from '@/features/appearance'
 import { parseWeworkScheme } from '@/features/notifications/scheme'
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
+import { cn } from '@/lib/utils'
+import { BlockNoteSchema, type Block } from '@blocknote/core'
+import { zh } from '@blocknote/core/locales'
+import '@blocknote/core/style.css'
+import { BlockNoteViewRaw, createReactBlockSpec, useCreateBlockNote } from '@blocknote/react'
+import '@blocknote/react/style.css'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
 import {
   createContext,
   useCallback,
@@ -10,29 +27,23 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  createAsyncResource,
-  getIdleResourceSnapshot,
-  subscribeIdleResource,
-} from '@wegent/chat-core/async-resource'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { BlockNoteSchema, type Block } from '@blocknote/core'
-import { createReactBlockSpec, useCreateBlockNote } from '@blocknote/react'
-import { BlockNoteView } from '@blocknote/mantine'
-import { zh } from '@blocknote/core/locales'
-import { X } from 'lucide-react'
-import '@blocknote/core/style.css'
-import '@blocknote/react/style.css'
-import '@blocknote/mantine/style.css'
-import { useOptionalAppearance } from '@/features/appearance'
-import { cn } from '@/lib/utils'
-import {
   detectInitialImeCodeBlockDuplicate,
   detectInitialImeDuplicate,
   inlineContentText,
   type ImeCompositionSnapshot,
 } from './imeComposition'
+import {
+  BlockNoteSdkFilePanel,
+  BlockNoteSdkSideMenu,
+} from './task-description-ui/BlockNoteSdkBlockMenus'
+import { BlockNoteSdkProvider } from './task-description-ui/BlockNoteSdkComponents'
+import { blockNoteSdkEditorOptions } from './task-description-ui/blockNoteSdkEditorOptions'
+import { BlockNoteSdkEscapeShortcut } from './task-description-ui/BlockNoteSdkEscapeShortcut'
+import { BlockNoteSdkFormattingToolbar } from './task-description-ui/BlockNoteSdkFormattingToolbar'
+import { BlockNoteSdkLinkToolbar } from './task-description-ui/BlockNoteSdkLinkToolbar'
+import { BlockNoteSdkSuggestions } from './task-description-ui/BlockNoteSdkSuggestions'
+import { BlockNoteSdkTableHandles } from './task-description-ui/BlockNoteSdkTableHandles'
 import { normalizeTaskDescription } from './taskDescription'
-import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 
 interface TaskDescriptionEditorProps {
   value: string
@@ -103,14 +114,15 @@ function AttachmentImageBlockView({
       contentEditable={false}
     >
       {src ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="task-description-attachment-image-trigger"
           aria-label={`预览 ${filename}`}
           onClick={() => setPreviewOpen(true)}
         >
           <img src={src} alt={filename} />
-        </button>
+        </ControlButton>
       ) : (
         <div className="task-description-attachment-image-placeholder">
           {!readAttachment || failed ? '图片加载失败' : '加载图片…'}
@@ -118,23 +130,27 @@ function AttachmentImageBlockView({
       )}
       {previewOpen && src
         ? createPortal(
-            <div
-              className="task-description-attachment-image-lightbox"
-              role="dialog"
-              aria-modal="true"
-              aria-label={`预览 ${filename}`}
-              onClick={() => setPreviewOpen(false)}
+            <DialogSurface
+              onClose={() => setPreviewOpen(false)}
+              render={
+                <div
+                  className="task-description-attachment-image-lightbox"
+                  aria-label={`预览 ${filename}`}
+                  onClick={() => setPreviewOpen(false)}
+                />
+              }
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="task-description-attachment-image-lightbox-close"
                 aria-label="关闭预览"
                 onClick={() => setPreviewOpen(false)}
               >
                 <X className="h-5 w-5" />
-              </button>
+              </ControlButton>
               <img src={src} alt={filename} onClick={event => event.stopPropagation()} />
-            </div>,
+            </DialogSurface>,
             document.body
           )
         : null}
@@ -299,6 +315,7 @@ export function TaskDescriptionEditor({
   const applyingExternalRef = useRef(false)
 
   const editor = useCreateBlockNote({
+    ...blockNoteSdkEditorOptions,
     schema: taskDescriptionSchema,
     tabBehavior: 'prefer-indent',
     dictionary: {
@@ -511,12 +528,35 @@ export function TaskDescriptionEditor({
         </p>
       ) : null}
       <AttachmentImageServicesContext.Provider value={{ readAttachment }}>
-        <BlockNoteView
-          editor={editor}
-          onChange={handleEditorChange}
-          editable={!disabled}
-          theme={appearance?.resolvedMode === 'dark' ? 'dark' : 'light'}
-        />
+        <BlockNoteSdkProvider>
+          <BlockNoteViewRaw
+            editor={editor}
+            onChange={handleEditorChange}
+            editable={!disabled}
+            formattingToolbar={false}
+            linkToolbar={false}
+            slashMenu={false}
+            emojiPicker={false}
+            sideMenu={false}
+            filePanel={false}
+            tableHandles={false}
+            comments={false}
+            theme={appearance?.resolvedMode === 'dark' ? 'dark' : 'light'}
+          >
+            {!disabled && (
+              <>
+                <BlockNoteSdkEscapeShortcut />
+                <BlockNoteSdkFormattingToolbar ariaLabel={ariaLabel} />
+                <BlockNoteSdkLinkToolbar />
+                <BlockNoteSdkSuggestions />
+                <BlockNoteSdkSuggestions emoji />
+                <BlockNoteSdkSideMenu />
+                <BlockNoteSdkFilePanel />
+                <BlockNoteSdkTableHandles />
+              </>
+            )}
+          </BlockNoteViewRaw>
+        </BlockNoteSdkProvider>
       </AttachmentImageServicesContext.Provider>
     </div>
   )

@@ -89,6 +89,8 @@ Passthrough preserves the original bytes of normal upstream chunks. A read error
 
 #### Portable Responses Tools
 
+When bridging to Responses with ordinary function tools, Chat Completions, or Anthropic Messages, the proxy merges server-side search results into the outbound tool catalog and omits server search calls and results without a `call_id` from the request history. Paired ordinary tool calls and results retain their IDs and order. Native Responses passthrough preserves the complete search history.
+
 All model streams share the executor's SSE framing and payload parser, including Responses tool bridging, ordinary Responses, passthrough inspection, Chat Completions, Anthropic Messages, tool history, and Harness adapters. The parser consumes LF, CRLF, and CR boundaries in stream order, keeping a split CRLF pair as one line ending. It joins every `data:` line within an event and preserves incomplete UTF-8 characters between network chunks. Responses tool dispatch and terminal detection use the JSON `type`, independently of the optional SSE `event:` field. Rewriting replaces all previous data lines while preserving event metadata. Passthrough inspection and history recording do not modify forwarded chunks.
 
 The `model-sse-parsing` desktop E2E checkpoint runs real Electron, executor, and Codex components with only the model service simulated. It covers Responses function bridging, native Responses, Chat Completions, and Anthropic Messages using multiline JSON, mixed line endings, split Chinese characters, and misleading event headers. Real Code Mode tools must write and read a file, and the successful result must reach the next model request's history. Responses tool streams stay open until the real tool result arrives, proving that complete CR-terminated frames dispatch without waiting for EOF. This is model protocol regression coverage; compatibility with real provider services remains unverified.
@@ -179,9 +181,11 @@ automatic continuation, no duplicate user messages, and cancellation.
 
 When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
 
-### Anthropic Empty-Output Recovery
+### Codex subagent message conversion
 
-For every Anthropic Messages upstream, the executor normalizes Codex subagent `agent_message` items to messages with the `developer` role. The Anthropic adapter then places their content in the upstream request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated upstream to verify that both the child task and the completion reach that field.
+The executor normalizes Codex subagent `agent_message` items to `developer` messages. The Chat Completions adapter converts them to a `system` message within `messages`, and the Anthropic Messages adapter writes them to the request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated Anthropic upstream to verify that both the child task and the completion reach that field.
+
+### Anthropic Empty-Output Recovery
 
 Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
 

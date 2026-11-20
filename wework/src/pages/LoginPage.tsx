@@ -1,13 +1,14 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   AdminPasswordSetupForm,
-  PasswordLoginForm,
   OUTLINED_LOGIN_BUTTON_CLASS,
+  PasswordLoginForm,
 } from '@/components/auth/LoginForms'
 import { getRuntimeConfig } from '@/config/runtime'
+import { createLoginPageSource, getLoginRedirectTarget } from '@/features/auth/loginPageSource'
 import { useAuth } from '@/features/auth/useAuth'
 import { useTranslation } from '@/hooks/useTranslation'
-import { createLoginPageSource, getLoginRedirectTarget } from '@/features/auth/loginPageSource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 
 export function LoginPage() {
   const { t } = useTranslation('common')
@@ -94,14 +95,15 @@ export function LoginPage() {
           {showOidcLogin &&
             (!showPasswordLogin ||
               (!isResolvingInitialUserState && !adminPasswordSetupRequired)) && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="oidc-login-button"
                 className={OUTLINED_LOGIN_BUTTON_CLASS}
                 onClick={handleOidcLogin}
               >
                 {config.oidcLoginText || t('workbench.oidc_login')}
-              </button>
+              </ControlButton>
             )}
         </div>
       </div>

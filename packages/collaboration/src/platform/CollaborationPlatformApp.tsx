@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { PlatformInvitedIssueAccess } from './PlatformInvitedIssueAccess'
 import { useInvitedIssueRoute } from './useInvitedIssueRoute'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
@@ -665,13 +666,14 @@ function CollaborationPlatformAppContent({
                 description={messages.noSpacesHint}
                 action={
                   canCreateCloudWorkspace ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-primary-button"
                       onClick={creation.openWorkspaceDialog}
                     >
                       {messages.createWorkspace}
-                    </button>
+                    </ControlButton>
                   ) : null
                 }
               />
@@ -796,7 +798,8 @@ function CollaborationPlatformAppContent({
           <span>
             {createCollaborationTranslator(locale)('standIn.start_failed')} {standInRetry.error}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-run-retry"
             disabled={standInRetrying}
@@ -804,7 +807,7 @@ function CollaborationPlatformAppContent({
             className="shrink-0 rounded-md px-2 py-1 hover:bg-muted"
           >
             {createCollaborationTranslator(locale)('standIn.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {content}

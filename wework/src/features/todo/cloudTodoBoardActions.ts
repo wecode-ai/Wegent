@@ -1,7 +1,6 @@
 import type { LocatedLoopItem } from './cloudTodoWorkspaceTypes'
 import { externalBoardColumnPageSize, toWeworkCloudProject } from './cloudTodoWorkspaceSupport'
-import type { DragEndEvent } from '@dnd-kit/core'
-import { projectBoardDrop } from '@wegent/collaboration/project-board/projectBoardDnd'
+import type { ProjectBoardDrop } from '@wegent/collaboration/project-board/projectBoardDnd'
 import { track } from '@/telemetry/client'
 import type { CloudTodoWorkspaceData } from './useCloudTodoWorkspaceData'
 export function createCloudTodoBoardActions(data: CloudTodoWorkspaceData) {
@@ -180,9 +179,9 @@ export function createCloudTodoBoardActions(data: CloudTodoWorkspaceData) {
       setBatchConfirmBusy(false)
     }
   }
-  function finishBoardDrop(event: DragEndEvent) {
+  function finishBoardDrop(drop: ProjectBoardDrop) {
     setActiveDragItemId(null)
-    standardBoardController.moveDroppedItem(projectBoardDrop(event))
+    standardBoardController.moveDroppedItem(drop)
   }
   async function saveGlobalGroupBy() {
     if (baseBoardStatusGrouping) return

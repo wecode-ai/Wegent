@@ -1,3 +1,4 @@
+import { Button as ControlButton } from './Button'
 import Panzoom, { type PanzoomObject } from '@panzoom/panzoom'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
@@ -95,7 +96,8 @@ export function DiagramCanvas({
         className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-1"
       >
         {controls.map(({ id, label, icon: Icon, action, disabled }) => (
-          <button
+          <ControlButton
+            variant="unstyled"
             key={id}
             type="button"
             data-testid={`diagram-zoom-${id}-button`}
@@ -106,7 +108,7 @@ export function DiagramCanvas({
             className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50 md:h-7 md:w-7"
           >
             <Icon className="h-4 w-4" />
-          </button>
+          </ControlButton>
         ))}
         <span className="min-w-11 text-center text-xs tabular-nums text-text-secondary">
           {Math.round(scale * 100)}%

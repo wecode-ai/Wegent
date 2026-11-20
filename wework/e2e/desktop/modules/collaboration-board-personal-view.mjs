@@ -23,6 +23,13 @@ export async function openProjectBoard(control, scoped, project) {
     text: project.name,
   })
   await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+  const openViewSelector = scoped(
+    '[data-testid="collaboration-project-view-select"][aria-expanded="true"]'
+  )
+  if (Number(await control.command('getElementCount', openViewSelector))) {
+    await control.command('setExpanded', openViewSelector, { value: 'false' })
+    await control.command('waitFor', openViewSelector, { visible: false })
+  }
   await control.command('waitFor', scoped('[data-testid="collaboration-board"]'))
 }
 
@@ -60,7 +67,9 @@ export async function assertProjectBoardGrouping(control, scoped, groupBy) {
 
 export async function selectProjectBoardGrouping(control, scoped, groupBy) {
   await control.command('click', scoped('[data-testid="cloud-board-group-by"]'))
-  await control.command('click', `[data-testid="cloud-board-group-option-${groupBy}"]`)
+  const option = `[data-testid="cloud-board-group-option-${groupBy}"]`
+  await control.command('click', option)
+  await control.command('waitFor', option, { visible: false })
   await assertProjectBoardGrouping(control, scoped, groupBy)
 }
 

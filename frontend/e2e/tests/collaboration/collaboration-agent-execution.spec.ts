@@ -11,7 +11,10 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
 import { createProjectChatClient } from '../../../../packages/chat-core/src/project-chat'
-import { selectCollaborationProjectView } from '../../utils/collaboration-test-support'
+import {
+  chooseCollaborationOption,
+  selectCollaborationProjectView,
+} from '../../utils/collaboration-test-support'
 import { createApiClient } from '../../utils/api-client'
 import { REGULAR_USER } from '../../config/test-users'
 import type { AssistantParticipation, AssistantParticipationWorkroom } from '@wegent/collaboration'
@@ -669,7 +672,7 @@ test.describe('Collaboration agent execution', () => {
     await page.getByTestId('project-agent-mode-create').click()
     await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
     await page.getByTestId('web-agent-display-name').fill(displayName)
-    await page.getByTestId('web-agent-model').selectOption({
+    await chooseCollaborationOption(page, page.getByTestId('web-agent-model'), {
       label: resources.modelName,
     })
     page.off('request', observeCatalog)

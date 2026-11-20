@@ -1,18 +1,22 @@
-import { useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from 'react'
-import {
-  canCommentCollaborationIssue,
-  type CollaborationIssue,
-  type CollaborationProject,
-  type SharedWorkspaceApi,
-} from '@wegent/collaboration'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DialogForm } from '@/components/common/DialogForm'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
+import { canCommentCollaborationIssue } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { Ref } from 'react'
+import { useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
 /** Publication writes only the explicitly entered text to an existing shared record. */
 interface ProjectCoordinatorPublicationProps {
@@ -50,7 +54,7 @@ function ProjectCoordinatorPublicationContent({
   const sending = useRef(false)
   const navigation = useStandInPanelNavigation(!!content.trim(), busy, () => setDiscard(true))
   const close = () => navigation.requestLeave(onClose)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
 
   const createCandidates = (
@@ -121,10 +125,16 @@ function ProjectCoordinatorPublicationContent({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      className="min-h-0 flex-1 overflow-y-auto p-5"
-      data-testid="project-coordinator-publication"
+    <DialogSurface
+      onClose={close}
+      active={!discard}
+      render={
+        <div
+          ref={dialogRef}
+          className="min-h-0 flex-1 overflow-y-auto p-5"
+          data-testid="project-coordinator-publication"
+        />
+      }
     >
       <h3 className="heading-sm">{t('standIn.project_coordinator.publish')}</h3>
       <p className="mt-2 text-sm text-text-muted">
@@ -135,14 +145,15 @@ function ProjectCoordinatorPublicationContent({
           <p role="status" className="mt-5 text-sm" data-testid="project-coordinator-published">
             {t('standIn.project_coordinator.published', { issue: published.title })}
           </p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="project-coordinator-publication-close"
             onClick={close}
             className="mt-4 min-h-11 md:min-h-8 rounded-md px-3 text-sm hover:bg-muted"
           >
             {t('standIn.project_coordinator.back_to_chat')}
-          </button>
+          </ControlButton>
         </>
       ) : (
         <DialogForm
@@ -160,24 +171,22 @@ function ProjectCoordinatorPublicationContent({
           )}
           <label className="flex flex-col gap-2 text-sm">
             {t('standIn.project_coordinator.publish_target')}
-            <select
+            <SelectField
+              testId="project-coordinator-publication-target"
+              menuTestId="project-coordinator-publication-target-options"
+              accessibleLabel={t('standIn.project_coordinator.publish_target')}
               value={selected}
+              onChange={setSelected}
               disabled={busy || !issues?.length}
-              onChange={event => setSelected(event.target.value)}
-              data-testid="project-coordinator-publication-target"
-              className="min-h-11 md:min-h-9 rounded-md border border-border bg-background px-3"
-            >
-              <option value="">{t('standIn.project_coordinator.choose_issue')}</option>
-              {issues?.map(issue => (
-                <option key={issue.id} value={issue.id}>
-                  {issue.title}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: t('standIn.project_coordinator.choose_issue') },
+                ...(issues ?? []).map(issue => ({ value: String(issue.id), label: issue.title })),
+              ]}
+            />
           </label>
           <label className="flex flex-col gap-2 text-sm">
             {t('standIn.project_coordinator.publish_content')}
-            <textarea
+            <ControlTextarea
               value={content}
               disabled={busy}
               onChange={event => setContent(event.target.value)}
@@ -192,7 +201,8 @@ function ProjectCoordinatorPublicationContent({
             </p>
           )}
           {issues === null && visibleError && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="project-coordinator-publication-reload"
               onClick={() => {
@@ -202,10 +212,11 @@ function ProjectCoordinatorPublicationContent({
               className="min-h-11 md:min-h-8 self-start text-sm underline"
             >
               {t('standIn.reload')}
-            </button>
+            </ControlButton>
           )}
           <div className="flex justify-end gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="project-coordinator-publication-cancel"
               disabled={busy}
@@ -213,8 +224,10 @@ function ProjectCoordinatorPublicationContent({
               className="min-h-11 md:min-h-8 rounded-md px-3 text-sm hover:bg-muted"
             >
               {t('standIn.cancel')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid="project-coordinator-publication-submit"
               disabled={busy || !selected || !content.trim()}
@@ -225,7 +238,7 @@ function ProjectCoordinatorPublicationContent({
                   ? 'standIn.project_coordinator.publishing'
                   : 'standIn.project_coordinator.publish'
               )}
-            </button>
+            </ControlButton>
           </div>
         </DialogForm>
       )}
@@ -247,6 +260,6 @@ function ProjectCoordinatorPublicationContent({
           navigation.confirmLeave(onClose)
         }}
       />
-    </div>
+    </DialogSurface>
   )
 }

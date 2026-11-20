@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -195,7 +196,8 @@ export function IssueHomeLauncher({
       </div>
       <div className="collaboration-issue-home-guides">
         {guides.map((guide, index) => (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`collaboration-issue-guide-${index + 1}`}
             key={guide.title}
@@ -211,7 +213,7 @@ export function IssueHomeLauncher({
             <guide.Icon aria-hidden="true" />
             <strong>{guide.title}</strong>
             <ChevronRight aria-hidden="true" />
-          </button>
+          </ControlButton>
         ))}
       </div>
       <div className="collaboration-issue-home-composer">{composer}</div>

@@ -8,7 +8,7 @@ pub(super) fn mcp_thread_configuration(params: &Value) -> Map<String, Value> {
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(key, _)| key.starts_with("mcp_servers."))
+        .filter(|(key, _)| *key == "mcp_servers" || key.starts_with("mcp_servers."))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }

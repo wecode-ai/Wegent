@@ -33,15 +33,16 @@ it('opens the advanced cron editor and focuses its input when validation changes
   }
   try {
     await act(async () => root.render(<Harness />))
-    const details = node.querySelector('details')!
-    expect(details.open).toBe(false)
+    const disclosure = node.querySelector('[data-testid="automatic-processing-cron-advanced"]')!
+    const trigger = disclosure.querySelector('button')!
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
     await act(async () => root.render(<Harness error="Invalid cron" />))
-    expect(details.open).toBe(true)
-    expect(details.contains(document.activeElement)).toBe(true)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(disclosure.contains(document.activeElement)).toBe(true)
     expect(document.activeElement?.tagName).toBe('INPUT')
     expect(scroll).toHaveBeenCalledWith({ block: 'center', inline: 'nearest' })
     await act(async () => root.render(<Harness />))
-    expect(details.open).toBe(true)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
   } finally {
     await act(async () => root.unmount())
     node.remove()

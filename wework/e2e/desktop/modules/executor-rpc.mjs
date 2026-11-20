@@ -2,15 +2,15 @@ import { fetchLocalRuntime } from './runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
-export async function requestExecutor(control, method, params, timeoutMs) {
-  const origin = await control.command('getLocationOrigin', 'body')
+export async function requestExecutor(control, method, params, timeoutMs, { origin } = {}) {
+  const runtimeOrigin = origin ?? (await control.command('getLocationOrigin', 'body'))
   const requestId = `desktop-e2e-${method}-${randomUUID()}`
   const startedAt = Date.now()
   let stage = 'response-headers'
   let response
   let payload
   try {
-    response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
+    response = await fetchLocalRuntime(control, `${runtimeOrigin}/wework/executor/v1/rpc`, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ id: requestId, method, params }),

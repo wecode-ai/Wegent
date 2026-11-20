@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../../markdown/Button'
 import { useToolInteractionServices } from '../ToolInteractionServices'
 import { useCallback, useRef, useState } from 'react'
 import { Copy, CopyCheck } from 'lucide-react'
@@ -80,7 +81,7 @@ export function InlineDiffPreview({
             </span>
           </span>
         </span>
-        <button
+        <ControlButton variant="unstyled"
           type="button"
           data-testid="copy-process-file-change-diff-button"
           aria-label={t('file_changes.copy_code')}
@@ -104,7 +105,7 @@ export function InlineDiffPreview({
               data-testid="process-file-change-diff-copy-icon"
             />
           )}
-        </button>
+        </ControlButton>
       </div>
       <div className="py-1">
         {visibleLines.map(line => (

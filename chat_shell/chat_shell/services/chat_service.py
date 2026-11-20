@@ -139,6 +139,9 @@ class ChatService(ChatInterface):
         backtrack_hint = getattr(ctx_result, "backtrack_hint", "")
         if backtrack_hint:
             parts.append(backtrack_hint)
+        mcp_hint = getattr(ctx_result, "mcp_hint", "")
+        if mcp_hint:
+            parts.append(mcp_hint)
 
         return "\n\n".join(parts) if parts else ""
 

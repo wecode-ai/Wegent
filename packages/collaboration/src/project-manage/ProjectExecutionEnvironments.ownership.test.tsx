@@ -50,14 +50,10 @@ async function render(api: SharedWorkspaceApi, id: string) {
     )
   )
 }
-async function openPreparation() {
-  await act(async () => {
-    const details = container.querySelector<HTMLDetailsElement>(
-      `[data-testid="${prefix}-preparation"]`
-    )!
-    details.open = true
-    details.dispatchEvent(new Event('toggle'))
-  })
+const preparationToggle = () =>
+  container.querySelector<HTMLButtonElement>(`[data-testid="${prefix}-preparation-toggle"]`)!
+async function togglePreparation() {
+  await act(async () => preparationToggle().click())
 }
 const field = (suffix: string) =>
   container.querySelector<HTMLInputElement>(`[data-testid="${prefix}-${suffix}-0"]`)!
@@ -87,13 +83,12 @@ test('a late catalog from the previous API owner cannot replace the active edito
     })
   )
   await render(old.api, 'same-project')
-  await openPreparation()
+  await togglePreparation()
   expect(old.list).toHaveBeenCalledTimes(1)
   await render(current.api, 'same-project')
-  expect(
-    container.querySelector<HTMLDetailsElement>(`[data-testid="${prefix}-preparation"]`)!.open
-  ).toBe(true)
-  await openPreparation()
+  expect(preparationToggle().getAttribute('aria-expanded')).toBe('true')
+  await togglePreparation()
+  await togglePreparation()
   await act(async () =>
     resolve([
       {

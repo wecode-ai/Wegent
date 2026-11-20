@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -103,9 +104,9 @@ export function ProjectTemplateSettings({
       {error && (
         <p role="alert">
           {error}{' '}
-          <button type="button" data-testid="project-template-retry" onClick={() => void reload()}>
+          <ControlButton variant="unstyled" type="button" data-testid="project-template-retry" onClick={() => void reload()}>
             {m.retry}
-          </button>
+          </ControlButton>
         </p>
       )}
       {canManage && api.projects.createCollaborationGroup && (
@@ -114,7 +115,7 @@ export function ProjectTemplateSettings({
             <h2 className="text-base font-medium">{m.importProject}</h2>
             <p className="mt-1 text-sm text-text-secondary">{m.importProjectHint}</p>
           </div>
-          <button
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-template-choice"
             data-testid="project-template-import"
@@ -122,7 +123,7 @@ export function ProjectTemplateSettings({
             onClick={() => setChoosing(true)}
           >
             {m.chooseTemplate}
-          </button>
+          </ControlButton>
         </section>
       )}
       <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
@@ -130,7 +131,7 @@ export function ProjectTemplateSettings({
           <h2 className="text-base font-medium">{m.saveTitle}</h2>
           <p className="mt-1 text-sm text-text-secondary">{m.saveHint}</p>
         </div>
-        <button
+        <ControlButton variant="unstyled"
           type="button"
           className="collaboration-template-choice"
           data-testid="project-template-save"
@@ -149,14 +150,14 @@ export function ProjectTemplateSettings({
           }}
         >
           {m.save}
-        </button>
+        </ControlButton>
       </section>
       <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-medium">{m.export}</h2>
           <p className="mt-1 text-sm text-text-secondary">{m.exportHint}</p>
         </div>
-        <button
+        <ControlButton variant="unstyled"
           type="button"
           className="collaboration-template-choice"
           data-testid="project-template-export"
@@ -176,7 +177,7 @@ export function ProjectTemplateSettings({
           }}
         >
           {m.export}
-        </button>
+        </ControlButton>
       </section>
       {choosing && (
         <TemplateDialog

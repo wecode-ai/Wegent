@@ -1,7 +1,15 @@
-import { useCallback, useState } from 'react'
-import { usePanelData } from '@wegent/collaboration/platform'
 import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { usePanelData } from '@wegent/collaboration/platform'
+import { useCallback, useState } from 'react'
 import { IssueProjectSelect } from './IssueProjectSelect'
 
 export function IndependentIssueProjectPicker({
@@ -46,14 +54,15 @@ export function IndependentIssueProjectPicker({
       {error !== undefined ? (
         <div role="alert" className="text-sm text-destructive">
           {t('issue_creation.projects_load_failed')}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="independent-issue-project-retry"
             className="min-h-11 px-3 underline md:min-h-8"
             onClick={() => void refresh()}
           >
             {t('independentIssues.retry')}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       <label className="grid gap-2 text-sm">
@@ -72,34 +81,38 @@ export function IndependentIssueProjectPicker({
                 : ''
             )
           }}
-          className="min-h-11 min-w-0 rounded-md border border-border bg-background px-3 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8"
         />
       </label>
       {selected ? (
         <label className="grid gap-2 text-sm">
           {t('independentIssues.projectStatus')}
-          <select
-            data-testid="independent-issue-project-status"
-            value={targetStatus}
+          <SelectRoot
+            value={normalizeSelectValue(targetStatus)}
             disabled={busy}
-            onChange={event => setTargetStatus(event.target.value)}
-            className="min-h-11 rounded-md border border-border bg-background px-3 md:min-h-8"
+            onValueChange={selectedValue => {
+              if (selectedValue !== null) return setTargetStatus(selectedValue)
+            }}
           >
-            <option value="">
-              {t(
-                statuses.length ? 'independentIssues.projectStatus' : 'independentIssues.noStatus'
-              )}
-            </option>
-            {statuses.map(status => (
-              <option key={status.id} value={status.id}>
-                {status.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger density="compact" data-testid="independent-issue-project-status" />
+            <SelectContent>
+              <SelectItem value="">
+                {t(
+                  statuses.length ? 'independentIssues.projectStatus' : 'independentIssues.noStatus'
+                )}
+              </SelectItem>
+              {statuses.map(status => (
+                <SelectItem key={status.id} value={String(status.id)}>
+                  {status.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </SelectRoot>
         </label>
       ) : null}
       <div className="flex justify-end gap-2">
-        <button
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           disabled={busy}
           data-testid="independent-issue-project-cancel"
@@ -107,8 +120,10 @@ export function IndependentIssueProjectPicker({
           className="min-h-11 rounded-md border border-border px-3 md:min-h-8"
         >
           {t('independentIssues.cancel')}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           disabled={busy || !selected || (statuses.length > 0 && !targetStatus) || !issue.id}
           data-testid="independent-issue-project-confirm"
@@ -116,7 +131,7 @@ export function IndependentIssueProjectPicker({
           className="min-h-11 rounded-md bg-text-primary px-3 text-background disabled:opacity-50 md:min-h-8"
         >
           {t('independentIssues.confirmAttach')}
-        </button>
+        </ControlButton>
       </div>
     </section>
   )

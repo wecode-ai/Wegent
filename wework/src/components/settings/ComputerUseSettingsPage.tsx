@@ -1,13 +1,14 @@
-import { ExternalLink, Loader2, MonitorCog } from 'lucide-react'
-import { useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
   getComputerUseStatus,
   openComputerUseScreenRecordingSettings,
   requestComputerUsePermissions,
   setComputerUseEnabled,
 } from '@/desktop/computerUse'
+import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ExternalLink, Loader2, MonitorCog } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import {
   SettingsGroup,
   SettingsPage,
@@ -61,7 +62,9 @@ export function ComputerUseSettingsPage() {
         {t('workbench.computer_use_permission_granted')}
       </span>
     ) : (
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid={`computer-use-open-${kind}-settings-button`}
         disabled={saving || !status?.supported}
@@ -70,11 +73,10 @@ export function ComputerUseSettingsPage() {
             ? openComputerUseScreenRecordingSettings()
             : mutate({ kind: 'permission' }))
         }
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-primary hover:bg-muted disabled:opacity-50"
       >
         <ExternalLink className="h-3.5 w-3.5" />
         {t('workbench.computer_use_open_system_settings')}
-      </button>
+      </ControlButton>
     )
 
   const stateLabel = loading
@@ -127,7 +129,7 @@ export function ComputerUseSettingsPage() {
               ? t('workbench.computer_use_enable_description')
               : t('workbench.computer_use_macos_only')
           }
-          control={
+          children={
             loading || saving ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
             ) : (
@@ -146,12 +148,12 @@ export function ComputerUseSettingsPage() {
             <SettingsRow
               label={t('workbench.computer_use_accessibility_permission')}
               description={t('workbench.computer_use_accessibility_permission_description')}
-              control={permissionControl(status.accessibilityPermissionGranted, 'accessibility')}
+              children={permissionControl(status.accessibilityPermissionGranted, 'accessibility')}
             />
             <SettingsRow
               label={t('workbench.computer_use_screen_recording_permission')}
               description={t('workbench.computer_use_screen_recording_permission_description')}
-              control={permissionControl(
+              children={permissionControl(
                 status.screenRecordingPermissionGranted,
                 'screen-recording'
               )}
@@ -161,7 +163,7 @@ export function ComputerUseSettingsPage() {
         <SettingsRow
           label={t('workbench.computer_use_approval')}
           description={t('workbench.computer_use_approval_description')}
-          control={
+          children={
             <span className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-text-secondary">
               {t('workbench.computer_use_approval_writes')}
             </span>

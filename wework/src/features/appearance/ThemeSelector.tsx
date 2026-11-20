@@ -1,6 +1,13 @@
-import { UI_THEME_CATALOGUE, getUiTheme } from '@wegent/collaboration/theme'
-import type { CSSProperties } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { getUiTheme, UI_THEME_CATALOGUE } from '@wegent/collaboration/theme'
+import type { CSSProperties } from 'react'
 import { resolveAppearanceThemeVariables } from './applyAppearance'
 import type { ResolvedAppearanceMode } from './types'
 import { useAppearance } from './useAppearance'
@@ -24,24 +31,29 @@ export function ThemeSelector({ mode }: { mode: ResolvedAppearanceMode }) {
     <div className="min-w-0 space-y-3">
       <label className="grid gap-2 text-sm text-text-primary">
         <span>{label}</span>
-        <select
-          aria-label={label}
-          className="wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-base text-text-primary outline-none keyboard:focus:ring-2 keyboard:focus:ring-focus"
-          data-testid={`appearance-theme-select-${mode}`}
-          value={selectedId}
-          onChange={event =>
-            setAppearance({
-              [mode === 'light' ? 'lightThemeId' : 'darkThemeId']: event.target.value,
-              themeOverrides: { [mode]: {} },
-            })
-          }
+        <SelectRoot
+          value={normalizeSelectValue(selectedId)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null)
+              return setAppearance({
+                [mode === 'light' ? 'lightThemeId' : 'darkThemeId']: selectedValue,
+                themeOverrides: { [mode]: {} },
+              })
+          }}
         >
-          {themes.map(theme => (
-            <option key={theme.id} value={theme.id}>
-              {theme.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label={label}
+            className="wework-native-select h-11 w-full text-base"
+            data-testid={`appearance-theme-select-${mode}`}
+          />
+          <SelectContent>
+            {themes.map(theme => (
+              <SelectItem key={theme.id} value={String(theme.id)}>
+                {theme.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       </label>
       <div
         aria-hidden="true"

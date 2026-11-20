@@ -1,12 +1,13 @@
-import { SquareTerminal, X } from 'lucide-react'
-import { createPortal } from 'react-dom'
-import { useMemo, useRef, useState } from 'react'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { localHarnessLabel, type LocalHarnessId } from '@/lib/local-harness'
 import { cn } from '@/lib/utils'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { SquareTerminal, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 
 interface HarnessSessionPickerOption {
@@ -51,8 +52,6 @@ export function HarnessSessionPickerDialog({
     onClose()
   }
 
-  useEscapeKey(closeDialog, open)
-
   if (!open) return null
 
   return createPortal(
@@ -63,12 +62,17 @@ export function HarnessSessionPickerDialog({
         if (event.target === event.currentTarget) closeDialog()
       }}
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="harness-session-picker-title"
-        data-testid="harness-session-picker"
-        className="w-full max-w-[420px] rounded-xl border border-border bg-popover p-5 text-text-primary shadow-xl"
+      <DialogSurface
+        onClose={() => {
+          if (open) closeDialog()
+        }}
+        render={
+          <section
+            aria-labelledby="harness-session-picker-title"
+            data-testid="harness-session-picker"
+            className="w-full max-w-[420px] rounded-xl border border-border bg-popover p-5 text-text-primary shadow-xl"
+          />
+        }
       >
         <header className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
@@ -85,7 +89,8 @@ export function HarnessSessionPickerDialog({
               )}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="harness-session-picker-close-button"
             onClick={closeDialog}
@@ -93,11 +98,12 @@ export function HarnessSessionPickerDialog({
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         <div className="mt-5 flex flex-col gap-1">
           {options.map(option => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={option.id}
               type="button"
               data-testid={`harness-session-picker-option-${option.id}`}
@@ -115,7 +121,7 @@ export function HarnessSessionPickerDialog({
               <SquareTerminal className="h-4 w-4 shrink-0 text-text-secondary" />
               <span className="min-w-0 flex-1 truncate">{localHarnessLabel(option.id)}</span>
               <ExperimentalBadge testId={`harness-session-picker-option-${option.id}-badge`} />
-            </button>
+            </ControlButton>
           ))}
         </div>
         {selectedOption && (
@@ -140,7 +146,8 @@ export function HarnessSessionPickerDialog({
           </div>
         )}
         <footer className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="harness-session-picker-cancel-button"
             onClick={closeDialog}
@@ -148,8 +155,10 @@ export function HarnessSessionPickerDialog({
             className="flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
           >
             {t('common.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="harness-session-picker-create-button"
             disabled={!selectedOption || submitting}
@@ -174,9 +183,9 @@ export function HarnessSessionPickerDialog({
             {submitting
               ? t('workbench.harness_session_creating', '正在创建…')
               : t('workbench.harness_session_create', '创建会话')}
-          </button>
+          </ControlButton>
         </footer>
-      </section>
+      </DialogSurface>
     </div>,
     document.body
   )

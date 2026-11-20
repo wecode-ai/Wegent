@@ -15,9 +15,10 @@ use brz_http_server::{
     AuthRequest, Handler, Header, IntoHttpError, IntoHttpResponse, Request, Response, StatusCode,
 };
 
-use crate::auth::{AppAuthenticator, SessionUser};
+use crate::auth::AppAuthenticator;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use wegent_identity::runtime_model_auth::RuntimeModelUser;
 
 use super::MODEL_TYPE_HEADER;
 
@@ -224,7 +225,7 @@ impl Handler<AppAuthenticator> for LlmResponsesProxyRoute {
             AuthRequest::from_request(&request),
             request.response_arena(),
         );
-        let user: SessionUser = match tokio::time::timeout_at(deadline, authentication).await {
+        let user: RuntimeModelUser = match tokio::time::timeout_at(deadline, authentication).await {
             Ok(Ok(user)) => user,
             Ok(Err(response)) => return response,
             Err(_) => {

@@ -7,7 +7,6 @@ import {
   getDisplayProcessingBlocks,
 } from './assistantMessagePresentation'
 import { Fragment, memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { flushSync } from 'react-dom'
 import { useDocumentEvent, useWindowEvent, useElementTypography } from '../dom-events'
 import { createMessageTextSelectionState } from './messageTextSelectionState'
 import { createMessageListViewportPort } from './messageListViewportPort'
@@ -46,13 +45,10 @@ import {
 import { useMessageRowMeasure, useMessageRowMeasurements } from './useMessageRowMeasurements'
 import {
   createMarkdownWindowingScope,
+  useMarkdownWindowingViewport,
   MarkdownWindowingContext,
   MarkdownWindowingDisabledContext,
 } from '../markdown/MarkdownWindowingScope'
-import {
-  isConversationDiagnosticsEnabled,
-  recordConversationDiagnostic,
-} from './conversationDiagnostics'
 
 export interface MessageListProps {
   assistantMessageStyle?: 'plain' | 'bubble'
@@ -417,24 +413,7 @@ export const MessageList = memo(function MessageList({
     viewportPort,
     onNativeScrollRange,
   ])
-  useWindowEvent(
-    'scroll',
-    event => {
-      const scope = markdownWindowingState.scope
-      if (event.target !== scope.scrollElementRef?.current) return
-      const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
-      const renders = scope.getViewportRenders()
-      if (renders.length > 0) flushSync(() => renders.forEach(render => render()))
-      if (startedAt === null) return
-      const elapsedMs = performance.now() - startedAt
-      if (elapsedMs >= 16)
-        recordConversationDiagnostic('search-scroll-render', {
-          elapsedMs,
-          renderedCount: renders.length,
-        })
-    },
-    { capture: true, passive: true }
-  )
+  useMarkdownWindowingViewport(markdownWindowingState.scope)
 
   const hasSelectionActions = Boolean(
     onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer

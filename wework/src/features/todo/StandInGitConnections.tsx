@@ -1,21 +1,28 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { GitBranch, Plus, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
-import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
-import { GithubCliAuthDialog } from '@/components/plugins/GithubCliAuthDialog'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
+import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
+import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
+import { GithubCliAuthDialog } from '@/components/plugins/GithubCliAuthDialog'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { GitBranch, Plus, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
+import { createGitConnectionsModel, GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
-import { createGitConnectionsModel, GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
 export { GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
-const fieldClassName =
-  'block h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-secondary focus-visible:border-focus focus-visible:ring-2 focus-visible:ring-focus/20 disabled:opacity-50 md:h-9'
 
 interface StandInGitConnectionsProps {
   role: StandInRole
@@ -114,13 +121,13 @@ function StandInGitConnectionsContent({
         {platform === 'gitlab' && (
           <label className="block space-y-1 text-sm">
             {t('standIn.git.instance')}
-            <input
+            <ControlInput
               data-testid="stand-in-git-instance"
               type="url"
               placeholder="https://gitlab.com"
               autoCapitalize="none"
               spellCheck={false}
-              className={fieldClassName}
+              className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
               value={instance}
               disabled={disabled || busy}
               onChange={event => {
@@ -177,23 +184,24 @@ function StandInGitConnectionsContent({
       ))}
       <label className="block space-y-1 text-sm">
         {t('standIn.git.scope')}
-        <select
-          data-testid="stand-in-git-kind"
-          className={fieldClassName}
-          value={kind}
+        <SelectRoot
+          value={normalizeSelectValue(kind)}
           disabled={disabled || busy}
-          onChange={event => {
+          onValueChange={selectedValue => {
+            if (selectedValue === null) return
             resetSearch()
-            setKind(event.target.value)
+            setKind(selectedValue)
           }}
         >
-          <option className="bg-background text-text-primary" value="personal">
-            {t('standIn.git.personal')}
-          </option>
-          <option className="bg-background text-text-primary" value="repository">
-            {t('standIn.git.repository')}
-          </option>
-        </select>
+          <SelectTrigger
+            data-testid="stand-in-git-kind"
+            className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
+          />
+          <SelectContent data-testid="stand-in-git-kind-options">
+            <SelectItem value="personal">{t('standIn.git.personal')}</SelectItem>
+            <SelectItem value="repository">{t('standIn.git.repository')}</SelectItem>
+          </SelectContent>
+        </SelectRoot>
       </label>
       <div className="space-y-2">
         {kind === 'repository' && (
@@ -203,10 +211,10 @@ function StandInGitConnectionsContent({
         )}
         <div className="flex items-center gap-2">
           {kind === 'repository' && (
-            <input
+            <ControlInput
               id={`stand-in-git-query-${platform}`}
               data-testid="stand-in-git-query"
-              className={fieldClassName}
+              className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
               placeholder={t('standIn.git.search_placeholder')}
               value={query}
               disabled={disabled || busy}
@@ -248,14 +256,13 @@ function StandInGitConnectionsContent({
           key={`${item.profile}:${item.id}`}
           className="flex min-h-11 items-center gap-2 text-sm"
         >
-          <input
-            type="checkbox"
+          <Checkbox
             data-testid={`stand-in-git-select-${item.id}`}
             disabled={disabled || busy}
             checked={selection.some(row => row.id === item.id && row.profile === item.profile)}
-            onChange={event =>
+            onCheckedChange={checked =>
               setSelection(previous =>
-                event.target.checked ? [...previous, item] : previous.filter(row => row !== item)
+                checked === true ? [...previous, item] : previous.filter(row => row !== item)
               )
             }
           />

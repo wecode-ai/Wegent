@@ -1,10 +1,15 @@
-import { FileTree, useFileTree } from '@pierre/trees/react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
-import { createWorkspaceDirectoryResource } from './workspaceDirectoryResource'
 import type { MenuPosition } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
-import { PIERRE_WORKSPACE_FILE_TREE_CSS } from './workspaceFileTreeStyles'
+import { Menu, MenuContextTrigger } from '@wegent/collaboration/controls/MenuParts'
+import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Folder, FolderOpen } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createFileTreeData, resolveFileTreePath } from './fileTreeData'
+import { useFileTreeExpansion } from './useFileTreeExpansion'
+import { createWorkspaceDirectoryResource } from './workspaceDirectoryResource'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { createWorkspaceTreeModel, getEntryByTreePath } from './workspaceFileTreeModel'
 
 interface PickerProps {
@@ -18,18 +23,29 @@ interface PickerProps {
 }
 
 export function WorkspaceDirectoryPicker(props: PickerProps) {
-  const { api, target, directoryPath } = props
+  const { api, target, directoryPath, activePath, expandActive } = props
   const { t } = useTranslation('common')
   const resource = useMemo(
-    () => createWorkspaceDirectoryResource(api, target.deviceId, target.path, directoryPath),
-    [api, target.deviceId, target.path, directoryPath]
+    () =>
+      createWorkspaceDirectoryResource(
+        api,
+        target.deviceId,
+        target.path,
+        directoryPath,
+        expandActive ? activePath : null
+      ),
+    [activePath, api, directoryPath, expandActive, target.deviceId, target.path]
   )
   const { entries, errors, loading } = useSyncExternalStore(
     resource.subscribe,
     resource.getSnapshot,
     resource.getSnapshot
   )
-  const load = resource.load
+  const load = async (path: string, retry?: boolean) => {
+    await resource.load(path, retry)
+    const error = resource.getSnapshot().errors[path]
+    if (error) throw new Error(error)
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -49,14 +65,15 @@ export function WorkspaceDirectoryPicker(props: PickerProps) {
           <span className="min-w-0 flex-1 truncate text-text-secondary" title={error}>
             {error}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-file-siblings-retry"
             className="shrink-0 rounded px-2 py-1 hover:bg-muted"
-            onClick={() => void load(path, true)}
+            onClick={() => void load(path, true).catch(() => {})}
           >
             {t('workbench.workspace_file_retry')}
-          </button>
+          </ControlButton>
         </div>
       ))}
     </div>
@@ -73,7 +90,7 @@ function DirectoryTree({
   onPathContextMenu,
 }: PickerProps & {
   entries: Record<string, WorkspaceFileEntry[]>
-  load: (path: string) => Promise<void>
+  load: (path: string, retry?: boolean, signal?: AbortSignal) => Promise<void>
 }) {
   const tree = useMemo(
     () =>
@@ -86,113 +103,87 @@ function DirectoryTree({
       }),
     [directoryPath, activePath, expandActive, entries]
   )
-  const current = useRef({ tree, onSelect, load })
-  const syncing = useRef(true)
-  const initialized = useRef(false)
-  const { model } = useFileTree({
-    paths: tree.paths,
-    initialExpandedPaths: tree.expandedTreePaths,
-    initialSelectedPaths: tree.selectedTreePath ? [tree.selectedTreePath] : [],
-    density: 'compact',
-    itemHeight: 28,
-    flattenEmptyDirectories: false,
-    icons: { set: 'complete', colored: true },
-    search: false,
-    dragAndDrop: { canDrop: () => false },
-    composition: { contextMenu: { enabled: false } },
-    unsafeCSS: PIERRE_WORKSPACE_FILE_TREE_CSS,
-    onSelectionChange: paths => {
-      if (syncing.current || !paths[0]) return
-      const state = current.current
-      const entry = getEntryByTreePath(
-        state.tree.entryByTreePath,
-        paths[0],
-        state.tree.caseInsensitivePaths
-      )
-      if (entry && !entry.isDirectory) state.onSelect(entry)
-    },
-  })
-
-  useLayoutEffect(() => {
-    const previous = current.current.tree
-    current.current = { tree, onSelect, load }
-    if (initialized.current && previous === tree) return
-    const expanded = previous.paths.filter(path => {
-      const item = model.getItem(path)
-      return item && 'isExpanded' in item && item.isExpanded()
-    })
-    syncing.current = true
-    // Adding lazily loaded children must not reset the user's expansion or selection.
-    if (initialized.current) model.resetPaths(tree.paths, { initialExpandedPaths: expanded })
-    if (!initialized.current && tree.selectedTreePath) {
-      model.scrollToPath(tree.selectedTreePath, { offset: 'center', focus: true })
-    }
-    initialized.current = true
-    syncing.current = false
-  }, [model, tree, load, onSelect])
-
-  const bindTree = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return
-      let active = true
-      const loadExpanded = () => {
-        if (!active || syncing.current) return
-        for (const path of tree.paths) {
-          const item = model.getItem(path)
-          if (!item || !('isExpanded' in item) || !item.isExpanded()) continue
-          const entry = getEntryByTreePath(tree.entryByTreePath, path, tree.caseInsensitivePaths)
-          if (entry) void load(entry.path)
-        }
-      }
-      const unsubscribe = model.subscribe(loadExpanded)
-      // Initial expansion is applied in the tree's layout phase.
-      queueMicrotask(loadExpanded)
-      return () => {
-        active = false
-        unsubscribe()
-      }
-    },
-    [model, tree, load]
+  const data = useMemo(() => createFileTreeData(tree.paths, '', false), [tree.paths])
+  const { values: expanded, setValues: setExpanded } = useFileTreeExpansion(
+    data,
+    '',
+    tree.expandedTreePaths
   )
-
+  const initialSelected = resolveFileTreePath(data, tree.selectedTreePath)
+  const [selection, setSelection] = useState<string | null>(initialSelected)
+  const { t } = useTranslation('common')
   return (
-    <div ref={bindTree} className="flex min-h-0 w-full flex-1 flex-col">
-      <FileTree
-        model={model}
+    <Menu
+      open={false}
+      onOpenChange={(open, details) => {
+        if (!open) return
+        details.cancel()
+        const event = details.event
+        const row =
+          event?.target instanceof Element
+            ? event.target.closest<HTMLElement>('[data-item-path]')
+            : null
+        const entry = row?.dataset.itemPath
+          ? getEntryByTreePath(
+              tree.entryByTreePath,
+              row.dataset.itemPath,
+              tree.caseInsensitivePaths
+            )
+          : null
+        if (!row || !entry) return
+        const rect = row.getBoundingClientRect()
+        onPathContextMenu(
+          entry.path,
+          entry.isDirectory,
+          event instanceof MouseEvent
+            ? { left: event.clientX, top: event.clientY }
+            : { left: rect.left, top: rect.top }
+        )
+      }}
+    >
+      <VirtualTree
         data-testid="workspace-file-picker-tree"
-        className="block min-h-0 w-full flex-1"
-        onContextMenu={event => {
-          event.preventDefault()
-          event.stopPropagation()
-          const row = event.nativeEvent
-            .composedPath()
-            .find(node => node instanceof HTMLElement && node.hasAttribute('data-item-path')) as
-            | HTMLElement
-            | undefined
-          if (!row?.dataset.itemPath) return
-          const entry = getEntryByTreePath(
-            tree.entryByTreePath,
-            row.dataset.itemPath,
-            tree.caseInsensitivePaths
-          )
-          if (entry)
-            onPathContextMenu(entry.path, entry.isDirectory, {
-              left: event.clientX,
-              top: event.clientY,
-            })
-        }}
-        onKeyDown={event => {
-          if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
-          event.preventDefault()
-          event.stopPropagation()
-          const focused = model.getFocusedPath()
+        aria-label={directoryPath}
+        items={data.items}
+        value={selection}
+        current={initialSelected}
+        scrollToValue={initialSelected}
+        scrollAlign="center"
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+        viewportClassName="w-full flex-1"
+        onValueChange={path => {
+          setSelection(path)
           const entry =
-            focused && getEntryByTreePath(tree.entryByTreePath, focused, tree.caseInsensitivePaths)
-          if (!entry) return
-          const rect = event.currentTarget.getBoundingClientRect()
-          onPathContextMenu(entry.path, entry.isDirectory, { left: rect.left, top: rect.top })
+            path && getEntryByTreePath(tree.entryByTreePath, path, tree.caseInsensitivePaths)
+          if (entry && !entry.isDirectory) onSelect(entry)
         }}
+        loadChildren={async (path, { signal }) => {
+          const entry = getEntryByTreePath(tree.entryByTreePath, path, tree.caseInsensitivePaths)
+          if (entry) await load(entry.path, false, signal)
+        }}
+        itemProps={() => ({ render: <MenuContextTrigger render={<button type="button" />} /> })}
+        renderLabel={(item, state) => (
+          <>
+            {state.branch ? (
+              state.expanded ? (
+                <FolderOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <Folder className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )
+            ) : (
+              <WorkspaceFileIcon
+                path={item.value}
+                testId={`workspace-file-picker-icon-${item.value}`}
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {state.loading && (
+              <span className="sr-only">{t('workbench.workspace_file_loading')}</span>
+            )}
+          </>
+        )}
       />
-    </div>
+    </Menu>
   )
 }

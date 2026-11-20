@@ -360,12 +360,12 @@ async function verifyConfiguredExecutionEnvironment(
   await verifyExecutionEnvironmentConflict(control, request, projectId, CONTENT)
   await control.command(
     'waitFor',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"]:not([open])`)
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"][aria-expanded="false"]`)
   )
   await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"]`))
   await control.command(
     'waitFor',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"][open]`)
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"][aria-expanded="true"]`)
   )
   await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-add-repository"]`))
   await control.command('fill', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-repository-url-0"]`), {
@@ -387,12 +387,15 @@ async function verifyConfiguredExecutionEnvironment(
       timeoutMs,
     }
   )
-  const initialize = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`)
-  await control.command(
-    'click',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}"]`)
-  )
-  await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  const actions = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}"]`)
+  const menu = `[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}-menu"]`
+  const initialize = `${menu} [role="menuitem"][data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`
+  const initializeEnvironment = async () => {
+    await control.command('scrollIntoView', actions)
+    await control.command('setExpanded', actions, { value: 'true', visible: true, timeoutMs })
+    await control.command('clickWhenEnabled', initialize, { visible: true, timeoutMs })
+  }
+  await initializeEnvironment()
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}`),
     value =>
@@ -428,7 +431,7 @@ async function verifyConfiguredExecutionEnvironment(
       timeoutMs,
     }
   )
-  await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  await initializeEnvironment()
   const readyDevice = await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}`),
     value =>
@@ -474,10 +477,11 @@ async function verifyAutomaticProcessingControls(
   assert.equal(
     await control.command(
       'getAttribute',
-      scoped('[data-testid="automatic-processing-trigger-created"]'),
-      { value: 'checked' }
+      scoped('[data-testid="automatic-processing-trigger-created"][role="radio"]'),
+      { value: 'aria-checked' }
     ),
-    ''
+    'true',
+    'The Issue creation trigger must be selected by default'
   )
   await control.command('click', scoped('[data-testid="automatic-processing-target-kind-human"]'))
   assert.equal(
@@ -968,6 +972,9 @@ export function createDesktopScenario({
         'Manual execution and its reply made unexpected model requests'
       )
       const requestsAfterReply = modelRequests
+      const issueClose = scoped('[data-testid="cloud-todo-detail-close"]')
+      await control.command('clickWhenEnabled', issueClose, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', issueClose, { visible: false, timeoutMs: uiTimeoutMs })
       await verifyConfiguredExecutionEnvironment(
         control,
         request,

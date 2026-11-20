@@ -95,11 +95,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         const modelSelector = `[data-testid="harness-app-model-${workbench.id}"]`
         await control.command('waitFor', modelSelector, {
           enabled: true,
-          text: MODEL_LABEL,
         })
         await control.command('select', modelSelector, {
           by: 'label',
           value: MODEL_LABEL,
+        })
+        await control.command('waitFor', modelSelector, {
+          enabled: true,
+          text: MODEL_LABEL,
         })
         const startSelector = `[data-testid="harness-app-start-${workbench.id}"]`
         await control.command('waitFor', startSelector, { enabled: true })
