@@ -315,8 +315,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         goal_status: Option<String>,
+        goal: Option<&Value>,
     ) {
-        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
+        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref(), goal);
         self.with_goal_status_change(local_task_id, |_| {
             self.update_runtime_task_goal_status(local_task_id, goal_status, true, true);
         });

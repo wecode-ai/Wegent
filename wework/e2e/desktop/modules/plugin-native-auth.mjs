@@ -43,35 +43,31 @@ async function withLogoutConfirmation(control, resultDir, run) {
   assert.ok(main, 'The main renderer must be available for Native logout confirmation')
   const page = (method, params) => client({ action: 'command', target: main.id, method, params })
   const confirm = async beforeAccept => {
-    const { latest: after } = await client({ action: 'events', target: main.id })
-    const accept = async () => {
-      const opening = await until(
-        async () =>
-          (await client({ action: 'events', target: main.id, after })).events.find(
-            event => event.method === 'Page.javascriptDialogOpening'
-          ),
-        Boolean,
-        'The Native logout button did not open its confirmation',
-        logoutStepMs
-      )
-      const expected =
-        opening.params.type === 'confirm' && /^确定退出「.+」登录？/.test(opening.params.message)
-      let prepared = false
-      try {
-        if (expected) await beforeAccept?.()
-        prepared = expected
-      } finally {
-        await page('Page.handleJavaScriptDialog', { accept: prepared })
-      }
-      assert.ok(expected, 'The unexpected native dialog was canceled')
+    const dialog = '[data-testid="confirmation-request-dialog"][role="alertdialog"]'
+    await control.command('clickWhenEnabled', sourceAction, { timeoutMs: logoutStepMs })
+    try {
+      const message = await control.command('waitFor', dialog, {
+        text: '登录？',
+        visible: true,
+        timeoutMs: logoutStepMs,
+      })
+      assert.match(message, /确定退出「.+」登录？/, 'Native logout must ask for confirmation')
+      await beforeAccept?.()
+    } catch (error) {
+      await control
+        .command('click', `${dialog} [data-testid="confirmation-request-cancel"]`)
+        .catch(() => {})
+      throw error
     }
-    await Promise.all([
-      accept(),
-      control.command('clickWhenEnabled', sourceAction, { timeoutMs: logoutStepMs }),
-    ])
+    await control.command(
+      'clickWhenEnabled',
+      `${dialog} [data-testid="confirmation-request-confirm"]`,
+      {
+        timeoutMs: logoutStepMs,
+      }
+    )
   }
   try {
-    await page('Page.enable')
     await run(confirm, page)
   } finally {
     await client({ action: 'detach', target: main.id })

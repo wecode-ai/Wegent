@@ -1,4 +1,6 @@
 import { parseGitAccessFailure, type GitAccessFailure } from "./git-access";
+import type { ChatErrorInfo } from "./api-types";
+export type { ChatErrorInfo } from "./api-types";
 
 export type ChatErrorType =
   | "context_length_exceeded"
@@ -10,6 +12,7 @@ export type ChatErrorType =
   | "timeout_error"
   | "server_overloaded"
   | "llm_error"
+  | "model_unavailable"
   | "llm_unsupported"
   | "invalid_parameter"
   | "forbidden"
@@ -21,10 +24,41 @@ export type ChatErrorType =
   | "model_protocol_error"
   | "invalid_role"
   | "permission_denied"
+  | "authentication_expired"
+  | "skills_unmanaged_entries"
+  | "skill_deploy_failed"
+  | "executor_start_failed"
+  | "workspace_unavailable"
+  | "tool_execution_failed"
+  | "connector_unavailable"
+  | "plugin_load_failed"
+  | "stream_protocol_error"
+  | "internal_error"
+  | "storage_error"
+  | "dispatch_error"
   | "generic_error";
+
+export type ChatErrorCategory =
+  | "model"
+  | "input"
+  | "access"
+  | "policy"
+  | "runtime"
+  | "tool"
+  | "transport"
+  | "platform"
+  | "unknown";
+
+export type ChatRetryPolicy =
+  | "after_backoff"
+  | "after_change"
+  | "none"
+  | "unknown";
 
 export interface ParsedChatError {
   type: ChatErrorType;
+  category: ChatErrorCategory;
+  retryPolicy: ChatRetryPolicy;
   titleKey: string;
   descriptionKey: string;
   timeoutSeconds?: number;
@@ -35,8 +69,8 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   context_length_exceeded: "context_length_exceeded",
   quota_exceeded: "quota_exceeded",
   rate_limit: "rate_limit",
-  llm_error: "llm_error",
-  model_unavailable: "llm_error",
+  llm_error: "model_unavailable",
+  model_unavailable: "model_unavailable",
   container_oom: "container_oom",
   container_error: "container_error",
   model_service_connection_error: "model_service_connection_error",
@@ -51,6 +85,7 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   llm_unsupported: "llm_unsupported",
   forbidden: "forbidden",
   payload_too_large: "payload_too_large",
+  device_callback_too_large: "payload_too_large",
   invalid_parameter: "invalid_parameter",
   content_filter: "content_filter",
   provider_error: "provider_error",
@@ -58,10 +93,78 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   model_protocol_error: "model_protocol_error",
   invalid_role: "invalid_role",
   permission_denied: "permission_denied",
+  authentication_expired: "authentication_expired",
+  skills_unmanaged_entries: "skills_unmanaged_entries",
+  skill_deploy_failed: "skill_deploy_failed",
+  executor_start_failed: "executor_start_failed",
+  workspace_unavailable: "workspace_unavailable",
+  tool_execution_failed: "tool_execution_failed",
+  connector_unavailable: "connector_unavailable",
+  plugin_load_failed: "plugin_load_failed",
+  stream_protocol_error: "stream_protocol_error",
+  internal_error: "internal_error",
+  storage_error: "storage_error",
+  dispatch_error: "dispatch_error",
   generic_error: "generic_error",
 };
 
+const ERROR_METADATA: Record<
+  ChatErrorType,
+  { category: ChatErrorCategory; retryPolicy: ChatRetryPolicy }
+> = {
+  context_length_exceeded: { category: "input", retryPolicy: "after_change" },
+  quota_exceeded: { category: "model", retryPolicy: "after_change" },
+  rate_limit: { category: "model", retryPolicy: "after_backoff" },
+  payload_too_large: { category: "input", retryPolicy: "after_change" },
+  model_service_connection_error: {
+    category: "transport",
+    retryPolicy: "after_backoff",
+  },
+  network_error: { category: "transport", retryPolicy: "after_backoff" },
+  timeout_error: { category: "transport", retryPolicy: "after_backoff" },
+  server_overloaded: { category: "model", retryPolicy: "after_backoff" },
+  llm_error: { category: "model", retryPolicy: "after_backoff" },
+  model_unavailable: { category: "model", retryPolicy: "after_backoff" },
+  llm_unsupported: { category: "input", retryPolicy: "after_change" },
+  invalid_parameter: { category: "input", retryPolicy: "after_change" },
+  forbidden: { category: "access", retryPolicy: "after_change" },
+  container_oom: { category: "runtime", retryPolicy: "after_change" },
+  container_error: { category: "runtime", retryPolicy: "after_change" },
+  content_filter: { category: "policy", retryPolicy: "after_change" },
+  provider_error: { category: "model", retryPolicy: "after_backoff" },
+  image_too_large: { category: "input", retryPolicy: "after_change" },
+  model_protocol_error: { category: "input", retryPolicy: "after_change" },
+  invalid_role: { category: "input", retryPolicy: "after_change" },
+  permission_denied: { category: "access", retryPolicy: "after_change" },
+  authentication_expired: { category: "access", retryPolicy: "after_change" },
+  skills_unmanaged_entries: {
+    category: "runtime",
+    retryPolicy: "after_change",
+  },
+  skill_deploy_failed: { category: "runtime", retryPolicy: "after_change" },
+  executor_start_failed: { category: "runtime", retryPolicy: "unknown" },
+  workspace_unavailable: { category: "runtime", retryPolicy: "after_change" },
+  tool_execution_failed: { category: "tool", retryPolicy: "unknown" },
+  connector_unavailable: { category: "tool", retryPolicy: "after_backoff" },
+  plugin_load_failed: { category: "tool", retryPolicy: "after_change" },
+  stream_protocol_error: {
+    category: "transport",
+    retryPolicy: "after_backoff",
+  },
+  internal_error: { category: "platform", retryPolicy: "after_backoff" },
+  storage_error: { category: "platform", retryPolicy: "after_backoff" },
+  dispatch_error: { category: "platform", retryPolicy: "after_backoff" },
+  generic_error: { category: "unknown", retryPolicy: "unknown" },
+};
+
 const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
+  [
+    "skills_unmanaged_entries",
+    [
+      "agent skills directory contains unmanaged entries",
+      "skills_unmanaged_entries",
+    ],
+  ],
   [
     "context_length_exceeded",
     [
@@ -110,24 +213,6 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
     ],
   ],
   [
-    "container_oom",
-    ["out of memory", /\boom\b/, "oom killed", "memory allocation"],
-  ],
-  [
-    "container_error",
-    [
-      "container",
-      "executor",
-      "docker",
-      "disappeared unexpectedly",
-      "no ports mapped",
-      "crashed unexpectedly",
-      "exit code",
-      "device disconnected",
-      "not logged in",
-    ],
-  ],
-  [
     "quota_exceeded",
     [
       "quota exceeded",
@@ -153,10 +238,49 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
     ],
   ],
   [
+    "authentication_expired",
+    [
+      "authentication_expired",
+      "authentication expired",
+      "credentials expired",
+      "not logged in",
+    ],
+  ],
+  [
     "permission_denied",
     ["permission_denied", "permission denied", "permission_error"],
   ],
   ["forbidden", ["forbidden", "not allowed", "unauthorized", "403"]],
+  // Specific causes remain informative inside provider or executor wrappers.
+  [
+    "container_oom",
+    ["out of memory", /\boom\b/, "oom killed", "memory allocation"],
+  ],
+  ["timeout_error", ["timeout", "timed out", "504 gateway", "超时"]],
+  [
+    "connector_unavailable",
+    [
+      "connector_unavailable",
+      "connector unavailable",
+      "connector not connected",
+    ],
+  ],
+  [
+    "network_error",
+    [
+      "network",
+      "fetch",
+      "error sending request",
+      "failed to send request",
+      "connection refused",
+      "connection reset",
+      "connection error",
+      "not connected",
+      "websocket",
+      "peer closed connection",
+      "upstream connection interrupted",
+    ],
+  ],
   [
     "provider_error",
     [
@@ -177,7 +301,7 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
     ],
   ],
   [
-    "llm_error",
+    "model_unavailable",
     [
       "model not found",
       "model unavailable",
@@ -192,41 +316,119 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ["invalid_parameter", ["invalid parameter", "invalid_parameter"]],
   ["payload_too_large", ["413", "payload too large"]],
   [
-    "network_error",
+    "skill_deploy_failed",
     [
-      "network",
-      "fetch",
-      "error sending request",
-      "failed to send request",
-      "connection refused",
-      "connection reset",
-      "connection error",
-      "not connected",
-      "websocket",
-      "peer closed connection",
-      "upstream connection interrupted",
+      "skill_deploy_failed",
+      "skill deployment failed",
+      "failed to deploy skill",
     ],
   ],
-  ["timeout_error", ["timeout", "timed out", "504 gateway", "超时"]],
+  [
+    "executor_start_failed",
+    [
+      "executor_start_failed",
+      "executor start failed",
+      "failed to start executor",
+    ],
+  ],
+  [
+    "workspace_unavailable",
+    ["workspace_unavailable", "workspace unavailable", "workspace not found"],
+  ],
+  ["tool_execution_failed", ["tool_execution_failed", "tool execution failed"]],
+  [
+    "plugin_load_failed",
+    ["plugin_load_failed", "plugin load failed", "failed to load plugin"],
+  ],
+  ["stream_protocol_error", ["stream_protocol_error", "stream protocol error"]],
+  ["internal_error", ["internal_error", "internal server error"]],
+  ["storage_error", ["storage_error", "storage error"]],
+  ["dispatch_error", ["dispatch_error", "dispatch failed"]],
+  [
+    "container_error",
+    [
+      "container",
+      "executor",
+      "docker",
+      "disappeared unexpectedly",
+      "no ports mapped",
+      "crashed unexpectedly",
+      "exit code",
+      "device disconnected",
+    ],
+  ],
 ];
 
 export function parseChatError(
   error: string,
   backendType?: string | null,
+  errorInfo?: ChatErrorInfo,
 ): ParsedChatError {
   const gitFailure = parseGitAccessFailure(error);
   if (gitFailure) {
     return {
       type: "generic_error",
+      category: "access",
+      retryPolicy: "after_change",
       titleKey: "assistant_error.git_access.title",
       descriptionKey: `assistant_error.git_access.${gitFailure.code}`,
       gitFailure,
     };
   }
+  const metadataType = normalizeSpecificBackendType(errorInfo?.code);
+  const backendTypeValue = normalizeSpecificBackendType(backendType);
+  const explicitType = metadataType ?? backendTypeValue;
+  if (explicitType) {
+    const retryPolicy =
+      metadataType !== undefined ? errorInfo?.retry_policy : undefined;
+    return buildParsedChatError(explicitType, error, retryPolicy);
+  }
+
+  const structuredCode = extractStructuredErrorType(error);
+  const structuredType = normalizeSpecificBackendType(structuredCode);
+  if (structuredType) {
+    return buildParsedChatError(structuredType, error);
+  }
+
+  const messageType = classifyByMessage(error);
+  const hasLegacyWrapper =
+    isLegacyLLMError(errorInfo?.code) ||
+    isLegacyLLMError(backendType) ||
+    isLegacyLLMError(structuredCode);
   const type =
-    normalizeBackendType(backendType) ??
-    normalizeBackendType(extractStructuredErrorType(error)) ??
-    classifyByMessage(error);
+    messageType !== "generic_error"
+      ? messageType
+      : hasLegacyWrapper
+        ? "model_unavailable"
+        : "generic_error";
+  return buildParsedChatError(
+    type,
+    error,
+    errorInfo?.code == null ? errorInfo?.retry_policy : undefined,
+  );
+}
+
+function normalizeSpecificBackendType(
+  type?: string | null,
+): ChatErrorType | undefined {
+  const normalizedType = normalizeBackendType(type);
+  return normalizedType &&
+    normalizedType !== "generic_error" &&
+    !isLegacyLLMError(type)
+    ? normalizedType
+    : undefined;
+}
+
+function isLegacyLLMError(type?: string | null): boolean {
+  return type?.trim().toLowerCase() === "llm_error";
+}
+
+function buildParsedChatError(
+  type: ChatErrorType,
+  error: string,
+  retryPolicy?: ChatErrorInfo["retry_policy"],
+): ParsedChatError {
+  const metadata = ERROR_METADATA[type];
   const timeoutSeconds =
     type === "timeout_error"
       ? Number(
@@ -238,17 +440,31 @@ export function parseChatError(
 
   return {
     type,
+    category: metadata.category,
+    retryPolicy: isRetryPolicy(retryPolicy)
+      ? retryPolicy
+      : metadata.retryPolicy,
     titleKey: `assistant_error.types.${type}.title`,
     descriptionKey: `assistant_error.types.${type}.${timeoutSeconds ? "description_with_seconds" : "description"}`,
     timeoutSeconds,
   };
 }
 
+function isRetryPolicy(policy: unknown): policy is ChatRetryPolicy {
+  return ["after_backoff", "after_change", "none", "unknown"].includes(
+    policy as string,
+  );
+}
+
 function normalizeBackendType(type?: string | null): ChatErrorType | undefined {
   if (!type) return undefined;
-  return (
-    BACKEND_TYPE_MAP[type.trim()] ?? BACKEND_TYPE_MAP[type.trim().toLowerCase()]
-  );
+  const normalized = type.trim();
+  const key = Object.prototype.hasOwnProperty.call(BACKEND_TYPE_MAP, normalized)
+    ? normalized
+    : normalized.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(BACKEND_TYPE_MAP, key)
+    ? BACKEND_TYPE_MAP[key]
+    : undefined;
 }
 
 function classifyByMessage(message: string): ChatErrorType {

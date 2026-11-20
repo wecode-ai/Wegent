@@ -1689,43 +1689,6 @@ async function createLocalRuntimeSendPayload(
           )
         ).payload.executionRequest
       : null
-  if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
-    const payload = { ...normalizedData } as Record<string, unknown>
-    delete payload.modelId
-    delete payload.modelType
-    return {
-      ...payload,
-      taskId,
-      address: normalizedAddress,
-      ...(collaborationMode ? { collaborationMode } : {}),
-      executionRequest: await buildLocalRuntimeExecutionRequest({
-        taskId,
-        runtime,
-        title: taskId,
-        message: normalizedData.message,
-        turnSeed,
-        modelId: normalizedData.modelId,
-        modelType: normalizedData.modelType,
-        modelOptions: normalizedData.modelOptions,
-        cloudModelGateway,
-        resolveProxy,
-        attachments: normalizedData.attachments,
-        additionalContext: normalizedData.additionalContext,
-        cloudProjectId: normalizedData.cloudProjectId,
-        origin: normalizedData.origin,
-        localDeviceId,
-        executionDeviceId,
-        workspacePath,
-        workspaceSource: 'local_path',
-        newSession: false,
-        clientUserMessageId: normalizedData.clientUserMessageId,
-        ephemeral: data.ephemeral,
-        requireLocalCodexCatalog,
-        user,
-      }),
-    } as unknown as Record<string, unknown>
-  }
-
   const payload = { ...normalizedData } as Record<string, unknown>
   delete payload.modelId
   delete payload.modelType
@@ -2504,6 +2467,22 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const inputResponse = data.requestUserInputResponse ?? data.request_user_input_response
+      if (inputResponse) {
+        // A reply resolves an existing turn and uses that turn's execution context.
+        const { taskId } = data.address
+        if (!taskId?.trim()) throw new Error('Runtime task address missing taskId')
+        return request(
+          'runtime.tasks.send',
+          {
+            taskId,
+            address: { ...data.address, deviceId: localDeviceId, taskId },
+            message: data.message,
+            requestUserInputResponse: inputResponse,
+          },
+          localDeviceId
+        )
+      }
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }

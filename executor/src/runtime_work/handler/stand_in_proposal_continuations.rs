@@ -152,7 +152,12 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn bind_stand_in_owner_command(&self, payload: &mut Value, activity: bool) {
-        if activity || payload.get("commandId").is_some() {
+        // Native replies resolve the live turn through its input channel.
+        if activity
+            || payload.get("commandId").is_some()
+            || request_user_input_response(payload)
+                .is_some_and(|reply| reply["delivery"] != "async")
+        {
             return;
         }
         let Some(task) = runtime_task_id(payload) else {

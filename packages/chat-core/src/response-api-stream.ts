@@ -397,7 +397,15 @@ export function emitResponseApiEvent(
       task: data.task as RuntimeTurnUpdatedPayload["task"],
       error: errorMessage(payload, data),
       type:
-        stringField(data, "type") ?? stringField(payload, "type") ?? eventName,
+        stringField(asRecord(data.error), "code") ??
+        stringField(asRecord(payload.error), "code") ??
+        stringField(data, "code") ??
+        stringField(data, "type") ??
+        stringField(payload, "type") ??
+        eventName,
+      errorInfo: (data.error_info ?? payload.error_info) as
+        | import("./api-types").ChatErrorInfo
+        | undefined,
       shellType:
         stringField(payload, "runtime") ?? stringField(data, "runtime"),
       startedAt:

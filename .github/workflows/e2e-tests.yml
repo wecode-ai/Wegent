@@ -978,6 +978,7 @@ jobs:
           ATTACHMENT_S3_USE_SSL: "false"
           DELIVERY_S3_BUCKET: wegent-deliveries
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+          WEGENT_RS_ROUTES_FILE: ${{ github.workspace }}/.github/ci/backend-e2e-routes.toml
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           RUST_LOG: info,brz_http_gateway::proxy=debug,brz_http_server::hyper::runtime=debug
         run: |

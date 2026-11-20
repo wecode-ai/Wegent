@@ -317,12 +317,6 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       if (!isActive()) return Promise.resolve(undefined)
       return bind().commands.sendQueuedMessage(...args)
     },
-    loadFullTranscriptForExport: (
-      ...args: Parameters<PaneCommands['loadFullTranscriptForExport']>
-    ) => {
-      if (!isActive()) return Promise.resolve([])
-      return bind().commands.loadFullTranscriptForExport(...args)
-    },
     sendQueuedMessageAsGuidance: (
       ...args: Parameters<PaneCommands['sendQueuedMessageAsGuidance']>
     ) => {
