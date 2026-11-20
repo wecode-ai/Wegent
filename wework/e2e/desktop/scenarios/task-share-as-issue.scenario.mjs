@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
+import { verifyIssueCreationColumns } from '../modules/independent-issue-draft.mjs'
 import {
   assistantMessage,
   createSse,
@@ -8,14 +10,23 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
+  requestContainsToolOutput,
+  selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
 
 const prompt = 'Investigate a model error for conversation sharing'
+const generatedFilename = 'model-error.txt'
+const generatedContent = 'Empty payload reproduction'
 const reply = 'The model error occurs when the response payload is empty.'
 const activePane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const selector = id => `[data-testid="${id}"]`
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   let cloud, colleague, colleagueToken, outsiderToken, project, restrictedProject
   async function request(
     path,
@@ -58,12 +69,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
     control.command('clickWhenEnabled', target, { timeoutMs: uiTimeoutMs })
 
   async function inviteColleague(control) {
-    await click(control, selector('issue-participant-add'))
     await control.command('fill', selector('independent-issue-search-people'), {
       value: colleague.user_name,
     })
     await click(control, selector(`independent-issue-invite-${colleague.id}`))
-    await click(control, selector('issue-participant-done'))
   }
 
   async function selectProject(control, target) {
@@ -125,7 +134,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       if (!JSON.stringify(body).includes(prompt)) return false
       const id = 'task-share-response'
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.end(createSse([responseCreated(id), assistantMessage(reply), responseCompleted(id)]))
+      const events = requestContainsToolOutput(body)
+        ? [assistantMessage(`${reply}\n\n[${generatedFilename}](./${generatedFilename})`)]
+        : selectedToolCall(
+            'share-generate-file',
+            selectShellToolCommand(
+              body,
+              "node -e \"const fs=require('node:fs');const path=require('node:path');fs.writeFileSync(path.join(process.env.WEGENT_TASK_WORKSPACE || process.cwd(),'model-error.txt'),'Empty payload reproduction')\"",
+              workspacePath
+            )
+          )
+      response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
     },
     async verify(control) {
@@ -156,9 +175,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await wait(control, dialog, { visible: true })
       const title = selector('independent-issue-title')
       assert.match(await control.command('getValue', title), /model error/i)
-      await wait(control, `${save}:disabled`)
-      await wait(control, selector('task-issue-share-missing-recipient'), { visible: true })
+      await wait(control, `${save}:not(:disabled)`)
+      await wait(control, selector('independent-issue-search-people'), { visible: true })
+      await wait(control, selector('independent-issue-options'), { visible: true })
+      await wait(control, 'details:not([open]) > [data-testid="independent-issue-options"]')
+      await verifyIssueCreationColumns(control)
       await captureScreenshot(control, '02-task-share-dialog.png')
+      await click(control, selector('independent-issue-options'))
+      await wait(control, 'details[open] > [data-testid="independent-issue-options"]')
+      await click(control, selector('independent-issue-options'))
+      await wait(control, 'details:not([open]) > [data-testid="independent-issue-options"]')
+      await control.command('fill', title, { value: 'Private model error notes' })
+      await click(control, save)
+      await wait(control, selector('independent-issue-edit'), { visible: true })
+      const privateIssue = (await request('/v1/personal-issues?scope=created')).items.find(
+        row => row.title === 'Private model error notes'
+      )
+      assert.ok(privateIssue)
+      assert.deepEqual(privateIssue.metadata.participants, [])
+      await request(`/v1/personal-issues/${privateIssue.id}`, {
+        token: colleagueToken,
+        status: 404,
+      })
+      await captureScreenshot(control, '02a-task-share-private-result.png')
+      await click(control, selector('independent-issue-close'))
+      await click(control, share)
+      await wait(control, dialog, { visible: true })
       await inviteColleague(control)
       await control.command('fill', title, { value: 'Model error follow-up' })
       await control.command('fill', description, {
@@ -174,7 +216,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await wait(control, `${excerpt}:checked`)
       await selectAttachment(control, 'draft.txt', 'Do not share this draft')
       await click(control, selector('task-issue-share-remove-file-0'))
-      await selectAttachment(control, 'model-error.txt', 'Empty payload reproduction')
+      await wait(control, selector('task-issue-share-conversation-files'), {
+        text: generatedFilename,
+      })
+      await click(control, selector('task-issue-share-conversation-file-0'))
       await captureScreenshot(control, '03-task-share-selected-content.png')
       await click(control, save)
       await wait(control, selector('independent-issue-edit'), { visible: true })
@@ -195,11 +240,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       const files = issue.metadata.share.files
       assert.deepEqual(
         files.map(file => file.filename),
-        ['model-error.txt']
+        [generatedFilename]
       )
       assert.ok(!Object.hasOwn(files[0], 'object_key'))
       const attachment = `/v1/personal-issues/${issue.id}/attachments/${files[0].id}`
-      await assertAttachment(attachment, colleagueToken, 200, 'Empty payload reproduction')
+      await assertAttachment(attachment, colleagueToken, 200, generatedContent)
       await assertAttachment(attachment, outsiderToken, 404)
       const sourcePath = `/v1/personal-issues/${issue.id}/source`
       const source = await request(sourcePath)
@@ -236,7 +281,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         },
       })
       await assertAttachment(attachment, colleagueToken, 404)
-      await assertAttachment(attachment, cloud.authToken, 200, 'Empty payload reproduction')
+      await assertAttachment(attachment, cloud.authToken, 200, generatedContent)
 
       // Sharing to a project uses its normal creation and visibility rules.
       await click(control, share)
@@ -246,7 +291,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await control.command('fill', description, { value: 'Review this with the project team.' })
       await selectProject(control, project)
       await wait(control, selector('issue-project-scope'), { visible: true })
-      await wait(control, selector('issue-participant-add'), { visible: true })
+      await wait(control, selector('independent-issue-search-people'), { visible: true })
       await selectAttachment(control, 'project-notes.txt', 'Project reproduction')
       await captureScreenshot(control, '05-task-share-project-audience.png')
       await click(control, save)

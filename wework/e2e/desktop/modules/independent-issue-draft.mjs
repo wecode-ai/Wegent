@@ -3,6 +3,16 @@ import { waitForAttribute } from './workspace-flows.mjs'
 
 const testId = id => `[data-testid="${id}"]`
 
+export async function verifyIssueCreationColumns(control) {
+  const metric = async id => JSON.parse(await control.command('getElementMetrics', testId(id)))[0]
+  const people = await metric('independent-issue-search-people')
+  const title = await metric('independent-issue-title')
+  assert.ok(
+    people.right < title.left && title.top < people.bottom,
+    'A wide creation dialog must show participants beside the issue content'
+  )
+}
+
 async function setIssueTestLanguage(control, language) {
   await control.command('clickWhenEnabled', testId('settings-button'))
   await control.command('clickWhenEnabled', testId('settings-menu-button'))
@@ -39,6 +49,9 @@ export async function verifyEnglishLinkedIssueLayout(
     const metric = async selector =>
       JSON.parse(await control.command('getElementMetrics', selector))[0]
     const scroll = await metric(testId('independent-issue-editor-scroll'))
+    const people = await metric(testId('independent-issue-search-people'))
+    const title = await metric(testId('independent-issue-title'))
+    assert.ok(people.bottom <= title.top, 'A narrow creation dialog must stack both columns')
     assert.equal(
       await control.command('getText', testId('issue-project-selected-name')),
       project.name
@@ -302,7 +315,9 @@ export async function verifyIndependentIssueDraft(
       initial.top >= 0 && initial.bottom <= initial.viewportHeight,
       'Actions must remain inside a short viewport'
     )
-    await control.command('clickWhenEnabled', testId('issue-participant-add'))
+    await control.command('fill', testId('independent-issue-search-people'), {
+      value: 'draft search',
+    })
     await control.command('waitFor', testId('independent-issue-search-people'), { visible: true })
     const expanded = await metrics('independent-issue-editor-actions')
     assert.ok(
@@ -321,9 +336,6 @@ export async function verifyIndependentIssueDraft(
     await control.command('nativePress', testId('independent-issue-search-people'), {
       key: 'Escape',
     })
-    await control.command('waitFor', testId('issue-participant-picker'), { visible: false })
-    assert.equal(await control.command('getValue', testId('independent-issue-title')), title)
-    await control.command('nativePress', testId('independent-issue-title'), { key: 'Escape' })
     await control.command('waitFor', testId('independent-issue-discard-dialog'), { visible: true })
     await control.command(
       'clickWhenEnabled',

@@ -519,7 +519,15 @@ export function DesktopWorkbenchConversationView({
                                                 key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
                                                 title={workbenchTitle ?? ''}
                                                 messages={paneMessages}
-                                                address={currentRuntimeTask}
+                                                address={{
+                                                  ...currentRuntimeTask,
+                                                  workspacePath:
+                                                    currentRuntimeTask.workspacePath ||
+                                                    runtimeTaskWorkspacePath,
+                                                }}
+                                                readWorkspaceFileChunk={
+                                                  workspaceFileApi.readWorkspaceFileChunk
+                                                }
                                               />
                                             )}
                                         </div>

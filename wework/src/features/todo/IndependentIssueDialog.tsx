@@ -94,7 +94,9 @@ function IndependentIssueDialogContent({
   const ref = useDialogKeyboard<HTMLDivElement>(
     requestClose,
     presentation === 'dialog',
-    '[data-testid="independent-issue-title"]'
+    editing && !issue
+      ? '[data-testid="independent-issue-search-people"]'
+      : '[data-testid="independent-issue-title"]'
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   const name = (id: number | null) =>
@@ -123,7 +125,7 @@ function IndependentIssueDialogContent({
           aria-labelledby="independent-issue-dialog-title"
           inert={deleting}
           data-testid="independent-issue-dialog"
-          className={`flex w-full max-w-[680px] flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-[20px]'}`}
+          className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]'}`}
         >
           <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3">
             <div className="min-w-0">
@@ -135,7 +137,7 @@ function IndependentIssueDialogContent({
               </h2>
               {(issueId || (shareDraft && issue)) && (
                 <p className="mt-1 text-sm text-text-secondary">
-                  {t(shareDraft ? 'taskIssueShare.shared' : 'independentIssues.noProject')}
+                  {t('independentIssues.noProject')}
                 </p>
               )}
             </div>
@@ -215,7 +217,6 @@ function IndependentIssueDialogContent({
               <p role="status">{t('independentIssues.loading')}</p>
             ) : editing ? (
               <IndependentIssueEditor
-                autoFocus={presentation === 'drawer' || Boolean(issue)}
                 api={api}
                 collaborationApi={collaborationApi}
                 allowProjectSelection={!issueId && !(shareDraft && issue)}
@@ -224,16 +225,29 @@ function IndependentIssueDialogContent({
                 userId={userId}
                 busy={busy}
                 onDirtyChange={setDirty}
-                onSave={(input, shareFiles) =>
+                onSave={(input, shareFiles, fileIds) =>
                   state.save(
                     input,
                     !issue && shareDraft
-                      ? (body, projectId, projectStatus) =>
+                      ? async (body, projectId, projectStatus) =>
                           api.createShared(
                             shareDraft.requestId,
                             shareDraft.source,
                             body,
-                            shareFiles,
+                            [
+                              ...shareFiles,
+                              ...(await Promise.all(
+                                shareDraft.conversationFiles
+                                  .filter(file => fileIds.includes(file.id))
+                                  .map(file =>
+                                    file.load().catch(() => {
+                                      throw new Error(
+                                        t('taskIssueShare.fileUnavailable', { name: file.name })
+                                      )
+                                    })
+                                  )
+                              )),
+                            ],
                             projectId,
                             projectStatus
                           )

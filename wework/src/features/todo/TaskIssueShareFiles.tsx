@@ -1,14 +1,21 @@
 import { Paperclip, X } from 'lucide-react'
+import type { TaskIssueConversationFile } from './taskIssueConversationFiles'
 import { useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function TaskIssueShareFiles({
   sourceTitle,
   files,
+  conversationFiles,
+  selectedConversationFileIds,
+  onSelectConversationFiles,
   onChange,
 }: {
   sourceTitle: string
   files: File[]
+  conversationFiles: TaskIssueConversationFile[]
+  selectedConversationFileIds: string[]
+  onSelectConversationFiles(ids: string[]): void
   onChange(files: File[]): void
 }) {
   const { t } = useTranslation('common')
@@ -27,7 +34,7 @@ export function TaskIssueShareFiles({
           className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm hover:bg-muted md:min-h-8"
         >
           <Paperclip className="h-4 w-4" aria-hidden="true" />
-          {t('taskIssueShare.addFiles')}
+          {t('taskIssueShare.uploadFiles')}
         </button>
         <input
           ref={input}
@@ -56,6 +63,38 @@ export function TaskIssueShareFiles({
       <p className="break-words text-sm text-text-secondary">
         {t('taskIssueShare.linkedConversation', { title: sourceTitle })}
       </p>
+      {conversationFiles.length > 0 && (
+        <ul
+          data-testid="task-issue-share-conversation-files"
+          className="max-h-44 overflow-y-auto rounded-md border border-border"
+        >
+          {conversationFiles.map((file, index) => {
+            const checked = selectedConversationFileIds.includes(file.id)
+            return (
+              <li key={file.id} className="border-b border-border last:border-b-0">
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 px-2 text-sm hover:bg-muted md:min-h-8">
+                  <input
+                    type="checkbox"
+                    data-testid={`task-issue-share-conversation-file-${index}`}
+                    checked={checked}
+                    onChange={() =>
+                      onSelectConversationFiles(
+                        checked
+                          ? selectedConversationFileIds.filter(id => id !== file.id)
+                          : [...selectedConversationFileIds, file.id]
+                      )
+                    }
+                    className="shrink-0 accent-text-primary"
+                  />
+                  <span className="min-w-0 truncate" title={file.name}>
+                    {file.name}
+                  </span>
+                </label>
+              </li>
+            )
+          })}
+        </ul>
+      )}
       {files.length > 0 && (
         <ul className="grid gap-1" data-testid="task-issue-share-files">
           {files.map((file, index) => (

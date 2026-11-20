@@ -2,6 +2,7 @@ import { verifyLocalProjectMigration } from '../modules/local-project-migration.
 import {
   verifyIndependentIssueDraft,
   verifyIssueConflictRecovery,
+  verifyIssueCreationColumns,
   verifyIssueDeviceLayout,
   verifyIssueAssociationRecovery,
   chooseIssueProperty,
@@ -168,6 +169,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await navigate(control, 'collaboration-primary-create-issue')
       await wait(control, '[data-testid="independent-issue-dialog"]')
+      await verifyIssueCreationColumns(control)
+      await captureScreenshot(control, 'new-issue-shared-layout.png')
       await click(control, 'independent-issue-close')
       await verifyIssueAssociationRecovery(control, {
         request,
@@ -187,6 +190,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('fill', '[data-testid="independent-issue-description"]', {
         value: 'Discuss a company-wide improvement without creating a project.',
       })
+      await wait(control, '[data-testid="independent-issue-search-people"]', { visible: true })
+      await wait(control, 'details:not([open]) > [data-testid="independent-issue-options"]')
       // User story: runtime setup is available without blocking a draft or starting work.
       await click(control, 'independent-issue-execution-settings')
       await control.command('waitFor', '[data-testid="settings-default-runner"]', { visible: true })
@@ -211,7 +216,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         404
       )
       await click(control, 'independent-issue-edit')
-      await click(control, 'issue-participant-add')
       await control.command('fill', '[data-testid="independent-issue-search-people"]', {
         value: `  ${participant.user_name}  `,
       })
@@ -221,7 +225,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
       await click(control, `independent-issue-invite-${participant.id}`)
-      await click(control, 'issue-participant-done')
+      await click(control, 'independent-issue-options')
       await chooseIssueProperty(
         control,
         'independent-issue-assignee',
@@ -383,14 +387,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('fill', '[data-testid="independent-issue-title"]', {
         value: typedTitle,
       })
-      await click(control, 'issue-participant-add')
       await click(control, 'issue-participant-tab-agent')
       await wait(control, `[data-testid="issue-participant-invite-agent:${agent.id}"]`)
       await click(control, `issue-participant-invite-agent:${agent.id}`)
       await click(control, 'issue-participant-tab-group')
       await wait(control, `[data-testid="issue-participant-invite-group:${group.id}"]`)
       await click(control, `issue-participant-invite-group:${group.id}`)
-      await click(control, 'issue-participant-done')
+      await click(control, 'independent-issue-options')
       await chooseIssueProperty(
         control,
         'independent-issue-assignee',

@@ -1,7 +1,7 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { usePanelData } from '@wegent/collaboration/platform'
 import type { SharedIssueSource, SharedIssueTarget } from '@/api/personalIssues'
-import { Link2, RotateCw, Share2 } from 'lucide-react'
+import { Link2, Share2 } from 'lucide-react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import {
   getAssistantRenderProjection,
@@ -14,12 +14,19 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { openWeworkScheme } from '@/features/notifications/schemeEvents'
 import { weworkIssueScheme, weworkPersonalIssueScheme } from '@/features/notifications/scheme'
 import { IndependentIssueDialog } from './IndependentIssueDialog'
+import { useAttachmentDownload } from '@/components/chat/AttachmentDownloadContext'
+import type { ReadWorkspaceFileChunk } from '@/lib/workspace-file-bytes'
+import {
+  taskIssueConversationFiles,
+  type TaskIssueConversationFile,
+} from './taskIssueConversationFiles'
 import { useCloudIssueApis } from './useCloudIssueApis'
 
 export type TaskIssueShareDraft = {
   title: string
   requestId: string
   source: SharedIssueSource
+  conversationFiles: TaskIssueConversationFile[]
   excerpts: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>[]
 }
 
@@ -35,17 +42,21 @@ export function TaskIssueShare({
   title,
   messages,
   address,
+  readWorkspaceFileChunk,
 }: {
   title: string
   messages: WorkbenchMessage[]
-  address: { deviceId: string; taskId: string }
+  address: { deviceId: string; taskId: string; workspacePath?: string | null }
+  readWorkspaceFileChunk?: ReadWorkspaceFileChunk
 }) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
+  const fetchAttachment = useAttachmentDownload()
   const apis = useCloudIssueApis(cloud)
   const [draft, setDraft] = useState<TaskIssueShareDraft | null>(null)
   const [projectIssue, setProjectIssue] = useState<SharedIssueTarget | null>(null)
   const [linksOpen, setLinksOpen] = useState(false)
+  const linksTrigger = useRef<HTMLButtonElement>(null)
   const personal = apis?.personal
   const loadLinks = useCallback(
     () =>
@@ -56,6 +67,7 @@ export function TaskIssueShare({
   const {
     data: links,
     error: linksError,
+    loading: linksLoading,
     refresh: refreshLinks,
   } = usePanelData(loadLinks, Boolean(personal))
   const clearProjectIssue = useCallback(() => setProjectIssue(null), [])
@@ -66,22 +78,11 @@ export function TaskIssueShare({
 
   return (
     <div className="relative ml-auto flex shrink-0 items-center gap-1">
-      {linksError !== undefined && (
-        <button
-          type="button"
-          data-testid="task-linked-issues-retry"
-          aria-label={t('taskIssueShare.linksRetry')}
-          title={t('taskIssueShare.linksRetry')}
-          onClick={() => void refreshLinks()}
-          className="flex h-11 items-center rounded-lg px-2 text-destructive hover:bg-muted md:h-7"
-        >
-          <RotateCw className="h-4 w-4" aria-hidden="true" />
-        </button>
-      )}
-      {Boolean(links?.length) && (
+      {(Boolean(links?.length) || linksError !== undefined || linksOpen) && (
         <>
           <button
             type="button"
+            ref={linksTrigger}
             data-testid="task-linked-issues"
             aria-expanded={linksOpen}
             title={t('taskIssueShare.linkedIssues')}
@@ -90,10 +91,38 @@ export function TaskIssueShare({
             className="flex h-11 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted md:h-7"
           >
             <Link2 className="h-4 w-4" aria-hidden="true" />
-            {links?.length}
+            {links?.length || null}
           </button>
           {linksOpen && (
             <ul className="absolute right-0 top-full z-popover mt-1 grid w-64 gap-1 rounded-lg border border-border bg-popover p-1 shadow-md">
+              {(linksError !== undefined || linksLoading) && (
+                <li className="flex items-center justify-between gap-2 px-2 py-1 text-sm">
+                  <span role="status">
+                    {t(
+                      linksLoading ? 'independentIssues.loading' : 'taskIssueShare.linksUnavailable'
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="task-linked-issues-retry"
+                    className="min-h-8 rounded px-2 hover:bg-muted"
+                    aria-disabled={linksLoading}
+                    onClick={event => {
+                      if (linksLoading) return
+                      if (document.activeElement === event.currentTarget)
+                        linksTrigger.current?.focus()
+                      void refreshLinks()
+                    }}
+                  >
+                    {t('independentIssues.retry')}
+                  </button>
+                </li>
+              )}
+              {!linksLoading && linksError === undefined && !links?.length && (
+                <li role="status" className="px-2 py-1 text-sm text-text-secondary">
+                  {t('taskIssueShare.noLinkedIssues')}
+                </li>
+              )}
               {links?.map(issue => (
                 <li key={issue.id}>
                   <button
@@ -127,6 +156,12 @@ export function TaskIssueShare({
             requestId: crypto.randomUUID(),
             source: { device_id: address.deviceId, task_id: address.taskId, title: sourceTitle },
             title: sourceTitle,
+            conversationFiles: taskIssueConversationFiles(
+              messages,
+              address,
+              readWorkspaceFileChunk,
+              fetchAttachment
+            ),
             excerpts: messages.flatMap(message => {
               if (message.status !== 'done' || message.contentTruncated) return []
               const { id, role } = message
@@ -178,7 +213,7 @@ export function TaskIssueShare({
             ? t(
                 projectIssue.restricted
                   ? 'taskIssueShare.createdRestricted'
-                  : 'taskIssueShare.shared'
+                  : 'taskIssueShare.created'
               )
             : null
         }
