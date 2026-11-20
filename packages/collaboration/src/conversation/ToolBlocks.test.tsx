@@ -51,6 +51,61 @@ function block(id: string): ToolBlock {
 }
 
 describe("shared tool output without a desktop host", () => {
+  it.each([false, true])(
+    "expands one provider catalog on demand (legacy response: %s)",
+    (legacy) => {
+      const catalog = {
+        items: [
+          {
+            id: "github",
+            availability: { status: "ready" },
+            eventTypes: ["git.event"],
+          },
+          { id: "gitlab", availability: { status: "plugin_disabled" } },
+        ],
+      };
+      render(
+        <ToolBlockItem
+          block={{
+            ...block("event-providers"),
+            toolName: "wework_control.list_connection_event_providers",
+            toolInput: {},
+            toolOutput: {
+              content: legacy
+                ? [{ type: "text", text: JSON.stringify(catalog) }]
+                : [],
+              structuredContent: legacy
+                ? catalog
+                : {
+                    items: catalog.items.map(({ id, availability }) => ({
+                      id,
+                      availability,
+                    })),
+                  },
+              _meta: legacy
+                ? null
+                : { connectionEventProviderCatalog: catalog },
+            },
+          }}
+          forceExpanded
+        />,
+      );
+
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[data-testid="connection-event-provider-result-toggle"]',
+      )!;
+      const output = () =>
+        container.querySelector('[data-testid="generic-tool-output"]');
+      expect(container.textContent).toContain("2 total, 1 ready");
+      expect(output()).toBeNull();
+      act(() => toggle.click());
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(JSON.parse(output()!.textContent!)).toEqual(catalog);
+      act(() => toggle.click());
+      expect(output()).toBeNull();
+    },
+  );
+
   it.each([
     ["done", "Ran pwd"],
     ["streaming", "Running pwd"],

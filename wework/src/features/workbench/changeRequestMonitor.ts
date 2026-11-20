@@ -1,11 +1,12 @@
 import { supportsConnectionEvents } from '@/lib/device-capabilities'
 import { useCallback, useSyncExternalStore } from 'react'
 import {
+  linkedChangeRequestTarget,
   observedChangeRequest,
   type TaskChangeRequestSnapshot,
   type TaskChangeRequestTarget,
 } from '@/api/changeRequests'
-import { outputAsRecord, type DeviceCommandApi } from '@/api/environment'
+import { outputAsRecord, parseGitRemote, type DeviceCommandApi } from '@/api/environment'
 import type {
   RuntimeDeviceWorkspace,
   DeviceInfo,
@@ -73,6 +74,28 @@ export function runtimeTaskChangeRequestTarget(
     remoteUrl,
     branch,
   }
+}
+
+function matchesObservedBranch(
+  target: TaskChangeRequestTarget,
+  watch: ChangeRequestObservation
+): boolean {
+  const remote = parseGitRemote(target.remoteUrl)
+  const linked = linkedChangeRequestTarget(watch.deviceId, watch.url)
+  const observedRemote = linked && parseGitRemote(linked.remoteUrl)
+  return Boolean(
+    remote &&
+    observedRemote &&
+    remote.host === observedRemote.host &&
+    remote.repoPath.toLowerCase() === observedRemote.repoPath.toLowerCase() &&
+    watch.subscription.resource_states?.some(
+      state =>
+        state.kind === 'change_request' &&
+        state.topicId === watch.url &&
+        (state.provider === 'github' || state.provider === 'gitlab') &&
+        observedChangeRequest(state.provider, state.data, watch.url)?.headBranch === target.branch
+    )
+  )
 }
 
 function readCache(): Map<string, TaskChangeRequestSnapshot> {
@@ -236,7 +259,7 @@ export class ChangeRequestMonitor {
     const candidates = observations.filter(
       watch =>
         this.sameDevice(watch.deviceId, target.deviceId) &&
-        watch.url === url &&
+        (url ? watch.url === url : matchesObservedBranch(target, watch)) &&
         ['preparing', 'armed', 'pending'].includes(watch.subscription.status)
     )
     const own = candidates.filter(watch => watch.taskId === target.taskId)
@@ -676,10 +699,10 @@ export function useTaskChangeRequest(
       if (!monitor) return () => undefined
       const unsubscribe = monitor.subscribe(listener)
       const unregister =
-        deviceId && taskId && remoteUrl && (changeRequestUrl || (workspacePath && branch))
+        deviceId && remoteUrl && (changeRequestUrl || (workspacePath && branch))
           ? monitor.register({
               deviceId,
-              taskId,
+              taskId: taskId ?? '',
               workspacePath: workspacePath ?? '',
               remoteUrl,
               branch: branch ?? '',

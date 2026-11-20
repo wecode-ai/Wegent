@@ -121,6 +121,7 @@ If the Issue summary above the composer cannot read its task count, use its retr
 | Desktop connection and models in one form, model search, per-model tests, mobile standalone models, capabilities, Catalog | [Model controls](./user-guide/model-settings.md#model-controls)                         |
 | Attachments, drawing, plan mode, Goal, queues, task views, personal schedules                                             | [Composer and task controls](./tasks.md#task-controls)                                  |
 | Act inside a conversation, select results, complete forms or open a feature                                               | [Describe the operation to Codex](./tasks.md#conversation-interactions)                 |
+| Tool calls, connection event provider summaries and full results                                                         | [Inspect processing activity](./tasks.md#processing-activity)                            |
 | Project menus, members, assignment, archive all chats, archive/restore, boards, execution environments                    | [Project operations](./projects.md#project-controls)                                    |
 | File path menus, IDE, terminal, message actions, Diff review, tabs                                                        | [Workbench operations](./workbench.md#workspace-controls)                               |
 

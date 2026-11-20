@@ -27,6 +27,33 @@ fn invalid(message: &str) -> AppIpcError {
     AppIpcError::new("invalid_event_subscription", message)
 }
 
+fn connection_event_provider_catalog(
+    catalog: Value,
+    provider_id: Option<&str>,
+) -> Result<Value, AppIpcError> {
+    let providers = catalog["items"].as_array().ok_or_else(|| {
+        AppIpcError::new("unavailable", "Invalid connection event provider catalog")
+    })?;
+    if let Some(provider_id) = provider_id {
+        let provider = providers
+            .iter()
+            .find(|provider| provider["id"].as_str() == Some(provider_id))
+            .ok_or_else(|| AppIpcError::new("not_found", "Connection event provider not found"))?;
+        return Ok(json!({"items": [provider]}));
+    }
+
+    let items: Vec<_> = providers
+        .iter()
+        .map(|provider| {
+            json!({"id": provider["id"], "displayName": provider["displayName"],
+                "resourceKinds": provider["resourceKinds"],
+                "availability": {"status": provider["availability"]["status"]}})
+        })
+        .collect();
+    // Codex exposes MCP metadata to the transcript, while the model sees structuredContent.
+    Ok(json!({"items": items, "_meta": {"connectionEventProviderCatalog": catalog}}))
+}
+
 fn validate_filter(filter: &Value) -> Result<(), AppIpcError> {
     wegent_protocol::connection_events::validate_filter(filter).map_err(invalid)
 }
@@ -63,9 +90,7 @@ fn mark_cloud_cancellation(record: &mut Value) {
 fn event_can_continue_goal(record: &Value, goal: &Value) -> bool {
     record["waiting_goal"] == goal_identity(goal)
         && (goal["status"] == "blocked"
-            || (goal["status"] == "active"
-                && (record["status"] == "pending"
-                    || conditions::is_independent_github_merge_wait(record))))
+            || (goal["status"] == "active" && record["status"] == "pending"))
 }
 
 fn handled_event_summaries(record: &Value) -> Value {
@@ -162,7 +187,7 @@ impl RuntimeWorkRpcHandler {
                     "[]".to_owned()
                 } else {
                     format!(
-                        "Change requests bound to this conversation: {}\nIf the task needs to wait for checks or merge, verify the current status. Reuse the PR/MR merge wait across head changes. If no matching wait exists, discover the exact resource and call subscribe_connection_events with wait_for_event:true. Provide the exact head SHA for checks or workflow runs. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
+                        "Change requests bound to this conversation: {}\nTo wait for a PR/MR, verify current status, then use a single merge wait for CI results and conflicts. Reuse it across head changes. If no matching wait exists, discover the exact PR/MR and call subscribe_connection_events with git_wait:merge and wait_for_event:true. Provide the exact head SHA for checks or workflow runs. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
                         json!(urls)
                     )
                 };
@@ -299,7 +324,8 @@ impl RuntimeWorkRpcHandler {
         args: Value,
     ) -> Result<Value, AppIpcError> {
         if operation == "list_connection_event_providers" {
-            return self.connection_call("catalog", None, json!({})).await;
+            let catalog = self.connection_call("catalog", None, json!({})).await?;
+            return connection_event_provider_catalog(catalog, args["provider_id"].as_str());
         }
         if operation == "list_connection_event_resources" {
             let input = json!({"kind":args["kind"],"query":args["query"],"cursor":args["cursor"]});
@@ -353,19 +379,11 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({"subscription":public_subscription(&record)}));
         }
-        let mut filter = conditions::resolve(&args)?;
-        let conflict = conditions::split_github_merge(&args, &mut filter);
+        let filter = conditions::resolve(&args)?;
         let subscription = self
             .arm_event_subscription(&link, &records, &args, key, filter)
             .await?;
-        let mut result = json!({"subscription":subscription});
-        if let Some(filter) = conflict {
-            let conflict_key = format!("pr-conflict:{}", self.subscription_id(task, key));
-            result["conflict_subscription"] = self
-                .arm_event_subscription(&link, &records, &args, &conflict_key, filter)
-                .await?;
-        }
-        Ok(result)
+        Ok(json!({"subscription":subscription}))
     }
 
     async fn arm_event_subscription(
@@ -999,10 +1017,7 @@ impl RuntimeWorkRpcHandler {
                 if !matches!(phase, "preparing" | "armed" | "pending" | "resuming_goal") {
                     continue;
                 }
-                if status == Some("active")
-                    && (matches!(phase, "preparing" | "resuming_goal")
-                        || conditions::is_independent_github_merge_wait(&record))
-                {
+                if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
                     continue;
                 }
                 record["status"] = json!("cancelled");

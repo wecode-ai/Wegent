@@ -24,8 +24,8 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
 }
 
 // Backend startup and concurrent Electron sessions can delay the 200ms Python
-// descriptor request. The plugin development job exceeded that deadline while
-// conversation state, Claude runtime and stand-in sessions shared its runner.
+// descriptor request. Keep the workloads observed during descriptor timeouts
+// off the same runner as Python startup.
 const PYTHON_RUNTIME_STARTUP_PEERS = [
   'collaboration-shared-core',
   'collaboration-templates',
@@ -33,6 +33,9 @@ const PYTHON_RUNTIME_STARTUP_PEERS = [
   'claude-runtime',
   'conversation-state',
   'stand-in-sessions',
+  'stand-in-cli',
+  'quota-recovery',
+  'permission-modes',
 ]
 
 export function linuxCoreCheckpointResources(checkpoint) {
