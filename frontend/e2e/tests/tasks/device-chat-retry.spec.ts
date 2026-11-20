@@ -49,7 +49,7 @@ test('a failed retry stays retryable until the device reconnects', async ({ hist
     const body = await response.text()
     return body
       .split('\n')
-      .filter(line => line.startsWith(`${name}{`) && line.includes(`outcome="${outcome}"`))
+      .filter(line => line.startsWith(`${name}{outcome="${outcome}",entrypoint="web"`))
       .reduce((total, line) => {
         const value = Number(line.slice(line.lastIndexOf('}') + 1).trim())
         expect(Number.isFinite(value)).toBe(true)
@@ -92,31 +92,39 @@ test('a failed retry stays retryable until the device reconnects', async ({ hist
     })
     await expect.poll(state).toEqual(['CANCELLED', 'CANCELLED'])
 
-    const acceptedBeforeRetry = await metricTotal('wegent_chat_requests_total', 'accepted')
     const rejectedBeforeRetry = await metricTotal('wegent_chat_requests_total', 'rejected')
-    const cancelledBeforeRetry = await metricTotal('wegent_chat_runs_total', 'cancelled')
+    expect(await socket.timeout(10_000).emitWithAck('chat:retry', { task_id: taskId })).toEqual({
+      error: 'Invalid payload',
+    })
+    await expect
+      .poll(() => metricTotal('wegent_chat_requests_total', 'rejected'))
+      .toBeGreaterThan(rejectedBeforeRetry)
 
     device.dispose()
     await expect.poll(async () => (await deviceRecord())?.status).toBe('offline')
+    const failedBeforeRetry = await metricTotal('wegent_chat_runs_total', 'failed')
     expect(await socket.timeout(10_000).emitWithAck('chat:retry', turn)).toEqual({
       error: 'Internal server error',
     })
     await expect.poll(state).toEqual(['FAILED', 'FAILED'])
+    // The retry was admitted and reset the subtask before dispatch failed.
     await expect
-      .poll(() => metricTotal('wegent_chat_requests_total', 'rejected'))
-      .toBeGreaterThan(rejectedBeforeRetry)
+      .poll(() => metricTotal('wegent_chat_runs_total', 'failed'))
+      .toBeGreaterThan(failedBeforeRetry)
 
     device = connect('/local-executor')
     const replacement = await register()
     const nextDelivery = new Promise<{ subtask_id: number; task_id: number }>(resolve =>
       replacement.once('task:execute', resolve)
     )
+    const acceptedBeforeRetry = await metricTotal('wegent_chat_requests_total', 'accepted')
     expect(await socket.timeout(10_000).emitWithAck('chat:retry', turn)).toEqual({ success: true })
     expect(await nextDelivery).toMatchObject(turn)
     await expect.poll(state).toEqual(['RUNNING', 'RUNNING'])
     await expect
       .poll(() => metricTotal('wegent_chat_requests_total', 'accepted'))
       .toBeGreaterThan(acceptedBeforeRetry)
+    const cancelledBeforeRetry = await metricTotal('wegent_chat_runs_total', 'cancelled')
     expect(await socket.timeout(10_000).emitWithAck('chat:cancel', turn)).toMatchObject({
       success: true,
     })
