@@ -550,6 +550,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    transcript_transfer_cleanup: Arc<super::transcript_transport::TransferCleanup>,
     #[cfg(test)]
     transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
@@ -945,6 +946,7 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            transcript_transfer_cleanup: Arc::default(),
             #[cfg(test)]
             transcript_test_workers: None,
             device_id,
