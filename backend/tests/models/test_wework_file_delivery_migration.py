@@ -19,7 +19,6 @@ from alembic.util import CommandError
 
 REVISION = "a9c4e7b2d610"
 PREDECESSOR = "f3a7c9e1b2d4"
-CURRENT_HEAD = "c6e8a1d4f902"
 VERSION_TABLE = "artifact_retired_revision_test"
 
 
