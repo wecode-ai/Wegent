@@ -8,11 +8,17 @@ import {
 } from './useConversationVirtualizer'
 
 it('preserves the visible anchor when a row resizes before an external scroll event arrives', async () => {
+  const observers = new Map<Element, ResizeObserverCallback>()
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      observe() {}
-      unobserve() {}
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(element: Element) {
+        observers.set(element, this.callback)
+      }
+      unobserve(element: Element) {
+        observers.delete(element)
+      }
       disconnect() {}
     },
   )
@@ -66,6 +72,20 @@ it('preserves the visible anchor when a row resizes before an external scroll ev
       current.resizeItem(0, height)
     })
     expect(viewport.scrollTop).toBe(1220)
+
+    await act(async () => current.measureElement(row))
+    const onResize = observers.get(row)
+    expect(onResize).toBeDefined()
+    await act(async () => {
+      viewport.scrollTop = 1250
+      onResize!(
+        [{ target: row, borderBoxSize: [{ inlineSize: 400, blockSize: 100 }] }] as ResizeObserverEntry[],
+        {} as ResizeObserver,
+      )
+      expect(viewport.scrollTop).toBe(1250)
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
+    })
+    expect(viewport.scrollTop).toBe(1270)
   } finally {
     await act(async () => root.unmount())
     viewport.remove()

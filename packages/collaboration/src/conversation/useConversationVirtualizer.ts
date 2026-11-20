@@ -63,6 +63,9 @@ export function useConversationVirtualizer({
   const enabled = options.enabled && viewportReady
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
+    // Row measurements may compensate scroll and commit new layout synchronously.
+    // Keep those writes together, outside the browser's ResizeObserver delivery.
+    useAnimationFrameWithResizeObserver: true,
     ...options,
     enabled,
     scrollMargin: prefix,
