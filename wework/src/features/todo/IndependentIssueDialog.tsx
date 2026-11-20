@@ -2,12 +2,9 @@ import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
 import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import {
-  createIndependentIssueDialogState,
-  type CreateSharedProjectIssue,
-} from './independentIssueDialogState'
+import { createIndependentIssueDialogState } from './independentIssueDialogState'
 import { createPortal } from 'react-dom'
-import { X, Maximize2, Minimize2 } from 'lucide-react'
+import { Download, X, Maximize2, Minimize2 } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
@@ -15,6 +12,8 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DialogForm } from '@/components/common/DialogForm'
 import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
 import type { TaskIssueShareDraft } from './TaskIssueShare'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
+import { SharedIssueSourceButton } from './SharedIssueSourceButton'
 import { IndependentIssueEditor } from './IndependentIssueEditor'
 
 const action =
@@ -26,7 +25,6 @@ type IndependentIssueDialogProps = {
   userId: number
   issueId: string | null
   shareDraft?: TaskIssueShareDraft
-  createSharedProjectIssue?: CreateSharedProjectIssue
   onClose(): void
   onSaved(issue: IndependentIssue | null): void
   onOpenProjectIssue?(projectId: string, issueId: string, restricted?: boolean): void
@@ -50,7 +48,6 @@ function IndependentIssueDialogContent({
   userId,
   issueId,
   shareDraft,
-  createSharedProjectIssue,
   onClose,
   onSaved,
   onOpenProjectIssue,
@@ -97,7 +94,7 @@ function IndependentIssueDialogContent({
   const ref = useDialogKeyboard<HTMLDivElement>(
     requestClose,
     presentation === 'dialog',
-    shareDraft ? '[data-testid="issue-participant-add"]' : '[data-testid="independent-issue-title"]'
+    '[data-testid="independent-issue-title"]'
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   const name = (id: number | null) =>
@@ -134,8 +131,7 @@ function IndependentIssueDialogContent({
                 id="independent-issue-dialog-title"
                 className="truncate text-heading-sm font-medium"
               >
-                {issue?.title ??
-                  t(shareDraft ? 'taskIssueShare.title' : 'independentIssues.create')}
+                {issue?.title ?? t('independentIssues.create')}
               </h2>
               {(issueId || (shareDraft && issue)) && (
                 <p className="mt-1 text-sm text-text-secondary">
@@ -228,7 +224,21 @@ function IndependentIssueDialogContent({
                 userId={userId}
                 busy={busy}
                 onDirtyChange={setDirty}
-                onSave={input => state.save(input, createSharedProjectIssue)}
+                onSave={(input, shareFiles) =>
+                  state.save(
+                    input,
+                    shareDraft &&
+                      ((body, projectId, projectStatus) =>
+                        api.createShared(
+                          shareDraft.requestId,
+                          shareDraft.source,
+                          body,
+                          shareFiles,
+                          projectId,
+                          projectStatus
+                        ))
+                  )
+                }
                 onCancel={() => {
                   if (dirty) setDiscarding(issue ? 'edit' : 'close')
                   else if (issue) {
@@ -262,6 +272,9 @@ function IndependentIssueDialogContent({
                         : 'independentIssues.archive'
                     )}
                   </button>
+                  {issue.creator_id === userId && issue.metadata.share && (
+                    <SharedIssueSourceButton api={api} issueId={issue.id} onOpen={requestClose} />
+                  )}
                   <IndependentIssueTaskButton
                     api={api}
                     issue={issue}
@@ -344,6 +357,31 @@ function IndependentIssueDialogContent({
                 <div className="whitespace-pre-wrap break-words text-base leading-7">
                   {issue.description}
                 </div>
+                {Boolean(issue.metadata.share?.files.length) && (
+                  <section className="mt-5 grid gap-2">
+                    <h3 className="text-sm font-medium">{t('taskIssueShare.attachments')}</h3>
+                    <ul className="grid gap-1" data-testid="independent-issue-attachments">
+                      {issue.metadata.share?.files.map(file => (
+                        <li key={file.id}>
+                          <button
+                            type="button"
+                            className={action + ' inline-flex max-w-full items-center gap-2'}
+                            data-testid={`independent-issue-attachment-${file.id}`}
+                            onClick={() => {
+                              void api
+                                .sharedAttachment(issue.id, file.id)
+                                .then(blob => saveBlobToDownloads(blob, file.filename))
+                                .catch(error => state.reportTaskError(String(error)))
+                            }}
+                          >
+                            <Download className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{file.filename}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
                 <h3 className="mb-3 mt-7 text-base font-medium">
                   {t('independentIssues.discussion')}
                 </h3>

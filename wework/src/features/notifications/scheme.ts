@@ -3,6 +3,7 @@ import { parseCollaborationExpDeepLink } from '@/features/collaboration-exp/inte
 export type WeworkDestination =
   | { kind: 'collaboration-exp'; contentRoute: string }
   | { kind: 'boards' }
+  | { kind: 'personal-issue'; issueId: string }
   | {
       kind: 'board'
       projectId: string
@@ -24,6 +25,10 @@ export function weworkInteractionScheme(
 
 export function weworkTaskScheme(address: { deviceId: string; taskId: string }): string {
   return `wework://tasks/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}`
+}
+
+export function weworkPersonalIssueScheme(issueId: string): string {
+  return `wework://personal-issues/${encodeURIComponent(issueId)}`
 }
 
 export function weworkIssueScheme(
@@ -82,6 +87,10 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       return null
     if (url.hostname === 'boards' && ['', '/'].includes(url.pathname)) return { kind: 'boards' }
     const parts = url.pathname.split('/').slice(1)
+    if (url.hostname === 'personal-issues' && parts.length === 1) {
+      const issueId = segment(parts[0])
+      return issueId && /^[a-zA-Z0-9-]+$/.test(issueId) ? { kind: 'personal-issue', issueId } : null
+    }
     if (url.hostname === 'interactions' && parts.length === 3) {
       const deviceId = segment(parts[0])
       const taskId = segment(parts[1])
@@ -135,6 +144,11 @@ export function weworkDestinationRoute(
 ): string {
   if (destination.kind === 'collaboration-exp') return destination.contentRoute
   if (destination.kind === 'boards') return '/todo'
+  if (destination.kind === 'personal-issue') {
+    const params = new URLSearchParams({ personalIssueId: destination.issueId })
+    if (focusRequest) params.set('focusRequest', focusRequest)
+    return `/todo?${params}`
+  }
   if (destination.kind === 'interaction') {
     return `/pending-interactions?${new URLSearchParams({ interaction: JSON.stringify([destination.deviceId, destination.taskId, destination.requestKey]) })}`
   }

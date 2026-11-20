@@ -808,14 +808,28 @@ mod dingtalk_protocol_tests {
                     "/v1.0/card/instances/createAndDeliver" if self.reject_card => {
                         br#"{"code":"rejected"}"#.as_slice()
                     }
-                    "/v1.0/card/instances/createAndDeliver" => br#"{"code":"0"}"#.as_slice(),
+                    "/v1.0/card/instances/createAndDeliver" => {
+                        let buttons: Value = serde_json::from_str(
+                            body["cardData"]["cardParamMap"]["sys_full_json_obj"]
+                                .as_str()
+                                .unwrap(),
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            buttons["msgButtons"][0]["url"],
+                            "wework://personal-issues/share-1-test"
+                        );
+                        br#"{"code":"0"}"#.as_slice()
+                    }
                     "/v1.0/robot/oToMessages/batchSend" => {
                         assert_eq!(body["robotCode"], "ci-app");
                         assert_eq!(body["userIds"], json!(["ci-staff"]));
                         assert_eq!(body["msgKey"], "sampleMarkdown");
                         let params: Value =
                             serde_json::from_str(body["msgParam"].as_str().unwrap()).unwrap();
-                        assert!(params["text"].as_str().unwrap().contains("CI notification"));
+                        let text = params["text"].as_str().unwrap();
+                        assert!(text.contains("CI notification"));
+                        assert!(text.contains("wework://personal-issues/share-1-test"));
                         br#"{"processQueryKey":"ci-message"}"#.as_slice()
                     }
                     _ => panic!("Unexpected DingTalk API request: {path}"),
@@ -865,13 +879,16 @@ mod dingtalk_protocol_tests {
                     &im_client().unwrap(),
                     &json!({"proactive_recipient_id":"ci-staff"}),
                     &config,
-                    "assignment",
+                    "issue_shared",
                     "CI title",
                     "CI notification",
-                    &json!({}),
+                    &json!({"personalIssueId": "share-1-test"}),
                     &[],
                     "CI notification",
-                    &[],
+                    &[(
+                        "在 Wework 中打开".into(),
+                        "wework://personal-issues/share-1-test".into(),
+                    )],
                 ),
             )
             .await;

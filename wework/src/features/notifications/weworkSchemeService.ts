@@ -136,8 +136,8 @@ export function createWeworkSchemeService() {
     }
     const cloud = input.connection
     if (
-      destination.kind === 'board' &&
-      destination.projectStore !== 'local' &&
+      (destination.kind === 'personal-issue' ||
+        (destination.kind === 'board' && destination.projectStore !== 'local')) &&
       (!cloud?.isConnected || !cloud.token)
     ) {
       return deferForCloud(url, deferInRenderer, cloud)
@@ -170,7 +170,8 @@ export function createWeworkSchemeService() {
       destination.kind === 'task' ? 'task' : 'board',
       weworkDestinationRoute(
         destination,
-        destination.kind === 'board' && destination.itemId
+        destination.kind === 'personal-issue' ||
+          (destination.kind === 'board' && destination.itemId)
           ? `${Date.now()}-${++focusRequest}`
           : undefined
       )

@@ -17,9 +17,17 @@ const selector = id => `[data-testid="${id}"]`
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelResponseTimeoutMs }) {
   let cloud, colleague, colleagueToken, outsiderToken, project, restrictedProject
-  async function request(path, { token = cloud.authToken, body, status = 200 } = {}) {
+  async function request(
+    path,
+    {
+      token = cloud.authToken,
+      body,
+      status = 200,
+      method = body === undefined ? 'GET' : 'POST',
+    } = {}
+  ) {
     const response = await fetch(`${cloud.backendUrl}/api${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     })
@@ -27,6 +35,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
     assert.equal(response.status, status, `${path}: ${response.status} ${error}`)
     return response.json()
   }
+  async function selectAttachment(control, filename, content) {
+    await control.command('selectFile', selector('task-issue-share-file-input'), {
+      filename,
+      mimeType: 'text/plain',
+      value: Buffer.from(content).toString('base64'),
+    })
+    await wait(control, selector('task-issue-share-files'), { text: filename })
+  }
+
+  async function assertAttachment(path, token, status, expected) {
+    const response = await fetch(`${cloud.backendUrl}/api${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    assert.equal(response.status, status, path)
+    if (expected) assert.equal(await response.text(), expected)
+  }
+
   const wait = (control, target, options = {}) =>
     control.command('waitFor', target, { timeoutMs: uiTimeoutMs, ...options })
   const click = (control, target) =>
@@ -147,6 +172,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       const excerpt = `[data-e2e-anchor-id="share-selected-reply"] ${selector('task-issue-share-excerpt')}`
       await click(control, excerpt)
       await wait(control, `${excerpt}:checked`)
+      await selectAttachment(control, 'draft.txt', 'Do not share this draft')
+      await click(control, selector('task-issue-share-remove-file-0'))
+      await selectAttachment(control, 'model-error.txt', 'Empty payload reproduction')
       await captureScreenshot(control, '03-task-share-selected-content.png')
       await click(control, save)
       await wait(control, selector('independent-issue-edit'), { visible: true })
@@ -164,8 +192,51 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       assert.ok(participating.items.some(row => row.id === issue.id))
       await request(`/v1/personal-issues/${issue.id}`, { token: colleagueToken })
       await request(`/v1/personal-issues/${issue.id}`, { token: outsiderToken, status: 404 })
+      const files = issue.metadata.share.files
+      assert.deepEqual(
+        files.map(file => file.filename),
+        ['model-error.txt']
+      )
+      assert.ok(!Object.hasOwn(files[0], 'object_key'))
+      const attachment = `/v1/personal-issues/${issue.id}/attachments/${files[0].id}`
+      await assertAttachment(attachment, colleagueToken, 200, 'Empty payload reproduction')
+      await assertAttachment(attachment, outsiderToken, 404)
+      const sourcePath = `/v1/personal-issues/${issue.id}/source`
+      const source = await request(sourcePath)
+      assert.ok(source.device_id && source.task_id)
+      await request(sourcePath, { token: colleagueToken, status: 404 })
+      const inbox = await request('/v1/wework-notifications?category=collaboration', {
+        token: colleagueToken,
+      })
+      const notices = inbox.items.filter(
+        item => item.kind === 'issue_shared' && item.payload.personalIssueId === issue.id
+      )
+      assert.equal(notices.length, 1)
+      assert.equal(notices[0].url, `wework://personal-issues/${issue.id}`)
       await click(control, selector('independent-issue-close'))
+      await click(control, selector('task-linked-issues'))
+      await wait(control, selector(`task-linked-issue-${issue.id}`), { visible: true })
+      await captureScreenshot(control, '04a-task-linked-issue.png')
+      await click(control, selector(`task-linked-issue-${issue.id}`))
+      await wait(control, selector('independent-issue-open-source'), { visible: true })
+      await click(control, selector('independent-issue-open-source'))
       await wait(control, assistant, { text: reply })
+      await wait(control, dialog, { visible: false })
+      await request(`/v1/personal-issues/${issue.id}`, {
+        method: 'PATCH',
+        body: {
+          title: issue.title,
+          description: issue.description,
+          status: issue.status,
+          priority: issue.priority,
+          assignee_id: issue.assignee_id,
+          due_at: issue.metadata.due_at,
+          participants: [],
+          version: issue.version,
+        },
+      })
+      await assertAttachment(attachment, colleagueToken, 404)
+      await assertAttachment(attachment, cloud.authToken, 200, 'Empty payload reproduction')
 
       // Sharing to a project uses its normal creation and visibility rules.
       await click(control, share)
@@ -175,7 +246,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await control.command('fill', description, { value: 'Review this with the project team.' })
       await selectProject(control, project)
       await wait(control, selector('issue-project-scope'), { visible: true })
-      await wait(control, selector('issue-participant-add'), { visible: false })
+      await wait(control, selector('issue-participant-add'), { visible: true })
+      await selectAttachment(control, 'project-notes.txt', 'Project reproduction')
       await captureScreenshot(control, '05-task-share-project-audience.png')
       await click(control, save)
       const viewIssue = selector('task-share-view-project-issue')
@@ -188,6 +260,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       const shared = projectItems.items.find(item => item.title === 'Project model error follow-up')
       assert.ok(shared, 'A project member must see the issue on its board')
       assert.equal(shared.description, 'Review this with the project team.')
+      const projectFiles = await request(`/v1/loop-items/${shared.id}/attachments`, {
+        token: colleagueToken,
+      })
+      const [projectFile] = Array.isArray(projectFiles) ? projectFiles : projectFiles.items
+      assert.equal(projectFile.display_name, 'project-notes.txt')
+      assert.match(projectFile.sha256, /^[a-f0-9]{64}$/)
+      await assertAttachment(
+        `/v1/loop-item-attachments/${projectFile.id}/content`,
+        colleagueToken,
+        200,
+        'Project reproduction'
+      )
+      await assertAttachment(
+        `/v1/loop-item-attachments/${projectFile.id}/content`,
+        outsiderToken,
+        404
+      )
+      const projectInbox = await request('/v1/wework-notifications?category=collaboration', {
+        token: colleagueToken,
+      })
+      assert.ok(
+        projectInbox.items.some(
+          item => item.kind === 'issue_shared' && item.payload.itemId === shared.id
+        )
+      )
       await request(`/v1/loop-items/${shared.id}`, { token: outsiderToken, status: 404 })
       const personalAfterProject = await request('/v1/personal-issues?scope=created')
       assert.ok(!personalAfterProject.items.some(item => item.title === shared.title))
@@ -216,6 +313,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await click(control, viewIssue)
       await wait(control, selector('cloud-todo-detail-close'), { visible: true })
       await wait(control, 'body', { text: 'Restricted model error follow-up' })
+      await wait(control, selector('independent-issue-open-source'), { visible: true })
+      await captureScreenshot(control, '09-task-share-project-detail.png')
+      await click(control, selector('independent-issue-open-source'))
+      await wait(control, assistant, { text: reply })
+      await wait(control, selector('cloud-todo-detail-close'), { visible: false })
+      await wait(control, selector('task-linked-issues'), { visible: true })
+      await captureScreenshot(control, '10-task-share-back-to-conversation.png')
     },
   }
 }

@@ -3,7 +3,9 @@ import {
   independentIssueInput,
   type IndependentIssue,
   type IndependentIssueComment,
+  type IndependentIssueInput,
   type PersonalIssuesApi,
+  type SharedIssueTarget,
 } from '@/api/personalIssues'
 import type { IssueCreationInput } from './IndependentIssueEditor'
 
@@ -21,11 +23,11 @@ interface DialogSnapshot {
 }
 type CreatedProjectIssue = { project_id: string; issue_id: string; restricted?: boolean }
 
-export type CreateSharedProjectIssue = (
-  projectId: string,
-  projectStatus: string | undefined,
-  input: IssueCreationInput
-) => Promise<CreatedProjectIssue>
+export type CreateSharedIssue = (
+  input: IndependentIssueInput,
+  projectId?: string,
+  projectStatus?: string
+) => Promise<SharedIssueTarget>
 
 interface DialogCallbacks {
   onClose(): void
@@ -224,14 +226,28 @@ export function createIndependentIssueDialogState(
     clearActionError() {
       if (owned()) publish({ error: '' })
     },
-    save(
-      { project_id, project_status, ...input }: IssueCreationInput,
-      createSharedProjectIssue?: CreateSharedProjectIssue
-    ) {
+    save(values: IssueCreationInput, createShared?: CreateSharedIssue) {
+      const { project_id, project_status, ...input } = values
       return run(async current => {
-        if (project_id && createSharedProjectIssue) {
-          const target = await createSharedProjectIssue(project_id, project_status, input)
-          if (current()) openProjectIssue(target, current)
+        if (createShared) {
+          const target = await createShared(input, project_id, project_status)
+          if (!current()) return
+          if (target.project_id) {
+            openProjectIssue(
+              {
+                project_id: target.project_id,
+                issue_id: target.id,
+                restricted: target.restricted && !input.participants.length,
+              },
+              current
+            )
+            return
+          }
+          const row = await api.get(target.id)
+          if (!current()) return
+          issueReadVersion += 1
+          publish({ issue: row, loading: false, editing: false })
+          notify(observer => observer.onSaved(row))
           return
         }
         const existing = snapshot.issue

@@ -13,6 +13,7 @@ import {
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
 import type { TaskIssueShareDraft } from './TaskIssueShare'
+import { TaskIssueShareFiles } from './TaskIssueShareFiles'
 import { TaskIssueShareExcerpts } from './TaskIssueShareExcerpts'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
 import { IssueProjectSelect } from './IssueProjectSelect'
@@ -51,13 +52,14 @@ export function IndependentIssueEditor({
   shareDraft?: TaskIssueShareDraft
   userId: number
   busy: boolean
-  onSave(input: IssueCreationInput): Promise<void>
+  onSave(input: IssueCreationInput, files: File[]): Promise<void>
   onCancel(): void
   onDirtyChange?(dirty: boolean): void
   autoFocus?: boolean
 }) {
   const { t } = useTranslation('common')
   const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([])
+  const [shareFiles, setShareFiles] = useState<File[]>([])
   const canSelectProject = allowProjectSelection ?? !issue
   const [draftOwner, setDraftOwner] = useState(() => ({
     api,
@@ -79,8 +81,10 @@ export function IndependentIssueEditor({
   const model = draftOwner.model
   const subscribe = useCallback(
     (listener: () => void) =>
-      model.subscribe(listener, dirty => onDirtyChange?.(dirty || selectedExcerpts.length > 0)),
-    [model, onDirtyChange, selectedExcerpts.length]
+      model.subscribe(listener, dirty =>
+        onDirtyChange?.(dirty || selectedExcerpts.length > 0 || shareFiles.length > 0)
+      ),
+    [model, onDirtyChange, selectedExcerpts.length, shareFiles.length]
   )
   const { draft, people, projectId, projectStatus } = useSyncExternalStore(
     subscribe,
@@ -172,12 +176,10 @@ export function IndependentIssueEditor({
           <label className="flex items-center gap-2 text-sm">
             <Folder className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
             <span className="shrink-0 text-text-secondary">
-              {t(shareDraft ? 'taskIssueShare.audience' : 'issue_creation.project_label')}
+              {t('issue_creation.project_label')}
             </span>
             <IssueProjectSelect
               projects={projects}
-              placeholder={shareDraft ? t('taskIssueShare.colleagues') : undefined}
-              accessibleLabel={shareDraft ? t('taskIssueShare.audience') : undefined}
               className={`${control} flex-1`}
               disabled={loadingProjects}
               value={projectId}
@@ -223,7 +225,7 @@ export function IndependentIssueEditor({
           )}
         </div>
       )}
-      {(!shareDraft || !projectId) && (
+      {
         <IssueParticipantPicker
           api={api}
           collaborationApi={collaborationApi}
@@ -233,9 +235,12 @@ export function IndependentIssueEditor({
           onChange={changePeople}
           disabled={busy || owner !== userId}
         />
-      )}
+      }
       {shareDraft && !projectId && (
         <p className="text-sm text-text-secondary">{t('taskIssueShare.independentVisibility')}</p>
+      )}
+      {shareDraft && (
+        <p className="text-sm text-text-secondary">{t('taskIssueShare.notifyHint')}</p>
       )}
     </div>
   )
@@ -249,14 +254,16 @@ export function IndependentIssueEditor({
           shareDraft?.excerpts
             .filter(excerpt => selectedExcerpts.includes(excerpt.id))
             .map(excerpt => `${t(`taskIssueShare.${excerpt.role}`)} · ${excerpt.content}`) ?? []
-        void onSave({
-          ...draft,
-          ...(shareDraft && {
-            description: [draft.description.trim(), ...excerpts].filter(Boolean).join('\n\n'),
-            ...(projectId && { participants: [], resource_participants: [] }),
-          }),
-          ...(projectId ? { project_id: projectId, project_status: projectStatus } : {}),
-        })
+        void onSave(
+          {
+            ...draft,
+            ...(shareDraft && {
+              description: [draft.description.trim(), ...excerpts].filter(Boolean).join('\n\n'),
+            }),
+            ...(projectId ? { project_id: projectId, project_status: projectStatus } : {}),
+          },
+          shareFiles
+        )
       }}
     >
       <div
@@ -264,12 +271,6 @@ export function IndependentIssueEditor({
         className="min-h-0 flex-1 overflow-y-auto p-5"
       >
         <fieldset disabled={busy} className="grid min-w-0 gap-3">
-          {shareDraft && (
-            <>
-              <p className="text-sm text-text-secondary">{t('taskIssueShare.intro')}</p>
-              {audience}
-            </>
-          )}
           <label className="grid gap-1">
             <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
             <input
@@ -286,24 +287,115 @@ export function IndependentIssueEditor({
           </label>
           <label className="grid gap-1">
             <span className="text-sm text-text-secondary">
-              {t(shareDraft ? 'taskIssueShare.content' : 'independentIssues.description')}
+              {t('independentIssues.description')}
             </span>
             <textarea
               data-testid="independent-issue-description"
-              aria-label={t(
-                shareDraft ? 'taskIssueShare.content' : 'independentIssues.description'
-              )}
-              placeholder={t(
-                shareDraft
-                  ? 'taskIssueShare.contentPlaceholder'
-                  : 'issue_creation.description_placeholder'
-              )}
+              aria-label={t('independentIssues.description')}
+              placeholder={t('issue_creation.description_placeholder')}
               value={draft.description}
               onChange={event => set('description', event.target.value)}
               rows={3}
               className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
             />
           </label>
+          {audience}
+          <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            {field(
+              t('independentIssues.status'),
+              projectId && statuses.length ? (
+                <select
+                  data-testid="independent-issue-project-status"
+                  className={control}
+                  value={projectStatus}
+                  onChange={event => setProjectStatus(event.target.value)}
+                >
+                  {statuses.map(status => (
+                    <option key={status.id} value={status.id}>
+                      {status.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  data-testid="independent-issue-status"
+                  className={control}
+                  value={draft.status}
+                  onChange={event =>
+                    set('status', event.target.value as IndependentIssue['status'])
+                  }
+                >
+                  {(['pending', 'in_progress', 'completed'] as const).map(status => (
+                    <option key={status} value={status}>
+                      {t(`independentIssues.${status}`)}
+                    </option>
+                  ))}
+                </select>
+              )
+            )}
+            {field(
+              t('independentIssues.priority'),
+              <select
+                data-testid="independent-issue-priority"
+                className={control}
+                value={draft.priority}
+                onChange={event =>
+                  set('priority', event.target.value as IndependentIssue['priority'])
+                }
+              >
+                {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
+                  <option key={priority} value={priority}>
+                    {t(`independentIssues.${priority}`)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {field(
+              t('independentIssues.assignee'),
+              <IssueDetailSearchableSelect
+                modal
+                testId="independent-issue-assignee"
+                accessibleLabel={t('independentIssues.assignee')}
+                className={`${control} flex items-center gap-2 text-left`}
+                value={assignee}
+                options={assigneeOptions}
+                searchPlaceholder={t('todo.search_assignee')}
+                emptyLabel={t('todo.no_matching_assignee')}
+                triggerContent={selection(
+                  selectedAssignee?.label ?? t('independentIssues.unassigned'),
+                  selectedAssignee?.description
+                )}
+                onChange={value => {
+                  const target = people.find(person => person.key === value)
+                  setDraft(previous => ({
+                    ...previous,
+                    assignee_id: target?.kind === 'human' ? target.id : null,
+                    assignee_resource:
+                      target && target.kind !== 'human'
+                        ? { kind: target.kind, id: target.id }
+                        : null,
+                  }))
+                }}
+              />
+            )}
+            {field(
+              t('independentIssues.due'),
+              <input
+                type="date"
+                data-testid="independent-issue-due"
+                className={control}
+                value={draft.due_at ?? ''}
+                onChange={event => set('due_at', event.target.value || null)}
+              />
+            )}
+          </div>
+          {shareDraft && (
+            <TaskIssueShareFiles
+              sourceTitle={shareDraft.title}
+              files={shareFiles}
+              onChange={setShareFiles}
+            />
+          )}
           {shareDraft && (
             <TaskIssueShareExcerpts
               excerpts={shareDraft.excerpts}
@@ -311,137 +403,45 @@ export function IndependentIssueEditor({
               onSelect={setSelectedExcerpts}
             />
           )}
-          {!shareDraft && audience}
           {!shareDraft && (
-            <>
-              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                {field(
-                  t('independentIssues.status'),
-                  projectId && statuses.length ? (
-                    <select
-                      data-testid="independent-issue-project-status"
-                      className={control}
-                      value={projectStatus}
-                      onChange={event => setProjectStatus(event.target.value)}
-                    >
-                      {statuses.map(status => (
-                        <option key={status.id} value={status.id}>
-                          {status.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <select
-                      data-testid="independent-issue-status"
-                      className={control}
-                      value={draft.status}
-                      onChange={event =>
-                        set('status', event.target.value as IndependentIssue['status'])
-                      }
-                    >
-                      {(['pending', 'in_progress', 'completed'] as const).map(status => (
-                        <option key={status} value={status}>
-                          {t(`independentIssues.${status}`)}
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
-                {field(
-                  t('independentIssues.priority'),
-                  <select
-                    data-testid="independent-issue-priority"
-                    className={control}
-                    value={draft.priority}
-                    onChange={event =>
-                      set('priority', event.target.value as IndependentIssue['priority'])
-                    }
-                  >
-                    {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
-                      <option key={priority} value={priority}>
-                        {t(`independentIssues.${priority}`)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                {field(
-                  t('independentIssues.assignee'),
-                  <IssueDetailSearchableSelect
-                    modal
-                    testId="independent-issue-assignee"
-                    accessibleLabel={t('independentIssues.assignee')}
-                    className={`${control} flex items-center gap-2 text-left`}
-                    value={assignee}
-                    options={assigneeOptions}
-                    searchPlaceholder={t('todo.search_assignee')}
-                    emptyLabel={t('todo.no_matching_assignee')}
-                    triggerContent={selection(
-                      selectedAssignee?.label ?? t('independentIssues.unassigned'),
-                      selectedAssignee?.description
-                    )}
-                    onChange={value => {
-                      const target = people.find(person => person.key === value)
-                      setDraft(previous => ({
-                        ...previous,
-                        assignee_id: target?.kind === 'human' ? target.id : null,
-                        assignee_resource:
-                          target && target.kind !== 'human'
-                            ? { kind: target.kind, id: target.id }
-                            : null,
-                      }))
-                    }}
-                  />
-                )}
-                {field(
-                  t('independentIssues.due'),
-                  <input
-                    type="date"
-                    data-testid="independent-issue-due"
-                    className={control}
-                    value={draft.due_at ?? ''}
-                    onChange={event => set('due_at', event.target.value || null)}
-                  />
-                )}
-              </div>
-              <details className="group min-w-0 border-t border-border pt-2">
-                <summary
-                  data-testid="independent-issue-execution-settings"
-                  className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
-                >
-                  <ChevronRight
-                    className="h-4 w-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
-                    aria-hidden="true"
-                  />
-                  {t('issue_creation.runtime_label')}
-                </summary>
-                <div className="grid min-w-0 gap-2 pt-2">
-                  <span className="text-sm text-text-secondary">
-                    {t(
-                      projectId
-                        ? 'issue_creation.project_device_settings'
-                        : 'workbench.runner_personal_default'
-                    )}
-                  </span>
-                  {projectId && collaborationApi ? (
-                    <IssueProjectEnvironmentPicker
-                      key={projectId}
-                      api={collaborationApi}
-                      projectId={projectId}
-                      disabled={busy}
-                    />
-                  ) : (
-                    <DefaultRunnerSetting compact confirmChanges />
+            <details className="group min-w-0 border-t border-border pt-2">
+              <summary
+                data-testid="independent-issue-execution-settings"
+                className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
+              >
+                <ChevronRight
+                  className="h-4 w-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+                  aria-hidden="true"
+                />
+                {t('issue_creation.runtime_label')}
+              </summary>
+              <div className="grid min-w-0 gap-2 pt-2">
+                <span className="text-sm text-text-secondary">
+                  {t(
+                    projectId
+                      ? 'issue_creation.project_device_settings'
+                      : 'workbench.runner_personal_default'
                   )}
-                  <p className="text-xs text-text-secondary">
-                    {t(
-                      projectId
-                        ? 'issue_creation.project_device_settings_hint'
-                        : 'issue_creation.personal_runner_hint'
-                    )}
-                  </p>
-                </div>
-              </details>
-            </>
+                </span>
+                {projectId && collaborationApi ? (
+                  <IssueProjectEnvironmentPicker
+                    key={projectId}
+                    api={collaborationApi}
+                    projectId={projectId}
+                    disabled={busy}
+                  />
+                ) : (
+                  <DefaultRunnerSetting compact confirmChanges />
+                )}
+                <p className="text-xs text-text-secondary">
+                  {t(
+                    projectId
+                      ? 'issue_creation.project_device_settings_hint'
+                      : 'issue_creation.personal_runner_hint'
+                  )}
+                </p>
+              </div>
+            </details>
           )}
         </fieldset>
       </div>
@@ -482,7 +482,7 @@ export function IndependentIssueEditor({
               busy
                 ? 'independentIssues.saving'
                 : shareDraft
-                  ? project?.default_issue_security === 'related'
+                  ? project?.default_issue_security === 'related' && !draft.participants.length
                     ? 'issue_creation.create_issue'
                     : 'taskIssueShare.submit'
                   : issue

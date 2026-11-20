@@ -34,7 +34,7 @@ struct Channels {
 fn channels(preferences: &Value, kind: &str) -> Channels {
     let collaboration = matches!(
         kind,
-        "assignment" | "mention" | "execution" | "issue_dispatch_assignment"
+        "assignment" | "mention" | "execution" | "issue_dispatch_assignment" | "issue_shared"
     );
     let category = if collaboration {
         "collaboration"
@@ -100,7 +100,9 @@ pub(crate) async fn create_on(
     let project = payload["projectId"].as_str().unwrap_or("");
     let issue = payload["itemId"].as_str().unwrap_or("");
     let encode = crate::board_snapshot::external_provider::url_encode_path;
-    let mut url = if project.is_empty() {
+    let mut url = if let Some(id) = payload["personalIssueId"].as_str() {
+        format!("wework://personal-issues/{}", encode(id))
+    } else if project.is_empty() {
         String::new()
     } else if issue.is_empty() {
         format!("wework://boards/{}", encode(project))

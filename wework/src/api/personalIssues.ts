@@ -13,6 +13,25 @@ export interface IssueResourceParticipant extends IssueResourceInvitation {
   team_id: number | null
   human_ids: number[]
 }
+export interface SharedIssueSource {
+  device_id: string
+  task_id: string
+  title: string
+}
+
+export interface SharedIssueTarget {
+  id: string
+  title: string
+  project_id: string | null
+  restricted: boolean
+}
+
+export interface SharedIssueAttachment {
+  id: string
+  filename: string
+  size: number
+}
+
 export interface IndependentIssue {
   id: string
   title: string
@@ -26,6 +45,7 @@ export interface IndependentIssue {
   updated_at: string
   people: Record<string, string>
   metadata: {
+    share?: { files: SharedIssueAttachment[] } | null
     standalone: true
     participants: number[]
     direct_participants?: number[] | null
@@ -101,6 +121,42 @@ export function createPersonalIssuesApi(client: HttpClient) {
     },
     create(input: IndependentIssueInput): Promise<IndependentIssue> {
       return client.post('/v1/personal-issues', input)
+    },
+    createShared(
+      requestId: string,
+      source: SharedIssueSource,
+      issue: IndependentIssueInput,
+      files: File[],
+      projectId?: string,
+      projectStatus?: string
+    ): Promise<SharedIssueTarget> {
+      const form = new FormData()
+      form.append(
+        'metadata',
+        JSON.stringify({
+          request_id: requestId,
+          source,
+          issue,
+          project_id: projectId,
+          project_status: projectStatus,
+        })
+      )
+      for (const file of files) form.append('file', file)
+      return client.post('/v1/personal-issues/share', form)
+    },
+    sharedFrom(
+      source: Pick<SharedIssueSource, 'device_id' | 'task_id'>
+    ): Promise<SharedIssueTarget[]> {
+      const query = new URLSearchParams(source)
+      return client.get(`/v1/personal-issues/shared-from?${query}`)
+    },
+    sharedSource(id: string): Promise<SharedIssueSource> {
+      return client.get(`/v1/personal-issues/${encodeURIComponent(id)}/source`)
+    },
+    sharedAttachment(id: string, attachmentId: string): Promise<Blob> {
+      return client.getBlob(
+        `/v1/personal-issues/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`
+      )
     },
     update(id: string, input: IndependentIssueInput): Promise<IndependentIssue> {
       return client.patch(`/v1/personal-issues/${encodeURIComponent(id)}`, input)

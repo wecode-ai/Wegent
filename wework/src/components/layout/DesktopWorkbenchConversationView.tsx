@@ -519,6 +519,7 @@ export function DesktopWorkbenchConversationView({
                                                 key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
                                                 title={workbenchTitle ?? ''}
                                                 messages={paneMessages}
+                                                address={currentRuntimeTask}
                                               />
                                             )}
                                         </div>

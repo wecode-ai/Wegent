@@ -9,7 +9,6 @@ export function IssueProjectSelect({
   disabled,
   className,
   placeholder,
-  accessibleLabel,
   onChange,
 }: {
   projects: CloudProject[]
@@ -17,7 +16,6 @@ export function IssueProjectSelect({
   disabled?: boolean
   className: string
   placeholder?: string
-  accessibleLabel?: string
   onChange(value: string): void
 }) {
   const { t } = useTranslation('common')
@@ -27,7 +25,7 @@ export function IssueProjectSelect({
     <IssueDetailSearchableSelect
       modal
       testId="independent-issue-project"
-      accessibleLabel={accessibleLabel ?? t('issue_creation.project_label')}
+      accessibleLabel={t('issue_creation.project_label')}
       className={`${className} flex items-center gap-2 text-left`}
       disabled={disabled}
       value={value}
