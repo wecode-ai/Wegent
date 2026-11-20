@@ -31,7 +31,8 @@ export function ChatMessage({
         {...props}
         showInlineExecutionStatus={
           props.showInlineExecutionStatus &&
-          props.message.metadata.execution_dispatch !== 'comment_only'
+          (props.message.metadata.execution_dispatch !== 'comment_only' ||
+            props.message.metadata.collaboration_turn_start === true)
         }
         executionStatus={status}
         translate={useActivityTranslate()}

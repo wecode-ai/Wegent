@@ -188,6 +188,21 @@ impl RuntimeWorkRpcHandler {
                         "origin":link.runtime_handle["origin"],
                         "triggerCommentId":trigger_comment_id
                     });
+                    if trigger_comment_id.is_none()
+                        && is_cloud_collaboration_issue_origin(&link.runtime_handle["origin"])
+                    {
+                        if let Some(turn) = codex_notification_turn_id(message) {
+                            let public_turn = link.runtime_handle["standInPublicTurn"].clone();
+                            queue_public_issue_reply(
+                                link,
+                                &turn,
+                                "开始处理",
+                                &public_turn,
+                                Some("start"),
+                                message,
+                            );
+                        }
+                    }
                 }
             });
             if let Err(error) = result {
@@ -195,6 +210,8 @@ impl RuntimeWorkRpcHandler {
                     "Issue public turn persistence failed",
                     &[("error", error.to_string())],
                 );
+            } else {
+                self.sync_public_issue_replies(task);
             }
             return;
         }
@@ -236,17 +253,20 @@ impl RuntimeWorkRpcHandler {
             {
                 return;
             }
-            let report =
-                json!({"origin":origin,"body":text,"messageId":key,"publicTurn":public_turn});
-            if !link.runtime_handle["standInIssueReplies"].is_object() {
-                link.runtime_handle["standInIssueReplies"] = json!({});
+            let autonomous_collaboration = is_cloud_collaboration_issue_origin(origin)
+                && public_turn["triggerCommentId"].is_null();
+            if autonomous_collaboration && item["phase"] == "commentary" {
+                return;
             }
-            if link.runtime_handle["standInIssueReplies"]
-                .get(&key)
-                .is_none()
-            {
-                link.runtime_handle["standInIssueReplies"][&key] = report;
-            }
+            let public_turn = public_turn.clone();
+            queue_public_issue_reply(
+                link,
+                &key,
+                text,
+                &public_turn,
+                autonomous_collaboration.then_some("output"),
+                message,
+            );
         });
         if let Err(error) = result {
             log_executor_event(
@@ -289,7 +309,11 @@ impl RuntimeWorkRpcHandler {
                     .as_object()
                     .into_iter()
                     .flatten()
-                    .find(|(_, report)| report["sent"] != true && report["rejected"] != true)
+                    .filter(|(_, report)| report["sent"] != true && report["rejected"] != true)
+                    .min_by_key(|(_, report)| (
+                        report["publicTurn"]["generation"].as_u64().unwrap_or(0),
+                        report["sequence"].as_u64().unwrap_or(0),
+                    ))
                     .map(|(key, report)| (key.clone(), report.clone()))
                 else {
                     return;
@@ -354,6 +378,8 @@ impl RuntimeWorkRpcHandler {
                 "task_id": task,
                 "dispatch_id": origin["dispatchId"],
                 "message_id": report["messageId"],
+                "turn_id": public_turn["turn"],
+                "phase": report["phase"],
                 "execution_trigger_comment_id": trigger,
                 "trigger_comment_id": if has_other_targets { &Value::Null } else { trigger },
             });
@@ -426,6 +452,32 @@ impl RuntimeWorkRpcHandler {
         }
         Ok(())
     }
+}
+
+fn queue_public_issue_reply(
+    link: &mut RuntimeTaskLink,
+    key: &str,
+    body: &str,
+    public_turn: &Value,
+    phase: Option<&str>,
+    message: &CodexNotification,
+) {
+    if !link.runtime_handle["standInIssueReplies"].is_object() {
+        link.runtime_handle["standInIssueReplies"] = json!({});
+    }
+    let replies = link.runtime_handle["standInIssueReplies"]
+        .as_object_mut()
+        .expect("Issue replies are an object");
+    replies.entry(key).or_insert_with(|| {
+        json!({
+            "origin": public_turn["origin"],
+            "body": body,
+            "messageId": key,
+            "publicTurn": public_turn,
+            "phase": phase,
+            "sequence": message.sequence(),
+        })
+    });
 }
 
 #[cfg(test)]
@@ -660,6 +712,48 @@ mod tests {
             .unwrap()
             .runtime_handle["standInIssueReplies"]
             .is_null());
+    }
+
+    #[test]
+    fn autonomous_group_turn_only_queues_start_and_final_output() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "issue-chat".into(),
+            thread_id: Some("parent".into()),
+            runtime_handle: json!({
+                "lastTurnId":"turn",
+                "origin":{"type":"issue_dispatch","dispatchRole":"member",
+                    "dispatchId":"dispatch","cloudProjectId":"project","loopItemId":"one"}
+            }),
+            ..Default::default()
+        });
+        handler.persist_public_issue_reply(
+            "issue-chat",
+            &json!({"method":"turn/started","params":{"threadId":"parent","turnId":"turn"}}).into(),
+        );
+        for (phase, text) in [
+            ("commentary", "Routine progress"),
+            ("final_answer", "Finished"),
+        ] {
+            handler.persist_public_issue_reply(
+                "issue-chat",
+                &json!({"method":"item/completed","params":{"threadId":"parent","turnId":"turn",
+                    "item":{"id":phase,"type":"agentMessage","phase":phase,"text":text}}})
+                .into(),
+            );
+        }
+        let link = handler.local_task_link("issue-chat").unwrap();
+        let reports = link.runtime_handle["standInIssueReplies"]
+            .as_object()
+            .unwrap();
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports["turn"]["body"], "开始处理");
+        assert_eq!(reports["turn"]["phase"], "start");
+        assert!(reports
+            .values()
+            .any(|report| report["phase"] == "output" && report["body"] == "Finished"));
     }
 
     #[test]

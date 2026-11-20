@@ -294,6 +294,51 @@ def test_member_public_reply_uses_recorded_author_and_is_idempotent(member_scena
     assert error.value.status_code == 403
 
 
+def test_autonomous_turn_publishes_one_start_and_threads_its_outputs(member_scenario):
+    s = member_scenario
+    s.root.content = "Unpublished progress and mirrored result"
+    s.db.commit()
+    scope = dict(user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id)
+    identity = CollaborationPublicReply(
+        dispatch_id="group-dispatch-1",
+        device_id="admin-native",
+        task_id=s.root.runtime_task_id,
+        message_id="turn-a",
+        turn_id="turn-a",
+        phase="start",
+    )
+    output = identity.model_copy(update={"message_id": "output-a", "phase": "output"})
+    with pytest.raises(HTTPException) as missing:
+        publish_collaboration_reply(s.db, **scope, body="Finished", identity=output)
+    assert missing.value.status_code == 425
+
+    start = publish_collaboration_reply(
+        s.db, **scope, body="开始处理", identity=identity
+    )
+    result = publish_collaboration_reply(
+        s.db, **scope, body="Finished", identity=output
+    )
+    result_replay = publish_collaboration_reply(
+        s.db, **scope, body="Finished", identity=output
+    )
+    additional = publish_collaboration_reply(
+        s.db,
+        **scope,
+        body="Additional output",
+        identity=output.model_copy(update={"message_id": "output-b"}),
+    )
+    assert start.reply_to_message_id is None
+    assert result_replay.message_id == result.message_id
+    assert (
+        result.reply_to_message_id == additional.reply_to_message_id == start.message_id
+    )
+    assert result.root_message_id == additional.root_message_id == start.message_id
+    assert (
+        list_issue_comments(s.db, **scope, message_id=s.root.message_id)[0]["body"]
+        == ""
+    )
+
+
 def test_manager_public_reply_hides_the_dispatch_envelopes_copy(group_scenario):
     s = group_scenario
     s.root.sender_id = "collaboration_group_dispatch:group-dispatch-1"

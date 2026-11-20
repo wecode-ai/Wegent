@@ -2736,6 +2736,34 @@ fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
 }
 
 #[test]
+fn default_mode_questions_are_disabled_only_in_collaboration_agent_threads() {
+    let key = "features.default_mode_request_user_input";
+    for (role, initiator, expected) in [
+        (Some("manager"), "automation", Some(false)),
+        (Some("member"), "automation", Some(false)),
+        (Some("member"), "stand_in", None),
+        (None, "human", None),
+    ] {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({
+                "type": "issue_dispatch", "dispatchRole": role, "initiatedBy": initiator
+            }),
+        );
+        let config = CodexLaunchConfig::default();
+        for params in [
+            thread_start_params(&request, &config),
+            thread_resume_params("existing", &request, &config),
+        ] {
+            assert_eq!(params["config"][key].as_bool(), expected);
+        }
+    }
+    let ordinary = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
+    assert!(ordinary["config"].get(key).is_none());
+}
+
+#[test]
 fn issue_stand_in_delegation_survives_start_and_resume_without_a_user_spawn_request() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(

@@ -14,6 +14,7 @@ SHARED_METADATA_KEYS = frozenset(
         "stand_in_reply_to",
         "execution_dispatch",
         "collaboration_public_reply",
+        "collaboration_turn_start",
         "collaboration_guidance",
         "collaboration_execution_activity_id",
         "activity_type",

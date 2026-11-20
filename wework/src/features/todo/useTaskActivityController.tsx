@@ -378,7 +378,9 @@ export function useTaskActivityController({
   function cardHasExecution(card: TaskReplyCard) {
     return [card.root, ...card.replies].some(
       message =>
-        message.sender.type === 'agent' && message.metadata.execution_dispatch !== 'comment_only'
+        message.sender.type === 'agent' &&
+        (message.metadata.execution_dispatch !== 'comment_only' ||
+          message.metadata.collaboration_turn_start === true)
     )
   }
   function cardReplyLabel(card: TaskReplyCard) {
