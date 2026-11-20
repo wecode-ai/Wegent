@@ -840,6 +840,7 @@ async def uninstall_installed_plugin(
 @router.post(
     "/submissions/init",
     response_model=PluginSubmissionInitResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
 )
 def init_plugin_submission(

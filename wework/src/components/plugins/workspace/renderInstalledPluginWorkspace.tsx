@@ -21,6 +21,7 @@ import {
   pluginDetailActionErrorMessage,
   tryPluginInChat,
 } from '../workspace/marketplaceWorkspaceHelpers'
+import { personalPluginInstallSource } from './personalPluginInstallSource'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
 
 export function renderInstalledPluginWorkspace({
@@ -43,6 +44,8 @@ export function renderInstalledPluginWorkspace({
   openPublicationProgress,
   openPublicationRevision,
   versionSubmission,
+  personalInstallation,
+  reconciliationBlocksActions,
   closePluginDetail,
   setSelectedPluginId,
   requestDeletePersonalPlugin,
@@ -128,6 +131,7 @@ export function renderInstalledPluginWorkspace({
         ],
         selectedPlugin
       )
+    const personalSource = personalPluginInstallSource([selectedPlugin])
     return (
       <>
         <PluginDetailView
@@ -141,8 +145,11 @@ export function renderInstalledPluginWorkspace({
               : t('workbench.plugins_try_now', '立即对话')
           }
           primaryActionDisabled={selectedUninstalling}
+          onAccountInstall={personalInstallation.actionFor(personalSource)}
+          accountInstallBusy={personalInstallation.busy}
+          accountInstallDisabled={headerBusy || selectedUninstalling || reconciliationBlocksActions}
           shareActionLabel={t('workbench.plugins_share', '分享')}
-          shareActionDisabled={headerBusy}
+          shareActionDisabled={headerBusy || personalInstallation.busy}
           onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
           publication={selectedPublication}
           publicationWithdrawing={withdrawingPublicationId === selectedPublication?.id}
@@ -242,6 +249,7 @@ export function renderInstalledPluginWorkspace({
         {publicationProgressDrawer}
         {pluginOperationNoticeOverlay}
         {pluginOverlayDialogs}
+        {personalInstallation.dialog}
       </>
     )
   }

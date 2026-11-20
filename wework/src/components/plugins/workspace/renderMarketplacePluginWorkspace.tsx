@@ -34,6 +34,8 @@ import {
   withMarketplaceListingInterface,
   withMarketplacePluginDetail,
 } from '../workspace/marketplaceWorkspaceHelpers'
+import { personalPluginInstallSource } from './personalPluginInstallSource'
+import { resolveMarketplacePluginLock } from '../marketplacePluginLock'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
 
 export function renderMarketplacePluginWorkspace({
@@ -52,6 +54,7 @@ export function renderMarketplacePluginWorkspace({
   marketplaceDetailLoading,
   t,
   versionSubmission,
+  personalInstallation,
   pluginPublishPreparing,
   isUploadingPlugin,
   pluginSharePreparing,
@@ -194,6 +197,13 @@ export function renderMarketplacePluginWorkspace({
         installedDetail
       )
 
+    const personalSource = personalPluginInstallSource(installedPlugins, selectedMarketplacePlugin)
+    const accountInstall = resolveMarketplacePluginLock(selectedMarketplacePlugin)
+      ? undefined
+      : personalInstallation.actionFor(personalSource)
+    const primaryInstallsForAccount = !isInstalled && Boolean(accountInstall)
+    const accountInstallDisabled =
+      isActionPending || reconciliationBlocksActions || isUploadingPlugin || pluginPublishPreparing
     return (
       <>
         <PluginDetailView
@@ -201,6 +211,9 @@ export function renderMarketplacePluginWorkspace({
           detailLoading={marketplaceDetailLoading}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           usableOnThisDevice={isInstalled}
+          onAccountInstall={isInstalled ? accountInstall : undefined}
+          accountInstallBusy={personalInstallation.busy}
+          accountInstallDisabled={accountInstallDisabled}
           accessRole={selectedMarketplacePlugin.accessRole}
           versionSubmission={versionSubmission.actionFor(packableCreated, ownedListing)}
           pluginVisibility={selectedMarketplacePlugin.visibility}
@@ -212,7 +225,12 @@ export function renderMarketplacePluginWorkspace({
             marketplaceOwnerActions.canManageAccess ? openMarketplaceOwnerShare : undefined
           }
           shareActionLabel={t('workbench.plugins_share', '分享')}
-          shareActionDisabled={pluginPublishPreparing || isUploadingPlugin || pluginSharePreparing}
+          shareActionDisabled={
+            pluginPublishPreparing ||
+            isUploadingPlugin ||
+            pluginSharePreparing ||
+            personalInstallation.busy
+          }
           onShareAction={
             marketplaceOwnerActions.showShareAction
               ? packableCreated
@@ -313,23 +331,30 @@ export function renderMarketplacePluginWorkspace({
                 : isInstalling
                   ? t('workbench.plugins_installing', '正在安装')
                   : t('workbench.plugins_syncing_installation', '同步中...')
-              : canUpdate
-                ? t('workbench.plugins_update', '更新')
-                : isInstalled
-                  ? t('workbench.plugins_try_now', '立即对话')
-                  : isFailed
-                    ? t('workbench.plugins_retry_install', '重试安装')
-                    : detailRequiresConnection
-                      ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
-                          name:
-                            detailRequiredConnectionNames[0] ||
-                            selectedMarketplacePlugin.displayName ||
-                            selectedMarketplacePlugin.name,
-                        })
-                      : t('workbench.plugins_install_plugin', '安装插件')
+              : primaryInstallsForAccount
+                ? personalInstallation.busy
+                  ? t('workbench.plugins_installing')
+                  : t('workbench.plugins_install')
+                : canUpdate
+                  ? t('workbench.plugins_update', '更新')
+                  : isInstalled
+                    ? t('workbench.plugins_try_now', '立即对话')
+                    : isFailed
+                      ? t('workbench.plugins_retry_install', '重试安装')
+                      : detailRequiresConnection
+                        ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
+                            name:
+                              detailRequiredConnectionNames[0] ||
+                              selectedMarketplacePlugin.displayName ||
+                              selectedMarketplacePlugin.name,
+                          })
+                        : t('workbench.plugins_install_plugin', '安装插件')
           }
           primaryActionIcon={marketplacePrimaryIcon}
-          primaryActionDisabled={primaryActionPending}
+          primaryActionDisabled={
+            primaryActionPending ||
+            (primaryInstallsForAccount && (accountInstallDisabled || personalInstallation.busy))
+          }
           tertiaryActionLabel={
             selectedMarketplacePlugin.accessRole === 'recipient' &&
             selectedMarketplacePlugin.allowCopy
@@ -348,6 +373,10 @@ export function renderMarketplacePluginWorkspace({
           onToggle={() => {
             if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
               return
+            if (!isInstalled && accountInstall) {
+              if (!accountInstallDisabled) accountInstall()
+              return
+            }
             if (canUpdate) {
               installMarketplacePlugin(selectedMarketplacePlugin)
               return
@@ -403,6 +432,7 @@ export function renderMarketplacePluginWorkspace({
         {publicationProgressDrawer}
         {pluginOperationNoticeOverlay}
         {pluginOverlayDialogs}
+        {personalInstallation.dialog}
       </>
     )
   }

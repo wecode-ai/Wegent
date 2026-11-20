@@ -415,6 +415,7 @@ class PluginSubmissionInitRequest(BaseModel):
     visibility: Optional[Literal["personal", "workspace", "public"]] = None
     targets: List["PluginAccessTarget"] = Field(default_factory=list)
     allowCopy: bool = False
+    privateFirstInstall: bool = False
 
     @field_validator("releaseNotes")
     @classmethod
@@ -447,6 +448,7 @@ class PluginSubmissionInitResponse(BaseModel):
     releaseId: int
     uploadUrl: str
     expiresAt: datetime
+    privateFirstInstall: Literal[True] | None = None
 
 
 class PluginSubmissionItem(BaseModel):

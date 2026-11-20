@@ -73,6 +73,9 @@ interface PluginDetailViewProps {
   shareActionLabel?: string
   shareActionDisabled?: boolean
   onShareAction?: () => void
+  onAccountInstall?: () => void
+  accountInstallBusy?: boolean
+  accountInstallDisabled?: boolean
   versionSubmission?: {
     currentVersion: string
     nextVersion: string
@@ -143,6 +146,9 @@ export function PluginDetailView({
   shareActionLabel,
   shareActionDisabled = false,
   onShareAction,
+  onAccountInstall,
+  accountInstallBusy = false,
+  accountInstallDisabled = false,
   versionSubmission,
   publication = null,
   publicationWithdrawing = false,
@@ -576,6 +582,20 @@ export function PluginDetailView({
           <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
             {shareActionButton}
             {actionMenu}
+            {onAccountInstall && (
+              <button
+                type="button"
+                data-testid="plugin-detail-account-install"
+                disabled={accountInstallDisabled || accountInstallBusy}
+                className="plugin-detail-action-secondary"
+                onClick={onAccountInstall}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {accountInstallBusy
+                  ? t('workbench.plugins_installing')
+                  : t('workbench.plugins_install')}
+              </button>
+            )}
             {primaryActionButton}
           </div>
         </header>
