@@ -1,3 +1,4 @@
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { Check, FileText, Maximize2, Paperclip, X } from 'lucide-react'
 import { mimeTypeForFileName } from '@wegent/chat-core/workspace-file-types'
 import { useAttachmentPreview } from '@wegent/collaboration'
@@ -83,7 +84,9 @@ export function TaskIssueShareFiles({
     toggle: () => void
   ) => (
     <>
-      <button
+      <Button
+        variant="unstyled"
+        showTooltip={false}
         type="button"
         data-testid={selectionId}
         aria-pressed={selected}
@@ -106,8 +109,10 @@ export function TaskIssueShareFiles({
         >
           {file.name}
         </span>
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="unstyled"
+        showTooltip={false}
         type="button"
         data-testid={previewId}
         aria-label={t('taskIssueShare.previewFile', { name: file.name })}
@@ -116,7 +121,7 @@ export function TaskIssueShareFiles({
         className="absolute right-1.5 top-1.5 grid size-11 place-items-center rounded-md bg-background/90 text-text-primary hover:bg-background md:size-8"
       >
         <Maximize2 className="size-3.5" aria-hidden="true" />
-      </button>
+      </Button>
     </>
   )
   return (
@@ -139,7 +144,9 @@ export function TaskIssueShareFiles({
               })}
           </span>
         </div>
-        <button
+        <Button
+          variant="unstyled"
+          showTooltip={false}
           type="button"
           data-testid="task-issue-share-select-files"
           onClick={() => input.current?.click()}
@@ -147,7 +154,7 @@ export function TaskIssueShareFiles({
         >
           <Paperclip className="h-4 w-4" aria-hidden="true" />
           {t('taskIssueShare.uploadFiles')}
-        </button>
+        </Button>
         <input
           ref={input}
           type="file"
@@ -215,7 +222,9 @@ export function TaskIssueShareFiles({
                             : [...files, file]
                         )
                     )}
-                    <button
+                    <Button
+                      variant="unstyled"
+                      showTooltip={false}
                       type="button"
                       data-testid={`task-issue-share-remove-file-${index}`}
                       aria-label={t('taskIssueShare.removeFile', { name: file.name })}
@@ -226,7 +235,7 @@ export function TaskIssueShareFiles({
                       className="absolute bottom-0 right-0 grid size-11 place-items-center rounded-md bg-background hover:bg-muted md:size-7"
                     >
                       <X className="size-3.5" aria-hidden="true" />
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>

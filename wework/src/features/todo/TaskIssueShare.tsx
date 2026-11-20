@@ -1,3 +1,4 @@
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { useCallback, useRef, useState } from 'react'
 import { usePanelData } from '@wegent/collaboration/platform'
 import type { SharedIssueSource, SharedIssueTarget } from '@/api/personalIssues'
@@ -145,7 +146,9 @@ export function TaskIssueShare({
     <div className="relative ml-auto flex shrink-0 items-center gap-1">
       {(Boolean(links?.length) || linksError !== undefined || linksOpen) && (
         <>
-          <button
+          <Button
+            variant="unstyled"
+            showTooltip={false}
             type="button"
             ref={linksTrigger}
             data-testid="task-linked-issues"
@@ -157,7 +160,7 @@ export function TaskIssueShare({
           >
             <Link2 className="h-4 w-4" aria-hidden="true" />
             {links?.length || null}
-          </button>
+          </Button>
           {linksOpen && (
             <ul className="absolute right-0 top-full z-popover mt-1 grid w-64 gap-1 rounded-lg border border-border bg-popover p-1 shadow-md">
               {(linksError !== undefined || linksLoading) && (
@@ -167,7 +170,9 @@ export function TaskIssueShare({
                       linksLoading ? 'independentIssues.loading' : 'taskIssueShare.linksUnavailable'
                     )}
                   </span>
-                  <button
+                  <Button
+                    variant="unstyled"
+                    showTooltip={false}
                     type="button"
                     data-testid="task-linked-issues-retry"
                     className="min-h-8 rounded px-2 hover:bg-muted"
@@ -180,7 +185,7 @@ export function TaskIssueShare({
                     }}
                   >
                     {t('independentIssues.retry')}
-                  </button>
+                  </Button>
                 </li>
               )}
               {!linksLoading && linksError === undefined && !links?.length && (
@@ -190,7 +195,9 @@ export function TaskIssueShare({
               )}
               {links?.map(issue => (
                 <li key={issue.id}>
-                  <button
+                  <Button
+                    variant="unstyled"
+                    showTooltip={false}
                     type="button"
                     data-testid={`task-linked-issue-${issue.id}`}
                     className="min-h-11 w-full truncate rounded px-2 text-left text-sm hover:bg-muted md:min-h-8"
@@ -200,14 +207,16 @@ export function TaskIssueShare({
                     }}
                   >
                     {issue.title}
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
         </>
       )}
-      <button
+      <Button
+        variant="unstyled"
+        showTooltip={false}
         type="button"
         data-testid="task-share-as-issue"
         aria-label={label}
@@ -257,7 +266,7 @@ export function TaskIssueShare({
       >
         <Share2 className="h-4 w-4" aria-hidden="true" />
         <span className="hidden sm:inline">{label}</span>
-      </button>
+      </Button>
       {draft && !apis && (
         <CloudConnectionDialog
           open

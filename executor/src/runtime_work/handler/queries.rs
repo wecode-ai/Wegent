@@ -486,7 +486,7 @@ impl RuntimeWorkRpcHandler {
                 .clone()
                 .or_else(|| self.store.get_task_summary(&local_task_id));
             after_cursor = Some(
-                if link.as_ref().is_none_or(|link| link.runtime == "codex") {
+                if link.as_ref().map_or(true, |link| link.runtime == "codex") {
                     crate::runtime_work::codex_transcript_search::first_history_cursor()
                         .map_err(|error| AppIpcError::new("history_cursor_invalid", error))?
                 } else {

@@ -1,3 +1,4 @@
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { useCallback } from 'react'
 import { Link2 } from 'lucide-react'
 import { usePanelData } from '@wegent/collaboration/platform'
@@ -21,19 +22,23 @@ export function SharedIssueSourceButton({
   const { data: source, error, refresh } = usePanelData(load)
   if (error !== undefined && !(error instanceof ApiError && [401, 403, 404].includes(error.status)))
     return (
-      <button
+      <Button
+        variant="unstyled"
+        showTooltip={false}
         type="button"
         data-testid="shared-issue-source-retry"
         className="rounded-md px-2 text-sm text-destructive hover:bg-muted"
         onClick={() => void refresh()}
       >
         {t('taskIssueShare.sourceRetry')}
-      </button>
+      </Button>
     )
   if (!source) return null
   const label = t('taskIssueShare.openSource')
   return (
-    <button
+    <Button
+      variant="unstyled"
+      showTooltip={false}
       type="button"
       data-testid="independent-issue-open-source"
       aria-label={label}
@@ -48,6 +53,6 @@ export function SharedIssueSourceButton({
     >
       <Link2 className="h-4 w-4" aria-hidden="true" />
       {label}
-    </button>
+    </Button>
   )
 }

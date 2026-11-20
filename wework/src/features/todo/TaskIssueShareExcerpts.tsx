@@ -1,3 +1,4 @@
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -43,7 +44,9 @@ export function TaskIssueShareExcerpts({
       className="min-w-0"
     >
       <div className="flex flex-wrap gap-x-2 px-2 pt-1">
-        <button
+        <Button
+          variant="unstyled"
+          showTooltip={false}
           type="button"
           data-testid="task-issue-share-select-all"
           aria-pressed={allSelected}
@@ -56,12 +59,14 @@ export function TaskIssueShareExcerpts({
           className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
         >
           {t('taskIssueShare.selectAll')}
-        </button>
+        </Button>
         {excerpts.length > 1 &&
           (['first', 'last'] as const).map(position => {
             const excerpt = excerpts[position === 'first' ? 0 : excerpts.length - 1]
             return (
-              <button
+              <Button
+                variant="unstyled"
+                showTooltip={false}
                 key={position}
                 type="button"
                 data-testid={`task-issue-share-select-${position}`}
@@ -74,7 +79,7 @@ export function TaskIssueShareExcerpts({
                 className="min-h-10 rounded px-2 text-xs text-text-secondary hover:bg-muted md:min-h-7"
               >
                 {t(`taskIssueShare.select_${position}`)}
-              </button>
+              </Button>
             )
           })}
       </div>
@@ -84,7 +89,9 @@ export function TaskIssueShareExcerpts({
           const fromUser = excerpt.role === 'user'
           const fade = !showAll && index === 1
           return (
-            <button
+            <Button
+              variant="unstyled"
+              showTooltip={false}
               key={excerpt.id}
               type="button"
               aria-pressed={checked}
@@ -106,11 +113,13 @@ export function TaskIssueShareExcerpts({
                   className="mt-0.5 size-4 shrink-0"
                 />
               )}
-            </button>
+            </Button>
           )
         })}
       </div>
-      <button
+      <Button
+        variant="unstyled"
+        showTooltip={false}
         type="button"
         data-testid="task-issue-share-all-excerpts"
         aria-expanded={showAll}
@@ -131,7 +140,7 @@ export function TaskIssueShareExcerpts({
           }
         )}
         <ChevronDown className={`size-3.5 ${showAll ? 'rotate-180' : ''}`} aria-hidden="true" />
-      </button>
+      </Button>
       {failed && (
         <p role="alert" className="px-2 py-1 text-xs text-destructive">
           {t('taskIssueShare.historyUnavailable')}
