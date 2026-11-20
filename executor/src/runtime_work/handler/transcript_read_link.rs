@@ -61,6 +61,14 @@ impl RuntimeWorkRpcHandler {
             let Some(completed_at) = timestamp_ms_field(turn, "completedAt") else {
                 return;
             };
+            let failure = &link.runtime_handle["startupFailure"];
+            if failure["subtaskId"].as_str().is_some()
+                && timestamp_ms_field(failure, "createdAt").is_some()
+                && timestamp_ms_field(failure, "failedAt")
+                    .is_some_and(|failed_at| failed_at > completed_at)
+            {
+                return;
+            }
             // Only the exact persisted native completion boundary repairs cold metadata.
             link.status = status.into();
             link.turn_status = Some(turn_status.into());

@@ -493,7 +493,11 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         Some(message),
         None,
     )
-    .await;
+    .await
+    .inspect_err(|error| {
+        tracing::warn!(%error, task_id, subtask_id, "request failure result read failed");
+    })
+    .unwrap_or(None);
     let persisted = completion::persist_completed_result(
         &ctx,
         task_id,
@@ -541,6 +545,13 @@ pub(crate) async fn mark_subtask_running(
 ) -> Result<(), FastApiError> {
     let (task_id, subtask_id) = (request.task_id, request.subtask_id);
     let tables = crate::internal_callback::tables(state);
+    let (task_table, _) = completion::resolve_tables(Some(state), tables, task_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, task_id, subtask_id, "task running table resolution failed");
+            FastApiError::internal()
+        })?;
+    let shell = routing::shell_type(request);
     let running = if let Some(redis) = state.redis.as_ref() {
         let ctx = completion::Completion {
             app: Some(state),
@@ -549,11 +560,18 @@ pub(crate) async fn mark_subtask_running(
             tables,
             executor_manager: &state.executor_manager,
         };
-        completion::mark_subtask_running(&ctx, task_id, subtask_id).await
+        completion::mark_subtask_running(&ctx, task_id, subtask_id, Some(shell.as_str())).await
     } else {
-        completion::commit_subtask_running(&state.mysql, tables, task_id, subtask_id)
-            .await
-            .map(|row| row.is_some())
+        completion::commit_subtask_running(
+            &state.mysql,
+            tables,
+            &task_table,
+            task_id,
+            subtask_id,
+            Some(shell.as_str()),
+        )
+        .await
+        .map(|row| row.is_some())
     };
     if running.map_err(|error| {
         tracing::error!(%error, task_id, subtask_id, "task running transition failed");

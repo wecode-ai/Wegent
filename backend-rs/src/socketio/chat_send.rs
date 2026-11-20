@@ -972,6 +972,12 @@ pub async fn handle(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
+    let entrypoint = if data.get("client_origin").and_then(Value::as_str) == Some("wework") {
+        "wework"
+    } else {
+        "web"
+    };
+    let mut observation = crate::chat_metrics::RequestObservation::new(entrypoint);
     let mut payload = match ChatSendPayload::parse(&data) {
         Ok(payload) => payload,
         Err(error) => {
@@ -1537,6 +1543,7 @@ pub async fn handle(
 
     match outcome {
         Ok(Ok(turn)) => {
+            observation.accept();
             // Source's two post-commit refresh pairs, each at its own commit
             // point and in its own order:
             //  * `lifecycle.py:421-429` (`prepare_execution_session`):

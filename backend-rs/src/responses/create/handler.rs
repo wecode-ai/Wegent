@@ -58,6 +58,7 @@ async fn create_response(
     if super::wework::is_wework_request(&body) {
         return super::wework::create_response(state, principal, body, limit, &limit_key).await;
     }
+    let mut observation = crate::chat_metrics::RequestObservation::new("api");
     let input: ResponseCreateInput = serde_json::from_value(body).map_err(invalid_body)?;
     create_response_flow(
         state,
@@ -67,6 +68,7 @@ async fn create_response(
         &limit_key,
         request_id,
         auto_delete_executor.or(auto_delete_executor_dash),
+        &mut observation,
     )
     .await
 }
@@ -429,6 +431,7 @@ async fn create_response_flow(
     // The raw `auto_delete_executor` / `auto-delete-executor` header; the
     // endpoint body normalizes it after the rate-limit check.
     raw_auto_delete_executor: Option<&str>,
+    observation: &mut crate::chat_metrics::RequestObservation,
 ) -> Result<CreateResponse, FastApiError> {
     // `setup_chat_session`: task + workspace + paired subtasks.
     let input_text = extract_input_text(&input.input);
@@ -494,6 +497,7 @@ async fn create_response_flow(
         FastApiError::internal,
     )
     .await?;
+    observation.accept();
     let (
         PreparedCreate {
             user,

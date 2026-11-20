@@ -134,8 +134,9 @@ export async function verifyStandInStartupRecovery({
       'Explicit retry must start the original failed Issue conversation'
     )
     assert.ok(completed.task.threadId)
-    assert.equal(completed.task.runtimeHandle.startupFailure.code, 'runtime_start_failed')
-    if (failure) assert.deepEqual(completed.task.runtimeHandle.startupFailure, failure)
+    // Starting the native retry clears the preparation diagnostic while the
+    // diagnostic itself remains covered by the restart assertions above.
+    assert.equal(completed.task.runtimeHandle.startupFailure ?? null, null)
     const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
     assert.equal(bindings.length, 1)
     assert.equal(bindings[0].task_id, taskId)

@@ -181,6 +181,47 @@ describe('ErrorCard', () => {
     expect(screen.queryByTestId('error-card-collapsed')).not.toBeInTheDocument()
   })
 
+  it.each([
+    {
+      error: 'Agent Skills directory contains unmanaged entries',
+      errorType: 'generic_error',
+      errorInfo: undefined,
+    },
+    {
+      error: 'Opaque startup failure',
+      errorType: 'llm_error',
+      errorInfo: { code: 'skills_unmanaged_entries', retry_policy: 'after_change' as const },
+    },
+  ])(
+    'explains a Skills conflict while preserving deliberate retry after a fix: $error',
+    async ({ error, errorType, errorInfo }) => {
+      const user = userEvent.setup()
+      const onRetry = jest.fn().mockResolvedValue(false)
+
+      render(
+        <ErrorCard
+          error={error}
+          errorType={errorType}
+          errorInfo={errorInfo}
+          subtaskId={42}
+          taskId={100}
+          timestamp={1000}
+          message={createErrorMessage(1000, error)}
+          isLastErrorMessage={true}
+          onRetry={onRetry}
+        />
+      )
+
+      expect(screen.getByText('errors.skills_unmanaged_entries')).toBeInTheDocument()
+      expect(screen.getByText('errors.skills_unmanaged_entries_hint')).toBeInTheDocument()
+      expect(screen.getByText('errors.retry_after_change')).toBeInTheDocument()
+      expect(screen.queryByText('errors.generic_error')).not.toBeInTheDocument()
+      await user.click(screen.getByTestId('error-card-retry'))
+      await waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1))
+      expect(screen.getByTestId('error-card')).toBeInTheDocument()
+    }
+  )
+
   it('falls back to textarea copy when navigator.clipboard is unavailable', async () => {
     const user = userEvent.setup()
     const clipboardWriteText = jest
