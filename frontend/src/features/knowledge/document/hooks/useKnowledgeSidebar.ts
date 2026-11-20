@@ -177,8 +177,11 @@ function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
 
 function mergeKnowledgeBase(
   existing: KnowledgeBaseWithGroupInfo,
-  updated: KnowledgeBase
+  updated: KnowledgeBase | Pick<KnowledgeBase, 'id' | 'kb_type'>
 ): KnowledgeBaseWithGroupInfo {
+  if (!('name' in updated)) {
+    return { ...existing, kb_type: updated.kb_type ?? existing.kb_type }
+  }
   return {
     ...existing,
     name: updated.name,
@@ -574,8 +577,8 @@ export function useKnowledgeSidebar({
     [addRecentAccess, scope, detailRequest]
   )
 
-  const syncConvertedKnowledgeBase = useCallback(
-    (updatedKb: KnowledgeBase) => {
+  const syncKnowledgeBase = useCallback(
+    (updatedKb: KnowledgeBase | Pick<KnowledgeBase, 'id' | 'kb_type'>) => {
       if (scopeRef.current !== scope) return
       setAllGroupedData(prev => {
         if (!prev) return prev
@@ -615,9 +618,11 @@ export function useKnowledgeSidebar({
           item.kbId === updatedKb.id
             ? {
                 ...item,
-                kbName: updatedKb.name,
-                kbType: documentViewOf(updatedKb.kb_type) ?? 'notebook',
-                namespace: updatedKb.namespace,
+                kbName: 'name' in updatedKb ? updatedKb.name : item.kbName,
+                kbType:
+                  documentViewOf(updatedKb.kb_type) ??
+                  ('name' in updatedKb ? 'notebook' : item.kbType),
+                namespace: 'namespace' in updatedKb ? updatedKb.namespace : item.namespace,
               }
             : item
         )
@@ -628,11 +633,11 @@ export function useKnowledgeSidebar({
     [recentKey, scope]
   )
 
-  const syncKnowledgeBase = useCallback(
+  const syncConvertedKnowledgeBase = useCallback(
     (updatedKb: KnowledgeBase) => {
-      syncConvertedKnowledgeBase(updatedKb)
+      if (updatedKb.kb_type) syncKnowledgeBase({ id: updatedKb.id, kb_type: updatedKb.kb_type })
     },
-    [syncConvertedKnowledgeBase]
+    [syncKnowledgeBase]
   )
 
   const selectGroup = useCallback((groupId: string) => {

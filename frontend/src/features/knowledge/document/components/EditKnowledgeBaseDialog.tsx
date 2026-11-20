@@ -393,7 +393,6 @@ export function EditKnowledgeBaseDialog({
   const handleTypeConverted = (updatedKb: KnowledgeBase) => {
     setShowConvertDialog(false)
     setConvertedView(updatedKb.kb_type)
-    onTypeConverted?.(updatedKb)
   }
 
   return (
@@ -715,7 +714,8 @@ export function EditKnowledgeBaseDialog({
         open={open && showConvertDialog && kb?.id === knowledgeBase?.id}
         onOpenChange={setShowConvertDialog}
         knowledgeBase={kb && kb.id === knowledgeBase?.id ? { ...kb, kb_type: kbType } : null}
-        onSuccess={handleTypeConverted}
+        onSaved={onTypeConverted}
+        onSessionSaved={handleTypeConverted}
       />
     </>
   )

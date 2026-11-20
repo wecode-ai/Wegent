@@ -308,11 +308,36 @@ it('rejects old mutation and refresh callbacks after scope changes, including re
   rerender()
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
   await act(async () => {
-    oldSync({ ...result.current.allKnowledgeBases[0], name: 'Old user mutation' })
+    oldSync({ ...result.current.allKnowledgeBases[0], kb_type: 'classic' })
     await oldRefresh()
   })
-  expect(result.current.allKnowledgeBases[0].name).toBe('Library 1')
+  expect(result.current.allKnowledgeBases[0].kb_type).toBe('notebook')
   expect(result.current.isGroupsLoading).toBe(false)
+})
+
+it('updates only the converted library view when another library is selected', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const [first, second] = result.current.allKnowledgeBases
+  jest.mocked(getKnowledgeBase).mockResolvedValueOnce(second)
+  await act(async () => result.current.selectKb(second))
+
+  act(() =>
+    result.current.syncConvertedKnowledgeBase({
+      ...first,
+      name: 'Older snapshot',
+      kb_type: 'classic',
+    })
+  )
+
+  expect(result.current.allKnowledgeBases.find(kb => kb.id === first.id)).toMatchObject({
+    name: first.name,
+    kb_type: 'classic',
+  })
+  expect(result.current.selectedKb).toMatchObject({ id: second.id, kb_type: second.kb_type })
 })
 
 it('does not resurrect a revoked library from a delayed detail response', async () => {

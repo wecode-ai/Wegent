@@ -128,7 +128,13 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
     expect(
       within(findConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
     ).toBeEnabled()
-    expect(onTypeConverted).not.toHaveBeenCalled()
+    expect(onTypeConverted).toHaveBeenCalledTimes(1)
+    expect(onTypeConverted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: first.id, kb_type: 'classic' })
+    )
+    expect(
+      within(findConfirmation()).getByText('document.knowledgeBase.typeNotebook')
+    ).toBeVisible()
   })
 
   it('uses the returned default view for subsequent changes in the same editor', async () => {
