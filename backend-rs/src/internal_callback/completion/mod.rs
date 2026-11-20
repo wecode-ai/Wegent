@@ -14,13 +14,16 @@
 //! This module ports that subsystem. The Redis half lives in
 //! [`super::session`]; this module owns the MySQL writes and the handler fan-out.
 //!
-//! Every step runs inline in the request, awaited, exactly like the source:
-//! the event bus dispatches handlers with `asyncio.gather`, so they are part of
-//! the request rather than detached work.
+//! Completion handlers run inline and are awaited. Subscription runtime
+//! deletion is admitted after commit to the process-owned responses supervisor,
+//! so slow executor-manager HTTP cannot delay delivery or later handlers.
 mod collect;
 mod delivery;
 mod events;
 mod handlers;
+pub(crate) use handlers::subscription::CleanupJob as SubscriptionCleanupJob;
+#[cfg(test)]
+pub(crate) use handlers::{code_wiki, subscription};
 mod persist;
 mod sql;
 mod text_value;

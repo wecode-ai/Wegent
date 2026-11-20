@@ -8,26 +8,26 @@
 //! record of the subscription execution that created it. When no execution
 //! exists, `_cleanup_auto_delete_task_executor` tears down the task's executor
 //! runtime and marks the subtasks whose runtime was deleted.
-use brz_mysql::{FromMysqlCol, Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
+use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
 use brz_redis::Redis;
 use serde_json::Value;
 
 use crate::background_jobs::subscription::{
     completion,
     model::{self, Execution},
+    state,
 };
-use crate::executor_manager::{ExecutorManager, SandboxLookup};
 use crate::internal_callback::completion::Completion;
-use crate::internal_callback::completion::Tables;
 use crate::internal_callback::completion::TaskCompletedEvent;
 use crate::internal_callback::completion::sql;
-use crate::internal_callback::completion::task_column;
 
-use super::{local_datetime, now_local};
+#[path = "subscription_cleanup.rs"]
+mod cleanup;
+pub(crate) use cleanup::CleanupJob;
 
 #[cfg(test)]
 #[path = "subscription_boundary_tests.rs"]
-mod boundary_tests;
+pub(crate) mod boundary_tests;
 
 /// `handle_task_completed`.
 ///
@@ -52,56 +52,174 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(event.task_id as u64));
+    let mut reached_status_write = false;
+    let mut auto_delete = None;
     let outcome = mysql
         .with_transaction(async |transaction| {
             let Some(execution) = find_execution_by_task_id(transaction, event).await? else {
-                cleanup_auto_delete_task_executor(
-                    transaction,
-                    ctx.tables,
-                    ctx.executor_manager,
-                    event,
-                )
-                .await?;
+                auto_delete = cleanup::prepare_auto_delete(transaction, ctx.tables, event).await?;
                 return Ok(None);
             };
             let result = completion::terminal_result(event);
+            reached_status_write = true;
             let applied = completion::apply_status(transaction, event, &execution, &result).await?;
-            Ok(Some((applied, result)))
+            Ok(Some((execution, applied, result)))
+        })
+        .await;
+    let failure_message: String;
+    let failed_event: TaskCompletedEvent<'_>;
+    let (event, execution, result) = match outcome {
+        Ok(Some((_, Some(applied), result))) => (event, applied, result),
+        Ok(Some((execution, None, _))) => {
+            release_after_status_noop(ctx, &mysql, execution, event).await;
+            return;
+        }
+        Ok(None) => {
+            if let Some(plan) = auto_delete {
+                cleanup::submit(ctx, event, plan);
+            }
+            return;
+        }
+        Err(error) if reached_status_write => {
+            // Left RUNNING, the execution would wait for the stale sweep, which
+            // reports a timeout and sends nothing. Fail it with the real cause
+            // so the failure notifications still go out.
+            tracing::error!(%error, task_id=event.task_id, "could not save the run result");
+            failure_message = unsaved_result_message(&error);
+            let Some(execution) = fail_unsaved_result(ctx, &mysql, event, &failure_message).await
+            else {
+                return;
+            };
+            failed_event = TaskCompletedEvent {
+                status: "FAILED",
+                error: Some(&failure_message),
+                ..*event
+            };
+            let result = completion::TerminalResult {
+                status: "FAILED",
+                silent: false,
+                summary: None,
+                notification_summary: None,
+            };
+            (&failed_event, execution, result)
+        }
+        Err(error) => {
+            tracing::error!(%error, task_id=event.task_id, "task completion transaction failed; cleanup rolled back");
+            return;
+        }
+    };
+    // Admit cleanup after commit; slow runtime deletion must not delay inbox,
+    // follower delivery or subsequent completion handlers.
+    if releases_executor(result.status) {
+        release_finished_executor(ctx, &mysql, &execution, event).await;
+    }
+    if let Err(error) = completion::after_status(ctx, event, &execution, &result).await {
+        tracing::error!(%error, task_id=event.task_id, "subscription completion failed")
+    }
+}
+
+/// A finished run never reuses its container, whatever its terminal status.
+fn releases_executor(status: &str) -> bool {
+    matches!(
+        status,
+        "COMPLETED" | "COMPLETED_SILENT" | "FAILED" | "CANCELLED"
+    )
+}
+
+/// The error the execution is failed with when its result could not be saved;
+/// the cause is cut to 300 characters.
+fn unsaved_result_message(cause: &impl std::fmt::Display) -> String {
+    let cause: String = cause.to_string().chars().take(300).collect();
+    format!("The run finished but its result could not be saved: {cause}")
+}
+
+/// Fallback when the status write failed: mark the execution FAILED, without
+/// the result, in a fresh transaction (`task_completion_handler.py`).
+async fn fail_unsaved_result<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    mysql: &M,
+    event: &TaskCompletedEvent<'_>,
+    message: &str,
+) -> Option<Execution> {
+    let outcome = mysql
+        .with_transaction(async |transaction| {
+            let Some(execution) = find_execution_by_task_id(transaction, event).await? else {
+                return Ok(None);
+            };
+            let applied =
+                state::transition_in(transaction, execution.id, "FAILED", None, Some(message))
+                    .await?;
+            Ok(Some((execution, applied)))
         })
         .await;
     match outcome {
-        Ok(Some((Some(execution), result))) => {
-            match completion::after_status(ctx, event, &execution, &result).await {
-                Ok(Some(status)) if matches!(status.as_str(), "COMPLETED" | "COMPLETED_SILENT") => {
-                    if let Err(error) = mysql
-                        .with_transaction(async |tx| {
-                            cleanup_completed_managed_executor(
-                                tx,
-                                ctx.tables,
-                                ctx.executor_manager,
-                                &execution,
-                                event.task_id,
-                            )
-                            .await
-                        })
-                        .await
-                    {
-                        tracing::warn!(%error, task_id=event.task_id, "subscription runtime cleanup failed");
-                    }
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::error!(%error, task_id=event.task_id, "subscription completion failed")
-                }
-            }
+        Ok(Some((_, Some(applied)))) => Some(applied),
+        Ok(Some((execution, None))) => {
+            release_after_status_noop(ctx, mysql, execution, event).await;
+            None
         }
-        Ok(_) => {}
+        Ok(None) => None,
         Err(error) => {
-            tracing::error!(%error, task_id=event.task_id, "task completion transaction failed; cleanup rolled back")
+            tracing::error!(%error, task_id=event.task_id, "could not mark the run FAILED");
+            None
         }
     }
 }
 
+/// A status no-op can lose its CAS to a cancel after the execution lookup.
+/// Reuse a known terminal snapshot; otherwise refresh the committed execution
+/// before deciding whether cleanup is due.
+async fn release_after_status_noop<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    mysql: &M,
+    snapshot: Execution,
+    event: &TaskCompletedEvent<'_>,
+) {
+    let execution = if model::terminal(&snapshot.status) {
+        snapshot
+    } else {
+        // End the previous REPEATABLE READ view; a writer transaction avoids a
+        // lagging replica and sees the committed winner of the status CAS.
+        match mysql
+            .with_transaction(async |tx| {
+                tx.fetch_optional(model::execution_by_id(), (snapshot.id,))
+                    .await
+            })
+            .await
+        {
+            Ok(Some(execution)) => execution,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(%error, task_id = event.task_id, "could not reload the run after a lost status update");
+                return;
+            }
+        }
+    };
+    if model::terminal(&execution.status) && releases_executor(event.status) {
+        release_finished_executor(ctx, mysql, &execution, event).await;
+    }
+}
+
+/// Prepare cleanup in a short transaction, then admit its owned HTTP job.
+async fn release_finished_executor<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    mysql: &M,
+    execution: &Execution,
+    event: &TaskCompletedEvent<'_>,
+) {
+    match mysql
+        .with_transaction(async |tx| {
+            cleanup::prepare_subscription(tx, ctx.tables, execution, event.task_id).await
+        })
+        .await
+    {
+        Ok(Some(plan)) => cleanup::submit(ctx, event, plan),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, task_id = event.task_id, "runtime cleanup preparation failed; administrative cleanup may be required");
+        }
+    }
+}
 /// `_find_execution_by_task_id`: the active execution, the newest execution,
 /// then the code-wiki scheduled-execution recovery read. The resolved row is
 /// the handler's single read for the whole completion: the source keeps the ORM
@@ -168,308 +286,39 @@ async fn recover_scheduled_execution<T: MysqlTransaction>(
     Ok(Some(execution))
 }
 
-/// `_cleanup_auto_delete_task_executor`: with no execution, the task's
-/// `autoDeleteExecutor` label decides whether its runtime is torn down.
-async fn cleanup_auto_delete_task_executor<T: MysqlTransaction>(
-    transaction: &mut T,
-    tables: Tables,
-    executor_manager: &ExecutorManager,
-    event: &TaskCompletedEvent<'_>,
-) -> MysqlResult<()> {
-    if !matches!(event.status, "COMPLETED" | "FAILED" | "CANCELLED") {
-        return Ok(());
-    }
-    let Some(task) = active_task(transaction, tables, event.task_id).await else {
-        tracing::warn!(
-            task_id = event.task_id,
-            "no task row; auto-delete executor skipped"
-        );
-        return Ok(());
-    };
-    let auto_delete = task_column::<Json<Value>>(&task, "json").and_then(|json| {
-        json.0
-            .get("metadata")
-            .and_then(|metadata| metadata.get("labels"))
-            .and_then(|labels| labels.get("autoDeleteExecutor"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    });
-    if auto_delete.as_deref() == Some("true") {
-        return cleanup_task_runtime(
-            transaction,
-            tables,
-            executor_manager,
-            event.task_id,
-            "auto-delete task",
-        )
-        .await;
-    }
-    Ok(())
-}
-
-/// `_cleanup_completed_managed_subscription_executor`
-/// (`task_completion_handler.py:336-370`): resolve the execution's subscription
-/// first — a missing subscription skips the runtime cleanup — then tear the
-/// task's runtime down.
-async fn cleanup_completed_managed_executor<T: MysqlTransaction>(
-    transaction: &mut T,
-    tables: Tables,
-    executor_manager: &ExecutorManager,
-    execution: &Execution,
-    task_id: i64,
-) -> MysqlResult<()> {
-    let subscription: Option<MysqlRow> = transaction
-        .fetch_optional(
-            crate::background_jobs::subscription::model::subscription_statement(false),
-            (execution.subscription_id,),
-        )
-        .await?;
-    if subscription.is_none() {
-        tracing::warn!(
-            subscription_id = execution.subscription_id,
-            "cannot clean executor: subscription not found"
-        );
-        return Ok(());
-    }
-    cleanup_task_runtime(
-        transaction,
-        tables,
-        executor_manager,
-        task_id,
-        "subscription completion",
-    )
-    .await
-}
-
-/// `_cleanup_task_runtime`: delete the sandbox or executor runtime of one
-/// completed task, then mark every subtask whose executor was deleted.
-async fn cleanup_task_runtime<T: MysqlTransaction>(
-    transaction: &mut T,
-    tables: Tables,
-    executor_manager: &ExecutorManager,
-    task_id: i64,
-    cleanup_source: &str,
-) -> MysqlResult<()> {
-    let Some(task) = active_task(transaction, tables, task_id).await else {
-        tracing::warn!(cleanup_source, "no task row; runtime cleanup skipped");
-        return Ok(());
-    };
-    let Some(owner_user_id) = task_column::<i64>(&task, "user_id") else {
-        return Ok(());
-    };
-    let subtasks =
-        list_not_executor_deleted_by_task(transaction, tables, task_id, owner_user_id).await;
-    if subtasks.is_empty() {
-        tracing::info!(
-            cleanup_source,
-            "no undeleted subtasks; runtime cleanup skipped"
-        );
-        return Ok(());
-    }
-
-    // Source builds a set of `(namespace, name)` pairs; only membership is
-    // consulted, so a de-duplicated ordered list keeps the same contract.
-    let mut unique_executors: Vec<(String, String)> = Vec::new();
-    let mut page = subtasks;
-    while !page.is_empty() {
-        let after_id = page
-            .last()
-            .and_then(|row| subtask_column::<i64>(row, "id"))
-            .unwrap_or(0);
-        for row in &page {
-            let Some(name) =
-                subtask_column::<String>(row, "executor_name").filter(|name| !name.is_empty())
-            else {
-                continue;
-            };
-            let key = (
-                subtask_column::<String>(row, "executor_namespace").unwrap_or_default(),
-                name,
-            );
-            if !unique_executors.contains(&key) {
-                unique_executors.push(key);
-            }
-        }
-        page = executor_cleanup_page(transaction, tables, task_id, after_id).await?;
-    }
-
-    let sandbox_id = task_id.to_string();
-    let cleanup_mode = match executor_manager.get_sandbox(&sandbox_id).await {
-        SandboxLookup::Found => "sandbox",
-        SandboxLookup::NotFound => "executor",
-        SandboxLookup::Failed => "fallback",
-    };
-    let mut sandbox_deleted = false;
-    if matches!(cleanup_mode, "sandbox" | "fallback") {
-        let (deleted, error) = executor_manager.delete_sandbox(&sandbox_id).await;
-        sandbox_deleted = deleted;
-        if deleted {
-            tracing::info!(cleanup_source, task_id, "sandbox runtime cleanup succeeded");
-        } else {
-            tracing::info!(
-                cleanup_source,
-                task_id,
-                ?error,
-                "sandbox runtime cleanup skipped or failed"
-            );
-        }
-    }
-
-    let mut successful_keys: Vec<(String, String)> = Vec::new();
-    if matches!(cleanup_mode, "executor" | "fallback") {
-        if unique_executors.is_empty() {
-            tracing::info!(cleanup_source, "no executor-backed subtasks");
-        }
-        for (namespace, name) in &unique_executors {
-            match executor_manager.delete_executor_task(name, namespace).await {
-                Ok(()) => successful_keys.push((namespace.clone(), name.clone())),
-                Err(error) => {
-                    tracing::warn!(
-                        cleanup_source,
-                        namespace,
-                        name,
-                        %error,
-                        "executor delete failed"
-                    );
-                }
-            }
-        }
-    }
-
-    if successful_keys.is_empty() && !sandbox_deleted {
-        tracing::warn!(
-            cleanup_source,
-            task_id,
-            cleanup_mode,
-            "runtime cleanup finished without a successful deletion"
-        );
-        return Ok(());
-    }
-
-    let mut page = executor_cleanup_page(transaction, tables, task_id, 0).await?;
-    while !page.is_empty() {
-        let after_id = page
-            .last()
-            .and_then(|row| subtask_column::<i64>(row, "id"))
-            .unwrap_or(0);
-        let updates: Vec<(String, i64)> = page
-            .iter()
-            .filter_map(|row| {
-                let key = (
-                    subtask_column::<String>(row, "executor_namespace").unwrap_or_default(),
-                    subtask_column::<String>(row, "executor_name").unwrap_or_default(),
-                );
-                if !sandbox_deleted && !successful_keys.contains(&key) {
-                    return None;
-                }
-                // `subtask_store.update_fields` stamps each row's `updated_at`
-                // independently before the shared flush.
-                Some((
-                    local_datetime(now_local()),
-                    subtask_column::<i64>(row, "id").unwrap_or(0),
-                ))
-            })
-            .collect();
-        let sql = sql::update_subtask_executor_deleted(tables);
-        apply_executor_deleted_updates(transaction, &sql, &updates).await?;
-        page = executor_cleanup_page(transaction, tables, task_id, after_id).await?;
-    }
-    Ok(())
-}
-
-/// `_cleanup_task_runtime`'s `db_session` flush: every selected
-/// `executor_deleted_at` update runs on the session's one connection and joins
-/// the transaction that already covers the handler's reads. The source flushes
-/// them together and commits once (`task_completion_handler.py:498`), so a
-/// failed update rolls the whole batch back; the caller's transaction supplies
-/// that commit.
-async fn apply_executor_deleted_updates<T: MysqlTransaction>(
-    transaction: &mut T,
-    sql: &str,
-    updates: &[(String, i64)],
-) -> MysqlResult<()> {
-    for (updated_at, subtask_id) in updates {
-        transaction
-            .execute(sql, (true, updated_at.as_str(), *subtask_id))
-            .await?;
-    }
-    Ok(())
-}
-
-/// `task_store.get_task_by_states(states=TaskResource.is_active_query())`: the
-/// two-state active read the auto-delete path issues twice.
-async fn active_task<T: MysqlTransaction>(
-    transaction: &mut T,
-    tables: Tables,
-    task_id: i64,
-) -> Option<MysqlRow> {
-    transaction
-        .fetch_optional(sql::resolve_owner_statement(tables.tasks), (task_id,))
-        .await
-        .ok()
-        .flatten()
-}
-
-/// `ShardedSubtaskStore.list_not_executor_deleted_by_task`: the owner probe
-/// then the full subtask projection of the task's undeleted runtime rows.
-async fn list_not_executor_deleted_by_task<T: MysqlTransaction>(
-    transaction: &mut T,
-    tables: Tables,
-    task_id: i64,
-    owner_user_id: i64,
-) -> Vec<MysqlRow> {
-    let owner: Option<MysqlRow> = transaction
-        .fetch_optional(
-            crate::task_store_statements::owner_matches_task_id_statement(tables.tasks),
-            (task_id, owner_user_id),
-        )
-        .await
-        .ok()
-        .flatten();
-    if owner.is_none() {
-        // `_owner_matches_task_id`'s fallback: the one distinct subtask owner.
-        let owners: Vec<MysqlRow> = transaction
-            .fetch_all(
-                crate::task_store_statements::distinct_subtask_owners_statement(tables.subtasks),
-                (task_id,),
-            )
-            .await
-            .unwrap_or_default();
-        let matches = owners.len() == 1
-            && owners[0].get_required::<i64>("user_id").ok() == Some(owner_user_id);
-        if !matches {
-            return Vec::new();
-        }
-    }
-    executor_cleanup_page(transaction, tables, task_id, 0)
-        .await
-        .unwrap_or_default()
-}
-
-async fn executor_cleanup_page<T: MysqlTransaction>(
-    transaction: &mut T,
-    tables: Tables,
-    task_id: i64,
-    after_id: i64,
-) -> MysqlResult<Vec<MysqlRow>> {
-    transaction
-        .fetch_all(
-            sql::subtasks_not_executor_deleted_by_task(tables),
-            (task_id, after_id),
-        )
-        .await
-}
-
-/// Decode one column of a subtask projection positionally.
-fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> Option<T> {
-    row.get::<T>(column).ok().flatten()
-}
-
 #[cfg(test)]
 mod tests {
+    use super::cleanup::{RuntimeReference, apply_executor_deleted_updates, deleted_statement};
     use super::*;
+    use crate::internal_callback::completion::Tables;
 
     use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, RedisValues};
+
+    /// Cancelled and failed runs release their container like completed ones;
+    /// on a node with 2 to 4 slots, two cancelled runs left none free.
+    #[test]
+    fn every_terminal_status_releases_the_executor() {
+        for status in ["COMPLETED", "COMPLETED_SILENT", "FAILED", "CANCELLED"] {
+            assert!(releases_executor(status), "{status}");
+        }
+        for status in ["PENDING", "RUNNING", ""] {
+            assert!(!releases_executor(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn the_unsaved_result_error_keeps_300_characters_of_the_cause() {
+        let message = unsaved_result_message(&"界".repeat(400));
+        let cause = message
+            .strip_prefix("The run finished but its result could not be saved: ")
+            .expect("prefix");
+        assert_eq!(cause.chars().count(), 300);
+        assert_eq!(
+            unsaved_result_message(&"Data too long for column 'result'"),
+            "The run finished but its result could not be saved: \
+             Data too long for column 'result'"
+        );
+    }
 
     /// The cleanup path issues no Redis command; the completion context still
     /// requires a Redis handle.
@@ -804,10 +653,24 @@ mod tests {
     #[tokio::test]
     async fn the_executor_deleted_updates_join_the_session_transaction() {
         let capture = TransactionCapture::default();
-        let sql = sql::update_subtask_executor_deleted(tables());
+        let sql = deleted_statement(tables());
         let updates = vec![
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589674),
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589675),
+            (
+                "2026-10-21 15:45:26.537475".to_string(),
+                RuntimeReference {
+                    id: 801406538589674,
+                    name: Some("fixture-runtime".into()),
+                    namespace: None,
+                },
+            ),
+            (
+                "2026-10-21 15:45:26.537475".to_string(),
+                RuntimeReference {
+                    id: 801406538589675,
+                    name: Some("fixture-runtime".into()),
+                    namespace: None,
+                },
+            ),
         ];
 
         let mut transaction = capture.transaction();
@@ -820,7 +683,7 @@ mod tests {
         assert_eq!(statements.len(), 2, "{statements:?}");
         for statement in &statements {
             assert_eq!(statement.sql, sql, "{statement:?}");
-            assert_eq!(statement.args, 3, "{statement:?}");
+            assert_eq!(statement.args, 5, "{statement:?}");
         }
         assert!(
             statements.iter().all(|statement| statement.sql != "COMMIT"),
@@ -833,10 +696,24 @@ mod tests {
     #[tokio::test]
     async fn a_failed_executor_deleted_update_aborts_the_batch() {
         let capture = TransactionCapture::failing_at(2);
-        let sql = sql::update_subtask_executor_deleted(tables());
+        let sql = deleted_statement(tables());
         let updates = vec![
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589674),
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589675),
+            (
+                "2026-10-21 15:45:26.537475".to_string(),
+                RuntimeReference {
+                    id: 801406538589674,
+                    name: Some("fixture-runtime".into()),
+                    namespace: None,
+                },
+            ),
+            (
+                "2026-10-21 15:45:26.537475".to_string(),
+                RuntimeReference {
+                    id: 801406538589675,
+                    name: Some("fixture-runtime".into()),
+                    namespace: None,
+                },
+            ),
         ];
 
         let mut transaction = capture.transaction();
