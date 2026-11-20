@@ -906,7 +906,7 @@ export function createHybridWorkbenchServices(
       rememberLocalRuntimeWorkDevices(qualifiedWork)
       const elapsedMs = Math.round(nowMs() - startedAt)
       if (elapsedMs > 5000) {
-        console.warn(
+        console.info(
           `[Wework] Slow local runtime inventory ${JSON.stringify({
             elapsedMs,
             identityMs: Math.round(identityReadyAt - startedAt),
