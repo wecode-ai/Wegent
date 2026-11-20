@@ -217,3 +217,102 @@ fn failed_projection_rolls_back_subscription_and_collector_reference() {
         2
     );
 }
+
+#[test]
+fn renewal_waits_for_an_in_process_collection_transaction() {
+    use std::sync::mpsc;
+    use std::thread;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("events.sqlite");
+    let (collecting, collection_started) = mpsc::channel();
+    let (commit, release_collection) = mpsc::channel();
+    let (renewing, renewal_started) = mpsc::channel();
+    let (renewed, renewal_finished) = mpsc::channel();
+
+    let path = path.as_path();
+    thread::scope(|scope| {
+        let collection = scope.spawn(move || {
+            update(path, Scope::Row("observations", "source"), |state| {
+                state["observations"]["source"] = json!({"sequence":1});
+                collecting.send(()).unwrap();
+                release_collection.recv().unwrap();
+                Ok(())
+            })
+        });
+        collection_started.recv().unwrap();
+        let renewal = scope.spawn(move || {
+            renewing.send(()).unwrap();
+            renewed
+                .send(update(path, Scope::Row("observers", "ui"), |state| {
+                    state["observers"]["ui"] = json!({"expires_at": 90_000});
+                    Ok(())
+                }))
+                .unwrap();
+        });
+        renewal_started.recv().unwrap();
+        let while_collecting = renewal_finished.recv_timeout(Duration::from_millis(750));
+        commit.send(()).unwrap();
+        collection.join().unwrap().unwrap();
+        renewal.join().unwrap();
+
+        assert!(matches!(
+            while_collecting,
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        renewal_finished.recv().unwrap().unwrap();
+    });
+}
+
+#[test]
+fn admission_write_waits_for_an_external_database_transaction() {
+    use std::sync::mpsc;
+    use std::thread;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("events.sqlite");
+    update(&path, Scope::Row("operations", "admission"), |state| {
+        state["operations"]["admission"] = json!({"task_id":"task","status":"armed"});
+        Ok(())
+    })
+    .unwrap();
+    let writer = Connection::open(&path).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let (starting, started) = mpsc::channel();
+    let (finished, completion) = mpsc::channel();
+    thread::scope(|scope| {
+        let path = path.as_path();
+        let admission = scope.spawn(move || {
+            starting.send(()).unwrap();
+            finished
+                .send(update(
+                    path,
+                    Scope::Row("operations", "admission"),
+                    |state| {
+                        state["operations"]["admission"]["status"] = json!("pending");
+                        Ok(())
+                    },
+                ))
+                .unwrap();
+        });
+        started.recv().unwrap();
+        let while_locked = completion.recv_timeout(Duration::from_millis(750));
+        writer.execute_batch("COMMIT").unwrap();
+        admission.join().unwrap();
+        assert!(
+            matches!(&while_locked, Err(mpsc::RecvTimeoutError::Timeout)),
+            "Admission must wait for the database writer: {while_locked:?}"
+        );
+        completion
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+    });
+    assert_eq!(
+        read(&path, Scope::Row("operations", "admission"), |state| {
+            Ok(state["operations"]["admission"]["status"].clone())
+        })
+        .unwrap(),
+        json!("pending")
+    );
+}

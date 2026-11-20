@@ -2,6 +2,10 @@
 use super::*;
 use rusqlite::{params, Connection, Transaction};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
+
+// An executor owns one event database. Queue its writes before acquiring a SQLite lock.
+static WRITER: Mutex<()> = Mutex::new(());
 
 pub(super) enum Scope<'a> {
     Row(&'a str, &'a str),
@@ -23,11 +27,15 @@ fn storage(error: impl std::fmt::Display) -> AppIpcError {
     AppIpcError::new("control_storage_failed", error.to_string())
 }
 
+fn lock_writer() -> MutexGuard<'static, ()> {
+    WRITER.lock().unwrap_or_else(|error| error.into_inner())
+}
+
 fn open(path: &Path) -> Result<Connection, AppIpcError> {
     std::fs::create_dir_all(path.parent().expect("event store parent")).map_err(storage)?;
     let mut connection = Connection::open(path).map_err(storage)?;
     connection
-        .busy_timeout(Duration::from_millis(250))
+        .busy_timeout(Duration::from_secs(5))
         .map_err(storage)?;
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -231,6 +239,7 @@ pub(super) fn update<T>(
     scope: Scope<'_>,
     update: impl FnOnce(&mut Value) -> Result<T, AppIpcError>,
 ) -> Result<T, AppIpcError> {
+    let _writer = lock_writer();
     let mut connection = open(path)?;
     let transaction = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -246,6 +255,7 @@ pub(super) fn update_and_read(
     update: impl FnOnce(&mut Value) -> Result<(), AppIpcError>,
     projection: Scope<'_>,
 ) -> Result<Value, AppIpcError> {
+    let _writer = lock_writer();
     let mut connection = open(path)?;
     let transaction = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -276,6 +286,7 @@ pub(super) fn unreferenced(path: &Path) -> Result<Vec<String>, AppIpcError> {
 }
 
 pub(super) fn remove_unreferenced(path: &Path, id: &str) -> Result<(), AppIpcError> {
+    let _writer = lock_writer();
     let connection = open(path)?;
     connection
         .execute(
