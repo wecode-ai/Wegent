@@ -15,7 +15,6 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
   const requested = new Set()
   const releases = new Map()
   const taskIds = []
-  const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const promptFor = (kind, index) => `${PREFIX}${kind}_${index}`
   const taskIdFor = (kind, index) =>
     kind === 'standIn'
@@ -46,16 +45,20 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
       for (const resolve of releases.values()) resolve()
     },
     async verify(control) {
-      const original = await rpc(control, 'runtime.settings.get', {})
+      // This scenario keeps the same renderer and Runtime host throughout verification.
+      const origin = await control.command('getLocationOrigin', 'body')
+      const rpc = (method, params) =>
+        requestExecutor(control, method, params, uiTimeoutMs, { origin })
+      const original = await rpc('runtime.settings.get', {})
       const settings = {
         maxConcurrentTasks: 1,
         maxConcurrentStandInTasks: 1,
         maxConcurrentAgentTasks: 1,
       }
-      const capacity = () => rpc(control, 'runtime.capacity.get', {})
+      const capacity = () => rpc('runtime.capacity.get', {})
       const waitForCompletedThread = taskId =>
         waitForCompletedOwnerTaskThread(
-          async id => (await rpc(control, 'runtime.tasks.get', { taskId: id })).task,
+          async id => (await rpc('runtime.tasks.get', { taskId: id })).task,
           taskId,
           uiTimeoutMs
         )
@@ -66,12 +69,12 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
           `No real model request for ${prompt}`,
           uiTimeoutMs
         )
-      const catalog = await rpc(control, 'runtime.runner.catalog', {})
+      const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
       assert.ok(model, 'The concurrency fixture requires the configured real Codex model route')
-      const personal = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+      const personal = await rpc('runtime.stand_in.personal.get', { userId: 9001 })
       try {
-        await rpc(control, 'runtime.stand_in.personal.save', {
+        await rpc('runtime.stand_in.personal.save', {
           userId: 9001,
           settings: {
             ...personal,
@@ -95,7 +98,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
             ],
           },
         })
-        await rpc(control, 'runtime.settings.update', settings)
+        await rpc('runtime.settings.update', settings)
         for (const kind of ['personal', 'standIn', 'agent']) {
           for (const index of [1, 2]) {
             const taskId = taskIdFor(kind, index)
@@ -113,7 +116,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
                   ? { type: 'project_automation' }
                   : null
             taskIds.push(taskId)
-            const created = await rpc(control, 'runtime.tasks.create', {
+            const created = await rpc('runtime.tasks.create', {
               taskId,
               title: prompt,
               runtime: 'codex',
@@ -159,9 +162,9 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         await waitRequested(promptFor('standIn', 2))
         assert.equal(requested.has(promptFor('personal', 2)), false)
         assert.equal(requested.has(promptFor('agent', 2)), false)
-        await rpc(control, 'runtime.settings.update', { maxConcurrentAgentTasks: 2 })
+        await rpc('runtime.settings.update', { maxConcurrentAgentTasks: 2 })
         await waitRequested(promptFor('agent', 2))
-        await rpc(control, 'runtime.settings.update', { maxConcurrentAgentTasks: 1 })
+        await rpc('runtime.settings.update', { maxConcurrentAgentTasks: 1 })
         const lowered = await capacity()
         assert.equal(
           lowered.categories.agent.active,
@@ -183,7 +186,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         for (const kind of ['standIn', 'agent']) {
           const taskId = taskIdFor(kind, 1)
           const prompt = promptFor(kind, 'followup')
-          const response = await rpc(control, 'runtime.tasks.send', {
+          const response = await rpc('runtime.tasks.send', {
             taskId,
             message: prompt,
             executionRequest: {
@@ -224,10 +227,10 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         }
       } finally {
         for (const resolve of releases.values()) resolve()
-        for (const taskId of taskIds) await rpc(control, 'runtime.tasks.cancel', { taskId })
-        await rpc(control, 'runtime.settings.update', original)
-        const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
-        await rpc(control, 'runtime.stand_in.personal.save', {
+        for (const taskId of taskIds) await rpc('runtime.tasks.cancel', { taskId })
+        await rpc('runtime.settings.update', original)
+        const current = await rpc('runtime.stand_in.personal.get', { userId: 9001 })
+        await rpc('runtime.stand_in.personal.save', {
           userId: 9001,
           settings: { ...personal, version: current.version },
         })
