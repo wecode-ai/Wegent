@@ -81,6 +81,7 @@ export function ProjectSpacePickerMenu({
       options={visible.map(({ key, project: option, group }) => ({
         value: key,
         label: option.name,
+        accessibleLabel: `${option.name} · ${group.label} · ${option.project_key}`,
         description: `${option.project_key} · ${group.label}`,
         searchText: `${option.name} ${option.project_key} ${group.label}`,
         testId: `work-item-workspace-option-${String(option.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,

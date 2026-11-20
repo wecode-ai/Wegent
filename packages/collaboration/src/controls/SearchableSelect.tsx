@@ -25,6 +25,7 @@ import {
 export interface SearchableSelectOption<T extends string = string> {
   value: T
   label: string
+  accessibleLabel?: string
   description?: string
   group?: string
   section?: string
@@ -362,6 +363,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
                   render={(props, state) => <div {...props} data-active={state.highlighted} />}
                   value={option.value}
                   label={option.label}
+                  aria-label={option.accessibleLabel}
                   disabled={option.disabled}
                   aria-current={
                     props.activateSelected && values.includes(option.value) ? true : undefined
