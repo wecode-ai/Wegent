@@ -454,24 +454,35 @@ fn goal_status_sync_projects_native_status_when_wait_storage_fails() {
     handler.save_event_subscription("wait", &waiting).unwrap();
     let mut delivered = waiting.clone();
     delivered["status"] = json!("delivered");
-    handler.save_event_subscription("delivered", &delivered).unwrap();
+    handler
+        .save_event_subscription("delivered", &delivered)
+        .unwrap();
     let connection = rusqlite::Connection::open(handler.event_subscription_path()).unwrap();
-    connection.execute(
-        "UPDATE records SET metadata='invalid' WHERE section='operations' AND id='delivered'",
-        [],
-    ).unwrap();
+    connection
+        .execute(
+            "UPDATE records SET metadata='invalid' WHERE section='operations' AND id='delivered'",
+            [],
+        )
+        .unwrap();
     let mut active = goal;
     active["status"] = json!("active");
     handler.sync_runtime_task_goal_status("caller", Some("active".into()), Some(&active));
     assert_eq!(
-        handler.store.get_task("caller").unwrap().goal_status.as_deref(),
+        handler
+            .store
+            .get_task("caller")
+            .unwrap()
+            .goal_status
+            .as_deref(),
         Some("active"),
     );
-    let wait_status: String = connection.query_row(
-        "SELECT status FROM records WHERE section='operations' AND id='wait'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let wait_status: String = connection
+        .query_row(
+            "SELECT status FROM records WHERE section='operations' AND id='wait'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(wait_status, "armed", "The failed projection must roll back");
 }
 
