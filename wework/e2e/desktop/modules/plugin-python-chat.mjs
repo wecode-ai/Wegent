@@ -170,7 +170,9 @@ export function createPluginPythonChat({
       await control.command('clickWhenEnabled', `${PANE} [data-testid="send-message-button"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await withTimeout(
+    },
+    waitForShellCommandRequest() {
+      return withTimeout(
         shellCommandRequested.promise,
         uiTimeoutMs,
         'The chat did not request the Python plugin shell command'
