@@ -506,9 +506,8 @@ function KnowledgeDocumentSession({
   const handleKnowledgeBaseTypeConverted = useCallback(
     (updatedKb: KnowledgeBase) => {
       sidebar.syncConvertedKnowledgeBase(updatedKb)
-      dialogs.setEditingKb(updatedKb)
     },
-    [sidebar, dialogs]
+    [sidebar]
   )
 
   const retainsDetail =

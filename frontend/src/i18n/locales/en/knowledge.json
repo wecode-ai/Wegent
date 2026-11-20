@@ -1465,6 +1465,7 @@
       "runner": "Future generation runner",
       "runnerHint": "Leave empty to use the knowledge-base owner. This affects future runs only; history, current files, and KB ownership stay unchanged.",
       "runnerPlaceholder": "Search users; leave empty for owner",
+      "useDefaultRunner": "Use default runner",
       "history": "Recent checks",
       "results": {
         "repositoryUnchanged": "Repository unchanged",

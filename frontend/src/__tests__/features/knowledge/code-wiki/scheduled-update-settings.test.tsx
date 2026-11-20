@@ -87,6 +87,27 @@ async function renderDialog() {
 describe('Code Wiki scheduled update details', () => {
   beforeEach(() => jest.clearAllMocks())
 
+  it('restores the default runner when the configured user is absent from search results', async () => {
+    jest.mocked(codeWikiApi.scheduledUpdate).mockResolvedValue({
+      ...PLAN,
+      execution_principal_user_id: 23,
+    })
+    jest.mocked(userApis.getUsersByIds).mockResolvedValue({ users: [], total: 0 })
+    const onDraftSaved = jest.fn()
+    render(
+      <ScheduledUpdateSettings
+        knowledgeBaseId={7}
+        onDraftSaved={onDraftSaved}
+        onDeleteRequested={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('code-wiki-scheduled-use-default-runner'))
+    expect(onDraftSaved).toHaveBeenCalledWith(
+      expect.objectContaining({ execution_principal_user_id: null })
+    )
+  })
+
   it('preserves explicitly clearing a runner when reopening an unapplied draft', async () => {
     jest.mocked(codeWikiApi.scheduledUpdate).mockResolvedValue({
       ...PLAN,

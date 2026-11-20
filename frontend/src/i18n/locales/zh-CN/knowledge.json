@@ -1465,6 +1465,7 @@
       "runner": "后续生成者",
       "runnerHint": "留空则使用知识库 owner。只影响未来生成，不改变历史、当前文件或知识库所属。",
       "runnerPlaceholder": "搜索用户；留空使用 owner",
+      "useDefaultRunner": "使用默认执行人",
       "history": "最近检查记录",
       "results": {
         "repositoryUnchanged": "仓库没有变化",

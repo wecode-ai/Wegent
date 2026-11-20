@@ -172,6 +172,11 @@ export function KnowledgeBaseForm({
   const sidebar = useRef<HTMLElement>(null)
   const [modelsOpened, setModelsOpened] = useState(false)
   const [generationOpened, setGenerationOpened] = useState(false)
+  const usageReadOnly = disabled || (editableSection !== undefined && editableSection !== 'usage')
+  const retrievalSettingsReadOnly =
+    retrievalReadOnly ||
+    disabled ||
+    (editableSection !== undefined && editableSection !== 'retrieval')
 
   useLayoutEffect(() => {
     if (selection.section === 'models') setModelsOpened(true)
@@ -408,7 +413,7 @@ export function KnowledgeBaseForm({
                   onUserChange={onRetrievalConfigUserChange}
                   scope={retrievalScope}
                   groupName={retrievalGroupName}
-                  readOnly={retrievalReadOnly}
+                  readOnly={retrievalSettingsReadOnly}
                   partialReadOnly={retrievalPartialReadOnly}
                 />
               )}
@@ -485,6 +490,7 @@ export function KnowledgeBaseForm({
               </div>
               <Slider
                 id="knowledge-max-calls"
+                disabled={usageReadOnly}
                 value={[callLimits.maxCalls]}
                 onValueChange={values => handleMaxCallsChange(values[0])}
                 min={2}
@@ -502,6 +508,7 @@ export function KnowledgeBaseForm({
               </div>
               <Slider
                 id="knowledge-exempt-calls"
+                disabled={usageReadOnly}
                 value={[callLimits.exemptCalls]}
                 onValueChange={values => handleExemptCallsChange(values[0])}
                 min={1}

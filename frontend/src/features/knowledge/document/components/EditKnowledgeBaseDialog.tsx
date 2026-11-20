@@ -124,6 +124,7 @@ export function EditKnowledgeBaseDialog({
 
   // Default view dialog state
   const [showConvertDialog, setShowConvertDialog] = useState(false)
+  const [convertedView, setConvertedView] = useState<KnowledgeBase['kb_type']>()
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [scheduledUpdateChange, setScheduledUpdateChange] = useState<ScheduledUpdateChange>(null)
   const [isSavingChanges, setIsSavingChanges] = useState(false)
@@ -138,6 +139,7 @@ export function EditKnowledgeBaseDialog({
     async (knowledgeBaseId: number) => {
       const requestId = ++fullKnowledgeBaseRequestId.current
       selectSection('basic')
+      setConvertedView(undefined)
       setFullKnowledgeBase(null)
       setIsLoadingFullKnowledgeBase(true)
       setFullKnowledgeBaseLoadFailed(false)
@@ -381,15 +383,14 @@ export function EditKnowledgeBaseDialog({
     onOpenChange(newOpen)
   }
 
-  // Knowledge base type info - use fullKnowledgeBase for accurate data
   const kb = fullKnowledgeBase
-  const kbType = kb?.kb_type || 'notebook'
+  const kbType = convertedView ?? kb?.kb_type ?? 'notebook'
   const isNotebook = kbType === 'notebook'
 
   // Handle default opening view update success
   const handleTypeConverted = (updatedKb: KnowledgeBase) => {
     setShowConvertDialog(false)
-    onOpenChange(false)
+    setConvertedView(updatedKb.kb_type)
     onTypeConverted?.(updatedKb)
   }
 
@@ -711,7 +712,7 @@ export function EditKnowledgeBaseDialog({
       <ConvertKnowledgeBaseTypeDialog
         open={showConvertDialog}
         onOpenChange={setShowConvertDialog}
-        knowledgeBase={fullKnowledgeBase}
+        knowledgeBase={fullKnowledgeBase && { ...fullKnowledgeBase, kb_type: kbType }}
         onSuccess={handleTypeConverted}
       />
     </>

@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { getKnowledgeBase, updateKnowledgeBaseType } from '@/apis/knowledge'
 import { EditKnowledgeBaseDialog } from '@/features/knowledge/document/components/EditKnowledgeBaseDialog'
 import type { KnowledgeBase, KnowledgeBaseUpdate } from '@/types/knowledge'
 
@@ -15,20 +15,24 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  updateKnowledgeBaseType: jest.fn(),
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
   KnowledgeBaseForm: ({
     documentSyncSetting,
+    typeSection,
     directAccessRequirement,
     onDirectAccessRequirementChange,
   }: {
     documentSyncSetting?: import('react').ReactNode
+    typeSection?: import('react').ReactNode
     directAccessRequirement: 'read' | 'edit'
     onDirectAccessRequirementChange: (value: 'read' | 'edit') => void
   }) => (
     <div data-testid="knowledge-base-form">
+      {typeSection}
       {documentSyncSetting}
       <button
         type="button"
@@ -50,10 +54,6 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       </button>
     </div>
   ),
-}))
-
-jest.mock('@/features/knowledge/document/components/ConvertKnowledgeBaseTypeDialog', () => ({
-  ConvertKnowledgeBaseTypeDialog: () => null,
 }))
 
 jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled', () => ({
@@ -90,6 +90,43 @@ const knowledgeBase: KnowledgeBase = {
 }
 
 describe('EditKnowledgeBaseDialog direct access requirement', () => {
+  it('uses the returned default view for subsequent changes in the same editor', async () => {
+    jest.mocked(getKnowledgeBase).mockResolvedValue({ ...knowledgeBase, kb_type: 'notebook' })
+    jest
+      .mocked(updateKnowledgeBaseType)
+      .mockImplementation(async (_id, kb_type) => ({ ...knowledgeBase, kb_type }))
+    const onTypeConverted = jest.fn()
+    render(
+      <EditKnowledgeBaseDialog
+        open
+        knowledgeBase={knowledgeBase}
+        onOpenChange={jest.fn()}
+        onSubmit={jest.fn()}
+        onTypeConverted={onTypeConverted}
+      />
+    )
+
+    const changeView = await screen.findByTestId('edit-kb-default-view')
+    const mainForm = within(screen.getByTestId('knowledge-base-form'))
+    fireEvent.click(changeView)
+    const confirmation = screen.getByRole('dialog', {
+      name: 'document.knowledgeBase.changeDefaultView',
+    })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'common:actions.confirm' }))
+    expect(await mainForm.findByText('document.knowledgeBase.typeClassic')).toBeVisible()
+    fireEvent.click(changeView)
+    const nextConfirmation = screen.getByRole('dialog', {
+      name: 'document.knowledgeBase.changeDefaultView',
+    })
+    fireEvent.click(
+      within(nextConfirmation).getByRole('button', { name: 'common:actions.confirm' })
+    )
+    expect(await mainForm.findByText('document.knowledgeBase.typeNotebook')).toBeVisible()
+    expect(onTypeConverted).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kb_type: 'notebook' })
+    )
+  })
+
   it('loads and saves the direct access requirement', async () => {
     const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
     jest.mocked(getKnowledgeBase).mockResolvedValue(knowledgeBase)

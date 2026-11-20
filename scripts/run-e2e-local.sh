@@ -166,6 +166,7 @@ cd "$PROJECT_ROOT/backend"
 
 # Set environment variables for backend
 export DATABASE_URL="mysql+pymysql://root:123456@127.0.0.1:3306/task_manager"
+export WEGENT_LOCAL_E2E=1
 export REDIS_URL="redis://127.0.0.1:6379"
 export ENVIRONMENT="development"
 export DB_AUTO_MIGRATE="True"

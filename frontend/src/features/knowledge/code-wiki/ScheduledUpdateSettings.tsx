@@ -113,6 +113,7 @@ export function ScheduledUpdateSettings({
 
   const plan = savedPlan && { ...savedPlan, ...draft }
   const runnerId = plan?.execution_principal_user_id
+  const selectedRunners = runner?.id === runnerId ? (runner?.users ?? []) : []
   useEffect(() => {
     if (!runnerId || runner?.id === runnerId) return
     let current = true
@@ -317,7 +318,7 @@ export function ScheduledUpdateSettings({
                 {t('codeWiki.scheduledUpdate.runnerHint')}
               </p>
               <UserSearchSelect
-                selectedUsers={runner?.id === runnerId ? (runner?.users ?? []) : []}
+                selectedUsers={selectedRunners}
                 onSelectedUsersChange={users => {
                   const id = users[0]?.id ?? null
                   setRunner(id === null ? null : { id, users })
@@ -327,6 +328,17 @@ export function ScheduledUpdateSettings({
                 placeholder={t('codeWiki.scheduledUpdate.runnerPlaceholder')}
                 inputTestId="code-wiki-scheduled-runner"
               />
+              {plan.can_configure && runnerId != null && selectedRunners.length === 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  data-testid="code-wiki-scheduled-use-default-runner"
+                  onClick={() => changePlan({ execution_principal_user_id: null })}
+                >
+                  {t('codeWiki.scheduledUpdate.useDefaultRunner')}
+                </Button>
+              )}
             </div>
           </details>
         </fieldset>

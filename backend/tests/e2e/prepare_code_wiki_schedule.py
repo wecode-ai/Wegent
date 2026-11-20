@@ -4,6 +4,7 @@
 
 """Seed a stopped Wiki and a disabled plan in the disposable browser test DB."""
 
+import os
 import sys
 
 from sqlalchemy.engine import make_url
@@ -24,8 +25,17 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 
 def prepare_wiki(owner_name: str, name: str) -> int:
     database = make_url(settings.DATABASE_URL)
-    if database.get_backend_name() != "mysql" or database.database != "wegent_test":
-        raise RuntimeError("Code Wiki browser fixtures require the wegent_test DB")
+    local_e2e = (
+        os.environ.get("WEGENT_LOCAL_E2E") == "1"
+        and database.host == "127.0.0.1"
+        and database.database == "task_manager"
+    )
+    if database.get_backend_name() != "mysql" or not (
+        database.database == "wegent_test" or local_e2e
+    ):
+        raise RuntimeError(
+            "Code Wiki browser fixtures require the CI or local E2E database"
+        )
 
     with SessionLocal() as db:
         owner = db.query(User).filter(User.user_name == owner_name).one()

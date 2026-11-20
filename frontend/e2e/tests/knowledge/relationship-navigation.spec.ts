@@ -391,6 +391,8 @@ creationTest(
 
     await expect(enabled).toBeEnabled({ timeout: 5000 })
     await enabled.click()
+    await page.getByTestId('code-wiki-scheduled-advanced').click()
+    await page.getByTestId('code-wiki-scheduled-use-default-runner').click()
     await page.getByTestId('code-wiki-scheduled-time').fill('12:34')
     const second = scheduleResponse()
     await page.getByTestId('code-wiki-scheduled-save-retry').click()
@@ -398,7 +400,12 @@ creationTest(
     expect(requests.filter(request => request === `PUT ${libraryPath}`)).toHaveLength(1)
     const saved = await creation.api.get(schedulePath)
     expect(saved.status).toBe(200)
-    expect(saved.data).toMatchObject({ enabled: false, hour: 12, minute: 34 })
+    expect(saved.data).toMatchObject({
+      enabled: false,
+      hour: 12,
+      minute: 34,
+      execution_principal_user_id: null,
+    })
   }
 )
 
