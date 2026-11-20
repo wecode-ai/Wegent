@@ -591,7 +591,11 @@ app.on('web-contents-created', (_event, contents) => {
         message: redactLog(message).slice(0, 1024),
       })
     }
-    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      (message.startsWith('[interaction-focus-state]') ||
+        message.startsWith('[desktop-e2e-drag-start] '))
+    )
       console.info(redactLog(message).slice(0, 4096))
     const diagnostic = rendererConsoleDiagnostic({
       e2e: process.env.VITE_WEWORK_E2E === 'true',

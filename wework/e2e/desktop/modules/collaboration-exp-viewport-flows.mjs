@@ -41,6 +41,9 @@ export async function verifyCollaborationExpTeamManagement({
   assert.equal(await control.command('getValue', roleName), 'Integration assistant')
   assert.deepEqual(await nativeTaskIdentities(), beforeManage)
   assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
+}
+
+async function closeCollaborationExpTeamManagement(control, click) {
   const profile = '[data-testid="stand-in-profile-panel"]'
   await click(control, `${profile} [data-testid="stand-in-close"]`)
   await control.command('waitFor', profile, { visible: false })
@@ -213,6 +216,7 @@ export async function verifyCollaborationExpViewports({
           nativeTaskIdentities,
           localIssueIdentities,
         })
+        await closeCollaborationExpTeamManagement(control, click)
         await control.command('navigate', 'body', { value: route() })
         await control.command('waitFor', `${runningRole}[data-state="running"]`, {
           visible: true,

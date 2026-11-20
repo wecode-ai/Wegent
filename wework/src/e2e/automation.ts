@@ -1549,7 +1549,7 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
-  console.warn(
+  console.info(
     `[desktop-e2e-drag-start] ${JSON.stringify({
       ...start,
       moveDefaultPrevented: !moved,

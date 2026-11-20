@@ -23,6 +23,13 @@ export async function openProjectBoard(control, scoped, project) {
     text: project.name,
   })
   await selectCollaborationProjectView(control, scoped('').trim(), 'board')
+  const openViewSelector = scoped(
+    '[data-testid="collaboration-project-view-select"][aria-expanded="true"]'
+  )
+  if (Number(await control.command('getElementCount', openViewSelector))) {
+    await control.command('setExpanded', openViewSelector, { value: 'false' })
+    await control.command('waitFor', openViewSelector, { visible: false })
+  }
   await control.command('waitFor', scoped('[data-testid="collaboration-board"]'))
 }
 
