@@ -460,6 +460,32 @@ impl RuntimeWorkRpcHandler {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
+                if let Err(error) = handler.flush_local_role_cancellations().await {
+                    log_executor_event(
+                        "Specialist cancellation reconciliation failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = handler.flush_stand_in_role_dependencies().await {
+                    log_executor_event(
+                        "Specialist prerequisite dispatch failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = handler.flush_remote_stand_in_role_requests().await {
+                    log_executor_event(
+                        "Specialist dispatch reconciliation failed",
+                        &[("code", error.code)],
+                    );
+                }
+            }
+        });
+        let handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(poll_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
                 // Cloud outages must not delay local assignment polling or receipts.
                 if let Err(error) = handler.collect_stand_in_issue_events().await {
                     log_executor_event(

@@ -29,7 +29,7 @@ impl RuntimeWorkRpcHandler {
                 link.thread_id = Some(thread.clone());
             });
             return Box::pin(
-                self.send_message_with_activity_checks(payload, activity, false, false),
+                self.send_message_with_activity_checks(payload, activity, false, false, None),
             )
             .await
             .map(Some);

@@ -1983,6 +1983,28 @@ export function createHybridWorkbenchServices(
       async inbox(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).inbox(userId, deviceId)
       },
+      async remoteRoleBranches(userId, deviceId, taskId) {
+        return (await standInApiForDevice(deviceId)).remoteRoleBranches(userId, deviceId, taskId)
+      },
+      async cancelRoleWork(userId, deviceId, taskId, root, branchTaskId) {
+        return (await standInApiForDevice(deviceId)).cancelRoleWork(
+          userId,
+          deviceId,
+          taskId,
+          root,
+          branchTaskId
+        )
+      },
+      async retryRoleWork(userId, deviceId, taskId, root, branchTaskId, attempt) {
+        return (await standInApiForDevice(deviceId)).retryRoleWork(
+          userId,
+          deviceId,
+          taskId,
+          root,
+          branchTaskId,
+          attempt
+        )
+      },
       async workMessages(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
       },
@@ -2075,6 +2097,15 @@ export function createHybridWorkbenchServices(
       },
       async personalSave(userId, settings, deviceId) {
         return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      },
+      async saveDelegationRoute(userId, deviceId, version, roleId, route) {
+        return (await standInApiForDevice(deviceId)).saveDelegationRoute(
+          userId,
+          deviceId,
+          version,
+          roleId,
+          route
+        )
       },
       async readTask(deviceId, taskId, options) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId, options)

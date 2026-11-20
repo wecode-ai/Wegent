@@ -44,6 +44,43 @@ fn submitted_interface_is_bound_to_the_authenticated_runtime_command() {
 use serde_json::json;
 
 #[test]
+fn specialist_relay_requires_the_authenticated_owner_and_a_source_route_for_start() {
+    let intent = json!({"userId":23,"intent":{"sourceRoute":"source-device"}});
+    assert_eq!(
+        role_task_source(STAND_IN_ROLE_START_METHOD, 23, &intent).unwrap(),
+        Some("source-device")
+    );
+    for (payload, message) in [
+        (
+            json!({"userId":24,"intent":{"sourceRoute":"source-device"}}),
+            "The role task owner must match the connected account",
+        ),
+        (
+            json!({"userId":23,"intent":{"sourceRoute":"  "}}),
+            "A current owned source device is required",
+        ),
+        (
+            json!({"userId":23}),
+            "A current owned source device is required",
+        ),
+    ] {
+        assert_eq!(
+            role_task_source(STAND_IN_ROLE_START_METHOD, 23, &payload),
+            Err(message)
+        );
+    }
+    let branches = json!({"userId":23,"taskId":"original"});
+    assert_eq!(
+        role_task_source("runtime.stand_in.role_task.branches", 23, &branches).unwrap(),
+        None
+    );
+    assert_eq!(
+        role_task_source("runtime.stand_in.role_task.branches", 24, &branches),
+        Err("The role task owner must match the connected account")
+    );
+}
+
+#[test]
 fn timeouts_clamp_to_the_source_default_and_cap() {
     assert_eq!(normalize_timeout(0), 30);
     assert_eq!(normalize_timeout(-1), 30);

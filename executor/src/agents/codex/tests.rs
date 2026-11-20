@@ -398,6 +398,15 @@ fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
     assert!(result
         .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"approve\"".into()));
     assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+    let specialist = serde_json::from_value(json!({
+        "origin":{"type":"stand_in_task","initiatedBy":"stand_in","askBeforeAct":true,"roleDelegation":{"root":"owner-request"}}
+    })).unwrap();
+    let result =
+        stand_in_mcp_approval_overrides(&specialist, root.path(), &overrides, &Map::new()).unwrap();
+    assert!(result.contains(
+        &"mcp_servers.wework_stand_in.tools.delegate_role_task.approval_mode=\"approve\"".into()
+    ));
+    assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
 }
 
 #[test]

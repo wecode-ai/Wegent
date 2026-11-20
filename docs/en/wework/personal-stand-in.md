@@ -40,6 +40,18 @@ The desktop prompt above the composer offers **Notification settings**, **Don't 
 
 The number beside **My Stand-in** counts unread AI messages in primary and role conversations, not internal subagents or task completions. Counts above 99 display **99+**. Viewing a foreground conversation acknowledges its messages; hidden or background windows do not. Each new message triggers at most one desktop notification. Clicking opens the corresponding device, account and identity conversation. Accounts do not share counts. Messages remain in the conversation and notification center even when OS delivery is blocked.
 
+## Delegate work to a specialist role
+
+In **My assistant**, name a role when you hand off work. When you leave the choice open, the assistant can assign work automatically if the responsibilities clearly match. If the choice affects the outcome and several roles fit, the assistant asks first. One request can be split across roles, and a specialist can hand off a part that calls for different expertise.
+
+Expand **Delegated tasks** at the bottom of the original conversation to see roles, progress, and errors. The card prioritizes work that is still active. You can answer supported questions right in the card. Open a task to read its independent conversation and handle native approval prompts. Each role uses its saved model and working directory, and its long-running chat remains available. Results flow back to the assigning assistant, which summarizes them in the original conversation.
+
+Cross-device delegation uses the role's configured execution device on the same Wework account. While that device is offline, the task shows **Waiting for device**. You can open the task from the original conversation once the device is online and accepts it.
+
+Work that depends on earlier results shows **Waiting for prerequisites**. When the prerequisite succeeds, its result goes to the next role. A failed or cancelled prerequisite leaves the dependent task marked **A prerequisite did not complete**. Choose **Retry** beside a failed branch to run it again in the same task. Other branches keep their progress and results.
+
+Choose **Cancel branch** to stop one branch and its subtasks while the other branches continue. Choose **Cancel delegation** to stop every unfinished branch in the request. Completed results remain available. If the execution device is offline, the card shows **Waiting for device to confirm cancellation**.
+
 <a id="role-execution-device"></a>
 
 ## Individual role-profile operations

@@ -1065,6 +1065,40 @@ impl RuntimeWorkRpcHandler {
         self.send_message_with_task_gate(payload, false, true).await
     }
 
+    pub(super) async fn send_stand_in_role_result(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        let user = payload["userId"].as_i64().ok_or_else(|| {
+            AppIpcError::new("permission_denied", "Assistant result has no owner")
+        })?;
+        if !self.local_task_link(&task).is_some_and(|link| {
+            super::stand_in_role_delegation::owned_role_task(&link, user, &self.device_id)
+                && !matches!(link.status.as_str(), "archived" | "cancelled")
+        }) {
+            return Ok(json!({"success": false, "accepted": false, "code": "owner_unavailable"}));
+        }
+        self.send_message_with_activity_checks(payload, true, false, true, None)
+            .await
+    }
+
+    pub(super) async fn send_stand_in_role_retry(
+        &self,
+        payload: Value,
+        attempt: u64,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        self.send_message_with_activity_checks(payload, false, false, false, Some(attempt))
+            .await
+    }
+
     pub(super) async fn send_message_from_owner(
         &self,
         payload: Value,
@@ -1084,7 +1118,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, owner_input, from_event)
+        self.send_message_with_activity_checks(payload, false, owner_input, from_event, None)
             .await
     }
 
@@ -1153,7 +1187,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, false, false)
+        self.send_message_with_activity_checks(payload, false, false, false, None)
             .await
     }
 
@@ -1165,7 +1199,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, false, false)
+        self.send_message_with_activity_checks(payload, true, false, false, None)
             .await
     }
 
@@ -1175,6 +1209,7 @@ impl RuntimeWorkRpcHandler {
         activity: bool,
         owner_input: bool,
         from_event: bool,
+        role_retry_attempt: Option<u64>,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1396,6 +1431,14 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
+            if let Some(attempt) = role_retry_attempt {
+                let delegation = request
+                    .extra
+                    .get_mut("standInDelegation")
+                    .filter(|delegation| delegation["roleDelegation"].is_object())
+                    .ok_or_else(super::stand_in_role_delegation::denied)?;
+                delegation["attempt"] = json!(attempt);
+            }
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
@@ -1572,7 +1615,9 @@ impl RuntimeWorkRpcHandler {
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         let turn = SpawnTurnRequest {
-            task_kind: None,
+            // A verified retry already restored its origin and advanced only the attempt.
+            // Rebinding at admission would replace it with the preceding attempt.
+            task_kind: role_retry_attempt.map(|_| RuntimeTaskKind::StandIn),
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
