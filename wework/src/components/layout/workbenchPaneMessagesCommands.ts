@@ -549,21 +549,6 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     await queueController?.send(message)
   }
 
-  const loadFullTranscriptForExport = async () => {
-    const { loadRuntimeTranscriptForPane, runtimeTaskLoadTarget } = sessionOwner.frame
-
-    if (!runtimeTaskLoadTarget) return sessionOwner.live.messages
-
-    const transcript = await loadRuntimeTranscriptForPane(runtimeTaskLoadTarget.address, {
-      includeFullContent: true,
-      refresh: true,
-    })
-    if (transcript.fullContent !== true) {
-      throw new Error('The complete task transcript is unavailable')
-    }
-    return transcript.messages.length > 0 ? transcript.messages : sessionOwner.live.messages
-  }
-
   const sendQueuedMessageAsGuidance = async (
     queuedMessage: RuntimePaneQueuedMessage,
     forceActiveTurn = false
@@ -835,7 +820,6 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     editLastUserMessageInPane,
     ignoreRequestUserInput,
     sendQueuedMessage,
-    loadFullTranscriptForExport,
     sendQueuedMessageAsGuidance,
     setDefaultCollaborationMode,
     sendRequestUserInputResponse,
