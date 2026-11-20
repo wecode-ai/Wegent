@@ -3218,6 +3218,8 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
       validateExecutor: path =>
         assertExecutorWorkbenchCompatibility({ ...process.env, WEWORK_EXECUTOR_PATH: path }),
       log: event => appUpdateLogger.info(event),
+      reportPreparation: (step, status, details) =>
+        logStartupStep(`desktop-components-${step}`, status, details),
       resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,
