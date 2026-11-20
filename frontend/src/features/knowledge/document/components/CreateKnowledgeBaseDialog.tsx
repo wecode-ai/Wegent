@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BookOpen, Code2, Database, FileText } from 'lucide-react'
 import {
   Dialog,
@@ -179,11 +179,11 @@ export function CreateKnowledgeBaseDialog({
   } = useMultimodalKBConfig()
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
   const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
-  const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>(
-    createDefaultRetrievalConfig
+  const [retrievalProfile, setRetrievalProfile] = useState(createDefaultRetrievalConfig)
+  const [retrievalDrafts, setRetrievalDrafts] = useState(
+    () => new Map<string, RetrievalConfigDraft>()
   )
-  const profileAppliedRef = useRef(false)
-  const retrievalConfigChangedRef = useRef(false)
+  const editedRetrievalScopes = useRef(new Set<string>())
   const [error, setError] = useState('')
   const navigation = useKnowledgeBaseFormNavigation()
   const { selectSection } = navigation
@@ -206,15 +206,32 @@ export function CreateKnowledgeBaseDialog({
       ? retrievalLocation.name
       : groupName
 
+  // Each draft belongs to the destination where its retrieval resources were selected.
+  const retrievalDestination = showGroupSelector
+    ? (retrievalLocation?.name ?? selectedGroupId)
+    : (effectiveGroupName ?? '')
+  const retrievalScopeKey = `${effectiveScope}:${retrievalDestination}`
+  const retrievalConfig = retrievalDrafts.get(retrievalScopeKey) ?? retrievalProfile
+  const setRetrievalConfig = useCallback(
+    (config: RetrievalConfigDraft) => {
+      setRetrievalDrafts(drafts => new Map(drafts).set(retrievalScopeKey, config))
+    },
+    [retrievalScopeKey]
+  )
   const wasOpen = useRef(false)
 
   // Reset only on opening, never when a refresh changes default location props.
   useEffect(() => {
     if (open && !wasOpen.current) {
       selectSection('basic')
+      setName('')
+      setDescription('')
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
+      setGenerationStrategy('')
+      setShowGenerationTask(false)
+      setDingtalkAutoSyncEnabled(false)
       setScheduledUpdateEnabled(false)
       setInitialCadence('weekly')
       setInitialIntervalDays(7)
@@ -225,27 +242,34 @@ export function CreateKnowledgeBaseDialog({
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
       setAllowDocumentDownload(true)
-      setRetrievalConfig(createDefaultRetrievalConfig())
-      profileAppliedRef.current = false
-      retrievalConfigChangedRef.current = false
+      setSummaryEnabled(true)
+      setSummaryModelRef(null)
+      setSummaryModelError('')
+      setExecutionModelRef(null)
+      setExecutionModelError('')
+      resetMultimodal()
+      setGuidedQuestions([])
+      setRagConfigMode('auto')
+      setRetrievalProfile(createDefaultRetrievalConfig())
+      setRetrievalDrafts(new Map())
+      editedRetrievalScopes.current.clear()
+      setMaxCalls(10)
+      setExemptCalls(5)
+      setError('')
     }
     wasOpen.current = open
-  }, [open, initialKbType, defaultGroupId, selectSection])
+  }, [open, initialKbType, defaultGroupId, selectSection, resetMultimodal])
 
   useEffect(() => {
-    if (!open || profileAppliedRef.current) return
-    profileAppliedRef.current = true
+    if (!open) return
     let cancelled = false
 
     void getKnowledgeBaseRetrievalProfile()
       .then(profile => {
-        if (cancelled) return
-        if (profile.health.status === 'valid' && profile.retrieval_config) {
-          if (!retrievalConfigChangedRef.current) {
-            setRetrievalConfig(profile.retrieval_config)
-          }
-          return
-        }
+        if (cancelled || profile.health.status !== 'valid' || !profile.retrieval_config) return
+        const editedScopes = new Set(editedRetrievalScopes.current)
+        setRetrievalProfile(profile.retrieval_config)
+        setRetrievalDrafts(drafts => new Map([...drafts].filter(([key]) => editedScopes.has(key))))
       })
       .catch(() => undefined)
     return () => {
@@ -362,7 +386,7 @@ export function CreateKnowledgeBaseDialog({
         direct_access_requirement: directAccessRequirement,
         allow_document_download: allowDocumentDownload,
         retrieval_config:
-          ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
+          ragConfigMode === 'disabled' || !editedRetrievalScopes.current.has(retrievalScopeKey)
             ? undefined
             : retrievalConfig,
         rag_config_mode: ragConfigMode,
@@ -404,75 +428,9 @@ export function CreateKnowledgeBaseDialog({
             }
           : {}),
       })
-      setName('')
-      setDescription('')
-      setDirectAccessRequirement('read')
-      setAllowDocumentDownload(true)
-      // Reset selectedKbType and keep summaryEnabled as true
-      setSelectedKbType(initialKbType)
-      setKind('document')
-      setSource(createEmptySource())
-      setGenerationStrategy('')
-      setShowGenerationTask(false)
-      setDingtalkAutoSyncEnabled(false)
-      setScheduledUpdateEnabled(false)
-      setInitialCadence('weekly')
-      setInitialIntervalDays(7)
-      setInitialWeekday(0)
-      setInitialTime('09:00')
-      setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
-      setInitialRunner([])
-      setSummaryEnabled(true)
-      setSummaryModelRef(null)
-      setExecutionModelRef(null)
-      setExecutionModelError('')
-      resetMultimodal()
-      setGuidedQuestions([])
-      setRagConfigMode('auto')
-      setRetrievalConfig(createDefaultRetrievalConfig())
-      setMaxCalls(10)
-      setExemptCalls(5)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common:error'))
     }
-  }
-
-  const handleOpenChange = (newOpen: boolean) => {
-    if (!newOpen) {
-      setName('')
-      setDescription('')
-      setDirectAccessRequirement('read')
-      setAllowDocumentDownload(true)
-      // Reset selectedKbType and keep summaryEnabled as true
-      setSelectedKbType(initialKbType)
-      setKind('document')
-      setSource(createEmptySource())
-      setGenerationStrategy('')
-      setShowGenerationTask(false)
-      setDingtalkAutoSyncEnabled(false)
-      setScheduledUpdateEnabled(false)
-      setInitialCadence('weekly')
-      setInitialIntervalDays(7)
-      setInitialWeekday(0)
-      setInitialTime('09:00')
-      setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
-      setInitialRunner([])
-      setSummaryEnabled(true)
-      setSummaryModelRef(null)
-      setExecutionModelRef(null)
-      setExecutionModelError('')
-      setSummaryModelError('')
-      resetMultimodal()
-      setGuidedQuestions([])
-      setRagConfigMode('auto')
-      setRetrievalConfig(createDefaultRetrievalConfig())
-      setMaxCalls(10)
-      setExemptCalls(5)
-      setError('')
-      selectSection('basic')
-      setSelectedGroupId(defaultGroupId || 'personal')
-    }
-    onOpenChange(newOpen)
   }
 
   // Determine if this is a notebook type
@@ -480,7 +438,7 @@ export function CreateKnowledgeBaseDialog({
   const ragModeOptions: RagConfigMode[] = ['auto', 'disabled']
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         onPointerDownCapture={locations.onReturnInteraction}
         onKeyDownCapture={locations.onReturnInteraction}
@@ -883,10 +841,11 @@ export function CreateKnowledgeBaseDialog({
             </div>
           }
           showRetrievalSection={ragConfigMode !== 'disabled'}
+          retrievalScopeKey={retrievalScopeKey}
           retrievalConfig={retrievalConfig}
           onRetrievalConfigChange={setRetrievalConfig}
           onRetrievalConfigUserChange={() => {
-            retrievalConfigChangedRef.current = true
+            editedRetrievalScopes.current.add(retrievalScopeKey)
           }}
           retrievalScope={effectiveScope}
           retrievalGroupName={effectiveGroupName}
@@ -903,7 +862,7 @@ export function CreateKnowledgeBaseDialog({
         <DialogFooter className="shrink-0 flex-row justify-end gap-2 space-y-0">
           <Button
             variant="outline"
-            onClick={() => handleOpenChange(false)}
+            onClick={() => onOpenChange(false)}
             disabled={loading}
             className="h-11 min-w-[44px]"
             data-testid="cancel-create-kb"

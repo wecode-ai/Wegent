@@ -43,7 +43,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onDirectAccessRequirementChange,
     onNameChange,
     onSummaryEnabledChange,
-    config,
+    retrievalConfig,
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
   }: {
@@ -54,7 +54,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
     onNameChange: (value: string) => void
     onSummaryEnabledChange: (value: boolean) => void
-    config: RetrievalConfigDraft
+    retrievalConfig: RetrievalConfigDraft
     onRetrievalConfigChange: (value: RetrievalConfigDraft) => void
     onRetrievalConfigUserChange: () => void
   }) => (
@@ -71,7 +71,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       <button
         type="button"
         onClick={() => {
-          onRetrievalConfigChange({ ...config, top_k: 9 })
+          onRetrievalConfigChange({ ...retrievalConfig, top_k: 9 })
           onRetrievalConfigUserChange()
         }}
       >
@@ -185,9 +185,11 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
   })
 })
 
-it('creates with automatic DingTalk updates enabled and resets it after success', async () => {
+it('creates with automatic DingTalk updates enabled and resets it on the next opening', async () => {
   const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
-  render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  const { rerender } = render(
+    <CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />
+  )
   const toggle = screen.getByTestId('knowledge-dingtalk-auto-sync')
   expect(toggle).not.toBeChecked()
   fireEvent.click(toggle)
@@ -199,7 +201,46 @@ it('creates with automatic DingTalk updates enabled and resets it after success'
       expect.objectContaining({ dingtalk_auto_sync_enabled: true })
     )
   )
-  await waitFor(() => expect(toggle).not.toBeChecked())
+  rerender(<CreateKnowledgeBaseDialog open={false} onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  expect(screen.getByTestId('knowledge-dingtalk-auto-sync')).not.toBeChecked()
+})
+
+it('submits retrieval edits only in the space where they were made', async () => {
+  const onSubmit = jest.fn().mockResolvedValue(undefined)
+  render(
+    <CreateKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      onSubmit={onSubmit}
+      showGroupSelector
+      defaultGroupId="one"
+      availableGroups={[
+        { id: 'one', name: 'team-one', displayName: 'Team One', type: 'group', canCreate: true },
+        { id: 'two', name: 'team-two', displayName: 'Team Two', type: 'group', canCreate: true },
+      ]}
+    />
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+  fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+  fireEvent.click(screen.getByRole('button', { name: 'change retrieval settings' }))
+  fireEvent.click(screen.getByTestId('group-selector'))
+  fireEvent.click(await screen.findByTestId('create-space-option-two'))
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  expect(onSubmit).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedGroupId: 'two', retrieval_config: undefined })
+  )
+
+  fireEvent.click(screen.getByTestId('group-selector'))
+  fireEvent.click(await screen.findByTestId('create-space-option-one'))
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  expect(onSubmit).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      selectedGroupId: 'one',
+      retrieval_config: expect.objectContaining({ top_k: 9 }),
+    })
+  )
 })
 
 it('defaults to a filtered team and shows its space selector with inheritance stated', async () => {

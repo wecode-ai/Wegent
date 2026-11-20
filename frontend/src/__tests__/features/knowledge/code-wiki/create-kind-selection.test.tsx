@@ -105,6 +105,37 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
   })
 
   it('loads retrieval resources for the selected group rather than the opening scope', async () => {
+    let resolvePersonal!: () => void
+    jest
+      .mocked(retrieverApis.getUnifiedRetrievers)
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolvePersonal = () =>
+              resolve({
+                data: [
+                  {
+                    name: 'personal-index',
+                    displayName: 'Personal index',
+                    type: 'user',
+                    namespace: 'default',
+                    storageType: 'qdrant',
+                  },
+                ],
+              })
+          })
+      )
+      .mockResolvedValueOnce({
+        data: [
+          {
+            name: 'team-index',
+            displayName: 'Team index',
+            type: 'group',
+            namespace: 'team-space',
+            storageType: 'qdrant',
+          },
+        ],
+      })
     render(
       <CreateKnowledgeBaseDialog
         open
@@ -144,6 +175,12 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
         'embedding'
       )
     )
+
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    expect(await screen.findByText('Team index', { exact: false })).toBeVisible()
+    await act(async () => resolvePersonal())
+    expect(screen.getByText('Team index', { exact: false })).toBeVisible()
+    expect(screen.queryByText('Personal index', { exact: false })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))

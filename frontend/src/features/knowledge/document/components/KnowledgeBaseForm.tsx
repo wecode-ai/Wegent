@@ -76,6 +76,7 @@ interface KnowledgeBaseFormProps {
   retrievalConfig: RetrievalConfigDraft
   onRetrievalConfigChange: (config: RetrievalConfigDraft) => void
   onRetrievalConfigUserChange?: () => void
+  retrievalScopeKey?: string
   retrievalScope?: KnowledgeResourceScope
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
@@ -151,6 +152,7 @@ export function KnowledgeBaseForm({
   retrievalConfig,
   onRetrievalConfigChange,
   onRetrievalConfigUserChange,
+  retrievalScopeKey,
   retrievalScope,
   retrievalGroupName,
   retrievalReadOnly,
@@ -164,9 +166,11 @@ export function KnowledgeBaseForm({
   const panelId = useId()
   const panel = useRef<HTMLDivElement>(null)
   const sidebar = useRef<HTMLElement>(null)
+  const [modelsOpened, setModelsOpened] = useState(false)
   const [retrievalOpened, setRetrievalOpened] = useState(false)
 
   useLayoutEffect(() => {
+    if (selection.section === 'models') setModelsOpened(true)
     const content = panel.current
     if (!content) return
     content.scrollTop = 0
@@ -369,7 +373,7 @@ export function KnowledgeBaseForm({
           </SimpleConfigRow>
         )}
 
-        {selection.section === 'models' && multimodalFeatureEnabled && (
+        {(modelsOpened || selection.section === 'models') && multimodalFeatureEnabled && (
           <MultimodalConfigSection
             enabled={multimodalAnalysisEnabled}
             modelRef={multimodalAnalysisModelRef}
@@ -393,6 +397,7 @@ export function KnowledgeBaseForm({
 
               {showRetrievalSection && (
                 <RetrievalSettingsSection
+                  key={retrievalScopeKey}
                   config={retrievalConfig}
                   onChange={onRetrievalConfigChange}
                   onUserChange={onRetrievalConfigUserChange}
