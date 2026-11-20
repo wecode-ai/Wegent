@@ -8,6 +8,7 @@ import {
   CONTEXT_COMPACTION_THRESHOLD_MIN,
   defaultAppPreferences,
   getAppPreferences,
+  USER_PREFERENCE_PROMPT_MAX_LENGTH,
   updateAppPreferences,
   type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
@@ -50,6 +51,9 @@ export function ContextSettingsPage() {
   const [instructionsDraft, setInstructions] = useState<string | null>(null)
   const savedInstructions = instructionsSnapshot.data?.instructions ?? ''
   const instructions = instructionsDraft ?? savedInstructions
+  const [userPreferenceDraft, setUserPreferenceDraft] = useState<string | null>(null)
+  const savedUserPreferencePrompt = preferences.userPreferencePrompt
+  const userPreferencePrompt = userPreferenceDraft ?? savedUserPreferencePrompt
   const [instructionsSaving, setInstructionsSaving] = useState(false)
   const [instructionsSaved, setInstructionsSaved] = useState(false)
   const [instructionsSaveError, setInstructionsError] = useState<string | null>(null)
@@ -108,6 +112,19 @@ export function ContextSettingsPage() {
     } finally {
       instructionsPending.current = false
       setInstructionsSaving(false)
+    }
+  }
+
+  const handleSaveUserPreferencePrompt = async () => {
+    const submitted = userPreferencePrompt.trim().slice(0, USER_PREFERENCE_PROMPT_MAX_LENGTH)
+    if (submitted === savedUserPreferencePrompt) return
+    try {
+      const receipt = await updateAppPreferences({ userPreferencePrompt: submitted })
+      preferencesResource.update(() => receipt)
+      setUserPreferenceDraft(current => (current === userPreferencePrompt ? null : current))
+    } catch (saveError) {
+      console.error('[Wework] Failed to save user preference prompt', saveError)
+      setError(t('workbench.context_settings_user_preference_prompt_save_failed'))
     }
   }
 
@@ -194,6 +211,43 @@ export function ContextSettingsPage() {
       </section>
 
       <CodexPersonalitySettings />
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
+        <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-text-primary">
+              {t('workbench.context_settings_user_preference_prompt_title')}
+            </h2>
+            <p className="mt-1 text-xs leading-5 text-text-secondary">
+              {t('workbench.context_settings_user_preference_prompt_description')}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="context-user-preference-prompt-save-button"
+            disabled={loading || userPreferencePrompt.trim() === savedUserPreferencePrompt}
+            onClick={() => void handleSaveUserPreferencePrompt()}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Save className="h-4 w-4" />
+            <span>{t('workbench.context_settings_user_preference_prompt_save')}</span>
+          </button>
+        </div>
+        <div className="px-4 py-4">
+          <textarea
+            data-testid="context-user-preference-prompt-textarea"
+            value={userPreferencePrompt}
+            maxLength={USER_PREFERENCE_PROMPT_MAX_LENGTH}
+            disabled={loading}
+            onChange={event => setUserPreferenceDraft(event.target.value)}
+            placeholder={t('workbench.context_settings_user_preference_prompt_placeholder')}
+            className="min-h-32 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-primary"
+          />
+          <p className="mt-3 text-xs leading-5 text-text-secondary">
+            {t('workbench.context_settings_user_preference_prompt_hint')}
+          </p>
+        </div>
+      </section>
 
       {preferences.experimentalFeaturesEnabled && (
         <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">

@@ -101,6 +101,23 @@ test('preserves supervisor edits when another preference is saved', async () => 
   expect(screen.getByTestId('context-supervisor-principles-save-button')).toBeEnabled()
 })
 
+test('edits and saves the global user preference prompt', async () => {
+  const preferences = {
+    ...defaultAppPreferences,
+    userPreferencePrompt: 'Saved preference',
+  }
+  mocks.preferences.mockResolvedValue(preferences)
+  render(<ContextSettingsPage />)
+  const editor = await screen.findByTestId('context-user-preference-prompt-textarea')
+  expect(editor).toHaveValue('Saved preference')
+  fireEvent.change(editor, { target: { value: '  Be concise.  ' } })
+  await userEvent.click(screen.getByTestId('context-user-preference-prompt-save-button'))
+  await waitFor(() =>
+    expect(mocks.update).toHaveBeenCalledWith({ userPreferencePrompt: 'Be concise.' })
+  )
+  expect(editor).toHaveValue('Be concise.')
+})
+
 test('rolls back a rejected optimistic toggle and leaves instructions usable', async () => {
   mocks.update.mockRejectedValue(new Error('Write failed'))
   render(<ContextSettingsPage />)

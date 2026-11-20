@@ -25,6 +25,7 @@ const mergedDefaultPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 75,
+  userPreferencePrompt: '',
   experimentalFeaturesEnabled: false,
   collaborationExperienceEnabled: false,
   localCodexSubscriptionEnabled: true,
@@ -369,6 +370,17 @@ describe('appPreferences', () => {
       browserDownloadDirectory: '/tmp/downloads',
       browserAskBeforeDownload: true,
     })
+  })
+
+  test('normalizes the global user preference prompt', async () => {
+    const { mergeAppPreferences } = await import('./appPreferences')
+
+    expect(
+      mergeAppPreferences({ userPreferencePrompt: '  Keep replies concise.  ' })
+        .userPreferencePrompt
+    ).toBe('Keep replies concise.')
+    expect(mergeAppPreferences({ userPreferencePrompt: 42 }).userPreferencePrompt).toBe('')
+    expect(mergeAppPreferences({}).userPreferencePrompt).toBe('')
   })
 
   test('normalizes the last selected supervisor model', async () => {

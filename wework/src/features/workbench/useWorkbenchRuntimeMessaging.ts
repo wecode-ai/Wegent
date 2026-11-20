@@ -38,8 +38,14 @@ import {
   worktreeWorkspaceDeviceId,
 } from '@/lib/worktree-availability'
 import { notifyMainRuntimeWorkChanged } from '@/desktop/runtimeWorkSync'
-import type { AppPreferences } from '@/desktop/appPreferences'
+import { updateAppPreferences, type AppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { withUserPreferencePrompt } from './userPreferencePrompt'
+import {
+  appendUserPreferencePrompt,
+  parseUserPreferencePromptCommand,
+} from './userPreferencePromptCommands'
+import { navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -427,7 +433,9 @@ export function useWorkbenchRuntimeMessaging({
         state.runtimeWork,
         () => executorClient.runtime.listRuntimeWork()
       )
-      if (!request.attachments?.length) return request
+      if (!request.attachments?.length) {
+        return withUserPreferencePrompt(request, preferences?.userPreferencePrompt ?? '')
+      }
       const prepared = await prepareRuntimeAttachmentsForDevice(
         request.address.deviceId,
         state.devices,
@@ -435,15 +443,19 @@ export function useWorkbenchRuntimeMessaging({
         request.attachments,
         services.attachmentApi?.uploadLocalAttachmentToCloud
       )
-      return {
-        ...request,
-        attachmentIds: prepared.attachmentIds,
-        attachments: prepared.attachments,
-      }
+      return withUserPreferencePrompt(
+        {
+          ...request,
+          attachmentIds: prepared.attachmentIds,
+          attachments: prepared.attachments,
+        },
+        preferences?.userPreferencePrompt ?? ''
+      )
     },
     [
       applyReadyRuntimeTaskModel,
       executorClient,
+      preferences,
       services.attachmentApi,
       state.devices,
       state.runtimeWork,
@@ -740,7 +752,10 @@ export function useWorkbenchRuntimeMessaging({
   const sendRuntimePaneGuidance = useCallback(
     async (request: RuntimeGuidanceRequest): Promise<RuntimePaneGuidanceResult> => {
       try {
-        let outboundRequest = request
+        let outboundRequest = withUserPreferencePrompt(
+          request,
+          preferences?.userPreferencePrompt ?? ''
+        )
         if (request.attachments?.length) {
           const preparedAttachments = await prepareRuntimeAttachmentsForDevice(
             request.address.deviceId,
@@ -750,7 +765,7 @@ export function useWorkbenchRuntimeMessaging({
             services.attachmentApi?.uploadLocalAttachmentToCloud
           )
           outboundRequest = {
-            ...request,
+            ...outboundRequest,
             attachmentIds: preparedAttachments.attachmentIds,
             attachments: preparedAttachments.attachments,
           }
@@ -800,7 +815,14 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
     },
-    [executorClient, refreshWorkLists, reportError, services.attachmentApi, state.devices]
+    [
+      executorClient,
+      preferences,
+      refreshWorkLists,
+      reportError,
+      services.attachmentApi,
+      state.devices,
+    ]
   )
 
   const compactRuntimePaneTask = useCallback(
@@ -1317,6 +1339,10 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.origin ? { origin: options.origin } : {}),
         ...(options?.additionalContext ? { additionalContext: options.additionalContext } : {}),
       }
+      const requestWithPreferences = withUserPreferencePrompt(
+        createRequest,
+        preferences?.userPreferencePrompt ?? ''
+      )
       debugRuntimeCreateFlow('create-request-built', {
         taskId,
         runtime,
@@ -1420,7 +1446,7 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: optimisticAddress.deviceId,
           runtime,
         })
-        return executorClient.runtime.createRuntimeTask(createRequest)
+        return executorClient.runtime.createRuntimeTask(requestWithPreferences)
       })()
       void createResponsePromise.catch(() => undefined)
       logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {
@@ -1677,6 +1703,25 @@ export function useWorkbenchRuntimeMessaging({
 
   const sendCurrentInput = useCallback(
     async (inputOverride?: string, options?: SendCurrentInputOptions) => {
+      const command = parseUserPreferencePromptCommand(inputOverride ?? '')
+      if (command) {
+        if (command.action === 'openSettings') {
+          navigateTo('/settings/personal/context')
+          return true
+        }
+        try {
+          await updateAppPreferences({
+            userPreferencePrompt: appendUserPreferencePrompt(
+              preferences?.userPreferencePrompt ?? '',
+              command.value
+            ),
+          })
+          return true
+        } catch (error) {
+          reportError(error instanceof Error ? error.message : '用户偏好保存失败', options)
+          return false
+        }
+      }
       const launchStartedAt = runtimeLaunchNowMs()
       logRuntimeTaskLaunchTiming('send-current-entered', launchStartedAt, {
         clientUserMessageId:
@@ -1835,6 +1880,8 @@ export function useWorkbenchRuntimeMessaging({
       isOptionsLocked,
       lifecycleStore,
       modelSelection,
+      preferences,
+      reportError,
       reportSendBlocked,
       sendPreparedRuntimeMessage,
       sendRuntimePaneMessage,

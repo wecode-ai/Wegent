@@ -2,6 +2,8 @@ import i18n from '@/i18n'
 import type { Attachment, DeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
+import { defaultAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
 import {
   applyRuntimeConversationAction,
@@ -25,13 +27,20 @@ import {
 } from './useWorkbenchRuntimeMessaging'
 import { initialWorkbenchState } from './workbenchReducer'
 
+vi.mock('@/desktop/appPreferences', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/desktop/appPreferences')>()),
+  updateAppPreferences: vi.fn(),
+}))
+vi.mock('@/lib/navigation', () => ({ navigateTo: vi.fn() }))
+
 function messagingFixture(
   modelState: {
     models?: UnifiedModel[]
     isSelectionReady?: boolean
     isConfiguredModelUnavailable?: boolean
   } = {},
-  taskSelectionState: Partial<RuntimeTaskModelSelectionControls> = {}
+  taskSelectionState: Partial<RuntimeTaskModelSelectionControls> = {},
+  preferencePrompt = ''
 ) {
   const address = { deviceId: 'cancel-device', taskId: 'cancel-task' }
   const store = new RuntimeTaskLifecycleStore('messaging-cancellation-test')
@@ -73,8 +82,15 @@ function messagingFixture(
     skillSelection: { selectedSkills: [] },
     refreshWorkLists: refresh,
   }
-  const { result } = renderHook(() => useWorkbenchRuntimeMessaging(options))
-  return { address, store, cancel, send, compact, refresh, messaging: result.current }
+  const preferences = { ...defaultAppPreferences, userPreferencePrompt: preferencePrompt }
+  const { result } = renderHook(() => useWorkbenchRuntimeMessaging(options), {
+    wrapper: ({ children }) => (
+      <AppPreferencesContext.Provider value={{ preferences, loaded: true }}>
+        {children}
+      </AppPreferencesContext.Provider>
+    ),
+  })
+  return { address, store, cancel, send, compact, refresh, messaging: result.current, preferences }
 }
 
 function cacheAsyncQuestion(
@@ -108,6 +124,42 @@ function cacheAsyncQuestion(
     },
   ])
 }
+
+test('injects the saved user preference prompt into continuation requests', async () => {
+  const { address, store, send, messaging } = messagingFixture({}, {}, 'Keep replies concise.')
+  try {
+    await messaging.sendRuntimePaneMessage({
+      address,
+      message: 'Continue',
+      modelId: 'test-model',
+      clientUserMessageId: 'preference-follow-up',
+    })
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalContext: {
+          'wework.user-preferences': {
+            kind: 'application',
+            value: 'Keep replies concise.',
+          },
+        },
+      })
+    )
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('appends a user preference from the remember command', async () => {
+  vi.mocked(updateAppPreferences).mockResolvedValue({
+    ...defaultAppPreferences,
+    userPreferencePrompt: 'Existing preference\nKeep replies concise.',
+  })
+  const { messaging } = messagingFixture({}, {}, 'Existing preference')
+  await expect(messaging.sendCurrentInput('/remember Keep replies concise.')).resolves.toBe(true)
+  expect(vi.mocked(updateAppPreferences)).toHaveBeenCalledWith({
+    userPreferencePrompt: 'Existing preference\nKeep replies concise.',
+  })
+})
 
 test('compaction renders only its native turn and remains active after an early RPC response', async () => {
   const { address, store, compact, messaging } = messagingFixture()

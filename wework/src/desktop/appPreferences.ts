@@ -29,6 +29,7 @@ export type { AppearanceThemeSnapshot } from '../../electron/src/host/appearance
 export { DEFAULT_CONTEXT_COMPACTION_THRESHOLD } from '@wegent/chat-core/runtime-context-usage'
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
 export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
+export const USER_PREFERENCE_PROMPT_MAX_LENGTH = 4000
 
 export function clampContextCompactionThreshold(value: number): number {
   return Math.min(
@@ -51,6 +52,7 @@ export interface AppPreferences {
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
   contextCompactionThreshold: number
+  userPreferencePrompt: string
   experimentalFeaturesEnabled: boolean
   collaborationExperienceEnabled: boolean
   localCodexSubscriptionEnabled: boolean
@@ -139,6 +141,7 @@ export interface AppPreferencesPatch {
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
   contextCompactionThreshold?: number
+  userPreferencePrompt?: string
   experimentalFeaturesEnabled?: boolean
   collaborationExperienceEnabled?: boolean
   localCodexSubscriptionEnabled?: boolean
@@ -191,6 +194,7 @@ export const defaultAppPreferences: AppPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
+  userPreferencePrompt: '',
   experimentalFeaturesEnabled: false,
   collaborationExperienceEnabled: false,
   localCodexSubscriptionEnabled: true,
@@ -283,6 +287,11 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
   })
 }
 
+function normalizeUserPreferencePrompt(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().slice(0, USER_PREFERENCE_PROMPT_MAX_LENGTH)
+}
+
 export function mergeAppPreferences(value: unknown): AppPreferences {
   if (!value || typeof value !== 'object') {
     return defaultAppPreferences
@@ -355,6 +364,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       Number.isFinite(record.contextCompactionThreshold)
         ? clampContextCompactionThreshold(record.contextCompactionThreshold)
         : defaultAppPreferences.contextCompactionThreshold,
+    userPreferencePrompt: normalizeUserPreferencePrompt(record.userPreferencePrompt),
     experimentalFeaturesEnabled:
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled
