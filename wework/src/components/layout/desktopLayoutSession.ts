@@ -176,17 +176,17 @@ export function createDesktopLayoutSession(
       if (isHeld()) reconcile(false)
     })
   }
+  function synchronizeRoute(path: string) {
+    previousPath = path
+    state.setCurrentPath(path)
+    state.setSettingsOpen(isSettingsRoute(path))
+  }
   function reconcile(attached: boolean) {
     if (!isHeld() || !input) {
       retire()
       return
     }
-    if (attached) {
-      const path = stripAppBasePath(window.location.pathname)
-      previousPath = path
-      state.setCurrentPath(path)
-      state.setSettingsOpen(isSettingsRoute(path))
-    }
+    if (attached) synchronizeRoute(stripAppBasePath(window.location.pathname))
     const changedServices = previousServices !== input.services
     const changedSurface = previousWorkItems !== input.workItemSurfaceOpen
     if (attached || changedServices || changedSurface) {
@@ -237,9 +237,7 @@ export function createDesktopLayoutSession(
         settingsReturnPath = currentRoute()
         if (!tabs) writeSettingsReturnPath(settingsReturnPath)
       }
-      previousPath = path
-      state.setCurrentPath(path)
-      state.setSettingsOpen(isSettingsRoute(path))
+      synchronizeRoute(path)
     },
     rememberSettingsReturnPath() {
       if (!isHeld()) return

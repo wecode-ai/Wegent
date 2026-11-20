@@ -26,7 +26,7 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
 })
 
-test('re-synchronizes a reactivated workspace with the current non-settings route', async () => {
+test('synchronizes a workspace when it remounts after an auxiliary route changed', async () => {
   window.history.replaceState({}, '', '/settings')
   const state = createDesktopLayoutState('/settings')
   const tabs = [
@@ -70,10 +70,15 @@ test('re-synchronizes a reactivated workspace with the current non-settings rout
 
   const firstStop = observation.subscribe(vi.fn())
   expect(state.getSnapshot()).toMatchObject({ currentPath: '/settings', settingsOpen: true })
+
+  // The auxiliary surface becomes active while the task workspace is hidden.
+  activeTabId = 'desktop-tab'
+  window.history.replaceState({}, '', '/device-desktop?deviceId=device-1')
   firstStop()
   await Promise.resolve()
 
-  window.history.replaceState({}, '', '/device-desktop?deviceId=device-1')
+  // React commits the task tab as active after the tab state changes but before its
+  // route observer has processed the device-desktop URL.
   activeTabId = 'task-tab'
 
   const secondStop = observation.subscribe(vi.fn())
