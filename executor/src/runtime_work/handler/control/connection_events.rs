@@ -1014,6 +1014,13 @@ impl RuntimeWorkRpcHandler {
         if status == Some("blocked") && identity.is_none() {
             return;
         }
+        let completed_session = if status == Some("complete") && identity.is_some() {
+            self.store
+                .get_task(task)
+                .and_then(|link| session::binding(&link).ok())
+        } else {
+            None
+        };
         let result = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::Waiting(task),
@@ -1040,7 +1047,10 @@ impl RuntimeWorkRpcHandler {
                 }
                 record["status"] = json!(closed_goal_wait_status(
                     &record,
-                    identity.is_some() && !replaced && status == Some("complete"),
+                    !replaced
+                        && completed_session
+                            .as_ref()
+                            .is_some_and(|binding| *binding == record["session"]),
                 ));
                 self.save_event_subscription(&id, &record)?;
             }

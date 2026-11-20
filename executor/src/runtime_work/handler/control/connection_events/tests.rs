@@ -401,6 +401,9 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
         let mut unrelated = receipt.clone();
         unrelated["waiting_goal"]["objective"] = json!("Previous work");
         handler.save_event_subscription("guided-replaced", &unrelated).unwrap();
+        let mut previous_session = receipt.clone();
+        previous_session["session"]["id"] = json!("previous-native-session");
+        handler.save_event_subscription("guided-previous-session", &previous_session).unwrap();
         let result = handler.set_task_goal(json!({"taskId":"caller","status":"complete"})).await.unwrap();
         assert_eq!(result["accepted"], true);
         let projection = event_store::read(
@@ -412,15 +415,18 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
             assert_eq!(projection[id]["status"], "delivered", "{id}");
             assert_eq!(projection[id]["operation_id"], "event-operation");
         }
-        assert!(projection["guided-replaced"].is_null());
-        assert_eq!(
-            event_store::read(
-                &handler.event_subscription_path(),
-                event_store::Scope::Row("operations", "guided-replaced"),
-                |state| Ok(state["operations"]["guided-replaced"]["status"].clone()),
-            ).unwrap(),
-            "cancelled"
-        );
+        for id in ["guided-replaced", "guided-previous-session"] {
+            assert!(projection[id].is_null(), "{id}");
+            assert_eq!(
+                event_store::read(
+                    &handler.event_subscription_path(),
+                    event_store::Scope::Row("operations", id),
+                    |state| Ok(state["operations"][id]["status"].clone()),
+                ).unwrap(),
+                "cancelled",
+                "{id}"
+            );
+        }
         let mut link = handler.store.get_task("caller").unwrap();
         handler.set_claude_goal(&link, &initial);
         let record = json!({"task_id":"caller","subscription_key":"unavailable","status":"armed","waiting_goal":goal_identity(&initial),"session":session::binding(&link).unwrap()});
