@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { BookOpen, Database } from 'lucide-react'
 import {
   Dialog,
@@ -36,6 +36,15 @@ export function ConvertKnowledgeBaseTypeDialog({
 }: ConvertKnowledgeBaseTypeDialogProps) {
   const { t } = useTranslation('knowledge')
   const [loading, setLoading] = useState(false)
+  const session = useRef(0)
+  const knowledgeBaseId = knowledgeBase?.id
+
+  useLayoutEffect(() => {
+    setLoading(false)
+    return () => {
+      session.current += 1
+    }
+  }, [open, knowledgeBaseId])
 
   if (!knowledgeBase) return null
 
@@ -46,15 +55,18 @@ export function ConvertKnowledgeBaseTypeDialog({
   const confirmMessage = t('document.knowledgeBase.changeDefaultViewConfirm')
 
   const handleConfirm = async () => {
+    const requestSession = session.current
     setLoading(true)
     try {
       const updatedKb = await updateKnowledgeBaseType(knowledgeBase.id, targetType)
+      if (session.current !== requestSession || updatedKb.id !== knowledgeBase.id) return
       toast({
         description: t('document.knowledgeBase.defaultViewUpdateSuccess'),
       })
       onOpenChange(false)
       onSuccess?.(updatedKb)
     } catch (error) {
+      if (session.current !== requestSession) return
       const errorMessage = mapKnowledgeDocumentErrorMessage(
         error,
         t,
@@ -65,7 +77,7 @@ export function ConvertKnowledgeBaseTypeDialog({
         description: errorMessage,
       })
     } finally {
-      setLoading(false)
+      if (session.current === requestSession) setLoading(false)
     }
   }
 

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { getKnowledgeBase, updateKnowledgeBaseType } from '@/apis/knowledge'
 import { EditKnowledgeBaseDialog } from '@/features/knowledge/document/components/EditKnowledgeBaseDialog'
@@ -90,6 +90,47 @@ const knowledgeBase: KnowledgeBase = {
 }
 
 describe('EditKnowledgeBaseDialog direct access requirement', () => {
+  it('keeps a later editor intact when an earlier view conversion resolves', async () => {
+    const first = { ...knowledgeBase, kb_type: 'notebook' as const }
+    const second = { ...first, id: 102, name: 'Other Docs' }
+    jest.mocked(getKnowledgeBase).mockImplementation(async id => (id === first.id ? first : second))
+    let resolveConversion!: (kb: KnowledgeBase) => void
+    jest.mocked(updateKnowledgeBaseType).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveConversion = resolve
+        })
+    )
+    const onTypeConverted = jest.fn()
+    const editor = (kb: KnowledgeBase) => (
+      <EditKnowledgeBaseDialog
+        open
+        knowledgeBase={kb}
+        onOpenChange={jest.fn()}
+        onSubmit={jest.fn()}
+        onTypeConverted={onTypeConverted}
+      />
+    )
+    const { rerender } = render(editor(first))
+    fireEvent.click(await screen.findByTestId('edit-kb-default-view'))
+    const findConfirmation = () =>
+      screen.getByRole('dialog', { name: 'document.knowledgeBase.changeDefaultView' })
+    fireEvent.click(
+      within(findConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
+    )
+
+    rerender(editor(second))
+    fireEvent.click(await screen.findByTestId('edit-kb-default-view'))
+    expect(within(findConfirmation()).getByText(second.name)).toBeVisible()
+    await act(async () => resolveConversion({ ...first, kb_type: 'classic' }))
+
+    expect(within(findConfirmation()).getByText(second.name)).toBeVisible()
+    expect(
+      within(findConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
+    ).toBeEnabled()
+    expect(onTypeConverted).not.toHaveBeenCalled()
+  })
+
   it('uses the returned default view for subsequent changes in the same editor', async () => {
     jest.mocked(getKnowledgeBase).mockResolvedValue({ ...knowledgeBase, kb_type: 'notebook' })
     jest

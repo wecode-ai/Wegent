@@ -802,7 +802,7 @@ function KnowledgeDocumentSession({
           sidebar.groups.find(group =>
             dialogs.createScope === 'organization'
               ? group.type === 'organization'
-              : group.name === dialogs.createGroupName
+              : group.type === 'group' && group.name === dialogs.createGroupName
           )?.displayName
         }
         kbType={dialogs.createKbType}
@@ -820,7 +820,11 @@ function KnowledgeDocumentSession({
         onOpenChange={open => !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
         spaceName={
-          sidebar.groups.find(group => group.name === dialogs.editingKb?.namespace)?.displayName
+          sidebar.groups.find(
+            group =>
+              (group.type === 'group' || group.type === 'organization') &&
+              group.name === dialogs.editingKb?.namespace
+          )?.displayName
         }
         onSubmit={dialogs.handleUpdate}
         onTypeConverted={handleKnowledgeBaseTypeConverted}

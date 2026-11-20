@@ -139,6 +139,7 @@ export function EditKnowledgeBaseDialog({
     async (knowledgeBaseId: number) => {
       const requestId = ++fullKnowledgeBaseRequestId.current
       selectSection('basic')
+      setShowConvertDialog(false)
       setConvertedView(undefined)
       setFullKnowledgeBase(null)
       setIsLoadingFullKnowledgeBase(true)
@@ -169,6 +170,7 @@ export function EditKnowledgeBaseDialog({
       void loadFullKnowledgeBase(knowledgeBase.id)
     } else {
       fullKnowledgeBaseRequestId.current += 1
+      setShowConvertDialog(false)
       setFullKnowledgeBase(null)
       setIsLoadingFullKnowledgeBase(false)
       setFullKnowledgeBaseLoadFailed(false)
@@ -710,9 +712,9 @@ export function EditKnowledgeBaseDialog({
 
       {/* Convert type dialog */}
       <ConvertKnowledgeBaseTypeDialog
-        open={showConvertDialog}
+        open={open && showConvertDialog && kb?.id === knowledgeBase?.id}
         onOpenChange={setShowConvertDialog}
-        knowledgeBase={fullKnowledgeBase && { ...fullKnowledgeBase, kb_type: kbType }}
+        knowledgeBase={kb && kb.id === knowledgeBase?.id ? { ...kb, kb_type: kbType } : null}
         onSuccess={handleTypeConverted}
       />
     </>
