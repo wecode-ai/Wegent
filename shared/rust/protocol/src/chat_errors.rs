@@ -21,6 +21,9 @@ pub fn classify_chat_error(code: Option<&str>, message: Option<&str>) -> ChatErr
     let Some(code) = code.filter(|code| !code.is_empty()) else {
         return classify_message(message.unwrap_or_default());
     };
+    if code.eq_ignore_ascii_case("generic_error") {
+        return classify_message(message.unwrap_or_default());
+    }
     match known_error(code) {
         Some(info) if code.eq_ignore_ascii_case("llm_error") => {
             let classified = classify_message(message.unwrap_or_default());
@@ -452,10 +455,17 @@ mod tests {
             "Error code: 4299",
             "max_tokens parameter is invalid",
             "Error code: 429abc",
-            r#"Error code: 500 - {"code":"not_insufficient_quota"}"#,
         ] {
             assert_eq!(classify_chat_error(None, Some(message)), UNKNOWN);
         }
+        assert_eq!(
+            classify_chat_error(
+                None,
+                Some(r#"Error code: 500 - {"code":"not_insufficient_quota"}"#),
+            )
+            .code,
+            "provider_error",
+        );
     }
 
     #[test]
