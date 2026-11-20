@@ -397,7 +397,7 @@ export function createDesktopScenario({
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TARGET_COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       await waitForNewTaskRow(control, sourceOnlyTaskRows, uiTimeoutMs)
       const targetTaskLocation = JSON.parse(await control.command('snapshot', 'body')).location

@@ -906,7 +906,8 @@ export function createDesktopScenario({
         await waitForRequestCount(
           requests,
           requestsDuringResumeInput.length + index + 1,
-          uiTimeoutMs
+          modelResponseTimeoutMs,
+          `model requests through ${prompt}`
         )
         assert.deepEqual(
           requests,
