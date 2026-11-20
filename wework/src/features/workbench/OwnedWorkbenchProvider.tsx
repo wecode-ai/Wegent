@@ -862,6 +862,7 @@ export function OwnedWorkbenchProvider({
     handleFileSelectForScope: attachmentSelection.handleFileSelectForScope,
     addExistingAttachment: attachmentSelection.addExistingAttachment,
     addExistingAttachmentForScope: attachmentSelection.addExistingAttachmentForScope,
+    replaceImageAttachmentForScope: attachmentSelection.replaceImageAttachmentForScope,
     removeAttachment: attachmentSelection.removeAttachment,
     removeAttachmentForScope: attachmentSelection.removeAttachmentForScope,
     dismissAttachmentError: attachmentSelection.dismissAttachmentError,

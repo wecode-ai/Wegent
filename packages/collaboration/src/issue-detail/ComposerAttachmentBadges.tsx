@@ -308,6 +308,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               <AttachmentImageView
                 services={imageServices}
                 attachment={attachment}
+                fromComposer
                 buttonTestId="attachment-image-preview-button"
                 imageTestId="attachment-image-preview"
                 loadingTestId="attachment-image-preview-loading"

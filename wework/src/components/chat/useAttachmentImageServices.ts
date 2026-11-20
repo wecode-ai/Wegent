@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { createElement, useMemo } from 'react'
 import { type AttachmentImageServices } from '@wegent/collaboration'
 import type { Attachment } from '@/types/api'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
@@ -7,6 +7,7 @@ import { readWorkspaceFileBytes } from '@/lib/workspace-file-bytes'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 import { acquireCachedImagePreview } from './imagePreviewCache'
 import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
+import { DesktopImagePreview } from './image-preview/DesktopImagePreview'
 import {
   localPathFromMarkdownImageSrc,
   resolveDirectMarkdownImageSrc,
@@ -40,12 +41,12 @@ function workspaceImageCacheKey(attachment: Attachment): string {
 async function loadElectronLocalImage(
   path: string,
   mimeType: string
-): Promise<{ url: string; release: () => void }> {
-  const objectUrl = URL.createObjectURL(
-    new Blob([await readElectronLocalFile(path)], { type: mimeType })
-  )
+): Promise<{ url: string; blob: Blob; release: () => void }> {
+  const blob = new Blob([await readElectronLocalFile(path)], { type: mimeType })
+  const objectUrl = URL.createObjectURL(blob)
   return {
     url: objectUrl,
+    blob,
     release: () => URL.revokeObjectURL(objectUrl),
   }
 }
@@ -54,7 +55,7 @@ async function loadAttachmentImageUrl(
   attachment: Attachment,
   fetchAttachmentBlob: (attachmentId: number) => Promise<Blob>,
   readWorkspaceFileChunk: ReturnType<typeof useWorkspaceFileReader>
-): Promise<{ url: string; release: (() => void) | null }> {
+): ReturnType<AttachmentImageServices<Attachment>['load']> {
   const workspaceFile = attachment.workspace_file
   if (workspaceFile) {
     if (!readWorkspaceFileChunk) {
@@ -99,6 +100,7 @@ async function loadAttachmentImageUrl(
   const objectUrl = URL.createObjectURL(blob)
   return {
     url: objectUrl,
+    blob,
     release: () => URL.revokeObjectURL(objectUrl),
   }
 }
@@ -174,9 +176,31 @@ export function useAttachmentImageServices() {
         loadAttachmentImageUrl(attachment, fetchAttachmentBlob, readWorkspaceFileChunk),
       download: downloadAttachmentImage,
       localPath: attachment =>
-        getDownloadableLocalPath(attachment.local_preview_url ?? attachment.local_path),
+        attachment.workspace_file
+          ? null
+          : (getDownloadableLocalPath(attachment.local_path) ??
+            getDownloadableLocalPath(attachment.local_preview_url)),
       onError: rememberFailedAttachmentPreview,
       loadImmediately: isElectronRuntime(),
+      renderLightbox: isElectronRuntime()
+        ? props =>
+            createElement(DesktopImagePreview, {
+              ...props,
+              key: attachmentPreviewIdentity(props.attachment),
+              loadFile: async () => {
+                let blob = props.blob
+                if (!blob) {
+                  if (!props.url) throw new Error('Image preview is unavailable')
+                  const response = await fetch(props.url)
+                  if (!response.ok) throw new Error('Could not load the image')
+                  blob = await response.blob()
+                }
+                return new File([blob], props.filename, {
+                  type: blob.type || props.attachment.mime_type,
+                })
+              },
+            })
+        : undefined,
     }),
     [fetchAttachmentBlob, readWorkspaceFileChunk]
   )
