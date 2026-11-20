@@ -749,7 +749,7 @@ fn formal_cloud_registration_uses_the_record_name_when_sandbox_is_absent() {
 }
 
 #[test]
-fn inactive_managed_cloud_rows_follow_the_generic_reactivation_path() {
+fn inactive_formal_cloud_registration_can_match_by_provisioned_id() {
     let payload = RegisterPayload {
         device_type: DeviceType::Cloud,
         runtime_instance_id: Some("runtime-1".into()),
@@ -757,50 +757,39 @@ fn inactive_managed_cloud_rows_follow_the_generic_reactivation_path() {
     };
     let mut row = managed_cloud_row(Some("runtime-1"));
     row.is_active = 0;
+    row.name = "sandbox-kind-name".into();
     row.json["spec"]["cloudConfig"] = serde_json::json!({"deviceId": payload.device_id});
 
-    let managed = managed_cloud_registration(&row, &payload).unwrap();
-    assert!(managed, "the record must first be recognized as managed");
-    let rows = [row];
-    let selected = select_registration_device(
-        &rows,
-        &payload.device_id,
-        payload.runtime_instance_id.as_deref(),
-        None,
-        DeviceType::Cloud,
-        false,
-    )
-    .unwrap()
-    .expect("the inactive record remains reusable");
-    assert_eq!(selected.id, 42);
-    assert_eq!(selected.is_active, 0);
-    assert!(device_update_query(selected.is_active == 0).contains("is_active=1"));
+    let managed = select_managed_cloud(vec![row], &payload, true)
+        .unwrap()
+        .expect("the provisioned ID identifies the inactive cloud Kind");
+    assert_eq!(managed.id, 42);
+    assert_eq!(managed.is_active, 0);
+    assert!(can_reactivate_managed_cloud(&[], &managed, &payload));
 }
 
 #[test]
-fn inactive_managed_cloud_reactivation_normalizes_a_stale_local_report() {
+fn inactive_managed_cloud_cannot_reactivate_over_a_competing_registration() {
     let payload = RegisterPayload {
         device_type: DeviceType::Local,
         runtime_instance_id: Some("runtime-1".into()),
         ..payload()
     };
-    let mut row = managed_cloud_row(Some("runtime-1"));
-    row.is_active = 0;
-    row.json["spec"]["cloudConfig"] = serde_json::json!({
-        "deviceId": payload.device_id, "sandboxId": "sandbox-1",
-    });
-    let effective = managed_cloud_reactivation_payload(&[row.clone()], &payload)
-        .expect("the managed type is normalized before persistence");
+    let mut managed = managed_cloud_row(Some("runtime-1"));
+    managed.is_active = 0;
+    let mut competing = device_row(43, device_json(Some("local"), Some("runtime-1"), None), 1);
+    competing.name = managed.name.clone();
 
-    let updated: Value = serde_json::from_str(
-        &updated_device_json(row.json.clone(), &effective, None, None).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(updated["spec"]["deviceType"], "cloud");
-    assert_eq!(
-        updated["spec"]["cloudConfig"],
-        serde_json::json!({"deviceId": payload.device_id, "sandboxId": "sandbox-1"})
-    );
+    assert!(can_reactivate_managed_cloud(
+        std::slice::from_ref(&managed),
+        &managed,
+        &payload,
+    ));
+    assert!(!can_reactivate_managed_cloud(
+        &[managed.clone(), competing],
+        &managed,
+        &payload,
+    ));
 }
 
 #[test]

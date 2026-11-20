@@ -187,7 +187,8 @@ async fn register_session(
     let mut route_id = payload.device_id.clone();
     let mut logical_device_id = None;
     let mut persisted_display_name = None;
-    // Resolve server provisioning before a local reconnect can reuse its cache.
+    // Resolve server provisioning and restore soft-deleted managed rows before
+    // a local reconnect can reuse its cache.
     match device::match_cloud_device(
         state,
         user_id,

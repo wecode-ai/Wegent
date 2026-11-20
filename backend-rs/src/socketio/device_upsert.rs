@@ -49,12 +49,13 @@ const EXISTING_DEVICES_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id
      WHERE kinds.user_id = ? AND kinds.kind = 'Device' AND kinds.namespace = 'default' \
      AND kinds.is_active = true";
 
+/// Include soft-deleted managed candidates so they are resolved before debounce.
 const CLOUD_DEVICES_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, kinds.namespace AS kinds_namespace, \
      kinds.json AS kinds_json, kinds.is_active AS kinds_is_active, \
      kinds.created_at AS kinds_created_at, kinds.updated_at AS kinds_updated_at FROM kinds \
      WHERE kinds.user_id = ? AND kinds.kind = 'Device' AND kinds.namespace = 'default' \
-     AND kinds.is_active IS true AND CASE JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
+     AND kinds.is_active IS NOT NULL AND CASE JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
      '$.\"deviceType\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(\
      kinds.json, '$.\"spec\"'), '$.\"deviceType\"')) END = 'cloud' \
      AND (kinds.name = ? OR JSON_UNQUOTE(JSON_EXTRACT(kinds.json, \
@@ -83,7 +84,7 @@ const DEVICE_BY_ID_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS 
 const INSERT_DEVICE_QUERY: &str = "INSERT INTO kinds (user_id, kind, name, namespace, json, \
      is_active, created_at, updated_at) VALUES (?, 'Device', ?, 'default', ?, 1, now(), now())";
 
-/// Resolves an owned managed cloud identity before registration or cache reuse.
+/// Resolves and reactivates an owned managed cloud identity before cache reuse.
 ///
 /// The submitted type cannot overwrite provisioning metadata. A mismatched
 /// type is accepted only for the original, already-pinned Runtime.
@@ -189,10 +190,52 @@ where
     let Some(json) = cloud_runtime_spec(&row.json, payload, runtime_transfer_host) else {
         return Ok(CloudMatch::Rejected(managed_cloud_conflict()));
     };
-    transaction
-        .execute(UPDATE_DEVICE_JSON_QUERY, (json, row.id))
-        .await?;
+    if row.is_active == 0 {
+        if let Some(error) = pre_transaction_rejection(payload) {
+            return Ok(CloudMatch::Rejected(RuntimeInstanceMismatch(error)));
+        }
+        let same_name: Vec<DeviceKindRow> = transaction
+            .fetch_all(DEVICE_BY_NAME_QUERY, (user_id, payload.device_id.as_str()))
+            .await?;
+        if !can_reactivate_managed_cloud(&same_name, &row, payload) {
+            return Ok(CloudMatch::Rejected(managed_cloud_conflict()));
+        }
+        transaction
+            .execute(
+                UPDATE_REGISTERED_DEVICE_REACTIVATE_QUERY,
+                (json, chrono::Local::now().naive_local(), row.id),
+            )
+            .await?;
+    } else {
+        transaction
+            .execute(UPDATE_DEVICE_JSON_QUERY, (json, row.id))
+            .await?;
+    }
     Ok(CloudMatch::Matched(row))
+}
+
+/// Reject a competing registration target before restoring a managed row.
+/// An empty name lookup is valid when the cloud device ID differs from the Kind name.
+fn can_reactivate_managed_cloud(
+    same_name: &[DeviceKindRow],
+    managed: &DeviceKindRow,
+    payload: &RegisterPayload,
+) -> bool {
+    if spec_string(&managed.json, "appDeviceId").is_some_and(|id| !id.is_empty()) {
+        return false;
+    }
+    if same_name.is_empty() {
+        return managed.name != payload.device_id;
+    }
+    select_registration_device(
+        same_name,
+        &payload.device_id,
+        payload.runtime_instance_id.as_deref(),
+        payload.app_device_id.as_deref(),
+        DeviceType::Cloud,
+        false,
+    )
+    .is_ok_and(|selected| selected.is_some_and(|row| row.id == managed.id))
 }
 
 fn select_managed_cloud(
@@ -373,18 +416,14 @@ where
     let devices: Vec<DeviceKindRow> = transaction
         .fetch_all(DEVICE_BY_NAME_QUERY, (user_id, payload.device_id.as_str()))
         .await?;
-    // Guard before App selection can allocate an alternative record. A valid
-    // inactive record still belongs to the generic reactivation path.
+    // Managed rows are handled by the cloud resolver before the generic upsert.
     for row in &devices {
         match managed_cloud_registration(row, payload) {
             Ok(false) => {}
-            Ok(true) if row.is_active == 0 => {}
             Ok(true) => return Err(rejection(managed_cloud_conflict().0)),
             Err(conflict) => return Err(rejection(conflict.0)),
         }
     }
-    let managed_cloud_payload = managed_cloud_reactivation_payload(&devices, payload);
-    let payload = managed_cloud_payload.as_ref().unwrap_or(payload);
     let selected = match select_registration_device(
         &devices,
         &payload.device_id,
@@ -427,23 +466,6 @@ where
         .execute(device_update_query(reactivates), (json, updated_at, row_id))
         .await?;
     Ok(row_id)
-}
-
-/// A validated inactive managed row still belongs to the generic reactivation
-/// path. Its persisted cloud type wins over an executor's stale local report.
-fn managed_cloud_reactivation_payload(
-    devices: &[DeviceKindRow],
-    payload: &RegisterPayload,
-) -> Option<RegisterPayload> {
-    let reactivates = devices.iter().any(|row| {
-        row.is_active == 0 && matches!(managed_cloud_registration(row, payload), Ok(true))
-    });
-    if !reactivates {
-        return None;
-    }
-    let mut payload = payload.clone();
-    payload.device_type = DeviceType::Cloud;
-    Some(payload)
 }
 
 /// `upsert_device_crd`'s identity validations, which run before any

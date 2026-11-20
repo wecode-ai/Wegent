@@ -15,6 +15,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use brz_mysql::MysqlService;
 use brz_redis::{Redis, RedisService, cmd};
+use brz_socket_io::SocketIo;
 use engineio_poll_client::PollClient;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, time::timeout};
@@ -75,6 +76,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
     )
     .unwrap();
     let server = socketio::handlers::build(Arc::clone(&state)).await.unwrap();
+    let io = server.io().clone();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (stop, stopped) = oneshot::channel();
@@ -96,7 +98,8 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         async move {
             timeout(Duration::from_secs(20), async {
                 let client = assert_heartbeats(&address, &token, &redis, &device_id, &key).await;
-                assert_managed_cloud_identity(&address, &token, &mysql, &redis, &device_id).await;
+                assert_managed_cloud_identity(&address, &token, &mysql, &redis, &device_id, &io)
+                    .await;
                 assert_terminal_delivery(&client, &redis, &mysql, &device_id).await;
                 assert_offline_timeout(&state, &redis, &mysql).await;
             })
@@ -302,6 +305,7 @@ async fn assert_managed_cloud_identity(
     mysql: &MysqlService,
     redis: &RedisService,
     prefix: &str,
+    io: &SocketIo,
 ) {
     let name = format!("{prefix}-cloud");
     let key = format!("device:online:{USER_ID}:{name}");
@@ -310,7 +314,7 @@ async fn assert_managed_cloud_identity(
         .unwrap();
     let registration = json!({
         "device_id": name, "name": "Managed Cloud", "device_type": "local",
-        "runtime_instance_id": "runtime-cloud",
+        "runtime_instance_id": "runtime-cloud", "runtime_transfer_port": 17888,
     });
     // Warm the local registration cache before the server repairs provisioning.
     assert_eq!(
@@ -365,7 +369,7 @@ async fn assert_managed_cloud_identity(
         assert_eq!(online(redis, &key).await, original_presence);
     }
     assert_eq!(
-        event_ack(&client, 13, "device:register", registration).await,
+        event_ack(&client, 13, "device:register", registration.clone()).await,
         json!({"success": true, "device_id": name, "device_route_id": name}),
     );
     let records: Vec<AppDeviceRecord> = mysql
@@ -391,6 +395,10 @@ async fn assert_managed_cloud_identity(
     let presence = online(redis, &key).await;
     assert_eq!(presence["socket_id"], client.socket_id());
     assert_eq!(presence["runtime_instance_id"], "runtime-cloud");
+
+    // Keep Redis presence live for both attempts. The first reuses the
+    // original local fingerprint. The second changes only a fingerprint field.
+    assert_stale_local_reactivation(mysql, redis, io, &client, record_id, registration).await;
     redis.del(key).await.unwrap();
 
     // Formal cloud records without an optional sandbox pointer stay compatible.
@@ -518,6 +526,80 @@ async fn assert_managed_cloud_identity(
             .unwrap()
             .is_none()
     );
+}
+
+async fn assert_stale_local_reactivation(
+    mysql: &MysqlService,
+    redis: &RedisService,
+    io: &SocketIo,
+    client: &PollClient,
+    record_id: i64,
+    mut registration: Value,
+) {
+    let name = registration["device_id"].as_str().unwrap().to_owned();
+    let key = format!("device:online:{USER_ID}:{name}");
+    let socket = io
+        .of(NAMESPACE)
+        .unwrap()
+        .get_socket(client.socket_id().parse().unwrap())
+        .unwrap();
+    let session =
+        brz_socket_io::__private::session::<socketio::session::DeviceSession, _>(&socket).unwrap();
+    for (ack_id, transfer_port, case) in [
+        (17, 17888, "cached local registration"),
+        (18, 17889, "uncached local registration"),
+    ] {
+        mysql
+            .execute(
+                "UPDATE kinds SET is_active = 0 WHERE id = ? AND user_id = ?",
+                (record_id, USER_ID),
+            )
+            .await
+            .unwrap();
+        registration["runtime_transfer_port"] = json!(transfer_port);
+        assert_eq!(
+            event_ack(client, ack_id, "device:register", registration.clone()).await,
+            json!({"success": true, "device_id": name, "device_route_id": name}),
+            "{case}",
+        );
+        let records: Vec<AppDeviceRecord> = mysql
+            .fetch_all(
+                "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+                 AND namespace = 'default' AND name = ?",
+                (USER_ID, name.as_str()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1, "{case}");
+        assert_eq!(records[0].id, record_id, "{case}");
+        assert_eq!(records[0].is_active, 1, "{case}");
+        assert_eq!(records[0].json["spec"]["deviceType"], "cloud", "{case}");
+        assert_eq!(
+            records[0].json["spec"]["runtimeInstanceId"], "runtime-cloud",
+            "{case}"
+        );
+        assert_eq!(
+            records[0].json["spec"]["cloudConfig"],
+            json!({"deviceId": name, "sandboxId": "sandbox-cloud"}),
+            "{case}",
+        );
+        let snapshot = session.snapshot().device;
+        assert_eq!(
+            snapshot.device_type,
+            Some(socketio::device::DeviceType::Cloud),
+            "{case}"
+        );
+        assert_eq!(snapshot.device_id.as_deref(), Some(name.as_str()), "{case}");
+        assert_eq!(
+            snapshot.logical_device_id.as_deref(),
+            Some(name.as_str()),
+            "{case}"
+        );
+        let presence = online(redis, &key).await;
+        assert_eq!(presence["socket_id"], client.socket_id(), "{case}");
+        assert_eq!(presence["runtime_instance_id"], "runtime-cloud", "{case}");
+        assert_eq!(presence["runtime_transfer_port"], transfer_port, "{case}");
+    }
 }
 
 async fn assert_offline_timeout(
