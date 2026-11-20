@@ -244,7 +244,7 @@ fn managed_cloud_registration(
     if row.name != payload.device_id && server_id != Some(payload.device_id.as_str()) {
         return Ok(false);
     }
-    if sandbox_id.is_none()
+    if (sandbox_id.is_none() && payload.device_type != DeviceType::Cloud)
         || server_id.is_some_and(|id| id != payload.device_id)
         || payload
             .app_device_id
@@ -373,11 +373,12 @@ where
     let devices: Vec<DeviceKindRow> = transaction
         .fetch_all(DEVICE_BY_NAME_QUERY, (user_id, payload.device_id.as_str()))
         .await?;
-    // Guard before App selection can allocate an alternative record. The
-    // lifecycle resolves legitimate managed registrations through the pin path.
+    // Guard before App selection can allocate an alternative record. A valid
+    // inactive record still belongs to the generic reactivation path.
     for row in &devices {
         match managed_cloud_registration(row, payload) {
             Ok(false) => {}
+            Ok(true) if row.is_active == 0 => {}
             Ok(true) => return Err(rejection(managed_cloud_conflict().0)),
             Err(conflict) => return Err(rejection(conflict.0)),
         }

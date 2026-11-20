@@ -393,6 +393,73 @@ async fn assert_managed_cloud_identity(
     assert_eq!(presence["runtime_instance_id"], "runtime-cloud");
     redis.del(key).await.unwrap();
 
+    // Formal cloud records without an optional sandbox pointer stay compatible.
+    let mut without_sandbox = document.clone();
+    without_sandbox["spec"]["cloudConfig"] = json!({"deviceId": name});
+    mysql
+        .execute(
+            "UPDATE kinds SET json = ? WHERE id = ? AND user_id = ?",
+            (without_sandbox.to_string(), record_id, USER_ID),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event_ack(
+            &client,
+            15,
+            "device:register",
+            json!({
+                "device_id": name, "name": "Managed Cloud", "device_type": "cloud",
+                "runtime_instance_id": "runtime-cloud",
+            })
+        )
+        .await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+
+    // The record-only deletion API soft-deletes the record, after which the
+    // original executor must be able to register and reactivate it.
+    mysql
+        .execute(
+            "UPDATE kinds SET is_active = 0 WHERE id = ? AND user_id = ?",
+            (record_id, USER_ID),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event_ack(
+            &client,
+            16,
+            "device:register",
+            json!({
+                "device_id": name, "name": "Managed Cloud", "device_type": "cloud",
+                "runtime_instance_id": "runtime-cloud",
+            })
+        )
+        .await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+    let reactivated: Vec<AppDeviceRecord> = mysql
+        .fetch_all(
+            "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (USER_ID, name.as_str()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reactivated.len(), 1);
+    assert_eq!(reactivated[0].id, record_id);
+    assert_eq!(reactivated[0].is_active, 1);
+    assert_eq!(reactivated[0].json["spec"]["deviceType"], "cloud");
+    assert_eq!(
+        reactivated[0].json["spec"]["runtimeInstanceId"],
+        "runtime-cloud"
+    );
+    assert_eq!(
+        reactivated[0].json["spec"]["cloudConfig"],
+        json!({"deviceId": name})
+    );
+
     let foreign = format!("{prefix}-foreign-cloud");
     mysql.execute(
         "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)

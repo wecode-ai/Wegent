@@ -722,7 +722,6 @@ fn managed_cloud_rejects_incomplete_or_mismatched_server_pointers() {
         ..payload()
     };
     for cloud in [
-        serde_json::json!({"deviceId": payload.device_id}),
         serde_json::json!({"deviceId": payload.device_id, "sandboxId": "  "}),
         serde_json::json!({"deviceId": "other-device", "sandboxId": "sandbox-1"}),
         serde_json::json!({"sandboxId": "sandbox-1"}),
@@ -731,6 +730,50 @@ fn managed_cloud_rejects_incomplete_or_mismatched_server_pointers() {
         row.json["spec"]["cloudConfig"] = cloud;
         assert!(managed_cloud_registration(&row, &payload).is_err());
     }
+}
+
+#[test]
+fn formal_cloud_registration_uses_the_record_name_when_sandbox_is_absent() {
+    let payload = RegisterPayload {
+        device_type: DeviceType::Cloud,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    let mut row = managed_cloud_row(Some("runtime-1"));
+    row.json["spec"]["cloudConfig"] = serde_json::json!({"deviceId": payload.device_id});
+
+    let matched = select_managed_cloud(vec![row], &payload, true)
+        .unwrap()
+        .expect("formal cloud registration remains compatible");
+    assert_eq!(matched.id, 42);
+}
+
+#[test]
+fn inactive_managed_cloud_rows_follow_the_generic_reactivation_path() {
+    let payload = RegisterPayload {
+        device_type: DeviceType::Cloud,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    let mut row = managed_cloud_row(Some("runtime-1"));
+    row.is_active = 0;
+    row.json["spec"]["cloudConfig"] = serde_json::json!({"deviceId": payload.device_id});
+
+    let managed = managed_cloud_registration(&row, &payload).unwrap();
+    assert!(managed, "the record must first be recognized as managed");
+    let selected = select_registration_device(
+        &[row],
+        &payload.device_id,
+        payload.runtime_instance_id.as_deref(),
+        None,
+        DeviceType::Cloud,
+        false,
+    )
+    .unwrap()
+    .expect("the inactive record remains reusable");
+    assert_eq!(selected.id, 42);
+    assert_eq!(selected.is_active, 0);
+    assert!(device_update_query(selected.is_active == 0).contains("is_active=1"));
 }
 
 #[test]
