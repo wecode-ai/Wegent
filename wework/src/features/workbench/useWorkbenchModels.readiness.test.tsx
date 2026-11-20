@@ -4,6 +4,32 @@ import { expect, test, vi } from 'vitest'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 
+test.each(['manual', 'ai', 'automatic'])(
+  'restores %s command approval when the saved model is replaced by the default',
+  async commandApproval => {
+    const model: UnifiedModel = { name: 'default-model', type: 'runtime' }
+    const api = { listModels: vi.fn().mockResolvedValue({ data: [model] }) }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: 'unavailable-model',
+          modelType: 'runtime',
+          options: { commandApproval },
+        },
+        defaultSelectionConfig: () => ({ modelName: model.name, modelType: model.type }),
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(model))
+    expect(result.current.selectedModelOptions.commandApproval).toBe(commandApproval)
+
+    act(() => result.current.setSelectedModelAndOptions(model, {}))
+    expect(result.current.selectedModelOptions.commandApproval).toBe(commandApproval)
+  }
+)
+
 test('refreshes the owning catalog after committed local model settings change', async () => {
   const before: UnifiedModel = { name: 'before-edit', type: 'runtime' }
   const after: UnifiedModel = { name: 'after-edit', type: 'runtime' }

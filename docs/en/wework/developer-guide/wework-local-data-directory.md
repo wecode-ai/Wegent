@@ -4,13 +4,17 @@ sidebar_position: 22
 
 # Local Data Directory
 
-Wework stores its local runtime data under `~/.wework` in the user's home
-directory. The legacy `~/.wecode/wegent-executor` and `~/.wegent-executor`
-locations are no longer used.
-
 ## Directory Layout
 
-The default Executor Home is `~/.wework` and contains:
+The desktop app defaults to `~/.wegent/workbench/wework/<namespace>`. The installed
+package selects the namespace, which defaults to `default`. Electron app data uses
+the `user-data/` subdirectory. Set `WEWORK_USER_DATA_DIR` to override it. Startup
+opens the current directory directly. Tasks and local settings that exist only in
+older directories stay on disk and are absent from the default workbench.
+
+The managed desktop Executor uses the same namespace directory. The standalone
+Executor defaults to `~/.wework`. The Executor Home contains the data below.
+The desktop workspace defaults to `~/.wegent/workspace`.
 
 - `codex/`: Wework's isolated Codex home (overridable with `WEGENT_CODEX_HOME`).
 - `workspace/projects/` and `workspace/worktrees/`: local projects and managed worktrees.
@@ -52,15 +56,6 @@ files fail startup rather than silently replacing an identity. A valid hardware
 UUID is required only when generating a new desktop identity. Isolated verification
 can set a nonempty `WEGENT_APP_IPC_DEVICE_ID` as the effective ID before file reads
 or hardware lookup, without overwriting the normal file.
-
-## Directory Scanning During Home Migration
-
-When moving a legacy Codex Home into the workbench directory, relative symlink
-scanning uses the entry types supplied by directory enumeration. It recurses
-into directories and validates symlinks without separately reading regular-file
-metadata. A background Git operation removing a temporary lock file after
-enumeration therefore does not block startup. Unresolvable relative symlinks
-still block migration.
 
 ## Automatic Cleanup and Retention
 

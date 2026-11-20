@@ -1,7 +1,7 @@
 import { createConnectionEventStatusSource } from './connectionEventStatusSource'
-import { memo, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useId, useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
-import { ChevronRight, CircleAlert, Radio } from 'lucide-react'
+import { ChevronRight, CircleAlert, CircleArrowDown, Radio } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
@@ -23,6 +23,8 @@ export function ConnectionEventStatus({
   unsupported?: boolean
 }) {
   const { t } = useTranslation('common')
+  const conditionId = useId()
+  const [expanded, setExpanded] = useState<string[]>([])
   const [source] = useState(createConnectionEventStatusSource)
   const { cancelled, announcement, pending, unsupportedFailure, errors } = useSyncExternalStore(
     source.subscribe,
@@ -76,7 +78,9 @@ export function ConnectionEventStatus({
           {announcement}
         </div>
       )}
-      {items.map(item => {
+      {items.map((item, index) => {
+        const conditionOpen = expanded.includes(item.subscription_key)
+        const detailsId = `${conditionId}-${index}`
         const summary = item.source.configurationSummary
         const sourceName =
           typeof summary === 'string' && summary.trim()
@@ -88,7 +92,7 @@ export function ConnectionEventStatus({
         const executionFailed = ['error', 'needs_attention'].includes(item.status)
         const observing = item.status === 'armed'
         const failed = setupFailed || executionFailed || (observing && Boolean(observation.error))
-        const Icon = failed ? CircleAlert : Radio
+        const Icon = failed ? CircleAlert : received ? CircleArrowDown : Radio
         const label = setupFailed
           ? observation.state === 'auth_required'
             ? t('workbench.observation_auth_required', '连接需要重新授权')
@@ -109,47 +113,77 @@ export function ConnectionEventStatus({
                   : t('workbench.connection_event_pending', '已收到事件，等待会话继续执行')
                 : t('workbench.connection_event_waiting', '等待事件，到达后自动继续')
         return (
-          <div
-            key={item.subscription_key}
-            className="flex min-h-8 min-w-0 flex-wrap items-center gap-1.5"
-            role="status"
-          >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {observing ? (
-                <ResourceObservationStatus observation={observation}>
-                  {label}
-                </ResourceObservationStatus>
-              ) : (
-                <span>{label}</span>
-              )}
-              <span className="min-w-0 max-w-full truncate" title={sourceName}>
-                · {sourceName}
-              </span>
-            </div>
-            <EventCondition match={item.match} />
-            {onCancel && (
+          <div key={item.subscription_key} className="min-w-0">
+            <div className="flex min-h-8 min-w-0 items-center gap-1.5">
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <div role="status" className="min-w-0 flex-1 truncate">
+                {observing ? (
+                  <ResourceObservationStatus observation={observation}>
+                    {label}
+                  </ResourceObservationStatus>
+                ) : (
+                  <span>{label}</span>
+                )}
+                <span title={sourceName}>
+                  {' · '}
+                  {sourceName}
+                </span>
+              </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="ml-auto h-7 min-h-11 shrink-0 px-2 text-xs text-text-secondary md:min-h-7"
-                data-testid="cancel-connection-event-subscription"
-                aria-label={t('workbench.connection_event_cancel_source', {
-                  source: sourceName,
-                })}
-                disabled={
-                  unavailable || cancellationUnsupported || pending.includes(item.subscription_key)
+                className="h-7 min-h-11 shrink-0 gap-1 whitespace-nowrap px-2 text-xs text-text-secondary md:min-h-7"
+                data-testid="connection-event-condition-toggle"
+                aria-expanded={conditionOpen}
+                aria-controls={detailsId}
+                onClick={() =>
+                  setExpanded(current =>
+                    current.includes(item.subscription_key)
+                      ? current.filter(key => key !== item.subscription_key)
+                      : [...current, item.subscription_key]
+                  )
                 }
-                onClick={() => void cancel(item.subscription_key, sourceName)}
               >
-                {pending.includes(item.subscription_key)
-                  ? t('workbench.connection_event_cancelling', '正在取消')
-                  : t('workbench.connection_event_cancel', '取消监听')}
+                <ChevronRight
+                  aria-hidden="true"
+                  className={conditionOpen ? 'h-3.5 w-3.5 rotate-90' : 'h-3.5 w-3.5'}
+                />
+                {t('workbench.event_condition_label', '等待条件')}
               </Button>
-            )}
+              {onCancel && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 min-h-11 shrink-0 whitespace-nowrap px-2 text-xs text-text-secondary md:min-h-7"
+                  data-testid="cancel-connection-event-subscription"
+                  aria-label={t('workbench.connection_event_cancel_source', {
+                    source: sourceName,
+                  })}
+                  disabled={
+                    unavailable ||
+                    cancellationUnsupported ||
+                    pending.includes(item.subscription_key)
+                  }
+                  onClick={() => void cancel(item.subscription_key, sourceName)}
+                >
+                  {pending.includes(item.subscription_key)
+                    ? t('workbench.connection_event_cancelling', '正在取消')
+                    : t('workbench.connection_event_cancel', '取消监听')}
+                </Button>
+              )}
+            </div>
+            <p
+              id={detailsId}
+              hidden={!conditionOpen}
+              className="whitespace-pre-wrap break-words pb-1 pl-5"
+              data-testid="connection-event-condition"
+            >
+              {conditionOpen && connectionEventCondition(item.match, t)}
+            </p>
             {onCancel && cancellationUnsupported && !unavailable && (
-              <span className="basis-full" data-testid="connection-event-upgrade-required">
+              <span className="block" data-testid="connection-event-upgrade-required">
                 {t(
                   'workbench.connection_event_upgrade_required',
                   '此设备需升级执行器以使用事件监听'
@@ -157,12 +191,12 @@ export function ConnectionEventStatus({
               </span>
             )}
             {onCancel && unavailable && (
-              <span className="basis-full">
+              <span className="block">
                 {t('workbench.connection_event_cancel_unavailable', '设备离线，恢复后可取消')}
               </span>
             )}
             {errors[item.subscription_key] && (
-              <span role="alert" className="basis-full text-destructive">
+              <span role="alert" className="block text-destructive">
                 {t('workbench.connection_event_cancel_failed', '取消失败，请重试')}
               </span>
             )}
@@ -172,22 +206,3 @@ export function ConnectionEventStatus({
     </div>
   )
 }
-
-const EventCondition = memo(function EventCondition({ match }: { match: unknown }) {
-  const { t } = useTranslation('common')
-  const condition = useMemo(() => connectionEventCondition(match, t), [match, t])
-  return (
-    <details className="group order-last w-full min-w-0 pl-5">
-      <summary
-        className="flex min-h-11 w-fit cursor-pointer items-center gap-1 hover:text-text-primary md:min-h-7"
-        data-testid="connection-event-condition-toggle"
-      >
-        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 group-open:rotate-90" />
-        {t('workbench.event_condition_label', '等待条件')}
-      </summary>
-      <p className="whitespace-pre-wrap break-words pb-1" data-testid="connection-event-condition">
-        {condition}
-      </p>
-    </details>
-  )
-})

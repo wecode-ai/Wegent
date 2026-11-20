@@ -88,15 +88,42 @@ pub(super) async fn enqueue_root(
             if thread.is_none() {
                 return Ok(Err(execution_failed()));
             }
+            // Guidance receipts acknowledge a steer. Only the originating activity binds a session.
             let bound: Option<MessageRow> = tx.fetch_optional(
                 format!("SELECT {} FROM project_chat_messages WHERE project_id=? AND task_id=? AND sender_type='agent'
                  AND (message_id=? OR thread_root_message_id=?)
+                 AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.collaboration_guidance')), 'false') <> 'true'
                  AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
-                 ORDER BY id DESC LIMIT 1 FOR UPDATE", messages::MESSAGE_COLUMNS),
-                (trigger.project_id.as_str(), trigger.task_id.as_str(), root.as_str(), root.as_str()),
+                 ORDER BY (message_id=?) DESC, id DESC LIMIT 1 FOR UPDATE", messages::MESSAGE_COLUMNS),
+                (trigger.project_id.as_str(), trigger.task_id.as_str(), root.as_str(), root.as_str(),
+                 trigger.reply_to_message_id.as_str()),
             ).await?;
             if let Some(bound) = bound {
+                let Some(mut bound) = published_comment_activity(tx, trigger, bound).await? else {
+                    return Ok(Err(execution_failed()));
+                };
                 let metadata = bound.metadata();
+                let manager_task = metadata["manager_runtime_task_id"].as_str()
+                    .filter(|id| !id.is_empty() && (
+                        metadata["collaboration_public_reply"] == true
+                        || metadata["activity_type"] == "manager_status_comment"
+                    ));
+                let manager_execution = if let Some(task) = manager_task {
+                    let project_id = trigger.project_id.parse().map_err(|_| MysqlError::InvalidQuery {
+                        reason: "Invalid project identifier".to_owned(),
+                    })?;
+                    let result = crate::runtime_work_transcript_access::comment_manager_dispatch(
+                        &state.mysql, project_id, &trigger.task_id, &bound.agent_id, &metadata,
+                    ).await;
+                    let Ok(Some((id, device))) = result else {
+                        return Ok(Err(execution_failed()));
+                    };
+                    bound.runtime_task_id = task.to_owned();
+                    bound.runtime_device_id = device;
+                    Some(id)
+                } else {
+                    None
+                };
                 let member = if metadata["dispatch_role"] == "member"
                     && metadata["execution_id"].is_null()
                 {
@@ -114,7 +141,9 @@ pub(super) async fn enqueue_root(
                 } else {
                     None
                 };
-                let execution = if let Some((id, _)) = member.as_ref() {
+                let execution = if let Some(id) = manager_execution {
+                    load_execution(tx, trigger, id).await?
+                } else if let Some((id, _)) = member.as_ref() {
                     load_execution(tx, trigger, *id).await?
                 } else {
                     bound_execution(state, tx, trigger, &bound).await?
@@ -189,6 +218,16 @@ pub(super) async fn enqueue_root(
             {
                 return Ok(Err(ack_error("SCOPE_FORBIDDEN", "Comment execution authorization is revoked")));
             }
+            if group && human_request_id.is_none() {
+                match guide_active_comment(state, tx, trigger, bound, original, &attachments).await? {
+                    Ok(Some(id)) => {
+                        new_response = true;
+                        return Ok(Ok(Some(id)));
+                    }
+                    Ok(None) => {}
+                    Err(error) => return Ok(Err(error)),
+                }
+            }
             owner = original.executor_owner_user_id;
             if !original.execution_environment.is_empty() {
                 environment = &original.execution_environment;
@@ -199,6 +238,11 @@ pub(super) async fn enqueue_root(
                 inherited.remove("human_request_id");
                 inherited.extend(context.as_object().cloned().unwrap_or_default());
                 context = Value::Object(inherited);
+                if context["collaboration_dispatch_execution_id"].is_null()
+                    && original.selection()["executor_kind"] == "collaboration_group_dispatch"
+                {
+                    context["collaboration_dispatch_execution_id"] = json!(original.id);
+                }
             }
             context["runtime_subject_user_id"] = json!(owner);
             context["comment_continue_task_id"] = json!(bound.runtime_task_id);
@@ -268,14 +312,13 @@ pub(super) async fn enqueue_root(
     let Some(id) = result else {
         return Ok((Vec::new(), false));
     };
-    if new_response && let Err(error) = crate::background_jobs::robot::prepare_and_wake(state).await
-    {
-        tracing::warn!(%error, "project comment runner wake failed");
-    }
     let row = messages::load_message_by_id(state, id)
         .await?
         .ok_or_else(execution_failed)?;
-    if new_response {
+    if new_response && row.metadata()["collaboration_guidance"] != true {
+        if let Err(error) = crate::background_jobs::robot::prepare_and_wake(state).await {
+            tracing::warn!(%error, "project comment runner wake failed");
+        }
         tracing::info!(
             item_id = trigger.task_id,
             trigger_id = trigger.message_id,
@@ -287,6 +330,137 @@ pub(super) async fn enqueue_root(
         vec![messages::message_view_with_actor(state, user_id, &row).await?],
         new_response,
     ))
+}
+
+async fn guide_active_comment(
+    state: &AppState,
+    tx: &mut impl MysqlTransaction,
+    trigger: &MessageRow,
+    bound: &MessageRow,
+    execution: &model::Execution,
+    attachments: &[Value],
+) -> Result<Result<Option<i64>, Value>, MysqlError> {
+    let active: Option<(i64,)> = tx
+        .fetch_optional(
+            "SELECT id FROM project_chat_messages
+         WHERE project_id=? AND task_id=? AND runtime_task_id=? AND sender_type='agent'
+         AND status='streaming'
+         AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.collaboration_guidance')), 'false') <> 'true'
+         AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
+         LIMIT 1",
+            (
+                trigger.project_id.as_str(),
+                trigger.task_id.as_str(),
+                bound.runtime_task_id.as_str(),
+            ),
+        )
+        .await?;
+    if active.is_none() || bound.runtime_device_id.is_empty() {
+        return Ok(Ok(None));
+    }
+    let result = super::runtime_rpc::call(
+        state, execution.executor_owner_user_id, &bound.runtime_device_id,
+        "runtime.tasks.guidance",
+        json!({
+            "taskId": bound.runtime_task_id,
+            "clientGuidanceId": trigger.message_id,
+            "issueCommentId": trigger.message_id,
+            "message": format!(
+                "New comment on this Issue (comment ID {}). Keep its reply separate from other comments and use add_board_item_comment with this reply_to_comment_id.\n\n{}",
+                trigger.message_id, trigger.content,
+            ),
+            "attachments": attachments,
+        }),
+        15, false,
+    ).await;
+    let accepted = match result {
+        Ok(value) if value["accepted"] == true => value,
+        Ok(value)
+            if matches!(
+                value["code"].as_str(),
+                Some("no_active_turn" | "conversation_context_mismatch" | "user_input_pending")
+            ) =>
+        {
+            return Ok(Ok(None));
+        }
+        Err(super::runtime_rpc::CallFailure::Rpc(error))
+            if error.code == "remote_control_disabled" =>
+        {
+            return Ok(Ok(None));
+        }
+        _ => {
+            return Ok(Err(ack_error(
+                "EXECUTION_FAILED",
+                "Delivery of the Issue reply could not be confirmed",
+            )));
+        }
+    };
+    let message_id = messages::uuid4();
+    let message = InsertMessage {
+        message_id: &message_id,
+        client_message_id: &message_id,
+        project_id: &trigger.project_id,
+        task_id: &trigger.task_id,
+        sender_type: "agent",
+        sender_id: &bound.agent_id,
+        sender_name: &bound.sender_name,
+        message_type: "agent_status",
+        content: "",
+        metadata: json!({
+            "run_status": "running",
+            "collaboration_guidance": true,
+            "runtime_turn_id": accepted["turnId"],
+        }),
+        trigger_message_id: &trigger.message_id,
+        reply_to_message_id: &trigger.message_id,
+        thread_root_message_id: &trigger.thread_root_message_id,
+        agent_id: &bound.agent_id,
+        runtime_device_id: &bound.runtime_device_id,
+        runtime_task_id: &bound.runtime_task_id,
+        runtime_activity_key: "",
+        status: "streaming",
+    };
+    let row = tx
+        .execute(
+            messages::INSERT_MESSAGE_SQL,
+            messages::insert_message_args(&message),
+        )
+        .await?;
+    Ok(Ok(Some(row.last_insert_id as i64)))
+}
+
+async fn published_comment_activity(
+    tx: &mut impl MysqlTransaction,
+    trigger: &MessageRow,
+    published: MessageRow,
+) -> Result<Option<MessageRow>, MysqlError> {
+    let metadata = published.metadata();
+    let Some(activity_id) = metadata["collaboration_member_activity_id"].as_str() else {
+        return Ok(Some(published));
+    };
+    if metadata["collaboration_public_reply"] != true || published.agent_id.is_empty() {
+        return Ok(None);
+    }
+    let source: Option<MessageRow> = tx.fetch_optional(
+        format!(
+            "SELECT {} FROM project_chat_messages
+             WHERE project_id=? AND task_id=? AND message_id=? AND sender_type='agent' AND agent_id=?
+             AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
+             FOR UPDATE",
+            messages::MESSAGE_COLUMNS,
+        ),
+        (
+            trigger.project_id.as_str(),
+            trigger.task_id.as_str(),
+            activity_id,
+            published.agent_id.as_str(),
+        ),
+    ).await?;
+    Ok(source.filter(|source| {
+        let source_metadata = source.metadata();
+        source_metadata["activity_type"] == "member_execution"
+            && source_metadata["dispatch_id"] == metadata["dispatch_id"]
+    }))
 }
 
 async fn load_comment_attachments(

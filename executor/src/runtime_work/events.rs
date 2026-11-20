@@ -808,6 +808,7 @@ impl CodexNotificationEventMapper {
 
         self.reset_process_text();
 
+        let display = &params["weworkGuidanceDisplay"];
         emit_response_event(
             context.event_tx,
             context.device_id,
@@ -817,7 +818,8 @@ impl CodexNotificationEventMapper {
             json!({
                 "guidanceId": item_id(item, "guidance"),
                 "clientGuidanceId": item_client_id,
-                "message": extract_text(item).unwrap_or_default(),
+                "message": string_field(display, "content").or_else(|| extract_text(item)).unwrap_or_default(),
+                "source": display.get("source"),
                 "appliedAtMs": params
                     .get("completedAtMs")
                     .or_else(|| params.get("completed_at_ms"))

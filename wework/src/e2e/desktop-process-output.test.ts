@@ -41,3 +41,33 @@ test('drains process output in delivery order before capture completes', async (
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test('finishes capture when an exited launcher leaves its output pipe open', async () => {
+  const moduleUrl = pathToFileURL(
+    resolve(import.meta.dirname, '../../e2e/desktop/process-output.mjs')
+  ).href
+  const { appendProcessOutput, closeExitedProcessOutput, flushProcessOutput } = await import(
+    /* @vite-ignore */ moduleUrl
+  )
+  const directory = await mkdtemp(join(tmpdir(), 'wework-process-output-'))
+  const destination = join(directory, 'app.log')
+  const launcherOutput = new PassThrough()
+  const liveOutput = new PassThrough()
+  try {
+    appendProcessOutput(launcherOutput, destination, { exitCode: 0, signalCode: null })
+    appendProcessOutput(liveOutput, destination, { exitCode: null, signalCode: null })
+    const finalLog = Buffer.alloc(128 * 1024, 'x')
+    launcherOutput.write(finalLog)
+    await closeExitedProcessOutput(destination)
+    expect(launcherOutput.destroyed).toBe(true)
+    expect(liveOutput.destroyed).toBe(false)
+    liveOutput.end('live\n')
+    await flushProcessOutput()
+    expect(await readFile(destination)).toEqual(Buffer.concat([finalLog, Buffer.from('live\n')]))
+  } finally {
+    launcherOutput.end()
+    liveOutput.end()
+    await flushProcessOutput()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

@@ -23,6 +23,16 @@ immediately after quick phrases. Hover to see the active mode, or click to choos
 **Full access**. After selecting a project space, the composer chip shows only the board name;
 its hover text still explains that sending creates a task on that board.
 
+<a id="command-approval"></a>
+
+In a Codex conversation, select **Full access** in the permission menu. Choose how later messages handle risky commands in the confirmation dialog. You can change the choice from the permission menu after enabling Full access.
+
+- **Confirm risky commands manually** (default) shows an approval in the conversation.
+- **Review risky commands with AI** lets Codex decide whether to approve.
+- **Run risky commands automatically** opens a confirmation with all three choices. You can change your selection there. Eligible risky commands can run automatically once enabled.
+
+Wework remembers your last choice and uses it for Full access in new standalone conversations.
+
 Under **Settings → General → General**, choose the Wework feature mode:
 
 - **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git

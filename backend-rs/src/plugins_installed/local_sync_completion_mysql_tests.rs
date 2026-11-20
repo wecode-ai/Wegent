@@ -153,7 +153,9 @@ pub(super) async fn verify(
     );
     ack_fence_tests::verify(&context, state).await?;
     verify_alias_cleanup(&context, state).await?;
+    eprintln!("[plugin-local-sync] Validating registration concurrency and row locks");
     registration_write_tests::verify(&context, state).await?;
+    eprintln!("[plugin-local-sync] Validating independent completion under contention");
     verify_contention(&context, state).await?;
     verify_independent_receipt_watermarks(&context).await?;
     Ok(())

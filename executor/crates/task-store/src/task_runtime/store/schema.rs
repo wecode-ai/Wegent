@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
     if schema_is_current(connection)? {
         stand_in_history_index::ensure_schema(connection)?;
+        ensure_runtime_query_indexes(connection)?;
         ensure_default_work_item_project(connection)?;
         return Ok(());
     }
@@ -293,6 +294,7 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
     )?;
     stand_in_telemetry::migrate(connection)?;
     stand_in_history_index::ensure_schema(connection)?;
+    ensure_runtime_query_indexes(connection)?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
@@ -300,6 +302,30 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
         params![LOCAL_SCHEMA_VERSION, now()],
     )?;
     Ok(())
+}
+
+pub(super) fn runtime_query_indexes_are_current(
+    connection: &Connection,
+) -> Result<bool, rusqlite::Error> {
+    connection.query_row(
+        "SELECT count(*) = 2 FROM sqlite_master WHERE type = 'index'
+         AND name IN ('ix_loop_items_bound_runtime_task', 'ix_loop_items_unfinished_arrangement_user')",
+        [],
+        |row| row.get(0),
+    )
+}
+
+fn ensure_runtime_query_indexes(connection: &Connection) -> Result<(), rusqlite::Error> {
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS ix_loop_items_bound_runtime_task
+            ON loop_items(device_id, task_id)
+            WHERE resource_type = 'execution' AND unlinked_at IS NULL AND loop_item_id IS NOT NULL;
+         CREATE INDEX IF NOT EXISTS ix_loop_items_unfinished_arrangement_user
+            ON loop_items(resource_type, json_extract(metadata,'$.userId'))
+            WHERE resource_type='stand_in_action' AND json_valid(metadata)
+              AND json_extract(metadata,'$.kind')='run_arrangement'
+              AND json_extract(metadata,'$.status') IN ('pending','sending');",
+    )
 }
 
 pub(super) fn schema_is_current(connection: &Connection) -> Result<bool, rusqlite::Error> {

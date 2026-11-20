@@ -158,6 +158,7 @@ export interface RuntimeGuidanceAppliedPayload {
   guidanceId: string;
   clientGuidanceId?: string;
   message: string;
+  source?: import("./workbench-message-reducer").MessageSource;
   appliedAtMs: number;
 }
 

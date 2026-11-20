@@ -124,18 +124,8 @@ impl RuntimeWorkRpcHandler {
         let connection = self.backend_connection_snapshot()?.ok_or_else(|| {
             AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
         })?;
-        let identity =
-            Self::runtime_request_on(&connection, reqwest::Method::GET, "/users/me", None).await?;
-        if !identity.status().is_success() {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "Cannot verify assignment recipient",
-            ));
-        }
-        let identity: Value = identity.json().await.map_err(|_| {
-            AppIpcError::new("permission_denied", "Cannot verify assignment recipient")
-        })?;
-        if identity["id"] != context["userId"] {
+        let owner = Self::connected_runtime_user(&connection).await?;
+        if context["userId"].as_i64() != Some(owner) {
             self.log_stand_in_decision(
                 context,
                 &json!({"id":issue,"human_task_binding":{"assignmentId":assignment}}),

@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
@@ -28,8 +28,10 @@ vi.mock('../../e2e/desktop/modules/workspace-flows.mjs', async importOriginal =>
   waitForControlValueIncludes: vi.fn(),
 }))
 
-test('the CI plugin flow initiates and holds app/list before opening the local-only picker', async () => {
+test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async outcome => {
+  vi.clearAllMocks()
   const root = await mkdtemp(join(tmpdir(), 'composer-isolation-'))
+  const seedFailure = new Error('Unable to write the isolated catalog')
   const read = Promise.withResolvers<unknown>()
   const proxy = {
     url: 'http://127.0.0.1:1',
@@ -49,10 +51,15 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
     else expect(proxy.release).toHaveBeenCalledOnce()
   })
   const control = {
-    command: vi.fn(async (action: string) => {
+    command: vi.fn(async (action: string, _selector?: string, options?: { value?: string }) => {
       if (action === 'previewPluginImport') return JSON.stringify({ valid: true })
       if (action === 'getWorkbenchDebugSnapshot')
         return JSON.stringify({ workbench: { currentProject: { id: 'project' } } })
+      if (action === 'getLocalExecutorStatus') return JSON.stringify({ deviceId: 'test-device' })
+      if (action === 'getLocalStorageItem' && options?.value === 'wework.cloudConnection')
+        return JSON.stringify({ apiBaseUrl: 'https://wework.example.test/api', user: { id: 1 } })
+      if (action === 'getLocalStorageItem' && options?.value === 'wework.plugins.openAiCatalog.v1')
+        return ''
       if (action === 'getComposerPluginInventoryDiagnostics')
         return JSON.stringify({
           composerApps: [{ id: `plugin:${pluginName}` }],
@@ -62,14 +69,35 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
     }),
   }
   try {
-    await verifyComposerPluginNetworkIsolation({
+    const storagePath = join(root, 'renderer-local-storage.json')
+    const catalogPath = join(root, 'plugin-cache', 'openai-official-catalog.json')
+    await writeFile(storagePath, JSON.stringify({ version: 1, entries: {} }))
+    const verification = verifyComposerPluginNetworkIsolation({
       blockingNetworkProxy: proxy,
       codexHome: root,
       control,
+      electronUserDataDirectory: root,
       marketplacePath: root,
-      restartDesktopApp: vi.fn(),
+      restartDesktopApp: async (afterStop: () => Promise<void>) => {
+        if (outcome === 'seed failure') throw seedFailure
+        await afterStop()
+        expect(JSON.parse(await readFile(catalogPath, 'utf8'))).toMatchObject({
+          version: 1,
+          items: [{ id: 'cached-documents@openai-curated-remote' }],
+        })
+      },
       workspacePath: root,
     })
+    if (outcome === 'seed failure') {
+      await expect(verification).rejects.toBe(seedFailure)
+      await expect(readFile(join(root, 'auth.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(control.command).toHaveBeenCalledWith('setLocalProxyUrl', 'body', { value: '' })
+      return
+    }
+    await verification
+    const storage = JSON.parse(await readFile(storagePath, 'utf8'))
+    expect(storage.entries).toEqual({})
+    await expect(readFile(catalogPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(openComposerPluginPicker).toHaveBeenCalledTimes(2)
     expect(control.command).toHaveBeenCalledWith('navigate', 'body', { value: '/' })
     expect(control.command).toHaveBeenCalledWith(

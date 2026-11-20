@@ -220,6 +220,7 @@ async fn owner_resolution_checks_the_connected_account_instead_of_trusting_paylo
     *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
         backend_url: url,
         auth_token: "synthetic-test-token".into(),
+        authenticated_user_id: Some(8),
         ..Default::default()
     });
     assert_eq!(

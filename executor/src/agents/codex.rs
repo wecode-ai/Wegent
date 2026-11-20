@@ -2736,7 +2736,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
-        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
+        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         let active_turn_id = if awaits_initial_goal_turn || awaits_event_goal_turn || resume_goal_only || restored_quota_goal {
@@ -2806,6 +2806,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 overload_turn_recovering,
                 wait_for_goal_continuation,
                 auto_approve_mcp_tool_calls,
+                auto_approve_commands: codex_auto_approve_commands(request),
                 stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(request),
             },
         )
@@ -3165,7 +3166,7 @@ async fn run_codex_app_server_turn_with_runtime(
         }
 
         let turn_input = turn_input(&request.prompt);
-        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
+        let auto_approve_mcp_tool_calls = codex_has_full_access(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
@@ -3238,6 +3239,7 @@ async fn run_codex_app_server_turn_with_runtime(
                     notifications,
                     request_user_input_answers,
                     auto_approve_mcp_tool_calls,
+                    auto_approve_commands: codex_auto_approve_commands(request),
                     defer_interactive_forms,
                     stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
                         request,
@@ -3325,6 +3327,7 @@ struct SharedTurnNotificationOptions {
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
     wait_for_goal_continuation: bool,
     auto_approve_mcp_tool_calls: bool,
+    auto_approve_commands: bool,
     stand_in_single_approval: bool,
 }
 
@@ -3708,6 +3711,17 @@ async fn read_shared_turn_notifications(
                     continue;
                 }
             }
+        }
+        if let Some(id) = automatic_command_approval_id(&message, options.auto_approve_commands) {
+            let decision = if cancellation_requested {
+                "decline"
+            } else {
+                "accept"
+            };
+            client
+                .send_response(id, json!({"decision": decision}))
+                .await?;
+            continue;
         }
         if prepare_runtime_notification(
             &mut message,
@@ -4525,6 +4539,26 @@ fn codex_app_server_command(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    if env::var("WEWORK_PROCESS_TRACE").as_deref() == Ok("1") {
+        let inherited_log = launch_config
+            .env
+            .get("RUST_LOG")
+            .cloned()
+            .or_else(|| env::var("RUST_LOG").ok())
+            .unwrap_or_else(|| "error".to_owned());
+        // These Codex spans and events record process lifecycle metadata.
+        // Keep general request tracing and the production SQLite filter unchanged.
+        command.env(
+            "RUST_LOG",
+            format!(
+                concat!(
+                    "{},codex_core::unified_exec::process_manager=info,",
+                    "codex_exec_server::local_process=info,codex_otel.trace_safe=info"
+                ),
+                inherited_log
+            ),
+        );
+    }
     command.env_remove("WEGENT_CONNECTION_SERVICE_TOKEN");
     // Use the native Codex desktop HTTP identity. Authentication and the actual
     // runtime version remain owned by Codex; never synthesize browser cookies.
@@ -4959,6 +4993,7 @@ fn configure_codex_router(
     routing_model_id: Option<String>,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
+    official_websocket: bool,
 ) {
     upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
@@ -4983,13 +5018,19 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
-    configure_codex_router_registration(launch_config, local_token, official_chatgpt);
+    configure_codex_router_registration(
+        launch_config,
+        local_token,
+        official_chatgpt,
+        official_websocket,
+    );
 }
 
 fn configure_codex_router_registration(
     launch_config: &mut CodexLaunchConfig,
     local_token: String,
     official_chatgpt: bool,
+    official_websocket: bool,
 ) {
     let provider = codex_model_catalog::PROVIDER_ID;
     launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
@@ -5003,10 +5044,10 @@ fn configure_codex_router_registration(
             .clone();
         launch_config
             .config_overrides
-            .extend(native_provider::official_proxy_overrides(format!(
-                "{}/{token}",
-                codex_router_base_url()
-            )));
+            .extend(native_provider::official_proxy_overrides(
+                format!("{}/{token}", codex_router_base_url()),
+                official_websocket,
+            ));
     } else {
         launch_config
             .config_overrides
@@ -6102,7 +6143,7 @@ fn codex_base_process_environment() -> BTreeMap<String, String> {
     environment
 }
 
-fn computer_use_mcp_config_overrides() -> Vec<String> {
+fn computer_use_mcp_config_overrides(task_id: &str) -> Vec<String> {
     let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
     if crate::computer_use_mcp::read_bridge_record(&path).is_err() {
         return Vec::new();
@@ -6122,7 +6163,8 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
         format!(
             "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["computer-use-mcp-server", path]))
+            // Separate the native MCP pool by task because the process owns script state.
+            toml_json_value(&json!(["computer-use-mcp-server", path, task_id]))
         ),
         format!(
             "{}=15",
@@ -6926,38 +6968,85 @@ pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
-    if external_work::applies(request)
+    let sandbox_approval = external_work::applies(request)
         || crate::runtime_work::stand_in_requires_confirmation(request)
-    {
-        return json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}});
-    }
-    match codex_runtime_permission_profile(request) {
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => json!({
+        || codex_full_access_command_approval(request).is_some();
+    if sandbox_approval || codex_has_full_access(request) {
+        json!({
             "granular": {
-                "sandbox_approval": false,
+                "sandbox_approval": sandbox_approval,
                 "rules": false,
                 "skill_approval": false,
                 "request_permissions": false,
                 "mcp_elicitations": true,
             }
-        }),
-        _ => Value::String("on-request".to_owned()),
+        })
+    } else {
+        json!("on-request")
     }
 }
 
-fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
+fn codex_has_full_access(request: &ExecutionRequest) -> bool {
     codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+}
+
+fn codex_full_access_command_approval(request: &ExecutionRequest) -> Option<&str> {
+    if !codex_has_full_access(request) {
+        return None;
+    }
+    match request
+        .extra
+        .get("runtime_command_approval")
+        .and_then(Value::as_str)
+    {
+        Some(mode @ ("manual" | "ai" | "automatic")) => Some(mode),
+        _ => (requested_codex_permission_profile(request)
+            == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE))
+        .then_some("manual"),
+    }
+}
+
+fn codex_auto_approve_commands(request: &ExecutionRequest) -> bool {
+    codex_full_access_command_approval(request) == Some("automatic")
+        && stand_in_approval::native_reviewer(request).is_none()
+}
+
+fn automatic_command_approval_id(message: &Value, enabled: bool) -> Option<Value> {
+    let params = message_params(message);
+    // Full access asks only for heuristic command risk. Keep explicit rules,
+    // permission grants, network approvals, and stdin callbacks on their native path.
+    if enabled
+        && message["method"] == "item/commandExecution/requestApproval"
+        && matches!(params["kind"].as_str(), None | Some("command"))
+        && params["command"]
+            .as_str()
+            .is_some_and(|command| !command.is_empty())
+        && params["reason"].is_null()
+        && params["networkApprovalContext"].is_null()
+        && params["additionalPermissions"].is_null()
+        && params["proposedNetworkPolicyAmendments"].is_null()
+        && params["availableDecisions"]
+            .as_array()
+            .map_or(true, |decisions| {
+                decisions.iter().any(|decision| decision == "accept")
+            })
+    {
+        json_rpc_request_id(message)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn prepare_codex_runtime_notification(
     request: &ExecutionRequest,
     message: &mut Value,
 ) -> bool {
-    prepare_runtime_notification(
-        message,
-        codex_auto_approve_mcp_tool_calls(request),
-        crate::runtime_work::stand_in_requires_confirmation(request),
-    )
+    automatic_command_approval_id(message, codex_auto_approve_commands(request)).is_none()
+        && prepare_runtime_notification(
+            message,
+            codex_has_full_access(request),
+            crate::runtime_work::stand_in_requires_confirmation(request),
+        )
 }
 
 fn prepare_runtime_notification(
@@ -6978,12 +7067,7 @@ fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str 
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         return CODEX_READ_ONLY_PERMISSION_PROFILE;
     }
-    match request
-        .extra
-        .get("runtime_permission_profile")
-        .or_else(|| request.extra.get("runtimePermissionProfile"))
-        .and_then(Value::as_str)
-    {
+    match requested_codex_permission_profile(request) {
         Some(CODEX_READ_ONLY_PERMISSION_PROFILE) => CODEX_READ_ONLY_PERMISSION_PROFILE,
         Some(CODEX_WORKSPACE_PERMISSION_PROFILE) => CODEX_WORKSPACE_PERMISSION_PROFILE,
         Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE) => {
@@ -6993,11 +7077,28 @@ fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str 
     }
 }
 
+fn requested_codex_permission_profile(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("runtime_permission_profile")
+        .or_else(|| request.extra.get("runtimePermissionProfile"))
+        .and_then(Value::as_str)
+}
+
 fn insert_codex_runtime_permissions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
 ) {
-    if let Some(reviewer) = stand_in_approval::native_reviewer(request) {
+    let reviewer = stand_in_approval::native_reviewer(request).or_else(|| {
+        codex_full_access_command_approval(request).map(|mode| {
+            if mode == "ai" {
+                "auto_review"
+            } else {
+                "user"
+            }
+        })
+    });
+    if let Some(reviewer) = reviewer {
         params.insert("approvalsReviewer".into(), json!(reviewer));
     }
     params.insert(

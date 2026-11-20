@@ -1,3 +1,4 @@
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { McpAppConversationServices, RuntimeMcpAppsApi } from '@/api/mcpApps'
 
@@ -13,7 +14,8 @@ export function createMcpAppConversationServices({
   readOnly: boolean
   sendMessage: (data: { address: RuntimeTaskAddress; message: string }) => Promise<boolean>
 }): McpAppConversationServices | undefined {
-  if (!address || !api?.requestMcpApp) return undefined
+  // Memory review exposes only evidence tools, so do not discover apps for its tool calls.
+  if (!address || !api?.requestMcpApp || isStandInMemoryReviewTask(address)) return undefined
   return {
     address,
     api: { requestMcpApp: api.requestMcpApp, getMcpAppSessionTarget: api.getMcpAppSessionTarget },

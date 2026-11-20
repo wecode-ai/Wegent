@@ -460,6 +460,9 @@ export function BrowserTaskComposer({
             onSelectModel={model => setSelection({ model, options })}
             onSelectModelAndOptions={(model, options) => setSelection({ model, options })}
             onSelectModelOption={selectOption}
+            onSelectPermissionOptions={patch =>
+              setSelection({ model: selectedModel, options: { ...options, ...patch } })
+            }
             onFileSelect={files => void attachments.handleFileSelect(files)}
             planModeActive={options.collaborationMode === 'plan'}
             onSetPlanMode={() => selectOption('collaborationMode', 'plan')}

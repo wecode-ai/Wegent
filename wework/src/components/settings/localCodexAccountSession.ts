@@ -7,6 +7,7 @@ import {
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
 import { openExternalUrl } from '@/lib/external-links'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
+import { invalidateOpenAiRemoteCatalogAccount } from '@/features/plugins/pluginMarketplaceCache'
 import type { useTranslation } from '@/hooks/useTranslation'
 
 type Translate = ReturnType<typeof useTranslation>['t']
@@ -93,7 +94,8 @@ export function createLocalCodexAccountSession() {
         while (current(version)) {
           const next = await getLocalCodexAuthStatus()
           if (!current(version)) return
-          if (next.exists && next.sha256 !== initialHash) {
+          if (next.exists && next.sha256 && next.sha256 !== initialHash) {
+            if (next.catalogScope !== status?.catalogScope) invalidateOpenAiRemoteCatalogAccount()
             loginId = null
             publish({ loginState: 'idle' })
             await reload()

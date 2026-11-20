@@ -428,10 +428,11 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  // Capture the visible timer before the transcript RPC consumes the short URL window.
+  await assertElicitationCountdown(control, durationMs)
   const original = await readPendingElicitation(control, taskId)
   const remainingSeconds = Math.ceil((original.expiresAtUnixMs - Date.now()) / 1000)
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
-  await assertElicitationCountdown(control, durationMs)
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(
     record => record.event === 'timeout_elicitation_request' && record.scenario === scenario

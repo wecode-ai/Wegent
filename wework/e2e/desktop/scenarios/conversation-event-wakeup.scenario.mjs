@@ -6,6 +6,8 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createConversationEventModel,
   findEventFact as find,
+  PREEXISTING_CHECKS_HEAD,
+  PREEXISTING_CHECKS_TOPIC,
   WORKFLOW_CONFLICT_TOPIC,
 } from '../modules/conversation-event-model.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
@@ -34,6 +36,17 @@ import {
 const MARKER = 'WEWORK_CONVERSATION_EVENT'
 const PROVIDER = '@test/connection-source/records'
 
+function latestWaitingSubscriptions(body) {
+  const snapshot = body.input.findLast(
+    item =>
+      item.type === 'function_call_output' &&
+      item.namespace === 'agent' &&
+      item.name === 'weworkconnectioneventswaiting'
+  )
+  assert.ok(snapshot, 'The model must receive a waiting subscription snapshot')
+  return JSON.parse(snapshot.output)
+}
+
 export function createDesktopScenario(options) {
   const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
   const {
@@ -55,6 +68,7 @@ export function createDesktopScenario(options) {
   let sequence = 0
   let busyResponse
   let busyStarted = false
+  let ownerResponse
   const releaseBusy = () => {
     if (!busyResponse) return
     const { response, id } = busyResponse
@@ -77,12 +91,34 @@ export function createDesktopScenario(options) {
     },
   })
   let events = []
+  const failedAt = new Date(Date.now() - 60000).toISOString()
+  const failedChecks = {
+    id: 'preexisting-checks-failure',
+    objectId: PREEXISTING_CHECKS_TOPIC,
+    version: PREEXISTING_CHECKS_HEAD,
+    eventType: 'git.event',
+    topicId: PREEXISTING_CHECKS_TOPIC,
+    text: `${MARKER}_preexisting_checks_EVENT_RECEIVED`,
+    at: failedAt,
+    external: {
+      eventType: 'tracked.status',
+      payload: {
+        headRefOid: PREEXISTING_CHECKS_HEAD,
+        statusCheckRollup: { state: 'FAILURE' },
+        failedAt,
+      },
+    },
+  }
   const saveEvents = () =>
     writeFile(
       recordsPath,
-      JSON.stringify(
-        ['archive-record', 'long-archive-record'].map(id => ({ id, value: JSON.stringify(events) }))
-      )
+      JSON.stringify([
+        ...['archive-record', 'long-archive-record'].map(id => ({
+          id,
+          value: JSON.stringify(events),
+        })),
+        { id: 'preexisting-checks-record', value: JSON.stringify([failedChecks]) },
+      ])
     )
   const event = (
     id,
@@ -149,16 +185,43 @@ export function createDesktopScenario(options) {
       if (!modelRequestTexts(body).includes(MARKER)) return false
       modelRequests++
       if (
+        phase === 'owner' &&
+        !ownerResponse &&
+        modelRequestTexts(body).includes(`${MARKER}_owner_CONTINUE`)
+      ) {
+        ownerResponse = () => {
+          const id = `conversation-owner-${++sequence}`
+          response.writeHead(200, { 'content-type': 'text/event-stream' })
+          response.end(
+            createSse([responseCreated(id), ...modelEvents(body, phase), responseCompleted(id)])
+          )
+        }
+        return true
+      }
+      if (
         phase === 'workflow' &&
         !busyStarted &&
         modelRequestTexts(body).includes(`${MARKER}_workflow_BUSY_HOLD`)
       ) {
+        assert.deepEqual(latestWaitingSubscriptions(body), [
+          {
+            subscription_key: MARKER + '_workflow',
+            source: { providerId: PROVIDER, kind: 'record', id: 'archive-record' },
+            status: 'armed',
+          },
+        ])
         busyStarted = true
         const id = `conversation-busy-${++sequence}`
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.write(createSse([responseCreated(id)]))
         busyResponse = { response, id }
         return true
+      }
+      if (
+        phase === 'workflow' &&
+        modelRequestTexts(body).includes(MARKER + '_workflow_EVENT_RECEIVED')
+      ) {
+        assert.deepEqual(latestWaitingSubscriptions(body), [], 'Delivery must clear the last wait')
       }
       const held = phase === 'human' ? human.intercept(modelRequestTexts(body), response) : null
       if (held) return held
@@ -192,6 +255,33 @@ export function createDesktopScenario(options) {
       active = true
       let originalAddress
       try {
+        phase = 'preexisting_checks'
+        const marker = `${MARKER}_${phase}`
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+          value: `${marker} 订阅这次提交的 PR 检查结果。`,
+        })
+        await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        const assistant = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+        await control.command('waitFor', assistant, {
+          text: `${marker}_WAITING`,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        originalAddress = snapshot.workbench.currentRuntimeTask
+        assert.ok(originalAddress?.taskId)
+        const getTask = () => rpc(control, 'runtime.tasks.get', { address: originalAddress })
+        const initialThread = (await getTask()).task.threadId
+        assert.ok(initialThread)
+        await control.command('waitFor', assistant, {
+          text: `${marker}_DONE`,
+          timeoutMs: 30000,
+        })
+        assert.equal((await getTask()).task.threadId, initialThread)
+        const delivery = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-message"]`
+        await control.command('waitFor', delivery, { text: 'PR 检查结果', timeoutMs: uiTimeoutMs })
+        assert.ok(completed.has(phase))
+
         for (const story of [
           'ordinary',
           'workflow',
@@ -199,6 +289,7 @@ export function createDesktopScenario(options) {
           'goal',
           'human',
           'cancel',
+          'owner',
           'pause',
         ]) {
           phase = story
@@ -229,14 +320,13 @@ export function createDesktopScenario(options) {
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             text: '发布文档',
           })
-          if (phase === 'workflow') {
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
+            const toggle = '[data-testid="connection-event-condition-toggle"]'
+            await control.command('waitFor', toggle, { visible: true, enabled: true })
+            await control.command('click', toggle)
             await control.command('waitFor', '[data-testid="connection-event-condition"]', {
-              text: '或',
-            })
-          }
-          if (phase === 'workflow_conflict') {
-            await control.command('waitFor', '[data-testid="connection-event-condition"]', {
-              text: '合并冲突',
+              text: phase === 'workflow' ? '或' : '合并冲突',
+              visible: true,
             })
           }
           const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -248,8 +338,8 @@ export function createDesktopScenario(options) {
           if (phase === 'workflow') {
             await control.command(
               'waitFor',
-              `[data-testid="runtime-local-task-event-${address.taskId}"]`,
-              { visible: true }
+              `[data-testid="runtime-local-task-event-${address.taskId}"][data-state="waiting"]`,
+              { visible: true, timeoutMs: uiTimeoutMs }
             )
           }
           const getTask = () => rpc(control, 'runtime.tasks.get', { address })
@@ -262,6 +352,14 @@ export function createDesktopScenario(options) {
           if (phase === 'human') await human.prepare(control, getTask)
           const requestsBefore = modelRequests
           const before = await getTask()
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
+            const waits = before.task.runtimeHandle?.connectionEventSubscriptions ?? []
+            assert.equal(
+              waits.filter(wait => ['preparing', 'armed', 'pending'].includes(wait.status)).length,
+              1,
+              'Alternative Git outcomes use one active wait in the original task'
+            )
+          }
           await captureScreenshot(control, `conversation-event-${phase}-waiting.png`)
           if (phase === 'goal') {
             const goal = await rpc(control, 'runtime.tasks.goal.get', { address })
@@ -405,6 +503,32 @@ export function createDesktopScenario(options) {
             await rpc(control, 'runtime.tasks.goal.clear', { address })
             continue
           }
+          if (phase === 'owner') {
+            await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+              value: `${MARKER}_owner_CONTINUE`,
+            })
+            await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+              enabled: true,
+              timeoutMs: uiTimeoutMs,
+            })
+            await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+            try {
+              await waitForValue(
+                () => rpc(control, 'runtime.tasks.goal.get', { address }),
+                result => ownerResponse && result.goal?.status === 'active',
+                'A user follow-up must reactivate the original event-blocked Goal',
+                modelResponseTimeoutMs
+              )
+            } finally {
+              ownerResponse?.()
+            }
+            await control.command(
+              'waitFor',
+              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+              { text: `${MARKER}_owner_DONE`, timeoutMs: modelResponseTimeoutMs }
+            )
+            continue
+          }
           if (phase === 'pause') {
             await control.command('click', '[data-testid="pause-goal-button"]')
             await control.command('waitFor', '[data-testid="connection-event-status"]', {
@@ -467,15 +591,16 @@ export function createDesktopScenario(options) {
             assert.equal(modelRequests, requestsBefore, 'Waiting must not poll through model turns')
             await new Promise(resolve => setTimeout(resolve, 100))
           }
+          let busyTurnId
           if (phase === 'workflow') {
             await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
               value: `${MARKER}_workflow_BUSY_HOLD`,
             })
             await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
             await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-            await waitForValue(
+            busyTurnId = await waitForValue(
               getTask,
-              result => busyStarted && result.task.running,
+              result => busyStarted && result.task.running && result.task.executionState?.turnId,
               'A real model turn must remain active while the event is delivered',
               modelResponseTimeoutMs
             )
@@ -493,14 +618,8 @@ export function createDesktopScenario(options) {
                     item.status === 'delivered' &&
                     item.operation_id
                 ),
-              'A received event must enter the existing message queue before the busy turn finishes',
+              'The running turn must accept the matching event',
               30000
-            )
-            assert.equal((await getTask()).task.running, true)
-            assert.equal(
-              completed.has('workflow'),
-              false,
-              'The queued event must not interrupt the active turn'
             )
             releaseBusy()
           }
@@ -536,6 +655,13 @@ export function createDesktopScenario(options) {
             before.task.threadId,
             'The event must resume the original native thread'
           )
+          if (busyTurnId) {
+            assert.equal(
+              after.task.executionState.turnId ?? after.task.executionState.latestTurnId,
+              busyTurnId,
+              'Native guidance must deliver the event within the running turn'
+            )
+          }
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             visible: false,
           })

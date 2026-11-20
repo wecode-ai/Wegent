@@ -69,6 +69,9 @@ impl RuntimeWorkRpcHandler {
         let Some((id, mut record)) = found else {
             return Ok(None);
         };
+        if record["status"] == "cancelled" {
+            return Err(CODEX_APP_SERVER_TURN_CANCELLED.into());
+        }
         if record["status"] == "delivered"
             && record["native_event_phase"] == "activated"
             && (request.extra.contains_key(quota_recovery::MARKER)
@@ -96,6 +99,23 @@ impl RuntimeWorkRpcHandler {
             .ok_or("Original event conversation no longer exists")?;
         self.validate_event_input_session(task, Some(operation), &link)
             .map_err(|error| error.message)?;
+        if self
+            .store
+            .read_task(task, |link| link.goal_status.as_deref() == Some("active"))
+            == Some(true)
+        {
+            let current = self
+                .read_event_goal(task)
+                .await
+                .map_err(|error| error.message)?;
+            if current["status"] == "active" && goal_identity(&current) == record["waiting_goal"] {
+                record["status"] = json!("resuming_goal");
+                record["native_event_phase"] = json!("joining_active_goal");
+                self.save_event_subscription(&id, &record)
+                    .map_err(|error| error.message)?;
+                return Ok(None);
+            }
+        }
         if record["status"] == "pending" {
             record["status"] = json!("resuming_goal");
             self.save_event_subscription(&id, &record)
@@ -265,7 +285,10 @@ impl RuntimeWorkRpcHandler {
                     .filter(|(_, record)| {
                         record["task_id"] == task
                             && record["operation_id"] == operation
-                            && record["native_event_phase"] == "activation_requested"
+                            && matches!(
+                                record["native_event_phase"].as_str(),
+                                Some("activation_requested" | "joining_active_goal")
+                            )
                     })
                     .map(|(id, _)| id.clone())
                     .collect::<Vec<_>>())

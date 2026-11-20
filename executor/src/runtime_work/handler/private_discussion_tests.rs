@@ -244,8 +244,8 @@ fn private_issue_dispatch_replies_never_enter_the_public_outbox_and_public_resum
     let private_started = boundary("turn/started", "private", 17);
     let private_reply = reply("private", 17, "private body");
     handler.apply_native_lifecycle(TASK, &private, &private_started);
-    handler.persist_stand_in_issue_reply(TASK, &private_started);
-    handler.persist_stand_in_issue_reply(TASK, &private_reply);
+    handler.persist_public_issue_reply(TASK, &private_started);
+    handler.persist_public_issue_reply(TASK, &private_reply);
     let link = handler.local_task_link(TASK).unwrap();
     assert!(link.runtime_handle["standInIssueReplies"].is_null());
     assert!(link.runtime_handle["standInPublicTurn"].is_null());
@@ -255,12 +255,12 @@ fn private_issue_dispatch_replies_never_enter_the_public_outbox_and_public_resum
     admit(&handler, &public);
     let public_started = boundary("turn/started", "public", 18);
     handler.apply_native_lifecycle(TASK, &public, &public_started);
-    handler.persist_stand_in_issue_reply(TASK, &public_started);
-    handler.persist_stand_in_issue_reply(TASK, &reply("public", 18, "public body"));
+    handler.persist_public_issue_reply(TASK, &public_started);
+    handler.persist_public_issue_reply(TASK, &reply("public", 18, "public body"));
     // Late private events and a former process cannot claim the new public turn.
-    handler.persist_stand_in_issue_reply(TASK, &private_started);
-    handler.persist_stand_in_issue_reply(TASK, &private_reply);
-    handler.persist_stand_in_issue_reply(TASK, &reply("public", 17, "stale process body"));
+    handler.persist_public_issue_reply(TASK, &private_started);
+    handler.persist_public_issue_reply(TASK, &private_reply);
+    handler.persist_public_issue_reply(TASK, &reply("public", 17, "stale process body"));
     let reopened = RuntimeWorkStore::new(root.path().join("runtime.json"));
     let link = reopened.get_task(TASK).unwrap();
     let reports = link.runtime_handle["standInIssueReplies"]

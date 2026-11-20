@@ -10,6 +10,7 @@ use std::time::Duration;
 use brz_mysql::{FromMysqlRow, Mysql, MysqlError, MysqlResult, MysqlTransaction};
 use brz_redis::{Redis, SetExpiration, SetOptions};
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::http_compat::FastApiError;
 
@@ -73,6 +74,20 @@ pub(crate) fn business_revision(document: &serde_json::Value) -> MysqlResult<i64
             .filter(|revision| *revision >= 0 && *revision < i64::MAX)
             .ok_or_else(|| coordination_error("plugin_write_conflict")),
     }
+}
+
+pub(crate) async fn complete_plugin_write<T, F>(operation: F) -> MysqlResult<T>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = MysqlResult<T>> + Send + 'static,
+{
+    // Client cancellation must not drop the transaction before its lease is released.
+    // The operation retains its existing acquisition, transaction and release bounds.
+    tokio::spawn(operation.in_current_span())
+        .await
+        .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+            reason: "plugin write task failed".into(),
+        })?
 }
 
 impl<'a, R: Redis> PluginWriteLease<'a, R> {

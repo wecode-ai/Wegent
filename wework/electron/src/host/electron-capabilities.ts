@@ -44,6 +44,7 @@ import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
 import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
+import type { OpenAiCatalogStore } from './openai-catalog-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type { ComputerUseService } from './computer-use-service.js'
 import type { AppshotsService } from './appshots-service.js'
@@ -151,6 +152,7 @@ function assertE2EEnabled(control: string): void {
 export type ProcessExplorerHostService = ProcessExplorerClient
 
 export interface ElectronDesktopServices {
+  openAiCatalog: OpenAiCatalogStore
   modelConfiguration?: ModelConfigurationStore
   syncLocalModels?: () => Promise<void>
   requestModelRuntime?: (input: Record<string, unknown>) => Promise<unknown>
@@ -1283,6 +1285,11 @@ export function createElectronCapabilityRouter(
     })
   })
   registerRendererStorageCapabilities(router, rendererStorage)
+  router.register('pluginCatalog.readOpenAi', () => desktopServices.openAiCatalog.read())
+  router.register('pluginCatalog.writeOpenAi', params =>
+    desktopServices.openAiCatalog.write(stringParam(params, 'snapshot'))
+  )
+  router.register('pluginCatalog.clearOpenAi', () => desktopServices.openAiCatalog.clear())
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   registerPluginDevelopmentCapabilities(router, desktopServices)

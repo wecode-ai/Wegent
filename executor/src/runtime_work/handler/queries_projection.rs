@@ -197,23 +197,25 @@ impl RuntimeWorkRpcHandler {
         {
             let snapshot_changed = local_link.as_ref().is_some_and(|link| {
                 link.thread_id.as_deref() == Some(thread_id.as_str())
-                    && (transcript_snapshot_messages(link) != messages
+                    && (transcript_snapshot_message_refs(link).ne(messages.iter())
                         || transcript_snapshot_pagination(link)
                             != Some((page_before_cursor.clone(), page_after_cursor.clone())))
             });
             if snapshot_changed {
                 let snapshot_messages = messages.clone();
-                handler.store.update_task(&local_task_id, |link| {
-                    if link.thread_id.as_deref() == Some(thread_id.as_str()) {
-                        set_transcript_snapshot_messages(
-                            &mut link.runtime_handle,
-                            &thread_id,
-                            snapshot_messages,
-                            page_before_cursor.clone(),
-                            page_after_cursor.clone(),
-                        );
-                    }
-                });
+                handler
+                    .store
+                    .update_task_without_snapshot(&local_task_id, |link| {
+                        if link.thread_id.as_deref() == Some(thread_id.as_str()) {
+                            set_transcript_snapshot_messages(
+                                &mut link.runtime_handle,
+                                &thread_id,
+                                snapshot_messages,
+                                page_before_cursor.clone(),
+                                page_after_cursor.clone(),
+                            );
+                        }
+                    });
             }
         }
         let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);

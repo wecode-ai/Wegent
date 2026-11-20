@@ -15,8 +15,8 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
   const scope = JSON.stringify([userId, backendUrl])
   const api = services.standInApi
   const model = useMemo(
-    () => createAssistantSourcesModel(services, api, userId, backendUrl, scope),
-    [services, api, userId, backendUrl, scope]
+    () => createAssistantSourcesModel(services, api, userId, scope),
+    [services, api, userId, scope]
   )
   const subscribe = useCallback(
     (listener: () => void) => model.subscribe(listener, includeProposals),
@@ -30,7 +30,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
   const source = snapshot.source
   const ownerId = source?.ownerId ?? userId
   const deviceId = source?.deviceId
-  const inbox = useStandInInbox(api, ownerId, deviceId, active)
+  const inbox = useStandInInbox(api, ownerId, deviceId, active, scope)
   const failure = snapshot.failure ?? snapshot.proposalFailure
   return {
     ...source,

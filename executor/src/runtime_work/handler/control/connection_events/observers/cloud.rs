@@ -62,21 +62,9 @@ impl RuntimeWorkRpcHandler {
                     "The observation connection changed",
                 ));
             }
-            let confirmation =
-                Self::runtime_request_on(&current, reqwest::Method::GET, "/users/me", None).await?;
-            if !confirmation.status().is_success()
-                || confirmation
-                    .json::<Value>()
-                    .await
-                    .ok()
-                    .map_or(true, |owner| owner["id"] != registration["owner_id"])
+            if Self::local_connection_user(&current).ok() != registration["owner_id"].as_i64()
+                || self.backend_connection_snapshot()?.as_ref() != Some(&current)
             {
-                return Err(AppIpcError::new(
-                    "connection_account_changed",
-                    "The observation connection changed",
-                ));
-            }
-            if self.backend_connection_snapshot()?.as_ref() != Some(&current) {
                 return Err(AppIpcError::new(
                     "connection_account_changed",
                     "The observation connection changed",

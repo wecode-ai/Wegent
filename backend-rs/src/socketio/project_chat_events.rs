@@ -11,9 +11,8 @@
 //! (`subscribe`, `send`, `start_agent_response`, `fail_agent_response`,
 //! `_require_scope`).
 //!
-//! `comment:execute`'s migration stops at the scope check: the recorded case
-//! targets a missing project task, and the AI comment-execution pipeline
-//! (loop item assignments, robot queue) remains a documented remainder.
+//! `comment:execute` checks the saved comment and resolves its Issue execution
+//! before queueing a turn or guiding an active collaboration session.
 //!
 //! Mention delivery and durable stand-in wakeups share the comment transaction.
 

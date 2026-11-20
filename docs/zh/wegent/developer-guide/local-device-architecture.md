@@ -162,6 +162,8 @@ Logo 轮廓由 `wework/electron/scripts/generate-startup-brand.py` 从原始透�
 
 ### 运行时任务与目标状态
 
+待回复通知通过 `runtime.tasks.list` 的 `pendingOnly` 和 `preferCached` 读取本地任务索引。Executor 在构建列表摘要前筛出未归档且等待回复的任务。排查空闲 CPU 时，可对比 `runtime work list finished` 日志中的 `candidate_tasks` 和 `tasks`，分别查看生成摘要的候选任务数和返回的任务数。
+
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
 
 `running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。

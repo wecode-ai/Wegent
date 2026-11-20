@@ -25,7 +25,7 @@ fn source_question_channels_follow_scoped_provider_guidance_without_vendor_rules
         assert!(!instructions.contains("DingTalk"));
         assert!(!instructions.contains("wework_stand_in.reply"));
     }
-    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(!codex_has_full_access(&request));
 }
 
 #[test]

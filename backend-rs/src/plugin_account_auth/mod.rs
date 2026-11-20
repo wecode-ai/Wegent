@@ -505,7 +505,7 @@ pub(crate) async fn exchange(
             lease.release().await;
         }
         if outcome.is_ok() && notifications::changes_credentials(operation) {
-            notifications::publish(state, user_id, &changed_targets).await;
+            notifications::publish(state.redis.as_ref(), user_id, &changed_targets).await;
         }
         return Ok(exchange_reply(outcome));
     }

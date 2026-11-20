@@ -5,7 +5,7 @@ import {
 
 import { tmpdir } from 'node:os'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
-import { flushProcessOutput } from '../process-output.mjs'
+import { closeExitedProcessOutput, flushProcessOutput } from '../process-output.mjs'
 import { launchWindowsOwnedApplication } from '../windows-owned-process.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
@@ -16,6 +16,7 @@ import { readInspectorEndpoint } from './inspect-before-start.mjs'
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyRiskyCommandApproval } from './risky-command-approval-flow.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
@@ -1117,9 +1118,7 @@ async function main() {
   const executorHome = usesDefaultUserData
     ? join(homePath, '.wegent/workbench/wework/default')
     : join(resultDir, 'executor-home')
-  const codexHome = usesDefaultUserData
-    ? join(homePath, '.wework/codex')
-    : join(executorHome, 'codex')
+  const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
@@ -1344,12 +1343,13 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const codexFixtureHome = desktopScenario?.codexFixtureHome ?? codexHome
       const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
       const modelRoutingConfigToml = usesModelRoutingSubscription
         ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
         : ''
       await writeCodexConfig(
-        codexHome,
+        codexFixtureHome,
         desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${modelRoutingConfigToml}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
@@ -1375,7 +1375,7 @@ async function main() {
           })
         ).toString('base64url')
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({
             auth_mode: 'chatgpt',
             tokens: {
@@ -1390,7 +1390,7 @@ async function main() {
         )
       } else {
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
           'utf8'
         )
@@ -2270,6 +2270,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           blockingNetworkProxy,
           codexHome,
           control,
+          electronUserDataDirectory,
           marketplacePath: marketplacePluginPath,
           restartDesktopApp,
           workspacePath,
@@ -2443,6 +2444,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (DESKTOP_SEGMENT === 'permission-modes') {
       phase = 'permission-modes'
       await verifyPermissionModes(control)
+      await verifyRiskyCommandApproval(control, workspacePath)
       console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
       return
     }
@@ -4929,7 +4931,12 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
-    await runTeardownStep('process output', flushProcessOutput)
+    await runTeardownStep('process output', async () => {
+      if (process.platform === 'win32' && desktopScenario?.usesReleasePackageRuntimeAssets) {
+        await closeExitedProcessOutput(appLogPath)
+      }
+      await flushProcessOutput()
+    })
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,

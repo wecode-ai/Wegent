@@ -33,6 +33,7 @@ function startConnection(input: LocalExecutorCloudInput, refreshConnectors: () =
     socketBaseUrl,
     isConnected,
     token,
+    user,
     preferencesLoaded,
   } = input
   if (!preferencesLoaded) {
@@ -124,6 +125,7 @@ function startConnection(input: LocalExecutorCloudInput, refreshConnectors: () =
           socketBaseUrl,
           isConnected,
           token,
+          user,
         },
         { isCurrent: isCurrentConnectionAttempt }
       )
@@ -290,6 +292,7 @@ export function createLocalExecutorCloudService() {
         next.socketBaseUrl,
         next.isConnected,
         next.token,
+        next.user?.id,
         next.preferencesLoaded,
       ])
       const nextConnectorKey = JSON.stringify([next.apiBaseUrl, next.isConnected, next.token])

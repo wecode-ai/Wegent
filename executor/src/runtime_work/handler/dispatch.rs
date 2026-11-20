@@ -307,7 +307,7 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.resolve_command_owner(payload).await })
             }
             "runtime.tasks.send" => {
-                boxed_rpc(move || async move { self.send_message(payload).await })
+                boxed_rpc(move || async move { self.send_message_from_owner(payload, true).await })
             }
             "runtime.tasks.interrupt_and_send" => {
                 boxed_rpc(move || async move { self.interrupt_and_send(payload).await })
@@ -315,9 +315,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.rollback" => {
                 boxed_rpc(move || async move { self.rollback_task(payload).await })
             }
-            "runtime.tasks.guidance" => {
-                boxed_rpc(move || async move { self.send_guidance(payload).await })
-            }
+            "runtime.tasks.guidance" => boxed_rpc(move || async move {
+                self.send_guidance_with_context(payload, None, true).await
+            }),
             "runtime.tasks.compact" => {
                 boxed_rpc(move || async move { self.compact_task(payload).await })
             }
@@ -678,6 +678,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.workspace.search" => {
                 boxed_rpc(move || async move { self.search_workspace(payload).await })
+            }
+            "runtime.workspace.read" => {
+                boxed_rpc(move || async move { self.read_workspace(payload).await })
             }
             "runtime.sidebar.projects.reorder" => {
                 boxed_rpc(move || async move { self.reorder_sidebar_projects(payload).await })

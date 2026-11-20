@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react'
 import {
   Bars3Icon,
@@ -17,6 +17,7 @@ import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TaskApp, TaskFileChanges, WorkbenchData } from '@/types/api'
+import { safeAppPreviewUrl } from './appPreviewUrl'
 import WorkbenchFiles from './WorkbenchFiles'
 import type { MessageBlock } from '../message/thinking/types'
 
@@ -101,12 +102,13 @@ export default function Workbench({
   const [loadingStateIndex, setLoadingStateIndex] = useState(0)
   const [tipIndex, setTipIndex] = useState(0)
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline collapse state
-  const prevAppRef = useRef<TaskApp | null | undefined>(undefined) // Track previous app state
+  const prevSafePreviewUrlRef = useRef<string | null>(null)
   const { theme } = useTheme()
   const { t } = useTranslation('tasks')
 
   const hasBlocks = Boolean(blocks && blocks.length > 0)
   const displayData = workbenchData
+  const safePreviewUrl = useMemo(() => safeAppPreviewUrl(app?.previewUrl), [app?.previewUrl])
 
   const getDisplayStatus = (): WorkbenchDisplayStatus | null => {
     switch (taskStatus) {
@@ -315,15 +317,13 @@ export default function Workbench({
     }
   }, [displayStatus, timelineItems.length])
 
-  // Auto-switch to preview tab when app data first becomes available
+  // Auto-switch to the preview tab only when a safe app preview becomes available.
   useEffect(() => {
-    // Check if app just became available (was null/undefined, now has value)
-    if (!prevAppRef.current && app) {
+    if (!prevSafePreviewUrlRef.current && safePreviewUrl) {
       setActiveTab('preview')
     }
-    // Update the ref to track current app state
-    prevAppRef.current = app
-  }, [app])
+    prevSafePreviewUrlRef.current = safePreviewUrl
+  }, [safePreviewUrl])
 
   // Generate collapsed timeline summary (aggregated view)
   const getTimelineSummaryText = (): string => {
@@ -823,13 +823,23 @@ export default function Workbench({
                   // Preview Tab - iframe for app preview
                   <div className="h-full flex flex-col -mx-2 -mb-2 sm:-mx-3 lg:-mx-4">
                     <div className="flex-1 min-h-0">
-                      <iframe
-                        src={app.previewUrl}
-                        title={app.name || t('common:appPreview.title')}
-                        className="w-full h-full border-0"
-                        style={{ minHeight: 'calc(100vh - 180px)' }}
-                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                      />
+                      {safePreviewUrl ? (
+                        <iframe
+                          src={safePreviewUrl}
+                          title={app.name || t('common:appPreview.title')}
+                          className="w-full h-full border-0"
+                          style={{ minHeight: 'calc(100vh - 180px)' }}
+                          sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                          data-testid="app-preview-frame"
+                        />
+                      ) : (
+                        <div
+                          data-testid="app-preview-unavailable"
+                          className="flex h-full items-center justify-center p-4 text-sm text-text-secondary"
+                        >
+                          {t('common:appPreview.unavailable')}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : null}

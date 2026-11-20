@@ -37,7 +37,7 @@ impl RuntimeWorkRpcHandler {
             .await?;
         link.runtime_handle["origin"] = history["origin"].clone();
         validate_continuation_target(&link, &device)?;
-        self.control_continue_on_device(context, &device, link, args)
+        self.control_continue_on_device(context, &device, link, args, false)
             .await
     }
 }

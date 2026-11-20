@@ -12,6 +12,7 @@ import { createLocalWorkspaceApi } from './localWorkspaceApi'
 import { createWeworkPlatformApi } from './weworkPlatformApi'
 import { StandInOverviewPage } from './StandInOverviewPage'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { isStandInBindingOwner } from '@/api/standIn'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { availableStandInDevices } from './standInDevices'
@@ -82,13 +83,15 @@ function AccountStandInWorkspace({
   )
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
+  const userId = Number(user.id)
+  const backendUrl = cloud?.apiBaseUrl ?? ''
   const instance = useStandInInstance(
     services,
-    Number(user.id),
+    userId,
     devices,
     !!cloud?.isConnected,
     active,
-    cloud?.apiBaseUrl ?? '',
+    backendUrl,
     initialBindingDevice,
     refreshKey
   )
@@ -97,14 +100,10 @@ function AccountStandInWorkspace({
   const ownerId = target?.userId ?? Number(user.id)
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
-  const bindingScope = target
-    ? JSON.stringify([target.userId, target.deviceId, target.backendUrl ?? ''])
-    : undefined
+  const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
   const ownerAvailable =
     notificationOwnerMatches &&
-    (binding?.status === 'stopped' ||
-      ownerId === LOCAL_USER.id ||
-      (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? '')))
+    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target.userId, userId))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const [confirmStop, setConfirmStop] = useState<number | null>(null)
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
@@ -246,7 +245,7 @@ function AccountStandInWorkspace({
           </p>
         )
       ) : !ownerAvailable ? (
-        <p role="alert" className="p-5 text-sm">
+        <p role="alert" className="p-5 text-sm" data-testid="stand-in-instance-owner-unavailable">
           {t('standIn.instance.owner_unavailable')}
         </p>
       ) : binding.status === 'stopped' && embedded ? (
@@ -284,8 +283,8 @@ function AccountStandInWorkspace({
                 onClick={() =>
                   void instance.bind({
                     userId: value.userId,
+                    backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
                     deviceId: value.deviceId,
-                    backendUrl: value.userId === LOCAL_USER.id ? '' : (cloud?.apiBaseUrl ?? ''),
                   })
                 }
               >
@@ -301,7 +300,7 @@ function AccountStandInWorkspace({
               busy={busy}
               onMigrate={async (deviceId, roleId) => {
                 const role = await instance.migrate(
-                  { userId: Number(user.id), deviceId, backendUrl: cloud.apiBaseUrl ?? '' },
+                  { userId, backendUrl, deviceId },
                   roleId,
                   t('standIn.title')
                 )
