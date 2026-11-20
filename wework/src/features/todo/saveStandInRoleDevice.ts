@@ -1,9 +1,5 @@
 import { dequal } from 'dequal'
-import {
-  newStandInRole,
-  type PersonalStandInSettings,
-  type StandInRole,
-} from '@/api/personalStandIn'
+import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 
 /** Stage the target before redirecting new intake; old tasks retain their source configuration. */
@@ -88,27 +84,26 @@ export async function saveStandInRoleDevice(
   )
   let redirected: PersonalStandInSettings | undefined
   try {
-    redirected = await api.personalSave(
-      userId,
-      {
-        ...draft,
-        roles: draft.roles.map(row =>
-          row.id === role.id
-            ? {
-                ...(previous ?? {
-                  ...newStandInRole(targetDevice, role.id),
-                  name: role.name,
-                  prompt: role.prompt,
-                  enabled: role.enabled,
-                }),
-                executionDeviceId: targetDevice,
-                migrationSource,
-              }
-            : row
-        ),
-      },
-      sourceDevice
-    )
+    redirected = previous
+      ? await api.personalSave(
+          userId,
+          {
+            ...draft,
+            roles: draft.roles.map(row =>
+              row.id === role.id
+                ? { ...previous, executionDeviceId: targetDevice, migrationSource }
+                : row
+            ),
+          },
+          sourceDevice
+        )
+      : await api.saveDelegationRoute(userId, sourceDevice, source.version, role.id, {
+          id: role.id,
+          name: role.name,
+          prompt: role.prompt,
+          enabled: role.enabled,
+          executionDeviceId: targetDevice,
+        })
     const result = await api.personalSave(
       userId,
       {
@@ -127,7 +122,18 @@ export async function saveStandInRoleDevice(
           throw new Error('Target activation is not known to have failed', { cause })
         }
         // Use the committed version so compensation cannot overwrite another edit.
-        await api.personalSave(userId, { ...source, version: redirected.version }, sourceDevice)
+        if (previous) {
+          await api.personalSave(userId, { ...source, version: redirected.version }, sourceDevice)
+        } else {
+          const priorRoute = source.delegationRoutes?.find(row => row.id === role.id)
+          await api.saveDelegationRoute(
+            userId,
+            sourceDevice,
+            redirected.version,
+            role.id,
+            priorRoute ?? null
+          )
+        }
       } catch (recoveryError) {
         throw Object.assign(
           new Error('Refresh the target role to reconcile the device change', {

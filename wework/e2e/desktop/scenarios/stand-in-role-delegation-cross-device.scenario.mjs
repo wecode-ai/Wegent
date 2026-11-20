@@ -231,7 +231,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
         language: 'zh-CN',
       })
       const initial = await rpc('runtime.stand_in.personal.get', { userId })
-      await rpc('runtime.stand_in.personal.save', {
+      const original = await rpc('runtime.stand_in.personal.save', {
         userId,
         settings: {
           ...initial,
@@ -255,7 +255,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, modelRes
       await control.command('clickWhenEnabled', testId('stand-in-save'))
       await control.command('waitFor', testId('stand-in-profile-panel'), { visible: false })
       const source = await rpc('runtime.stand_in.personal.get', { userId })
-      const role = source.roles.find(role => role.name === '跨设备发布工程')
+      assert.deepEqual(source.roles, original.roles, 'Remote creation must preserve local roles')
+      const role = source.delegationRoutes?.find(role => role.name === '跨设备发布工程')
       assert.ok(
         role,
         'The original device must retain the role address before the target goes offline'

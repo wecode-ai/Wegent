@@ -647,7 +647,10 @@ fn remote_role_status(metadata: &Value) -> &str {
 
 fn role_directory(settings: &Value, verified_routes: &Value) -> Vec<Value> {
     let mut roles = stand_in_identities(settings);
-    for route in verified_routes.as_array().into_iter().flatten() {
+    for route in [&settings["delegationRoutes"], verified_routes]
+        .into_iter()
+        .flat_map(|routes| routes.as_array().into_iter().flatten())
+    {
         // A peer's directory can locate another device. This device always uses
         // its current saved role configuration for local execution.
         if route["executionDeviceId"].is_string()

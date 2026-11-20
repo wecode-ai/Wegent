@@ -112,6 +112,7 @@ export interface StandInProcessingStatus {
 import {
   publishPersonalStandIn,
   type PersonalStandInSettings,
+  type StandInDelegationRoute,
   type StandInSourceConnection,
 } from './personalStandIn'
 
@@ -423,6 +424,13 @@ export interface StandInExecutorApi {
     settings: PersonalStandInSettings,
     deviceId: string
   ): Promise<PersonalStandInSettings>
+  saveDelegationRoute(
+    userId: number,
+    deviceId: string,
+    version: number,
+    roleId: string,
+    route: StandInDelegationRoute | null
+  ): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
     taskId: string,
@@ -721,6 +729,15 @@ export function createStandInExecutorApi(
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
         { userId, settings },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
+    saveDelegationRoute: async (userId, deviceId, version, roleId, route) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.save',
+        { userId, delegationRoute: { version, roleId, route } },
         deviceId
       )
       publishPersonalStandIn(saved)
