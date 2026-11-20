@@ -1,7 +1,9 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { CollaborationExecutionEnvironment } from '../types'
 import { DeviceLastSeen } from './DeviceLastSeen'
 import type { PlatformMessages } from './platformMessages'
@@ -32,16 +34,7 @@ export function DeviceDeleteDialog({
     ...workspaceNames,
     ...(otherSpaces ? [messages.otherSpaceCount.replace('{{count}}', String(otherSpaces))] : []),
   ]
-  const focusDialog = useCallback((node: HTMLDivElement | null) => {
-    dialog.current = node
-    if (!node) return
-    const previous = document.activeElement
-    node.querySelector<HTMLButtonElement>('button')?.focus()
-    return () => {
-      dialog.current = null
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
-    }
-  }, [])
+
   const remove = async () => {
     if (locked.current || protectedRegistration) return
     locked.current = true
@@ -71,35 +64,19 @@ export function DeviceDeleteDialog({
         if (event.target === event.currentTarget && !locked.current) onClose()
       }}
     >
-      <div
-        ref={focusDialog}
-        className="collaboration-resource-dialog collaboration-delete-agent-dialog collaboration-delete-device-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={messages.deleteDevice}
-        aria-busy={pending}
-        data-testid="collaboration-delete-device-dialog"
-        onKeyDown={event => {
-          if (event.key === 'Escape') {
-            event.stopPropagation()
-            if (!locked.current) onClose()
-          }
-          if (event.key !== 'Tab') return
-          const buttons = Array.from(
-            dialog.current?.querySelectorAll<HTMLButtonElement>(
-              'button:not(:disabled), [tabindex="0"]'
-            ) ?? []
-          )
-          const first = buttons[0],
-            last = buttons.at(-1)
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault()
-            last?.focus()
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault()
-            first?.focus()
-          }
+      <DialogSurface
+        onClose={() => {
+          if (!locked.current) onClose()
         }}
+        render={
+          <div
+            ref={dialog}
+            className="collaboration-resource-dialog collaboration-delete-agent-dialog collaboration-delete-device-dialog"
+            aria-label={messages.deleteDevice}
+            aria-busy={pending}
+            data-testid="collaboration-delete-device-dialog"
+          />
+        }
       >
         <header>
           <div>
@@ -131,7 +108,8 @@ export function DeviceDeleteDialog({
           </p>
         ) : null}
         <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-secondary-button"
             data-testid="collaboration-delete-device-cancel"
@@ -139,8 +117,9 @@ export function DeviceDeleteDialog({
             onClick={onClose}
           >
             {messages.cancel}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-primary-button"
             data-testid="collaboration-delete-device-confirm"
@@ -148,9 +127,9 @@ export function DeviceDeleteDialog({
             onClick={() => void remove()}
           >
             {pending ? messages.deleting : messages.deleteDevice}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

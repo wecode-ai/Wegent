@@ -77,7 +77,7 @@ test('traps access focus, refuses Escape during save and restores the opener', a
   document.body.append(opener)
   opener.focus()
   const { unmount } = render(<SiteAccessDialog api={f.api} site={site} onClose={close} />)
-  expect(screen.getByTestId('site-access-close')).toHaveFocus()
+  await waitFor(() => expect(screen.getByTestId('site-access-close')).toHaveFocus())
   await screen.findByTestId('site-access-audience-owner')
   f.updateSiteAccess.mockReturnValueOnce(pending.promise)
   fireEvent.click(screen.getByTestId('site-access-save'))
@@ -87,7 +87,7 @@ test('traps access focus, refuses Escape during save and restores the opener', a
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
   expect(close).toHaveBeenCalledOnce()
   unmount()
-  expect(opener).toHaveFocus()
+  await waitFor(() => expect(opener).toHaveFocus())
   opener.remove()
 })
 
@@ -148,7 +148,7 @@ test('restores the original opener after changing the modal owner', async () => 
   rerender(<SiteAccessDialog api={next.api} site={site} onClose={vi.fn()} />)
   await screen.findByTestId('site-access-audience-owner')
   unmount()
-  expect(opener).toHaveFocus()
+  await waitFor(() => expect(opener).toHaveFocus())
   opener.remove()
 })
 

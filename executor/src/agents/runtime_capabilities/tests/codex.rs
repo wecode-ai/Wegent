@@ -4,6 +4,82 @@
 
 use super::*;
 
+#[test]
+fn default_home_skips_backend_dependent_mcps_before_native_configuration() {
+    for backend_url in [None, Some(""), Some(" \t\n")] {
+        let request = ExecutionRequest {
+            backend_url: backend_url.map(str::to_owned),
+            auth_token: Some("synthetic-task-token".to_owned()),
+            bot: json!([{"shell_type": "Codex", "mcp_servers": [{
+                "name": "bot-connector", "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"}
+            }]}]),
+            mcp_servers: vec![
+                json!({"name": "connector", "url": "${{backend_url}}/mcp/connectors/sse"}),
+                json!({"name": "web", "url": "https://example.test/mcp"}),
+            ],
+            ..Default::default()
+        };
+        let mut runtime = Map::new();
+        configure_request_mcps(&request, &mut runtime).unwrap();
+        assert_eq!(
+            runtime["mcp_servers.web"]["url"],
+            "https://example.test/mcp"
+        );
+        assert!(!runtime.contains_key("mcp_servers.connector"));
+        assert!(!runtime.contains_key("mcp_servers.bot-connector"));
+        assert!(!serde_json::to_string(&runtime).unwrap().contains("${{"));
+    }
+}
+
+#[test]
+fn default_home_mcp_rebinds_encoded_backend_context_without_argv_credentials() {
+    let reference = format!(
+        "${{{}}}",
+        mcp_environment::context_variable("backend_api_url")
+    );
+    for (backend, token) in [
+        ("https://first.example/api/", "synthetic-first-token"),
+        (
+            "https://second.example/deployment/api/",
+            "synthetic-next-token",
+        ),
+    ] {
+        let request = ExecutionRequest {
+            backend_url: Some(backend.into()),
+            auth_token: Some(token.into()),
+            mcp_servers: vec![
+                json!({
+                    "name": "connector", "url": format!("{reference}/mcp/connectors/sse"),
+                    "headers": {"Authorization": "Bearer ${{task_token}}"}
+                }),
+                json!({
+                    "name": "backend-command", "command": "tool",
+                    "args": [reference, "${{task_token}}"],
+                    "env": {"TOKEN": "${{task_token}}"}
+                }),
+            ],
+            ..Default::default()
+        };
+        let mut runtime = Map::new();
+        configure_request_mcps(&request, &mut runtime).unwrap();
+        assert_eq!(
+            runtime["mcp_servers.connector"]["url"],
+            format!("{}/mcp/connectors/sse", backend.trim_end_matches('/'))
+        );
+        assert_eq!(
+            runtime["mcp_servers.connector"]["http_headers"]["Authorization"],
+            format!("Bearer {token}")
+        );
+        assert_eq!(
+            runtime["mcp_servers.backend-command"]["args"][0],
+            backend.trim_end_matches('/')
+        );
+        assert_eq!(runtime["mcp_servers.backend-command"]["args"][1], token);
+        assert_eq!(runtime["mcp_servers.backend-command.env"]["TOKEN"], token);
+    }
+}
+
 fn with_agent_identity(mut request: ExecutionRequest) -> ExecutionRequest {
     request.bot[0]["id"] = json!(23);
     request.new_session = true;

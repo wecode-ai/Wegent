@@ -1,13 +1,13 @@
-import { createConnectionEventStatusSource } from './connectionEventStatusSource'
-import { useCallback, useId, useState, useSyncExternalStore } from 'react'
+import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
 import { Button } from '@/components/ui/button'
-import { ChevronRight, CircleAlert, CircleArrowDown, Radio } from 'lucide-react'
+import { connectionObservationHealth } from '@/features/workbench/resourceObservation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
-import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
-import { connectionObservationHealth } from '@/features/workbench/resourceObservation'
 import type { RuntimeTaskInteractionStatus } from '@/types/api'
+import { ChevronRight, CircleAlert, CircleArrowDown, Radio } from 'lucide-react'
+import { useCallback, useId, useState, useSyncExternalStore } from 'react'
+import { createConnectionEventStatusSource } from './connectionEventStatusSource'
 
 export function ConnectionEventStatus({
   subscriptions,

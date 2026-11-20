@@ -290,7 +290,7 @@ export interface ElectronE2EHost {
     presentationId?: number
   ) => Promise<boolean | void>
   dismissPopout: () => void
-  dismissSystemDragPanel: (presentationId: number | null) => boolean | void
+  dismissSystemDragPanel: (presentationId: number | null, inputAt?: number) => boolean | void
   focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
@@ -343,7 +343,7 @@ export interface ElectronE2EHost {
   showPopout: () => Promise<void>
   showSystemDragPanel: () => number | void | Promise<number | void>
   systemDragPanelVisible: () => boolean
-  takePendingSystemDrops: () => Array<{
+  takePendingSystemDrops: (windowLabel: string) => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'
     text: string | null
     paths: string[]
@@ -795,7 +795,13 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.focusMainWindow', async () => {
+    const activation = () =>
+      process.platform === 'darwin'
+        ? { active: app.isActive(), hidden: app.isHidden(), dockVisible: app.dock?.isVisible() }
+        : null
+    const before = activation()
     await e2eHost.focusMainWindow()
+    const afterPresentation = activation()
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
@@ -828,7 +834,7 @@ export function createElectronCapabilityRouter(
           visible: window.isVisible(),
           modal: window.isModal(),
         })),
-        appHidden: process.platform === 'darwin' ? app.isHidden() : null,
+        appActivation: { before, afterPresentation, afterTimeout: activation() },
       })
       throw error
     }
@@ -1486,7 +1492,10 @@ export function createElectronCapabilityRouter(
     )
   )
   router.register('systemDrag.dismissPanel', params =>
-    e2eHost.dismissSystemDragPanel(integerParam(params, 'presentationId') ?? null)
+    e2eHost.dismissSystemDragPanel(
+      integerParam(params, 'presentationId') ?? null,
+      integerParam(params, 'inputAt')
+    )
   )
   router.register('systemDrag.getContext', () => e2eHost.getSystemDragContext())
   router.register('systemDrag.panelVisible', () => e2eHost.systemDragPanelVisible())
@@ -1496,7 +1505,9 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('systemDrag.showPanel', () => e2eHost.showSystemDragPanel())
-  router.register('systemDrag.takePending', () => e2eHost.takePendingSystemDrops())
+  router.register('systemDrag.takePending', params =>
+    e2eHost.takePendingSystemDrops(stringParam(params, 'windowLabel'))
+  )
   router.register('systemSleep.setTaskActivity', async params => {
     const preferencesSnapshot = await preferences.read()
     e2eHost.setSystemSleepEnabled(preferencesSnapshot.preventSleepWhileTasksRunning !== false)

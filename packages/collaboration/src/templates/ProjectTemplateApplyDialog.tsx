@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -77,13 +78,13 @@ export function ProjectTemplateApplyDialog({
         {error ? (
           <p role="alert">
             {error}{' '}
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               data-testid="template-project-retry"
               onClick={() => void resource.reload()}
             >
               {m.retry}
-            </button>
+            </ControlButton>
           </p>
         ) : (
           <p role="status">{m.loading}</p>

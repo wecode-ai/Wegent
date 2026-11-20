@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { useFocusRequest } from '../dom-events'
-import { useDialogKeyboard } from './useDialogKeyboard'
+import { Button as ControlButton } from '../markdown/Button'
+import { DialogSurface } from './DialogSurface'
 
 export function ConfirmationDialog({
   title,
@@ -20,13 +21,7 @@ export function ConfirmationDialog({
   onClose(): void
 }) {
   const lock = useRef(false)
-  const dialog = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!lock.current) onClose()
-    },
-    true,
-    `[data-testid="${testIdPrefix}-cancel"]`
-  )
+  const dialog = useRef<HTMLDivElement>(null)
   const mounted = useRef(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -38,9 +33,7 @@ export function ConfirmationDialog({
       mounted.current = false
     }
   }, [])
-  useFocusRequest(confirmButton, error ?? undefined, {
-    enabled: !pending && Boolean(error),
-  })
+  useFocusRequest(confirmButton, error ?? undefined, { enabled: !pending && Boolean(error) })
   const confirm = async () => {
     if (lock.current) return
     lock.current = true
@@ -58,22 +51,23 @@ export function ConfirmationDialog({
     }
   }
   return (
-    <div
-      ref={attachBackdrop}
-      className="collaboration-resource-dialog-backdrop"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget && !lock.current) onClose()
-      }}
-    >
-      <div
-        ref={dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        aria-busy={pending}
-        tabIndex={-1}
-        data-testid={`${testIdPrefix}-dialog`}
-        className="w-full max-w-md rounded-2xl border border-border bg-background p-6 text-text-primary shadow-lg"
+    <div ref={attachBackdrop} className="collaboration-resource-dialog-backdrop fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
+      <DialogSurface
+        kind="alertdialog"
+        onClose={() => {
+          if (!lock.current) onClose()
+        }}
+        initialFocus={`[data-testid="${testIdPrefix}-cancel"]`}
+        render={
+          <div
+            ref={dialog}
+            aria-label={title}
+            aria-busy={pending}
+            tabIndex={-1}
+            data-testid={`${testIdPrefix}-dialog`}
+            className="w-full max-w-md rounded-2xl border border-border bg-background p-6 text-text-primary shadow-lg"
+          />
+        }
       >
         <h2 className="text-lg font-medium">{title}</h2>
         <p className="mt-3 break-words font-medium">{subject}</p>
@@ -84,7 +78,8 @@ export function ConfirmationDialog({
           </p>
         )}
         <div className="mt-6 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={pending}
             className="min-h-11 rounded-lg px-4 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
@@ -92,8 +87,10 @@ export function ConfirmationDialog({
             onClick={onClose}
           >
             {labels.cancel}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             disabled={pending}
             className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-8"
@@ -102,9 +99,9 @@ export function ConfirmationDialog({
             onClick={() => void confirm()}
           >
             {pending ? labels.pending : labels.confirm}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

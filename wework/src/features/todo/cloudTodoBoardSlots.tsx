@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { BaseBoardStatusMigrationNotice } from '@wegent/collaboration'
 import type {
   NativeBoardGroupBy,
@@ -18,13 +19,7 @@ import {
   isExecutionBoardColumn,
   boardDropHint,
 } from '@wegent/collaboration'
-import type { DragStartEvent } from '@dnd-kit/core'
-import {
-  projectBoardDnd,
-  projectBoardCollisionDetection,
-  projectBoardDragItemId,
-} from '@wegent/collaboration/project-board/projectBoardDnd'
-import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
+import { projectBoardDragItemId } from '@wegent/collaboration/project-board/projectBoardDnd'
 import { Archive, CheckCheck, Plus } from 'lucide-react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
@@ -46,11 +41,7 @@ import {
 } from '@wegent/collaboration/project-board'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AITableView } from '@/features/todo/AITableView'
-import {
-  CloudTodoBoardCard,
-  CloudTodoCardContent,
-  type BoardCardProgressDisplay,
-} from './CloudTodoBoardCard'
+import { CloudTodoBoardCard, type BoardCardProgressDisplay } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { CloudFilesView, LocalFilesView } from './CloudFilesView'
@@ -81,7 +72,6 @@ export function createCloudTodoBoardSlots(
     localProjectManageApi,
     replaceProject,
     collaborationProjectMembers,
-    boardSensors,
     connectDingTalkBoard,
     localProjectOptions,
     isMyTasksBoard,
@@ -111,7 +101,6 @@ export function createCloudTodoBoardSlots(
     availableTags,
     aitableApi,
     canCreateBoardTask,
-    activeBoardSourceItems,
     boardItemsLoading,
     isTaskBoardItemUnread,
     markTaskBoardItemRead,
@@ -467,19 +456,12 @@ export function createCloudTodoBoardSlots(
         columns={boardColumns as ProjectBoardColumn[]}
         currentParent={boardParent}
         currentParentId={boardParentId}
-        dnd={projectBoardDnd}
-        dndContextProps={{
-          sensors: boardSensors,
-          collisionDetection: projectBoardCollisionDetection,
-          onDragStart: (event: DragStartEvent) => {
-            standardBoardController.setActiveSourceColumnKey(
-              event.active.data.current?.columnKey ?? null
-            )
-            setActiveDragItemId(projectBoardDragItemId(event.active))
-          },
-          onDragCancel: () => setActiveDragItemId(null),
-          onDragEnd: finishBoardDrop,
+        onDragStart={source => {
+          standardBoardController.setActiveSourceColumnKey(source.columnKey ?? null)
+          setActiveDragItemId(projectBoardDragItemId(source))
         }}
+        onDragCancel={() => setActiveDragItemId(null)}
+        onDrop={finishBoardDrop}
         externalGroupLabel={selectedGroupField?.name ?? '记录'}
         externalGroupValues={aitableGroupValues}
         externalManagedLabel="数据由钉钉托管 · AI 可直接管理"
@@ -627,7 +609,8 @@ export function createCloudTodoBoardSlots(
                   side="bottom"
                   align="end"
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="cloud-todo-batch-confirm-review"
                     disabled={batchConfirmBusy}
@@ -640,7 +623,7 @@ export function createCloudTodoBoardSlots(
                     aria-label={t('todo.batch_confirm_review_items', '批量确认完成待确认事项')}
                   >
                     <CheckCheck className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 </Tooltip>
               ) : null}
               {isMyTasksBoard &&
@@ -653,7 +636,8 @@ export function createCloudTodoBoardSlots(
                   side="bottom"
                   align="end"
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="cloud-my-tasks-archive-completed"
                     disabled={archiveBusy}
@@ -665,7 +649,7 @@ export function createCloudTodoBoardSlots(
                     aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
                   >
                     <Archive className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 </Tooltip>
               ) : null}
               {canCreateBoardTask &&
@@ -685,7 +669,8 @@ export function createCloudTodoBoardSlots(
                   side="bottom"
                   align="end"
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`cloud-todo-column-add-${column.key}`}
                     onClick={open}
@@ -698,26 +683,12 @@ export function createCloudTodoBoardSlots(
                     )}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 </Tooltip>
               ) : null}
             </>
           )
         }}
-        renderDragOverlay={() =>
-          activeDragItemId ? (
-            <ProjectBoardDragOverlay>
-              <CloudTodoCardContent
-                statusNames={Object.fromEntries(
-                  nativeStatuses.map(status => [status.id, status.name])
-                )}
-                item={activeBoardSourceItems.find(item => item.id === activeDragItemId)!}
-                display={boardCardDisplay}
-                agentNames={agentNameById}
-              />
-            </ProjectBoardDragOverlay>
-          ) : null
-        }
         renderExternalGroupPicker={() => (
           <AITableGroupFieldPicker
             fields={aitableFields}
@@ -742,7 +713,8 @@ export function createCloudTodoBoardSlots(
         renderBoardSettingsAction={
           !isMyTasksBoard && (isAITableProject || isExternalGitBoard)
             ? () => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                   data-testid="cloud-board-settings"
@@ -750,7 +722,7 @@ export function createCloudTodoBoardSlots(
                   onClick={() => setBoardSettingsOpen(true)}
                 >
                   {t('todo.board_settings', '看板设置')}
-                </button>
+                </ControlButton>
               )
             : undefined
         }
@@ -813,7 +785,8 @@ export function createCloudTodoBoardSlots(
         renderItemsFooter={column =>
           isExternalGitBoard &&
           activeExternalPageCursors[column.status as CloudLoopItem['status']] ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`cloud-todo-column-load-more-${column.key}`}
               disabled={activeExternalPageLoading[column.status as CloudLoopItem['status']]}
@@ -823,7 +796,7 @@ export function createCloudTodoBoardSlots(
               {activeExternalPageLoading[column.status as CloudLoopItem['status']]
                 ? t('todo.loading_more_issues')
                 : t('todo.load_more_issues')}
-            </button>
+            </ControlButton>
           ) : null
         }
         renderQuickStart={() =>
@@ -853,7 +826,8 @@ export function createCloudTodoBoardSlots(
           isAITableProject && dingtalkAuthPrompt ? (
             <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
               <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="aitable-board-dws-login"
                 disabled={dingtalkAuthBusy}
@@ -863,7 +837,7 @@ export function createCloudTodoBoardSlots(
                 {dingtalkAuthBusy
                   ? t('todo.dingtalk_board_connecting')
                   : t('todo.dingtalk_board_connect')}
-              </button>
+              </ControlButton>
             </div>
           ) : baseBoardMigration.error ? (
             <BaseBoardStatusMigrationNotice

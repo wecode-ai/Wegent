@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -67,14 +68,15 @@ export function PanelFeedback({
         data-testid={`${testId}-error`}
       >
         <span>{translate('todo.load_collaboration_data_failed', '加载协作数据失败')}</span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="min-h-11 rounded-md px-3 text-text-primary hover:bg-muted md:min-h-8"
           data-testid={`${testId}-retry`}
           onClick={() => void state.refresh()}
         >
           {translate('common.retry', '重试')}
-        </button>
+        </ControlButton>
       </div>
     )
   return state.loading && state.data === undefined ? (

@@ -97,7 +97,11 @@ async fn spawn_revocation<T: super::PluginAuthTransport>(
     }
     let home = home.to_owned();
     pending.spawn(async move {
-        let gateway = NativeAuthGateway::new(transport);
+        let installed_id = target
+            .package
+            .as_ref()
+            .map_or(0, |package| package.installed_plugin_id);
+        let gateway = NativeAuthGateway::new(transport.for_plugin(installed_id, false));
         let _ = revoke_one(
             &gateway,
             &home,
@@ -141,19 +145,9 @@ async fn revoke_one<T: super::PluginAuthTransport>(
     let operation_id = identifier(&lease["operation_id"])?;
     let succeeded = revoke_adapter(home, &lease, expected).await.is_ok();
     let payload = json!({"connection_id": connection_id, "operation_id": operation_id, "succeeded": succeeded});
-    let result = gateway
-        .call("plugin.auth.oauth.revoke_finish", payload.clone())
-        .await;
-    match result {
-        Err(AuthError("plugin_auth_backend_unavailable")) => {
-            gateway
-                .call("plugin.auth.oauth.revoke_finish", payload)
-                .await?;
-        }
-        result => {
-            result?;
-        }
-    }
+    gateway
+        .call_idempotent("plugin.auth.oauth.revoke_finish", payload)
+        .await?;
     Ok(())
 }
 

@@ -1,24 +1,25 @@
+import type { ModelOptions, UnifiedModel } from '@wegent/chat-core/models'
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { composerActionDensity, composerIconActionDensity } from '../controls/recipes'
 import { ActionMenu } from '../controls/ActionMenu'
-import type { ComposerSubmitOptions } from './composerInputTypes'
-import type { ComposerFollowUpBehavior } from './composerInputTypes'
 import type { CollaborationTranslate } from '../i18n'
-import { Tooltip } from '../issue-detail/Tooltip'
-import type { ModelOptions, UnifiedModel } from '@wegent/chat-core/models'
+import { Tooltip } from '../controls/Tooltip'
+import { Button as ControlButton } from '../markdown/Button'
+import type { ComposerFollowUpBehavior, ComposerSubmitOptions } from './composerInputTypes'
 
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 
 import type { ModelSelectorCloseReason } from '../controls/model-selector-types'
 
-import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import {
   RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
+import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 export interface ComposerToolbarProps {
@@ -74,7 +75,6 @@ export interface ComposerToolbarProps {
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
-const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
   translate: t,
@@ -165,6 +165,7 @@ export function ComposerToolbar({
       onCommandApprovalChange={mode => onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)}
       disabled={disabled}
       iconOnly
+      density="dense"
       onChange={(mode, approval) => {
         if (onSelectPermissionOptions) {
           onSelectPermissionOptions({
@@ -210,7 +211,14 @@ export function ComposerToolbar({
         {renderFeatureMenus ? renderFeatureMenus(compact, permissionSelector) : permissionSelector}
         {!hideFeatureActions && (
           <>
-            {leadingContext}
+            {leadingContext && (
+              <div
+                data-testid="composer-toolbar-context"
+                className="flex min-w-0 max-w-full flex-wrap items-center gap-1"
+              >
+                {leadingContext}
+              </div>
+            )}
             {goalDraftActive ? (
               <GoalDraftPill translate={t} onCancel={onCancelGoalDraft} />
             ) : planModeActive ? (
@@ -248,8 +256,7 @@ export function ComposerToolbar({
               onSelectModelAndOptions: onSelectModelAndOptions,
               onSelectModelOption: onSelectModelOption,
               onBlockedModelSelect: onBlockedModelSelect,
-              buttonClassName: 'opacity-90 hover:opacity-100',
-              maxClosedWidth: compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined,
+              buttonClassName: composerActionDensity + ' md:min-w-7 opacity-90 hover:opacity-100',
             }))
           : null}
         {workspaceMenu}
@@ -261,17 +268,22 @@ export function ComposerToolbar({
               align="end"
               testId="composer-pause-tooltip"
             >
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-composer-primary-action="true"
                 data-testid="pause-response-button"
                 onClick={onPause}
                 disabled={disabled || !onPause}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
+                className={
+                  composerIconActionDensity +
+                  ' flex shrink-0 items-center justify-center rounded-full bg-text-primary text-background hover:bg-text-primary/90'
+                }
                 aria-label={t('workbench.pause_response', '暂停回复')}
               >
                 <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
-              </button>
+              </ControlButton>
             </Tooltip>
           ) : isStreaming && canSend ? (
             <div className="flex shrink-0 items-center rounded-full bg-text-primary text-background">
@@ -280,22 +292,28 @@ export function ComposerToolbar({
                 align="end"
                 testId="composer-send-after-turn-tooltip"
               >
-                <button
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="submit"
                   data-composer-primary-action="true"
                   data-testid={sendButtonTestId}
                   onMouseDown={event => event.preventDefault()}
-                  className="flex h-7 w-7 items-center justify-center rounded-l-full hover:bg-text-primary/90"
+                  className={
+                    composerIconActionDensity +
+                    ' flex items-center justify-center rounded-l-full hover:bg-text-primary/90'
+                  }
                   aria-label={primaryBusyLabel}
                 >
                   <ArrowUp className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </Tooltip>
               <ActionMenu
+                density="dense"
                 ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
                 testId="send-mode-menu-button"
                 icon={ChevronDown}
-                triggerClassName="flex h-7 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
+                triggerClassName="flex items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
                 items={[
                   {
                     label: t('workbench.send_after_turn', '当前回复结束后发送'),
@@ -344,22 +362,29 @@ export function ComposerToolbar({
               label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
               align="end"
               testId="composer-send-tooltip"
+              disabled={!canSend}
             >
-              <button
-                type="submit"
-                data-composer-primary-action="true"
-                data-testid={sendButtonTestId}
-                disabled={!canSend}
-                onMouseDown={event => event.preventDefault()}
-                className={cn(
-                  'flex h-7 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
-                  sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-7 rounded-full p-0'
-                )}
-                aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
-              >
-                {sendButtonLabel}
-                <ArrowUp className="h-4 w-4" />
-              </button>
+              <span className="inline-flex">
+                <ControlButton
+                  variant="unstyled"
+                  type="submit"
+                  data-composer-primary-action="true"
+                  data-testid={sendButtonTestId}
+                  disabled={!canSend}
+                  onMouseDown={event => event.preventDefault()}
+                  className={cn(
+                    composerActionDensity +
+                      ' flex shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
+                    sendButtonLabel
+                      ? 'rounded-lg px-3 text-sm font-medium'
+                      : composerIconActionDensity + ' rounded-full'
+                  )}
+                  aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
+                >
+                  {sendButtonLabel}
+                  <ArrowUp className="h-4 w-4" />
+                </ControlButton>
+              </span>
             </Tooltip>
           ))}
       </div>

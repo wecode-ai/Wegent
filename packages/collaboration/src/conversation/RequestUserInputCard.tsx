@@ -1,3 +1,5 @@
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { ChevronDown, CornerDownLeft, MessageCircleQuestion, Pencil } from 'lucide-react'
@@ -198,7 +200,8 @@ function RequestUserInputForm({
     <>
       {additionalActions}
       {(!compact || canIgnore) && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="request-user-input-ignore-button"
           disabled={isDisabled || !canIgnore}
@@ -209,9 +212,11 @@ function RequestUserInputForm({
           <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
             ESC
           </kbd>
-        </button>
+        </ControlButton>
       )}
-      <button
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid="request-user-input-submit-button"
         disabled={isDisabled || questions.length === 0 || !onSubmit}
@@ -222,7 +227,7 @@ function RequestUserInputForm({
         <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/15">
           <CornerDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-      </button>
+      </ControlButton>
     </>
   )
 
@@ -279,7 +284,8 @@ function RequestUserInputForm({
                       selectedAnswers[question.id] === option.value &&
                       (!isImplementationPlanRequest || selectedQuestionId === question.id)
                     return (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         key={`${question.id}-${option.label}-${index}`}
                         type="button"
                         data-testid={`request-user-input-option-${question.id}-${index}`}
@@ -316,7 +322,7 @@ function RequestUserInputForm({
                             </span>
                           ) : null}
                         </span>
-                      </button>
+                      </ControlButton>
                     )
                   })}
                 </div>
@@ -326,7 +332,9 @@ function RequestUserInputForm({
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted">
                     <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                   </span>
-                  <input
+                  <ControlInput
+                    density="compact"
+                    appearance="plain"
                     data-testid={`request-user-input-custom-${question.id}`}
                     aria-labelledby={`${formId}-${questionIndex}`}
                     value={selectedAnswers[question.id] ?? ''}

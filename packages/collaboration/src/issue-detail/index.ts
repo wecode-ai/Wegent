@@ -37,7 +37,6 @@ export {
   issueExecutionElapsedMinutes,
 } from './issueTimestamp'
 export * from './CompositedSpinner'
-export * from './Tooltip'
 export * from './executionStatus'
 export * from './activityMessageUtils'
 export * from './managerActivity'

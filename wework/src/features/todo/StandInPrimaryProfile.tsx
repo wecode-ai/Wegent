@@ -1,40 +1,30 @@
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import {
-  useCallback,
-  useImperativeHandle,
-  useRef,
-  useState,
-  type Ref,
-  type ReactNode,
-  useSyncExternalStore,
-} from 'react'
-import { dequal } from 'dequal'
-import {
-  connectionChangeEnablesIdentity,
-  newStandInRole,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
-import { createTagDraft, type CollaborationProject } from '@wegent/collaboration'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo } from '@/types/api'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { createTagDraft } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { dequal } from 'dequal'
+import type { ReactNode, Ref } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
+import { StandInComposer } from './StandInComposer'
+import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
+import { StandInConnectionSettings } from './StandInConnectionSettings'
+import { StandInDeviceSelect } from './StandInDeviceSelect'
 import {
-  StandInConnectionSettings,
-  type StandInConnectionNavigationHandle,
-} from './StandInConnectionSettings'
-import {
-  StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
   StandInSettingsError,
+  StandInSettingsHeader,
 } from './StandInSettingsLayout'
-import { StandInComposer } from './StandInComposer'
-import { StandInDeviceSelect } from './StandInDeviceSelect'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
-import { useStandInRuntimeWork } from './useStandInRuntimeWork'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 
 /** Edit the primary identity and its connections on the explicitly selected Executor. */
 export function StandInPrimaryProfile({
@@ -163,13 +153,19 @@ export function StandInPrimaryProfile({
     else navigation.requestLeave(action)
   }
   const close = () => requestLeave(onClose)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave }))
   return (
-    <div
-      ref={dialogRef}
-      className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
-      data-testid="stand-in-primary-profile"
+    <DialogSurface
+      onClose={close}
+      suspended={discard}
+      render={
+        <div
+          ref={dialogRef}
+          className={`flex h-full min-h-0 flex-col px-5 ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          data-testid="stand-in-primary-profile"
+        />
+      }
     >
       <StandInSettingsHeader
         path={[
@@ -228,7 +224,7 @@ export function StandInPrimaryProfile({
           <label className="grid gap-2">
             <span>{t('standIn.workspace.profile_instructions')}</span>
             <div className="rounded-lg border border-solid border-border bg-background focus-within:border-text-tertiary focus-within:ring-1 focus-within:ring-focus/20">
-              <textarea
+              <ControlTextarea
                 data-testid="stand-in-preferences"
                 value={draft.preferences}
                 disabled={blocked}
@@ -402,6 +398,6 @@ export function StandInPrimaryProfile({
           )}
         </StandInSettingsActions>
       )}
-    </div>
+    </DialogSurface>
   )
 }

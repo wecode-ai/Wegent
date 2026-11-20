@@ -1,14 +1,19 @@
-import { runnerModelKey, type RunnerEnvironment } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { useAgentRouting } from './useAgentRouting'
+import { runnerModelKey, type RunnerEnvironment } from '@wegent/collaboration'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AgentEnvironmentPicker } from './AgentEnvironmentPicker'
+import type { useAgentRouting } from './useAgentRouting'
 
 type Routing = ReturnType<typeof useAgentRouting>
 const accountSources = (environment: RunnerEnvironment) =>
   [...new Set(environment.models.map(model => model.account_label).filter(Boolean))].join(', ')
-
-const selectClass =
-  'wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-50 md:h-9'
 
 export function AgentEnvironmentFields({
   routing,
@@ -134,26 +139,27 @@ export function AgentModelFields({
         })
       : []
 
+  const modelValue = chooseAtRuntime
+    ? 'user_select'
+    : routing.model
+      ? runnerModelKey(routing.model)
+      : ''
+
   return (
     <div className="space-y-2">
       <label className="block space-y-1 text-sm">
         <span>{t('workbench.agent_creator_model')}</span>
-        <select
-          className={selectClass}
-          data-testid={`${prefix}-model`}
+        <SelectRoot
           disabled={disabled || routing.loading || !environmentSelected}
-          value={
-            chooseAtRuntime ? 'user_select' : routing.model ? runnerModelKey(routing.model) : ''
-          }
-          onChange={event => {
-            if (event.target.value === 'user_select') {
+          value={normalizeSelectValue(modelValue)}
+          onValueChange={selectedValue => {
+            if (selectedValue === null) return
+            if (selectedValue === 'user_select') {
               routing.setModelMode('user_select')
               routing.setModel(null)
               return
             }
-            const selected = routing.models.find(
-              item => runnerModelKey(item) === event.target.value
-            )
+            const selected = routing.models.find(item => runnerModelKey(item) === selectedValue)
             routing.setModelMode('fixed')
             routing.setModel(
               selected
@@ -168,35 +174,42 @@ export function AgentModelFields({
             )
           }}
         >
-          <option value="" disabled>
-            {t('workbench.agent_creator_model_placeholder')}
-          </option>
-          {!selectionOnly && (
-            <option value="user_select">{t('workbench.runner_user_select')}</option>
-          )}
-          {routing.model && !routing.modelAvailable && (
-            <option
-              value={runnerModelKey(routing.model)}
-              disabled={!routing.persistedModelSupported}
-            >
-              {routing.model.model_id}
-              {!routing.persistedModelSupported &&
-                !routing.loading &&
-                !routing.nativeLoading &&
-                ` · ${t('workbench.runner_model_unavailable')}`}
-            </option>
-          )}
-          {routing.models.map(model => (
-            <option key={runnerModelKey(model)} value={runnerModelKey(model)}>
-              {model.label} ·{' '}
-              {t(
-                model.source === 'cloud'
-                  ? 'workbench.runner_model_cloud'
-                  : 'workbench.runner_model_native'
-              )}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            className="w-full"
+            data-testid={`${prefix}-model`}
+            data-value={modelValue}
+          />
+          <SelectContent data-testid={`${prefix}-model-menu`}>
+            <SelectItem value="" disabled>
+              {t('workbench.agent_creator_model_placeholder')}
+            </SelectItem>
+            {!selectionOnly && (
+              <SelectItem value="user_select">{t('workbench.runner_user_select')}</SelectItem>
+            )}
+            {routing.model && !routing.modelAvailable && (
+              <SelectItem
+                value={String(runnerModelKey(routing.model))}
+                disabled={!routing.persistedModelSupported}
+              >
+                {routing.model.model_id}
+                {!routing.persistedModelSupported &&
+                  !routing.loading &&
+                  !routing.nativeLoading &&
+                  ` · ${t('workbench.runner_model_unavailable')}`}
+              </SelectItem>
+            )}
+            {routing.models.map(model => (
+              <SelectItem key={runnerModelKey(model)} value={String(runnerModelKey(model))}>
+                {model.label} ·{' '}
+                {t(
+                  model.source === 'cloud'
+                    ? 'workbench.runner_model_cloud'
+                    : 'workbench.runner_model_native'
+                )}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       </label>
       {chooseAtRuntime && (
         <p className="text-xs text-text-muted">
@@ -226,7 +239,8 @@ export function AgentModelFields({
             {!selectionOnly && routing.executionPolicy?.mode === 'project_pool' && (
               <>
                 <p>{t('workbench.runner_automatic_native_hint')}</p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${prefix}-choose-device`}
                   disabled={disabled || routing.environmentLoading}
@@ -234,7 +248,7 @@ export function AgentModelFields({
                   onClick={() => routing.setEnvironmentPickerOpen(true)}
                 >
                   {t('workbench.runner_specify_device')}
-                </button>
+                </ControlButton>
               </>
             )}
           </div>

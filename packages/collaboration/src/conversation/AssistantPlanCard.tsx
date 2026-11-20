@@ -1,10 +1,11 @@
-import { useDeadlineExpired } from '../clock'
-import { useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { Copy, Download, ListChecks, Maximize2 } from 'lucide-react'
-import { useConversationTranslation } from './ConversationTranslation'
+import type { MouseEvent as ReactMouseEvent } from 'react'
+import { useState } from 'react'
+import { useDeadlineExpired } from '../clock'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { AssistantMarkdown } from '../markdown/AssistantMarkdown'
+import { Button as ControlButton } from '../markdown/Button'
+import { useConversationTranslation } from './ConversationTranslation'
 
 interface AssistantPlanCardProps {
   content: string
@@ -38,31 +39,46 @@ export function AssistantPlanCard({
     openPlan()
   }
 
-  const handleCardKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    if (isNestedInteractiveElement(event.target, event.currentTarget)) return
-    event.preventDefault()
-    openPlan()
-  }
-
   return (
     <section
       data-testid="assistant-plan-card"
-      role={onOpenPlan ? 'button' : undefined}
-      tabIndex={onOpenPlan ? 0 : undefined}
-      aria-label={onOpenPlan ? t('plan_card.expand') : undefined}
       onClick={onOpenPlan ? handleCardClick : undefined}
-      onKeyDown={onOpenPlan ? handleCardKeyDown : undefined}
       className={cn(
         'my-2 min-w-0 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
         onOpenPlan &&
-          'cursor-pointer keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-offset-2 keyboard:focus-visible:outline-primary/70'
+          'cursor-pointer keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-offset-2 keyboard:focus-visible:outline-primary/70',
       )}
     >
       <div className="flex min-h-9 items-center justify-between gap-3 px-4 py-1.5 text-text-muted">
         <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
-          <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
-          <span>{t('plan_card.title')}</span>
+          {onOpenPlan ? (
+            <ControlButton
+              variant="ghost"
+              size="sm"
+              data-testid="assistant-plan-card-open"
+              aria-label={t('plan_card.expand')}
+              onClick={openPlan}
+              className="min-w-0 justify-start p-0 text-left"
+            >
+              <>
+                <ListChecks
+                  className="h-4 w-4 shrink-0"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+                <span>{t('plan_card.title')}</span>
+              </>
+            </ControlButton>
+          ) : (
+            <>
+              <ListChecks
+                className="h-4 w-4 shrink-0"
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+              <span>{t('plan_card.title')}</span>
+            </>
+          )}
           {isStreaming ? (
             <span
               data-testid="assistant-plan-streaming-indicator"
@@ -111,12 +127,12 @@ function PlanCardActions({
   const [copiedUntil, setCopiedUntil] = useState<number>()
   const expired = useDeadlineExpired(copiedUntil)
   const copied = copiedUntil !== undefined && !expired
+
   const handleCopy = () => {
-    void copyText(content).then(() =>
-      setCopiedUntil(previous =>
-        previous !== undefined && previous > Date.now() ? previous : Date.now() + 1400
-      )
-    )
+    void copyText(content).then(() => {
+      const now = Date.now()
+      setCopiedUntil(previous => (previous !== undefined && previous > now ? previous : now + 1400))
+    })
   }
 
   const actions = [
@@ -157,21 +173,22 @@ function PlanCardActions({
           {t('plan_card.copy_success')}
         </span>
       ) : null}
-      {actions.map(action => (
-        <button
+      {actions.map((action) => (
+        <ControlButton
+          variant="unstyled"
           key={action.key}
           type="button"
           data-testid={action.testId}
           aria-label={action.label}
           title={action.label}
-          onClick={event => {
+          onClick={(event) => {
             event.stopPropagation()
             void action.onClick()
           }}
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
         >
           {action.icon}
-        </button>
+        </ControlButton>
       ))}
     </div>
   )
@@ -189,7 +206,10 @@ function downloadTextFile(content: string, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function isNestedInteractiveElement(target: EventTarget | null, currentTarget: HTMLElement) {
+function isNestedInteractiveElement(
+  target: EventTarget | null,
+  currentTarget: HTMLElement,
+) {
   if (!(target instanceof HTMLElement)) return false
   const interactiveTarget = target.closest('button,a,input,textarea,select')
   return Boolean(interactiveTarget && interactiveTarget !== currentTarget)

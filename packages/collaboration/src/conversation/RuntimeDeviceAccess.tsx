@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { useRuntimeDeviceAccess } from './useRuntimeDeviceAccess'
-import type { SharedWorkspaceRuntimeApi, RuntimeDeviceAccess } from '../ports/SharedWorkspaceApi'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import type { RuntimeDeviceAccess, SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
+import { useRuntimeDeviceAccess } from './useRuntimeDeviceAccess'
 
 export function RuntimeDeviceAccessNotice({
   access,
@@ -30,14 +31,15 @@ export function RuntimeDeviceAccessNotice({
                 : 'activity.device_access_unavailable'
           )}
       {access === 'error' && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="runtime-device-access-retry"
           className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
           onClick={retry}
         >
           {t('activity.retry')}
-        </button>
+        </ControlButton>
       )}
     </div>
   )

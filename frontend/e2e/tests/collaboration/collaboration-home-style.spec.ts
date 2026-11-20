@@ -58,10 +58,12 @@ test('renders the collaboration Issue home with the shared visual hierarchy', as
     await expect(guide).toHaveCSS('height', '44px')
     await expect(guide.locator('svg')).toHaveCount(2)
     await expect(composer).toHaveCSS('width', '768px')
-    await expect(projectSelect).toHaveCSS('opacity', '0')
-    await expect(projectSelect.locator(`option[value="${project.id}"]`)).toHaveText(
-      `Issue home project ${suffix}`
-    )
+    await expect(projectSelect).toBeVisible()
+    await projectSelect.click()
+    const projectMenu = page.getByTestId('collaboration-issue-project-menu')
+    await expect(
+      projectMenu.getByRole('option', { name: `Issue home project ${suffix}`, exact: true })
+    ).toBeVisible()
   } finally {
     if (project) {
       await archiveResource(page, `/api/v1/cloud-projects/${encodeURIComponent(project.id)}`)

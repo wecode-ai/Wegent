@@ -1,17 +1,20 @@
-import { createPopoutWindowSource } from './popoutWindowSource'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { Copy, SquarePen, X } from 'lucide-react'
 import { DesktopWorkbenchMain } from '@/components/layout/DesktopWorkbenchMain'
+import type { WorkbenchPaneIdentity } from '@/components/layout/workbenchPaneIdentity'
+import { dismissPopoutWindow, openPopoutTaskInMain } from '@/desktop/popoutWindow'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import {
   findRuntimeTask,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
-import { dismissPopoutWindow, openPopoutTaskInMain } from '@/desktop/popoutWindow'
-import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { WorkbenchPaneIdentity } from '@/components/layout/workbenchPaneIdentity'
+import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Copy, SquarePen, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import './PopoutWorkbenchPage.css'
+import { createPopoutWindowSource } from './popoutWindowSource'
 
 export function PopoutWorkbenchPage() {
   const { t } = useTranslation('common')
@@ -45,7 +48,7 @@ export function PopoutWorkbenchPage() {
       localDeviceRequired,
     ]
   )
-  const overlayOpen = useSyncExternalStore(
+  const { overlayOpen, ready } = useSyncExternalStore(
     subscribeWindow,
     windowSource.getSnapshot,
     windowSource.getSnapshot
@@ -72,12 +75,14 @@ export function PopoutWorkbenchPage() {
         !expanded && 'popout-window-compact'
       )}
     >
+      {ready && isElectronRuntime() && <SystemDragBridge />}
       {expanded ? (
         <header
           data-testid="popout-window-header"
           className="relative flex h-11 shrink-0 items-center border-b border-border/40 px-3"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="popout-window-close-button"
             onClick={closeWindow}
@@ -86,13 +91,14 @@ export function PopoutWorkbenchPage() {
             title={t('workbench.popout_window_close')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
           <div className="electron-titlebar-drag-region h-full min-w-0 flex-1" />
           <div className="pointer-events-none absolute inset-x-14 truncate text-center text-base font-medium text-text-primary">
             {title}
           </div>
           <div className="electron-titlebar-interactive-region flex items-center gap-1">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="popout-window-new-chat-button"
               onClick={startNewChat}
@@ -101,8 +107,9 @@ export function PopoutWorkbenchPage() {
               title={t('workbench.popout_window_new_chat')}
             >
               <SquarePen className="h-4 w-4" />
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="popout-window-open-in-main-button"
               onClick={() => {
@@ -115,7 +122,7 @@ export function PopoutWorkbenchPage() {
               title={t('workbench.popout_window_open_in_main')}
             >
               <Copy className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
         </header>
       ) : null}

@@ -4,44 +4,13 @@
 
 // @vitest-environment jsdom
 
-import { act, type ReactNode } from 'react'
+import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import type { CollaborationIssue } from '../types'
-import {
-  defaultScheduleViewOptions,
-  localDateKey,
-  scheduleDateDropId,
-  scheduleIssueDragId,
-} from './model'
+import { addLocalDays, defaultScheduleViewOptions, localDateKey } from './model'
 import { ProjectGanttView } from './ProjectGanttView'
 import { CollaborationTheme } from '../theme'
-
-const dnd = vi.hoisted(() => ({
-  handlers: {} as {
-    onDragStart(event: DragStartEvent): void
-    onDragEnd(event: DragEndEvent): void
-    onDragCancel(): void
-  },
-}))
-
-vi.mock('@dnd-kit/core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@dnd-kit/core')>()),
-  DndContext: ({ children, ...handlers }: { children: ReactNode }) => {
-    dnd.handlers = handlers as typeof dnd.handlers
-    return children
-  },
-  DragOverlay: ({ children }: { children: ReactNode }) => children,
-  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
-  useDraggable: () => ({
-    attributes: {},
-    listeners: {},
-    setNodeRef: vi.fn(),
-    isDragging: true,
-    transform: { x: 50, y: -300 },
-  }),
-}))
 
 const issue = {
   id: 'undated-issue',
@@ -54,11 +23,35 @@ const issue = {
   can_edit: true,
 } as unknown as CollaborationIssue
 
+let hit: Element | null = null
 let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal(
+    'PointerEvent',
+    class PointerEvent extends MouseEvent {
+      pointerId: number
+      isPrimary: boolean
+      pointerType: string
+      constructor(type: string, init: PointerEventInit = {}) {
+        super(type, init)
+        this.pointerId = init.pointerId ?? 1
+        this.isPrimary = init.isPrimary ?? true
+        this.pointerType = init.pointerType ?? 'mouse'
+      }
+    },
+  )
+  Object.defineProperty(document, 'elementsFromPoint', {
+    configurable: true,
+    value: () => (hit ? [hit] : []),
+  })
+  vi.spyOn(window, 'scrollBy').mockImplementation(() => {})
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+    new DOMRect(10, 300, 180, 32),
+  )
+  hit = null
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -68,6 +61,8 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  Reflect.deleteProperty(document, 'elementsFromPoint')
 })
 
 function render(issues = [issue], onSchedule = vi.fn()) {
@@ -88,12 +83,34 @@ function render(issues = [issue], onSchedule = vi.fn()) {
   return onSchedule
 }
 
-function startDrag() {
-  act(() =>
-    dnd.handlers.onDragStart({
-      active: { id: scheduleIssueDragId(issue.id) },
-    } as DragStartEvent),
+function pointer(target: EventTarget, type: string, x: number, y: number) {
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      isPrimary: true,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: type === 'pointerup' ? 0 : 1,
+      clientX: x,
+      clientY: y,
+    }),
   )
+}
+async function startDrag(
+  selector = '[data-testid="collaboration-schedule-undated-undated-issue"]',
+) {
+  const source = container.querySelector<HTMLElement>(selector)
+  if (!source) throw new Error('Missing undated task')
+  await act(async () => {
+    pointer(source, 'pointerdown', 20, 310)
+    pointer(document, 'pointermove', 70, 10)
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  })
+}
+function release() {
+  act(() => pointer(document, 'pointerup', 70, 10))
 }
 
 const overlay = () =>
@@ -102,10 +119,10 @@ const overlay = () =>
   )
 
 describe('undated schedule dragging', () => {
-  it('keeps the dragged task outside the clipping scroll container and restores it on cancel', () => {
+  it('keeps the dragged task outside the clipping scroll container and restores it on cancel', async () => {
     render()
     expect(overlay()).toBeNull()
-    startDrag()
+    await startDrag()
 
     expect(overlay()?.textContent).toContain(issue.title)
     expect(overlay()?.parentElement).toBe(document.body)
@@ -117,21 +134,27 @@ describe('undated schedule dragging', () => {
     expect(source.closest('section')?.className).toContain('overflow-auto')
     expect(source.style.transform).toBe('')
 
-    act(() => dnd.handlers.onDragCancel())
+    act(() =>
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    )
     expect(overlay()).toBeNull()
     expect(source.isConnected).toBe(true)
   })
 
-  it('saves the dropped date and renders the task in the Gantt after the saved issue arrives', () => {
+  it('saves the dropped date and renders the task in the Gantt after the saved issue arrives', async () => {
     const onSchedule = render()
-    startDrag()
+    await startDrag()
     const date = localDateKey(new Date())
-    act(() =>
-      dnd.handlers.onDragEnd({
-        active: { id: scheduleIssueDragId(issue.id) },
-        over: { id: scheduleDateDropId(date, 'gantt-header') },
-      } as DragEndEvent),
+    hit = container.querySelector(
+      '[data-testid="collaboration-gantt-header-day-' + date + '"]',
     )
+    release()
     expect(onSchedule).toHaveBeenCalledExactlyOnceWith(issue, {
       startAt: date,
       dueAt: date,
@@ -150,17 +173,49 @@ describe('undated schedule dragging', () => {
     ).toBeNull()
   })
 
-  it('keeps the task unscheduled when released outside a date target', () => {
+  it('keeps the task unscheduled when released outside a date target', async () => {
     const onSchedule = render()
-    startDrag()
-    act(() =>
-      dnd.handlers.onDragEnd({
-        active: { id: scheduleIssueDragId(issue.id) },
-        over: null,
-      } as DragEndEvent),
-    )
+    await startDrag()
+    hit = null
+    release()
     expect(onSchedule).not.toHaveBeenCalled()
     expect(overlay()).toBeNull()
     expect(container.textContent).toContain(issue.title)
   })
+})
+
+it.each(['start', 'end'] as const)(
+  'SDK %s resize preserves the other date and task identity',
+  async (mode) => {
+    const start = localDateKey(new Date())
+    const due = localDateKey(addLocalDays(new Date(), 2))
+    const date = localDateKey(addLocalDays(new Date(), 1))
+    const scheduled = { ...issue, start_at: start, due_at: due }
+    const onSchedule = render([scheduled])
+    hit = container.querySelector(
+      `[data-testid="collaboration-gantt-header-day-${date}"]`,
+    )
+    await startDrag(
+      `[data-testid="collaboration-gantt-issue-undated-issue-${mode}-handle"]`,
+    )
+    release()
+    expect(onSchedule).toHaveBeenCalledExactlyOnceWith(scheduled, {
+      startAt: mode === 'start' ? date : start,
+      dueAt: mode === 'end' ? date : due,
+    })
+  },
+)
+
+it('revoked edit permission cancels an active schedule gesture without persisting', async () => {
+  const onSchedule = render()
+  await startDrag()
+  const date = localDateKey(new Date())
+  hit = container.querySelector(
+    `[data-testid="collaboration-gantt-header-day-${date}"]`,
+  )
+  render([{ ...issue, can_edit: false }], onSchedule)
+  release()
+  expect(onSchedule).not.toHaveBeenCalled()
+  expect(overlay()).toBeNull()
+  expect(container.textContent).toContain(issue.title)
 })

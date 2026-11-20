@@ -1,10 +1,29 @@
-import { useOutsideClick } from '@wegent/collaboration/composer/useOutsideClick'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useCallback, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { Check, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@wegent/collaboration/controls/Field'
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuContent,
+  MenuItemIndicator,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from '@wegent/collaboration/controls/MenuParts'
+import {
+  controlFieldAppearance,
+  controlFieldDensity,
+  controlTrigger,
+} from '@wegent/collaboration/controls/recipes'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Check, ChevronDown } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 export interface MenuOption {
   value: string
@@ -31,8 +50,12 @@ export function MenuSelect({
   disabled = false,
   placeholder,
   invalid = false,
-  field = false,
+  field,
   fullWidth = false,
+  label,
+  accessibleLabel,
+  description,
+  error,
 }: {
   testId: string
   value: string
@@ -43,80 +66,66 @@ export function MenuSelect({
   disabled?: boolean
   placeholder?: string
   invalid?: boolean
-  field?: boolean
   fullWidth?: boolean
-}) {
+} & (
+  | {
+      field: true
+      label: string
+      description?: ReactNode
+      error?: ReactNode
+      accessibleLabel?: never
+    }
+  | { field?: false; accessibleLabel: string; label?: never; description?: never; error?: never }
+)) {
   const selected = options.find(option => option.value === value)
-  const selectionState = value ? 'selected' : 'unselected'
-  return (
-    <PopupMenu
+  const select = (
+    <SelectField
       testId={testId}
+      value={value}
+      options={options}
+      onChange={onChange}
+      accessibleLabel={field ? label : accessibleLabel}
       disabled={disabled}
-      invalid={invalid}
-      fullWidth={fullWidth}
-      trigger={
+      invalid={invalid || Boolean(error)}
+      placeholder={placeholder}
+      density={field ? 'default' : 'dense'}
+      appearance={field ? 'outline' : 'plain'}
+      className={cn(pill && 'bg-surface', (field || fullWidth) && 'w-full')}
+      triggerContent={
         <span
-          data-selection-state={selectionState}
+          className="flex min-w-0 flex-1 items-center gap-2"
+          data-selection-state={value ? 'selected' : 'unselected'}
           data-value={value}
           data-invalid={invalid || undefined}
-          className={cn(
-            'inline-flex h-8 max-w-64 items-center justify-end gap-1.5 rounded-full px-2 text-sm font-medium',
-            field &&
-              'h-9 w-full max-w-none justify-between rounded-lg border border-border bg-background',
-            pill && 'bg-surface',
-            selectionState === 'selected' && 'text-text-primary',
-            selectionState === 'unselected' && 'text-text-muted',
-            invalid && 'text-destructive ring-1 ring-destructive/40'
-          )}
         >
-          <span className="flex min-w-0 items-center gap-2">
-            {selected?.icon}
-            <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
+          {selected?.icon}
+          <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
         </span>
       }
-    >
-      {close => (
-        <>
-          {options.map(option => (
-            <button
-              key={option.value}
-              type="button"
-              data-testid={`${testId}-option-${option.value}`}
-              disabled={option.disabled}
-              aria-label={option.ariaLabel}
-              onClick={() => {
-                if (option.disabled) return
-                onChange(option.value)
-                close()
-              }}
-              className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-            >
-              {option.icon}
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
-            </button>
-          ))}
-          {action ? (
-            <div className="mt-1 border-t border-border pt-1">
-              <button
-                type="button"
-                data-testid={action.testId}
-                onClick={() => {
-                  action.onSelect()
-                  close()
-                }}
-                className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
-              >
-                {action.icon}
-                <span className="min-w-0 flex-1 truncate">{action.label}</span>
-              </button>
-            </div>
-          ) : null}
-        </>
-      )}
-    </PopupMenu>
+      footer={
+        action && (
+          <Button
+            variant="ghost"
+            data-testid={action.testId}
+            onClick={action.onSelect}
+            className="w-full justify-start"
+          >
+            {action.icon}
+            {action.label}
+          </Button>
+        )
+      }
+    />
+  )
+  return field ? (
+    <Field disabled={disabled} invalid={invalid || Boolean(error)}>
+      <FieldLabel>{label}</FieldLabel>
+      {select}
+      {description && <FieldDescription>{description}</FieldDescription>}
+      {error && <FieldError>{error}</FieldError>}
+    </Field>
+  ) : (
+    select
   )
 }
 
@@ -129,6 +138,7 @@ export function TimeMenu({
   value: string
   onChange: (value: string) => void
 }) {
+  const { t } = useTranslation('common')
   const options = Array.from({ length: 96 }, (_, index) => {
     const hour = Math.floor(index / 4)
     const minute = (index % 4) * 15
@@ -140,7 +150,16 @@ export function TimeMenu({
     options.push({ value, label: `${Number(hour)}:${minute}` })
     options.sort((left, right) => left.value.localeCompare(right.value))
   }
-  return <MenuSelect testId={testId} value={value} options={options} onChange={onChange} pill />
+  return (
+    <MenuSelect
+      accessibleLabel={t('workbench.project_automation_time', '执行时间')}
+      testId={testId}
+      value={value}
+      options={options}
+      onChange={onChange}
+      pill
+    />
+  )
 }
 
 export function WeekdayMenu({
@@ -171,152 +190,57 @@ export function WeekdayMenu({
       : `${selectedLabels.slice(0, 3).join('、')}…`
 
   return (
-    <PopupMenu
-      testId={testId}
-      trigger={
-        <span className="inline-flex h-8 max-w-64 items-center gap-1.5 rounded-full bg-surface px-2 text-sm font-medium">
-          <span className="truncate">
-            {label || t('workbench.automation_select_days', '选择日期')}
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
+    <Menu>
+      <MenuTrigger
+        data-testid={testId}
+        aria-label={t('workbench.automation_select_days', '选择日期')}
+        className={cn(controlTrigger, controlFieldAppearance.plain, controlFieldDensity.dense)}
+      >
+        <span className="max-w-64 truncate">
+          {label || t('workbench.automation_select_days', '选择日期')}
         </span>
-      }
-      keepOpen={!single}
-    >
-      {close =>
-        days.map(day => {
-          const checked = value.includes(day.value)
-          return (
-            <button
+        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+      </MenuTrigger>
+      <MenuContent data-testid={testId + '-menu'} align="end" data-embedded-browser-occlusion>
+        {single ? (
+          <MenuRadioGroup value={value[0] ?? ''} onValueChange={day => onChange([day])}>
+            {days.map(day => (
+              <MenuRadioItem
+                key={day.value}
+                value={day.value}
+                closeOnSelect
+                data-testid={testId + '-option-' + day.value}
+              >
+                <span className="flex-1">{day.label}</span>
+                <MenuItemIndicator>
+                  <Check aria-hidden="true" className="h-4 w-4" />
+                </MenuItemIndicator>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        ) : (
+          days.map(day => (
+            <MenuCheckboxItem
               key={day.value}
-              type="button"
-              data-testid={`${testId}-option-${day.value}`}
-              onClick={() => {
-                if (single) {
-                  onChange([day.value])
-                  close()
-                  return
-                }
+              value={day.value}
+              checked={value.includes(day.value)}
+              data-testid={testId + '-option-' + day.value}
+              onCheckedChange={(checked, details) => {
                 const next = checked
-                  ? value.filter(current => current !== day.value)
-                  : [...value, day.value]
-                if (next.length > 0) onChange(next)
+                  ? [...value, day.value]
+                  : value.filter(current => current !== day.value)
+                if (next.length === 0) details.cancel()
+                else onChange(next)
               }}
-              className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
             >
               <span className="flex-1">{day.label}</span>
-              {checked ? <Check className="h-4 w-4" /> : null}
-            </button>
-          )
-        })
-      }
-    </PopupMenu>
-  )
-}
-
-export function PopupMenu({
-  testId,
-  trigger,
-  children,
-  keepOpen = false,
-  disabled = false,
-  invalid = false,
-  menuWidth,
-  fullWidth = false,
-  triggerClassName,
-  ariaLabel,
-  onOpen,
-}: {
-  testId: string
-  trigger: ReactNode
-  children: (close: () => void) => ReactNode
-  keepOpen?: boolean
-  disabled?: boolean
-  invalid?: boolean
-  menuWidth?: number
-  fullWidth?: boolean
-  triggerClassName?: string
-  ariaLabel?: string
-  onOpen?: () => void
-}) {
-  const rootRef = useRef<HTMLSpanElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ top: number; right: number; width: number } | null>(
-    null
-  )
-  const close = useCallback(() => setOpen(false), [])
-  useEscapeKey(close, open, menuRef)
-
-  const bindMenu = useCallback(
-    (menu: HTMLDivElement | null) => {
-      menuRef.current = menu
-      if (!menu) return
-      const triggerRect = rootRef.current?.getBoundingClientRect()
-      if (!triggerRect) return
-      const width = Math.max(menuWidth ?? 180, triggerRect.width)
-      const belowTop = triggerRect.bottom + 6
-      const estimatedHeight = Math.min(360, menu.scrollHeight)
-      const top =
-        belowTop + estimatedHeight <= window.innerHeight - 8
-          ? belowTop
-          : Math.max(8, triggerRect.top - estimatedHeight - 6)
-      setPosition({
-        top,
-        right: Math.max(8, window.innerWidth - triggerRect.right),
-        width,
-      })
-    },
-    [menuWidth]
-  )
-
-  useOutsideClick(rootRef, open, close, [menuRef])
-
-  return (
-    <span ref={rootRef} className={cn('inline-flex', fullWidth && 'w-full')}>
-      <button
-        type="button"
-        data-testid={testId}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        aria-invalid={invalid || undefined}
-        onClick={() => {
-          if (!open) onOpen?.()
-          setOpen(current => !current)
-        }}
-        className={cn(
-          'rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:cursor-not-allowed disabled:opacity-50 wework:keyboard:focus-visible:ring-blue-500/30',
-          fullWidth && 'w-full',
-          triggerClassName
+              <MenuItemIndicator>
+                <Check aria-hidden="true" className="h-4 w-4" />
+              </MenuItemIndicator>
+            </MenuCheckboxItem>
+          ))
         )}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        {trigger}
-      </button>
-      {open
-        ? createPortal(
-            <div
-              ref={bindMenu}
-              data-testid={`${testId}-menu`}
-              data-embedded-browser-occlusion
-              style={{
-                top: position?.top ?? 0,
-                right: position?.right ?? 0,
-                width: position?.width ?? 180,
-                visibility: position ? 'visible' : 'hidden',
-              }}
-              onClick={() => {
-                if (!keepOpen) close()
-              }}
-              className="fixed z-[11000] max-h-[360px] overflow-y-auto rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-              role="menu"
-            >
-              {children(close)}
-            </div>,
-            document.body
-          )
-        : null}
-    </span>
+      </MenuContent>
+    </Menu>
   )
 }

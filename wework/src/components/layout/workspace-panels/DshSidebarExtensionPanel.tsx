@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { AppIframe } from '@/components/topnav/AppIframe'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -50,13 +50,18 @@ export function DshSidebarExtensionPanel({
     )
   }
   return (
-    <DshSlotSurface
+    <div
       className="flex min-h-0 flex-1 flex-col"
-      enabled={visible}
-      entryId={descriptor.id}
-      props={props}
-      slot={WEWORK_DSH_SLOTS.workspaceSidebarTab}
-      testId={`dsh-sidebar-extension-surface-${descriptor.id}`}
-    />
+      data-testid={`dsh-sidebar-extension-surface-${descriptor.id}`}
+    >
+      {visible ? (
+        <DshContributionSlotSurface
+          attachedClassName="flex min-h-0 flex-1 flex-col"
+          entryId={descriptor.id}
+          props={props}
+          slot={WEWORK_DSH_SLOTS.workspaceSidebarTab}
+        />
+      ) : null}
+    </div>
   )
 }

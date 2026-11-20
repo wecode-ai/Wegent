@@ -1,9 +1,10 @@
 import { useIntersectionEvent } from '../dom-events'
 import { useCallback, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { Button as ControlButton } from '../markdown/Button'
 
-import { useConversationTranslation } from './ConversationTranslation'
 import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
+import { useConversationTranslation } from './ConversationTranslation'
 
 interface ConversationHistoryBoundaryProps {
   boundaryKey: string
@@ -107,7 +108,8 @@ export function ConversationHistoryBoundary({
         createPortal(
           <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center">
             {showAction ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="load-older-runtime-transcript-button"
                 disabled={!onLoad}
@@ -121,7 +123,7 @@ export function ConversationHistoryBoundary({
                   : failed || status === 'failed'
                     ? t('workbench.load_older_messages_failed')
                     : t('workbench.load_older_messages')}
-              </button>
+              </ControlButton>
             ) : (
               <span
                 role="status"

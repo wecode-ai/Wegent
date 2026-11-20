@@ -1,3 +1,6 @@
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useId, useMemo, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { Bot, Check, CircleUserRound, Search, Users, UserRound } from 'lucide-react'
@@ -137,7 +140,8 @@ export function IssueParticipantPicker({
     const Icon = icon(person.kind)
     return (
       <li key={person.key} className="flex min-w-0 items-center rounded-md hover:bg-muted/50">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           disabled={disabled || owner}
           aria-pressed={checked}
@@ -166,9 +170,10 @@ export function IssueParticipantPicker({
           <span className="min-w-0 flex-1 truncate">{identified ? person.name : label}</span>
           {identified && <span className="shrink-0 text-text-secondary"> · #{person.id}</span>}
           {checked && <Check className="size-4 shrink-0" aria-hidden="true" />}
-        </button>
+        </ControlButton>
         {checked && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={disabled}
             aria-pressed={responsible}
@@ -186,7 +191,7 @@ export function IssueParticipantPicker({
               className={`size-4 ${responsible ? 'rounded-full bg-text-primary text-background' : ''}`}
               aria-hidden="true"
             />
-          </button>
+          </ControlButton>
         )}
       </li>
     )
@@ -208,55 +213,34 @@ export function IssueParticipantPicker({
     >
       <div className="grid gap-2">
         {!colleaguesOnly && (
-          <div
-            role="tablist"
-            aria-label={t('issue_creation.participant_type')}
-            className="flex gap-1"
+          <TabsRoot
+            value={tab}
+            onValueChange={kind => {
+              if (kind !== 'human' && kind !== 'agent' && kind !== 'group') return
+              setTab(kind)
+              setQuery('')
+            }}
           >
-            {(['human', 'agent', 'group'] as const).map(kind => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={kind === tab}
-                id={`${pickerId}-${kind}-tab`}
-                aria-controls={`${pickerId}-panel`}
-                tabIndex={kind === tab ? 0 : -1}
-                disabled={disabled}
-                data-testid={`issue-participant-tab-${kind}`}
-                key={kind}
-                onClick={() => {
-                  setTab(kind)
-                  setQuery('')
-                }}
-                onKeyDown={event => {
-                  const kinds = ['human', 'agent', 'group'] as const
-                  const index = kinds.indexOf(kind)
-                  const next =
-                    event.key === 'ArrowRight'
-                      ? kinds[(index + 1) % kinds.length]
-                      : event.key === 'ArrowLeft'
-                        ? kinds[(index + kinds.length - 1) % kinds.length]
-                        : event.key === 'Home'
-                          ? kinds[0]
-                          : event.key === 'End'
-                            ? kinds[2]
-                            : null
-                  if (!next) return
-                  event.preventDefault()
-                  setTab(next)
-                  setQuery('')
-                  document.getElementById(`${pickerId}-${next}-tab`)?.focus()
-                }}
-                className={`min-h-11 rounded-md px-3 text-sm md:min-h-8 ${kind === tab ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
-              >
-                {t(`issue_creation.participant_${kind}`)}
-              </button>
-            ))}
-          </div>
+            <TabsList appearance="surface" aria-label={t('issue_creation.participant_type')}>
+              {(['human', 'agent', 'group'] as const).map(kind => (
+                <TabsTab
+                  key={kind}
+                  value={kind}
+                  appearance="surface"
+                  disabled={disabled}
+                  id={`${pickerId}-${kind}-tab`}
+                  data-testid={`issue-participant-tab-${kind}`}
+                  className="min-h-11 rounded-md px-3 text-sm aria-selected:bg-muted md:min-h-8"
+                >
+                  {t(`issue_creation.participant_${kind}`)}
+                </TabsTab>
+              ))}
+            </TabsList>
+          </TabsRoot>
         )}
         <label className="flex items-center gap-2 rounded-md border border-border px-2">
           <Search className="h-4 w-4 text-text-muted" />
-          <input
+          <ControlInput
             disabled={disabled}
             value={query}
             data-testid="independent-issue-search-people"
@@ -284,14 +268,15 @@ export function IssueParticipantPicker({
           {error && (
             <div role="alert" className="text-sm text-destructive">
               {t('issue_creation.participants_load_failed')}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="issue-participant-retry"
                 onClick={() => setRevision(v => v + 1)}
                 className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
               >
                 {t('independentIssues.retry')}
-              </button>
+              </ControlButton>
             </div>
           )}
           <p
@@ -309,7 +294,8 @@ export function IssueParticipantPicker({
             {statusMessage}
           </p>
           {!error && !busy && unselected.length > 1 && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="issue-participants-select-results"
               disabled={disabled}
@@ -317,7 +303,7 @@ export function IssueParticipantPicker({
               className="min-h-11 rounded-md px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
             >
               {t('taskIssueShare.selectParticipants', { count: unselected.length })}
-            </button>
+            </ControlButton>
           )}
           {!error && !busy && <ul>{unselected.map(person => personRow(person, false))}</ul>}
         </div>

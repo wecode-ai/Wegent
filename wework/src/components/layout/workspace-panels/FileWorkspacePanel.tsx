@@ -1,8 +1,3 @@
-import { useWorkspaceMarkdownFileNavigation } from './useWorkspaceFileNavigation'
-import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
-import { Code2, Eye, Folders, Loader2 } from 'lucide-react'
-import { useCallback, useImperativeHandle, useMemo, useSyncExternalStore, type Ref } from 'react'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -11,10 +6,16 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
-import { WorkspaceFilePreview } from './WorkspaceFilePreview'
-import { WorkspaceFileToolbar, WorkspaceFileRootSelector } from './WorkspaceFileToolbar'
-import { WorkspaceFileTree } from './WorkspaceFileTree'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Code2, Eye, Folders, Loader2 } from 'lucide-react'
+import { useCallback, useImperativeHandle, useMemo, useSyncExternalStore, type Ref } from 'react'
 import { createFileWorkspacePanelState } from './fileWorkspacePanelState'
+import { useWorkspaceMarkdownFileNavigation } from './useWorkspaceFileNavigation'
+import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
+import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import { WorkspaceFileRootSelector, WorkspaceFileToolbar } from './WorkspaceFileToolbar'
+import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { isPreviewableTextFile } from './workspaceFileTypes'
 
 export interface FileWorkspacePanelSelection {
@@ -215,7 +216,8 @@ export function FileWorkspacePanel({
           />
         )}
         {preview && isPreviewableTextFile(preview.name) && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-file-markdown-mode-button"
             onClick={() => {
@@ -238,7 +240,7 @@ export function FileWorkspacePanel({
             {editing || previewMode === 'source'
               ? t('workbench.workspace_file_preview')
               : t('workbench.workspace_file_source')}
-          </button>
+          </ControlButton>
         )}
         {canEditPreview && saving && (
           <span
@@ -249,7 +251,8 @@ export function FileWorkspacePanel({
             {t('workbench.workspace_file_saving')}
           </span>
         )}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="workspace-file-toggle-tree-button"
           aria-expanded={directoryTreeVisible}
@@ -259,7 +262,7 @@ export function FileWorkspacePanel({
           title={directoryTreeToggleLabel}
         >
           <Folders className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </WorkspaceFileToolbar>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
@@ -318,7 +321,8 @@ export function FileWorkspacePanel({
         >
           <span>{saveError}</span>
           {saveError.toLowerCase().includes('changed on disk') && selectedFilePath && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-file-conflict-reload-button"
               className="shrink-0 underline"
@@ -327,10 +331,11 @@ export function FileWorkspacePanel({
               }}
             >
               {t('workbench.workspace_file_reload')}
-            </button>
+            </ControlButton>
           )}
           {!saveError.toLowerCase().includes('changed on disk') && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-file-save-retry-button"
               className="shrink-0 underline"
@@ -340,7 +345,7 @@ export function FileWorkspacePanel({
               }}
             >
               {t('workbench.workspace_file_retry')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}

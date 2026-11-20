@@ -1,0 +1,176 @@
+diff --git a/dist/components/scroll-area/scroll-area-pointer.js b/dist/components/scroll-area/scroll-area-pointer.js
+index 03d865a..5af36e9 100644
+--- a/dist/components/scroll-area/scroll-area-pointer.js
++++ b/dist/components/scroll-area/scroll-area-pointer.js
+@@ -5,7 +5,6 @@ import {
+ } from "../../foundation/drag-and-drop/pointer.js";
+ import { on } from "../../foundation/kernel/events.js";
+ import {
+-  draggedPosition,
+   edgeTolerance,
+   maxScroll,
+   pageDirection,
+@@ -19,6 +18,7 @@ function createScrollbarInput(host) {
+   const thumbs = /* @__PURE__ */ new Map();
+   const drags = createDragSession();
+   let holder;
++  let syncDrag;
+   const endPress = (el) => {
+     if (holder !== el) {
+       return;
+@@ -75,8 +75,9 @@ function createScrollbarInput(host) {
+       if (axis === "x") {
+         host.readDirection();
+       }
++      const offset = thumbGeometry(host.metrics[axis], host.track[axis]).offset;
+       host.measure();
+-      drag(el, event, axis, host.metrics[axis].position);
++      drag(el, event, axis, host.metrics[axis].position, offset);
+     });
+     return () => {
+       off();
+@@ -86,9 +87,26 @@ function createScrollbarInput(host) {
+       }
+     };
+   }
+-  function drag(el, down, axis, start) {
++  function drag(el, down, axis, start, offset) {
+     const from = axis === "y" ? down.clientY : down.clientX;
+     const scale = scaleOf(el, axis);
++    let thumbOffset;
++    let lastScroll;
++    let lastClient;
++    let lastTrack;
++    const positionThumb = (moved = false) => {
++      if (thumbOffset === void 0) return;
++      const metrics = host.metrics[axis];
++      const track = host.track[axis];
++      if (!moved && lastScroll === metrics.scroll && lastClient === metrics.client && lastTrack === track) return;
++      lastScroll = metrics.scroll;
++      lastClient = metrics.client;
++      lastTrack = track;
++      const { size } = thumbGeometry(metrics, track);
++      // positionAt centers the thumb on the given point. Keep the original grab offset.
++      host.scrollTo(axis, positionAt(thumbOffset + size / 2, metrics, track));
++    };
++    syncDrag = positionThumb;
+     const restoreSnap = suspendSnap(host.viewport());
+     host.stopEasing();
+     host.setDragging(axis);
+@@ -98,14 +116,14 @@ function createScrollbarInput(host) {
+       onMove: (sample) => {
+         const distance = ((axis === "y" ? sample.y : sample.x) - from) / scale;
+         const delta = axis === "x" && host.rtl() ? -distance : distance;
+-        host.scrollTo(
+-          axis,
+-          draggedPosition(start, delta, host.metrics[axis], host.track[axis])
+-        );
++        thumbOffset = offset + delta;
++        host.measure();
++        positionThumb(true);
+       },
+       // Only Escape puts the content back. It ends with the last move; a lost
+       // pointer or a new press ends with its own event.
+       onEnd: (end, canceled) => {
++        syncDrag = void 0;
+         if (canceled && holder === el && end.type === "pointermove") {
+           host.scrollTo(axis, start);
+         }
+@@ -130,7 +148,8 @@ function createScrollbarInput(host) {
+       host.scrollTo(axis, position);
+       const thumb = thumbs.get(axis);
+       if (thumb) {
+-        drag(thumb, event, axis, position);
++        const offset = thumbGeometry({ ...host.metrics[axis], position }, host.track[axis]).offset;
++        drag(thumb, event, axis, position, offset);
+       }
+       return;
+     }
+@@ -168,7 +187,7 @@ function createScrollbarInput(host) {
+       }
+     });
+   }
+-  return { forwardWheel, bindThumb, pressTrack, endPress };
++  return { forwardWheel, bindThumb, pressTrack, endPress, syncDrag: () => syncDrag?.() };
+ }
+ function suspendSnap(el) {
+   const saved = el.style.scrollSnapType;
+@@ -192,8 +211,16 @@ function trackPoint(el, axis, event) {
+ }
+ function scaleOf(el, axis) {
+   const rect = el.getBoundingClientRect();
+-  const layout = axis === "y" ? el.offsetHeight : el.offsetWidth;
+-  const screen = axis === "y" ? rect.height : rect.width;
++  const style = getComputedStyle(el);
++  const px = (property) => Number.parseFloat(style[property]) || 0;
++  const vertical = axis === "y";
++  let layout = px(vertical ? "height" : "width");
++  if (style.boxSizing !== "border-box") {
++    layout += vertical
++      ? px("paddingTop") + px("paddingBottom") + px("borderTopWidth") + px("borderBottomWidth")
++      : px("paddingLeft") + px("paddingRight") + px("borderLeftWidth") + px("borderRightWidth");
++  }
++  const screen = vertical ? rect.height : rect.width;
+   return layout > 0 && screen > 0 ? screen / layout : 1;
+ }
+ export {
+diff --git a/dist/components/scroll-area/scroll-area-view.js b/dist/components/scroll-area/scroll-area-view.js
+index 1b9e92c..99fbcc3 100644
+--- a/dist/components/scroll-area/scroll-area-view.js
++++ b/dist/components/scroll-area/scroll-area-view.js
+@@ -118,6 +118,7 @@ function createScrollView(store) {
+       return;
+     }
+     measure();
++    input.syncDrag();
+     if (resized) {
+       follow();
+     }
+@@ -181,6 +182,11 @@ function createScrollView(store) {
+       if (scrollbar.axis !== axis) {
+         continue;
+       }
++      if (scrollbar.el.getAttribute("role") === "scrollbar") {
++        const max = maxScroll(metrics[axis]);
++        scrollbar.el.setAttribute("aria-valuemax", String(Math.round(max)));
++        scrollbar.el.setAttribute("aria-valuenow", String(Math.round(Math.max(0, Math.min(max, metrics[axis].position)))));
++      }
+       write(scrollbar.el, names[axis].thumbSize, geometry.size);
+       write(
+         scrollbar.el,
+@@ -270,6 +276,15 @@ function createScrollView(store) {
+     } else {
+       viewport.scrollTo({ left: rtl ? -position : position, behavior });
+     }
++    // Keep the grabbed thumb under the pointer before the deferred scroll update.
++    if (behavior === "instant" && store.get().dragging === axis) {
++      const previousPosition = metrics[axis].position;
++      metrics[axis].position = axis === "y" ? viewport.scrollTop : rtl ? -viewport.scrollLeft : viewport.scrollLeft;
++      writeThumb(axis);
++      if (axis === "y" && metrics[axis].position !== previousPosition) {
++        viewport.dispatchEvent(new Event("ui-sdk:scrollbar-drag-position"));
++      }
++    }
+   }
+   function release() {
+     stopEasing();
+diff --git a/dist/foundation/platform/layers.js b/dist/foundation/platform/layers.js
+--- a/dist/foundation/platform/layers.js
++++ b/dist/foundation/platform/layers.js
+@@ -316,7 +316,15 @@ function escapeTop(doc, event, from) {
+   if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) {
+     return;
+   }
+-  const top = active().filter((layer) => documentOf(layer) === doc).at(-1);
++  const layers = active().filter((layer) => documentOf(layer) === doc);
++  const modal = layers.findLast((layer) => layer.blocking);
++  const target = event.composedPath()[0];
++  // Background tooltips cannot take Escape from a focused modal or its menus.
++  const top = modal && target && insideTree(modal, target, event)
++    ? layers.findLast((layer) => layer.component !== "tooltip" || (
++        layer.el && insideTree(modal, layer.el, event)
++      ))
++    : layers.at(-1);
+   if (!top?.onEscape || from && top !== from) {
+     return;
+   }

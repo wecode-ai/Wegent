@@ -101,11 +101,16 @@ def list_issue_comments(
         and message.content
         and message.metadata.get("execution_dispatch") != "comment_only"
     }
-    published = _published_activity_content(db, project_id, item_id, activity_ids)
+    published, started = _published_activity_content(
+        db, project_id, item_id, activity_ids
+    )
     comments = []
     for message in messages:
         comment = _comment_view(message)
-        if (message.message_id, message.content) in published:
+        if (
+            message.message_id in started
+            or (message.message_id, message.content) in published
+        ):
             comment["body"] = ""
         comments.append(comment)
     return comments
@@ -113,15 +118,16 @@ def list_issue_comments(
 
 def _published_activity_content(
     db: Session, project_id: str, item_id: str, activity_ids: set[str]
-) -> set[tuple[str, str]]:
+) -> tuple[set[tuple[str, str]], set[str]]:
     if not activity_ids:
-        return set()
+        return set(), set()
     source = ProjectChatMessage.metadata_json[
         "collaboration_execution_activity_id"
     ].as_string()
-    return {
-        (activity_id, content)
-        for activity_id, content in db.query(source, ProjectChatMessage.content).filter(
+    is_start = ProjectChatMessage.metadata_json["collaboration_turn_start"].as_boolean()
+    rows = (
+        db.query(source, ProjectChatMessage.content, is_start)
+        .filter(
             ProjectChatMessage.project_id == project_id,
             ProjectChatMessage.task_id == item_id,
             ProjectChatMessage.sender_type == "agent",
@@ -131,7 +137,12 @@ def _published_activity_content(
             .is_(True),
             source.in_(activity_ids),
         )
-    }
+        .all()
+    )
+    return (
+        {(activity_id, content) for activity_id, content, _ in rows},
+        {activity_id for activity_id, _, start in rows if start},
+    )
 
 
 def add_issue_comment(

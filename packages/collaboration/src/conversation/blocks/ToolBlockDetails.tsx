@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../../markdown/Button'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
@@ -154,7 +155,8 @@ function ConnectionEventProviderDetail({
     <div className="min-w-0 space-y-2 pl-5 text-sm text-text-secondary">
       <div className="flex flex-wrap items-center gap-x-3">
         <span>{t('tool_activity.event_provider_summary', { total: providers.length, ready })}</span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           aria-expanded={expanded}
           className="min-h-11 rounded text-text-secondary hover:text-text-primary hover:underline keyboard:focus-visible:outline keyboard:focus-visible:outline-2 md:min-h-7"
@@ -162,7 +164,7 @@ function ConnectionEventProviderDetail({
           onClick={() => setExpanded(value => !value)}
         >
           {t(expanded ? 'tool_activity.hide_full_result' : 'tool_activity.show_full_result')}
-        </button>
+        </ControlButton>
       </div>
       {expanded && (
         <ToolDetailSection
@@ -366,7 +368,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
     <div className="min-w-0 overflow-x-hidden rounded-lg bg-code-bg px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs text-text-muted">Shell</span>
-        <button
+        <ControlButton variant="unstyled"
           type="button"
           onClick={handleCopy}
           className="p-0.5 text-text-muted hover:text-text-secondary"
@@ -396,7 +398,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
               />
             </svg>
           )}
-        </button>
+        </ControlButton>
       </div>
       {displayCommand && (
         <div className="overflow-x-auto font-mono text-xs leading-5 text-text-primary">

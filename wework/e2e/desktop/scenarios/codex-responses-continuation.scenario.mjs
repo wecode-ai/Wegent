@@ -154,9 +154,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       const openModels = () =>
         control.command('navigate', 'body', { value: '/settings/personal/models' })
       const waitForTransport = selector =>
-        control.command('waitFor', `${selector}[aria-pressed="true"]:not(:disabled)`, {
-          timeoutMs: uiTimeoutMs,
-        })
+        control.command(
+          'waitFor',
+          `${selector}[role="radio"][aria-checked="true"]:not(:disabled):not([aria-disabled="true"])`,
+          {
+            timeoutMs: uiTimeoutMs,
+          }
+        )
       await openModels()
       await waitForTransport(httpOption)
       await control.command('clickWhenEnabled', webSocketOption)

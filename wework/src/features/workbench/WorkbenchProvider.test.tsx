@@ -9015,11 +9015,22 @@ describe('WorkbenchProvider runtime tasks', () => {
         expect(screen.getByTestId('saved-default-result')).not.toHaveTextContent('saving')
       )
       expect(screen.getByTestId('saved-default-model')).toHaveTextContent('global-model')
-      await userEvent.click(screen.getByTestId('quick-phrase-button'))
+      const openQuickPhrases = async () => {
+        await userEvent.click(screen.getByTestId('quick-phrase-button'))
+        const search = await screen.findByTestId('quick-phrase-search-input')
+        await waitFor(() => expect(search).toHaveFocus())
+      }
+      const closeQuickPhrases = async () => {
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() =>
+          expect(screen.queryByTestId('quick-phrase-menu')).not.toBeInTheDocument()
+        )
+      }
+      await openQuickPhrases()
       expect(
         screen.queryByTestId('project-quick-phrase-option-project-review')
       ).not.toBeInTheDocument()
-      await userEvent.keyboard('{Escape}')
+      await closeQuickPhrases()
       expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
       if (ambiguousExclusion) {
         expect(screen.getByTestId('saved-default-project-ids')).toHaveTextContent('8:removed-key')
@@ -9056,11 +9067,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('saved-default-source')).toHaveTextContent(
         source === 'legacy_root' ? 'local_project' : 'remote_project'
       )
-      await userEvent.click(screen.getByTestId('quick-phrase-button'))
+      await openQuickPhrases()
       expect(
         await screen.findByTestId('project-quick-phrase-option-project-review')
       ).toHaveTextContent('Review saved project')
-      await userEvent.keyboard('{Escape}')
+      await closeQuickPhrases()
       expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenLastCalledWith(
         expect.objectContaining({ deviceId: 'owner-socket' })
       )
@@ -9095,7 +9106,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       await waitFor(() =>
         expect(screen.getByTestId('saved-default-model')).toHaveTextContent('project-model')
       )
-      await userEvent.click(screen.getByTestId('quick-phrase-button'))
+      await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+      await openQuickPhrases()
       expect(
         await screen.findByTestId('project-quick-phrase-option-project-review')
       ).toHaveTextContent('Review saved project')

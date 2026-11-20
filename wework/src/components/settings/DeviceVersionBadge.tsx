@@ -1,7 +1,8 @@
-import { ArrowUpCircle } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/devices'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpCircle } from 'lucide-react'
 
 function formatDeviceVersion(version?: string | null): string {
   if (!version) return '-'
@@ -37,7 +38,8 @@ export function DeviceVersionBadge({
           side="bottom"
           testId={`connection-upgrade-tooltip-${device.device_id}`}
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`connection-upgrade-badge-${device.device_id}`}
             aria-label={updateLabel}
@@ -47,7 +49,7 @@ export function DeviceVersionBadge({
           >
             <ArrowUpCircle className="h-3 w-3" aria-hidden="true" />
             {t('workbench.connection_update_available')}
-          </button>
+          </ControlButton>
         </Tooltip>
       ) : null}
     </div>

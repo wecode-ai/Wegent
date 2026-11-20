@@ -1,3 +1,6 @@
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { TextField } from '@wegent/collaboration/controls/TextField'
+import { Textarea } from '@wegent/collaboration/controls/Textarea'
 import { type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -81,15 +84,14 @@ export function PluginPublicationRiskStep({
               {t('workbench.plugins_publication_risk_network_hint', '访问企业外部服务或域名')}
             </span>
           </span>
-          <input
-            type="checkbox"
+          <Checkbox
             checked={riskDeclaration.externalNetworkAccess}
             data-testid="plugin-publication-risk-network"
-            className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-            onChange={event =>
+            className="mt-1"
+            onCheckedChange={checked =>
               setRiskDeclaration(current => ({
                 ...current,
-                externalNetworkAccess: event.target.checked,
+                externalNetworkAccess: checked === true,
               }))
             }
           />
@@ -99,10 +101,10 @@ export function PluginPublicationRiskStep({
             <span className="text-xs font-medium text-text-secondary">
               {t('workbench.plugins_publication_external_domains', '外部域名')}
             </span>
-            <input
+            <TextField
               value={domainsText}
               data-testid="plugin-publication-external-domains"
-              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+              className="mt-2 w-full"
               placeholder="api.example.com"
               onChange={event => setDomainsText(event.target.value)}
             />
@@ -126,15 +128,14 @@ export function PluginPublicationRiskStep({
                     {t('workbench.plugins_publication_risk_' + row.key + '_hint', row.hint)}
                   </span>
                 </span>
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={riskDeclaration[row.key]}
                   data-testid={testId}
-                  className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                  onChange={event =>
+                  className="mt-1"
+                  onCheckedChange={checked =>
                     setRiskDeclaration(current => ({
                       ...current,
-                      [row.key]: event.target.checked,
+                      [row.key]: checked,
                     }))
                   }
                 />
@@ -144,11 +145,11 @@ export function PluginPublicationRiskStep({
                   <span className="text-xs font-medium text-text-secondary">
                     {t('workbench.plugins_publication_command_examples', '命令或脚本示例')}
                   </span>
-                  <textarea
+                  <Textarea
                     value={commandExamplesText}
                     rows={3}
                     data-testid="plugin-publication-command-examples"
-                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+                    className="mt-2 resize-none"
                     placeholder="node scripts/check.js"
                     onChange={event => setCommandExamplesText(event.target.value)}
                   />
@@ -170,12 +171,11 @@ export function PluginPublicationRiskStep({
                 )}
               </span>
             </span>
-            <input
-              type="checkbox"
+            <Checkbox
               checked={applicationAuthorization}
               data-testid="plugin-publication-risk-application"
-              className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-              onChange={event => setApplicationAuthorization(event.target.checked)}
+              className="mt-1"
+              onCheckedChange={checked => setApplicationAuthorization(checked === true)}
             />
           </label>
           {applicationAuthorization ? (
@@ -183,11 +183,11 @@ export function PluginPublicationRiskStep({
               <span className="text-xs font-medium text-text-secondary">
                 {t('workbench.plugins_publication_application_permissions', '应用与权限列表')}
               </span>
-              <textarea
+              <Textarea
                 value={applicationPermissionsText}
                 rows={3}
                 data-testid="plugin-publication-application-permissions"
-                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+                className="mt-2 resize-none"
                 placeholder="GitLab OAuth: read_api"
                 onChange={event => setApplicationPermissionsText(event.target.value)}
               />
@@ -199,7 +199,7 @@ export function PluginPublicationRiskStep({
         <span className="text-sm font-medium text-text-primary">
           {t('workbench.plugins_publication_test_notes', '测试说明')}
         </span>
-        <textarea
+        <Textarea
           value={testNotes}
           data-testid="plugin-publication-test-notes"
           rows={5}
@@ -239,12 +239,12 @@ export function PluginPublicationRiskStep({
         <span className="text-sm font-medium text-text-primary">
           {t('workbench.plugins_publication_additional_notes', '补充说明')}
         </span>
-        <textarea
+        <Textarea
           value={riskDeclaration.additionalNotes}
           data-testid="plugin-publication-additional-notes"
           rows={3}
           maxLength={2000}
-          className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+          className="resize-none"
           onChange={event =>
             setRiskDeclaration(current => ({
               ...current,

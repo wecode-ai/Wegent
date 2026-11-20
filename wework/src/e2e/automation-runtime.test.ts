@@ -6,11 +6,14 @@ import * as nativeKey from './native-key-acknowledgement'
 import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
+  installWeworkAutomationBridge,
   isWeworkAutomationEnabled,
   runDesktopControlClient,
   seedDesktopE2ELocalModels,
   seedDesktopE2ERuntime,
 } from './automation'
+import { ensureLocalModelCatalogReady } from './local-model-catalog-readiness'
+import * as localExecutor from '@/desktop/localExecutor'
 import {
   clearLocalModelConfigs,
   listLegacyLocalModelConfigs,
@@ -1151,6 +1154,105 @@ describe('Electron desktop E2E automation', () => {
     expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
   })
 
+  test.each(['offline', 'unauthorized', 'pending'])(
+    'prepares the native model snapshot independently of %s cloud identity',
+    async cloudState => {
+      clearLocalModelConfigs()
+      replaceProviderModelConfigs([])
+      installNativeModelOwner()
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+        cloudBackendUrl: 'https://cloud.example.com',
+        modelServerUrl: 'http://127.0.0.1:43111',
+        seedLocalModels: true,
+      }
+      let finishIdentity!: () => void
+      const identity = new Promise<Response>(resolve => {
+        finishIdentity = () => resolve(Response.json({ id: 7, user_name: 'fixture' }))
+      })
+      vi.stubGlobal('fetch', async (url: string) => {
+        if (url.endsWith('/users/me')) {
+          if (cloudState === 'offline') throw new TypeError('Failed to fetch')
+          if (cloudState === 'unauthorized') return new Response('{}', { status: 401 })
+          return identity
+        }
+        return Response.json({ ok: true, result: {} })
+      })
+      seedDesktopE2ELocalModels(
+        window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__,
+        'http://127.0.0.1:43111'
+      )
+      vi.spyOn(localExecutor, 'subscribeLocalExecutorEvents').mockResolvedValue(() => {})
+      const runtimeStatus = {
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        runtimeInstanceId: 'reloaded-runtime',
+      }
+      vi.spyOn(localExecutor, 'ensureLocalExecutorStarted').mockResolvedValue(runtimeStatus)
+      vi.spyOn(localExecutor, 'getLocalExecutorStatus').mockResolvedValue(runtimeStatus)
+      vi.spyOn(localExecutor, 'requestLocalExecutor').mockImplementation(
+        async method =>
+          (method === 'runtime.codex.app_server.restart'
+            ? { restarted: true }
+            : { data: [], models: [] }) as never
+      )
+      let finishStartup!: () => void
+      const startup = new Promise<void>(resolve => {
+        finishStartup = resolve
+      })
+      const bridge = installWeworkAutomationBridge(startup)
+      let bridgeFinished = false
+      const bridgeResult = bridge.then(
+        () => {
+          bridgeFinished = true
+          return null
+        },
+        error => {
+          bridgeFinished = true
+          return error
+        }
+      )
+      let readiness: Promise<unknown> | undefined
+      try {
+        await vi.waitFor(() => expect(window.__WEWORK_E2E__).toBeDefined())
+        vi.useFakeTimers()
+        let preparationFinished = false
+        readiness = ensureLocalModelCatalogReady().then(
+          () => {
+            preparationFinished = true
+            return null
+          },
+          error => error
+        )
+        await vi.advanceTimersByTimeAsync(0)
+        expect(preparationFinished).toBe(false)
+        finishStartup()
+        await vi.waitFor(() => expect(preparationFinished).toBe(true))
+        expect(await readiness).toBeNull()
+        if (cloudState === 'pending') {
+          expect(bridgeFinished).toBe(false)
+        } else {
+          expect((await bridgeResult).message).toContain(
+            cloudState === 'offline' ? 'Failed to fetch' : 'E2E cloud identity returned 401'
+          )
+        }
+
+        expect(listLegacyLocalModelConfigs()).toEqual([])
+        const catalog = listLocalModelConfigs().filter(model => model.catalogEntry)
+        expect(catalog).toHaveLength(4)
+        expect(catalog.every(model => model.catalogReady)).toBe(true)
+      } finally {
+        finishStartup()
+        finishIdentity()
+        await Promise.all([bridgeResult, readiness])
+        vi.useRealTimers()
+        vi.unstubAllEnvs()
+        delete window.__WEWORK_E2E__
+      }
+    }
+  )
+
   test('does not advertise fixture readiness when native ownership cannot be established', async () => {
     vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue({
       providers: [],
@@ -1161,7 +1263,16 @@ describe('Electron desktop E2E automation', () => {
       modelServerUrl: 'http://127.0.0.1:43111',
       seedLocalModels: true,
     }
-    await expect(seedDesktopE2ERuntime()).rejects.toThrow('Native model owner unavailable')
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    try {
+      await expect(installWeworkAutomationBridge()).rejects.toThrow(
+        'Native model owner unavailable'
+      )
+      await expect(ensureLocalModelCatalogReady()).rejects.toThrow('Native model owner unavailable')
+    } finally {
+      vi.unstubAllEnvs()
+      delete window.__WEWORK_E2E__
+    }
   })
 
   test('propagates cloud identity failures after seeding local models', async () => {

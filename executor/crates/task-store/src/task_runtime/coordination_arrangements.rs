@@ -11,9 +11,13 @@ impl LocalTaskStore {
     pub fn unfinished_arrangement_users(&self) -> Result<Vec<i64>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT DISTINCT json_extract(metadata,'$.userId') FROM loop_items
-             WHERE resource_type='stand_in_action' AND json_valid(metadata)
+            "SELECT DISTINCT json_extract(metadata,'$.userId')
+             FROM loop_items INDEXED BY ix_stand_in_live_work
+             WHERE resource_type IN ('stand_in_action','stand_in_event') AND resource_type='stand_in_action'
                AND json_extract(metadata,'$.kind')='run_arrangement'
+               AND CASE WHEN json_valid(metadata)
+                        THEN json_extract(metadata,'$.status') IN ('pending','sending','failed')
+                        ELSE 0 END
                AND json_extract(metadata,'$.status') IN ('pending','sending')",
         )?;
         let users = statement

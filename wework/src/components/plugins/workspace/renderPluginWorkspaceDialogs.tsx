@@ -22,6 +22,7 @@ import {
 import type { PluginsWorkspaceController } from './usePluginsWorkspaceController'
 
 export function renderPluginWorkspaceDialogs({
+  requestDialogs,
   pluginShareState,
   pluginShareSaving,
   pluginShareError,
@@ -181,6 +182,7 @@ export function renderPluginWorkspaceDialogs({
     : null
   const pluginOverlayDialogs = (
     <>
+      {requestDialogs}
       <ConfirmDialog
         open={pendingPluginUpdate !== null}
         title={t('workbench.plugins_update', '更新')}

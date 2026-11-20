@@ -11,6 +11,14 @@ fn is_issue_work(request: &ExecutionRequest) -> bool {
     })
 }
 
+pub(super) fn is_project_collaboration_agent(request: &ExecutionRequest) -> bool {
+    is_issue_work(request)
+        && request.extra.get("origin").is_some_and(|origin| {
+            matches!(origin["dispatchRole"].as_str(), Some("manager" | "member"))
+                && origin["initiatedBy"] != "stand_in"
+        })
+}
+
 pub(super) fn apply_thread_config(params: &mut Map<String, Value>, request: &ExecutionRequest) {
     let config = thread_config(request);
     if config.is_empty() {
@@ -25,10 +33,17 @@ pub(super) fn apply_thread_config(params: &mut Map<String, Value>, request: &Exe
 }
 
 pub(super) fn thread_config(request: &ExecutionRequest) -> Map<String, Value> {
+    let mut config = Map::new();
+    if is_project_collaboration_agent(request) {
+        config.insert(
+            "features.default_mode_request_user_input".into(),
+            json!(false),
+        );
+    }
     if !is_issue_work(request)
         || codex_collaboration_mode(request).is_some_and(|mode| mode.eq_ignore_ascii_case("single"))
     {
-        return Map::new();
+        return config;
     }
     let policy = concat!(
         "In this Wework collaboration Issue, the primary agent delegates substantial ",
@@ -45,14 +60,15 @@ pub(super) fn thread_config(request: &ExecutionRequest) -> Map<String, Value> {
         "Delegation never expands native permissions or bypasses approvals."
     );
     // Native resolves root, mode and spawn-tool guidance independently.
-    let mut config: Map<String, Value> = [
-        "root_agent_usage_hint_text",
-        "multi_agent_mode_hint_text",
-        "usage_hint_text",
-    ]
-    .into_iter()
-    .map(|key| (format!("features.multi_agent_v2.{key}"), json!(policy)))
-    .collect();
+    config.extend(
+        [
+            "root_agent_usage_hint_text",
+            "multi_agent_mode_hint_text",
+            "usage_hint_text",
+        ]
+        .into_iter()
+        .map(|key| (format!("features.multi_agent_v2.{key}"), json!(policy))),
+    );
     config.insert("agents.enabled".into(), json!(true));
     config.insert("features.multi_agent_v2".into(), json!(true));
     config

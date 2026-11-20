@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { useMediaQuery } from '../media-query'
 import { PluginTrialTemplateStrip } from '../composer/PluginTrialTemplateStrip'
@@ -257,14 +258,14 @@ export function BrowserTaskComposer({
         error={error || catalogError}
         action={
           catalogError ? (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               data-testid="task-conversation-models-retry"
               onClick={() => void models.reload()}
               className="ml-2 underline"
             >
               {t('activity.retry')}
-            </button>
+            </ControlButton>
           ) : undefined
         }
       />

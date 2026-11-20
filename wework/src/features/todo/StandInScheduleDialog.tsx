@@ -26,6 +26,7 @@ export function StandInScheduleDialog({
       open
       title={t('todo.automation_edit_title')}
       testId="stand-in-schedule-dialog"
+      finalFocus="none"
       onClose={() => {
         if (editor.current) editor.current.requestLeave(onClose)
         else onClose()

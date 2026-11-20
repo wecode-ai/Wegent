@@ -1,3 +1,4 @@
+import { useDialogRequests } from '../controls/useDialogRequests'
 import { useContext, useState, useSyncExternalStore } from 'react'
 import type { ProjectChatMessage } from '@wegent/chat-core'
 import type { CollaborationAgent, CollaborationIssue, CollaborationProject } from '../types'
@@ -37,6 +38,7 @@ export function BrowserIssueActivityTools({
   onTaskUpdated?(issue: CollaborationIssue): void
   translate: CollaborationTranslate
 }) {
+  const { prompt: requestText, dialogs: requestDialogs } = useDialogRequests((key, fallback) => t(key, fallback))
   const execution = useContext(BrowserIssueExecutionContext)
   const drafts = useContext(BrowserTaskDraftContext)
   const operationScope = `issue:${issue.cloud_project_id}:${issue.id}`
@@ -117,6 +119,7 @@ export function BrowserIssueActivityTools({
   }
   return (
     <>
+      {requestDialogs}
       <IssueActivityTools
         task={issue}
         assignedAgent={agent}
@@ -135,8 +138,8 @@ export function BrowserIssueActivityTools({
             'workbench.task_activity_approve_failed'
           )
         }
-        onReject={() => {
-          const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt'))
+        onReject={async () => {
+          const reason = await requestText(t('workbench.task_activity_reject_reason_prompt'))
           if (reason === null) return
           void perform(
             () =>

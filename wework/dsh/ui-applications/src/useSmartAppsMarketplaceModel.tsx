@@ -1,3 +1,4 @@
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { createMarketplaceOperations } from './marketplaceOperations'
 import { createMarketplacePageSource } from './marketplacePageSource'
 import { useSyncExternalStore } from 'react'
@@ -22,6 +23,9 @@ export function useSmartAppsMarketplaceModel({
   targetSmartAppId = null,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<'all' | 'official' | 'public' | 'shared'>('all')
   const [tag, setTag] = useState('')
@@ -263,6 +267,7 @@ export function useSmartAppsMarketplaceModel({
     mode,
     currentPendingInstall,
     installModelKey,
+    requestConfirmation,
     navigateFromSmartApps,
   })
   const {
@@ -288,6 +293,7 @@ export function useSmartAppsMarketplaceModel({
     deleteLocalInstallation,
   } = operations
   return {
+    requestDialogs,
     api,
     mode,
     onNavigate,

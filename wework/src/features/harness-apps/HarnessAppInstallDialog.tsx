@@ -1,9 +1,18 @@
-import { AlertTriangle, Archive, CheckCircle2, ChevronDown, Loader2, X } from 'lucide-react'
 import type { HarnessAppPreview } from '@/api/local/harnessApps'
 import { Button } from '@/components/ui/button'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
 import { useTranslation } from '@/hooks/useTranslation'
 import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertTriangle, Archive, CheckCircle2, ChevronDown, Loader2, X } from 'lucide-react'
 
 interface HarnessAppInstallDialogProps {
   busy: boolean
@@ -42,13 +51,18 @@ export function HarnessAppInstallDialog({
         if (!busy) onCancel()
       }}
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="harness-app-install-title"
-        data-testid="harness-app-preview"
-        className="plugin-dialog-surface flex max-h-[min(720px,92vh)] w-full max-w-[560px] flex-col overflow-hidden"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={() => {
+          if (!busy) onCancel()
+        }}
+        render={
+          <section
+            aria-labelledby="harness-app-install-title"
+            data-testid="harness-app-preview"
+            className="plugin-dialog-surface flex max-h-[min(720px,92vh)] w-full max-w-[560px] flex-col overflow-hidden"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <header className="plugin-dialog-divider flex items-start justify-between gap-4 border-b px-6 py-5">
           <div className="flex min-w-0 items-start gap-3">
@@ -67,7 +81,8 @@ export function HarnessAppInstallDialog({
               </p>
             </div>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="harness-app-install-close"
             aria-label={t('common.close', '关闭')}
@@ -76,7 +91,7 @@ export function HarnessAppInstallDialog({
             onClick={onCancel}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -141,19 +156,26 @@ export function HarnessAppInstallDialog({
                   )}
                 </span>
                 <span className="relative mt-2 block">
-                  <select
-                    data-testid="harness-app-model-select"
-                    className="h-10 w-full appearance-none rounded-xl border border-border/50 bg-background px-3 pr-10 text-sm text-text-primary outline-none transition-colors keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
-                    value={modelKey}
-                    onChange={event => onModelChange(event.target.value)}
+                  <SelectRoot
+                    value={normalizeSelectValue(modelKey)}
+                    onValueChange={selectedValue => {
+                      if (selectedValue !== null) return onModelChange(selectedValue)
+                    }}
                   >
-                    <option value="">{t('workbench.harness_apps_model_choose')}</option>
-                    {modelOptions.map(option => (
-                      <option key={option.key} value={option.key}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      data-value={modelKey}
+                      data-testid="harness-app-model-select"
+                      className="h-10 w-full appearance-none pr-10 transition-colors"
+                    />
+                    <SelectContent>
+                      <SelectItem value="">{t('workbench.harness_apps_model_choose')}</SelectItem>
+                      {modelOptions.map(option => (
+                        <SelectItem key={option.key} value={String(option.key)}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </SelectRoot>
                   <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-text-muted" />
                 </span>
               </label>
@@ -232,7 +254,7 @@ export function HarnessAppInstallDialog({
             ) : null}
           </div>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

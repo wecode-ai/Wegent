@@ -1,11 +1,10 @@
-import { Check, ChevronDown, Folder, GitBranch, Workflow } from 'lucide-react'
-import { useState } from 'react'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Folder, GitBranch, Workflow } from 'lucide-react'
 
-import { BranchSelector } from '@/components/common/BranchSelector'
 import { WorktreeBranchSelector } from '@/components/chat/composer/WorktreeBranchSelector'
+import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
-import { cn } from '@/lib/utils'
 import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { ProjectWithTasks } from '@/types/api'
 
@@ -35,7 +34,6 @@ interface GitProjectWorkSectionProps {
 
 export default function GitProjectWorkSection({ context }: GitProjectWorkSectionProps) {
   const { t } = useTranslation('common')
-  const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const project = context.project ?? context.currentProject
   const worktreeAvailability =
     context.worktreeAvailability ??
@@ -58,77 +56,66 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
   return (
     <>
       <div className="relative min-w-0 max-w-[10rem] shrink">
-        {modeMenuOpen ? (
-          <div
-            data-testid="project-execution-mode-menu"
-            className="absolute left-0 top-11 z-popover w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-          >
-            {(
-              [
-                ['current_workspace', t('workbench.execution_mode_current_workspace')],
-                ['git_worktree', t('workbench.execution_mode_git_worktree')],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                data-testid={`execution-mode-${mode.replaceAll('_', '-')}-button`}
-                disabled={mode === 'git_worktree' && !worktreeAvailability.available}
-                onClick={() => {
-                  context.onExecutionModeChange(mode)
-                  setModeMenuOpen(false)
-                }}
-                className="flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {mode === 'git_worktree' ? (
-                  <Workflow className="h-4 w-4 shrink-0" />
-                ) : (
-                  <Folder className="h-4 w-4 shrink-0" />
-                )}
-                <span className="min-w-0 flex-1">{label}</span>
-                {context.executionMode === mode ? <Check className="h-4 w-4 shrink-0" /> : null}
-              </button>
-            ))}
-            {!worktreeAvailability.available ? (
-              <p
-                data-testid="execution-mode-worktree-unavailable-reason"
-                className="px-2 pt-1 text-xs leading-4 text-text-muted"
-                role="status"
-              >
-                {t(`workbench.worktree_unavailable_${worktreeAvailability.reason}`)}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
         {context.executionModeLocked ? (
           <div
             data-testid="execution-mode-button"
             role="status"
-            className="flex h-9 items-center gap-2 px-2 text-sm text-text-secondary"
+            className="flex min-h-11 items-center gap-1.5 px-2.5 text-sm text-text-primary md:min-h-7"
           >
             {worktreeSelected ? <Workflow className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
             <span>{modeLabel}</span>
           </div>
         ) : (
-          <button
-            type="button"
-            data-testid="execution-mode-button"
-            disabled={context.executionModeLocked}
-            onClick={() => setModeMenuOpen(open => !open)}
-            className={cn(
-              'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
-              modeMenuOpen && 'bg-background/70 text-text-primary'
-            )}
-            aria-expanded={modeMenuOpen}
-          >
-            {worktreeSelected ? (
-              <Workflow className="h-4 w-4 shrink-0" />
-            ) : (
-              <Folder className="h-4 w-4 shrink-0" />
-            )}
-            <span className="max-w-[8rem] truncate">{modeLabel}</span>
-            <ChevronDown className="h-4 w-4 shrink-0" />
-          </button>
+          <SelectField
+            testId="execution-mode-button"
+            menuTestId="project-execution-mode-menu"
+            appearance="composer"
+            triggerContent={
+              <>
+                {worktreeSelected ? (
+                  <Workflow aria-hidden="true" className="h-4 w-4 shrink-0" />
+                ) : (
+                  <Folder aria-hidden="true" className="h-4 w-4 shrink-0" />
+                )}
+                <span className="min-w-0 truncate">{modeLabel}</span>
+              </>
+            }
+            accessibleLabel={t('workbench.execution_mode_label', '执行方式')}
+            value={worktreeSelected ? 'git_worktree' : 'current_workspace'}
+            onChange={mode => {
+              if (
+                !context.executionModeLocked &&
+                (mode !== 'git_worktree' || worktreeAvailability.available)
+              )
+                context.onExecutionModeChange(mode)
+            }}
+            options={[
+              {
+                value: 'current_workspace',
+                label: t('workbench.execution_mode_current_workspace'),
+                icon: <Folder className="h-4 w-4" />,
+                testId: 'execution-mode-current-workspace-button',
+              },
+              {
+                value: 'git_worktree',
+                label: t('workbench.execution_mode_git_worktree'),
+                icon: <Workflow className="h-4 w-4" />,
+                disabled: !worktreeAvailability.available,
+                testId: 'execution-mode-git-worktree-button',
+              },
+            ]}
+            footer={
+              !worktreeAvailability.available ? (
+                <p
+                  data-testid="execution-mode-worktree-unavailable-reason"
+                  className="px-2 py-1 text-xs text-text-secondary"
+                  role="status"
+                >
+                  {t(`workbench.worktree_unavailable_${worktreeAvailability.reason}`)}
+                </p>
+              ) : undefined
+            }
+          />
         )}
       </div>
       {!context.executionModeLocked &&

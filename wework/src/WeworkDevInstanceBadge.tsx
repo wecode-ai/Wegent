@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   useState,
   useSyncExternalStore,
@@ -78,7 +79,8 @@ export function WeworkDevInstanceBadge() {
       style={position}
       className="group pointer-events-auto fixed bottom-3 right-3 z-critical max-w-[min(460px,calc(100vw-1.5rem))]"
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="wework-dev-instance-trigger"
         onClick={handleTriggerClick}
@@ -96,7 +98,7 @@ export function WeworkDevInstanceBadge() {
         ) : (
           <span className="truncate text-text-primary">{info.title}</span>
         )}
-      </button>
+      </ControlButton>
       <div
         className={cn(
           'pointer-events-none absolute w-[min(460px,calc(100vw-1.5rem))] text-xs opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
@@ -108,7 +110,8 @@ export function WeworkDevInstanceBadge() {
           <div className="mb-1 flex items-center justify-between px-2 py-1">
             <span className="font-medium text-text-primary">Development instance</span>
             {!collapsed && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
                 className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
@@ -117,7 +120,7 @@ export function WeworkDevInstanceBadge() {
                 onClick={() => setCollapsed(true)}
               >
                 <Minimize2 className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             )}
           </div>
           <div className="space-y-1">
@@ -133,7 +136,8 @@ export function WeworkDevInstanceBadge() {
                 >
                   {row.value}
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
                   className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
@@ -146,7 +150,7 @@ export function WeworkDevInstanceBadge() {
                   ) : (
                     <Copy className="h-3.5 w-3.5" />
                   )}
-                </button>
+                </ControlButton>
               </div>
             ))}
           </div>

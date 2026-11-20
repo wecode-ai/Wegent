@@ -1,6 +1,6 @@
 import { ChevronDown } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { IssueDetailSearchableSelect } from '@wegent/collaboration'
+import { SearchableSelect } from '@wegent/collaboration'
 import type { CloudProject } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -17,7 +17,7 @@ export function IssueProjectSelect({
   projects: CloudProject[]
   value: string
   disabled?: boolean
-  className: string
+  className?: string
   placeholder?: string
   triggerPlaceholder?: string
   scopeHint?: ReactNode
@@ -27,11 +27,13 @@ export function IssueProjectSelect({
   const empty = placeholder ?? t('issue_creation.independent_option')
   const selected = projects.find(project => String(project.id) === value)
   return (
-    <IssueDetailSearchableSelect
+    <SearchableSelect
       modal
+      density="compact"
+      appearance="property"
       testId="independent-issue-project"
       accessibleLabel={t('issue_creation.project_label')}
-      className={`${className} flex items-center gap-2 text-left`}
+      className={`${className ?? ''} flex items-center gap-2 text-left`}
       disabled={disabled}
       value={value}
       searchPlaceholder={t('todo.search_projects')}

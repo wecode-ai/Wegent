@@ -1,9 +1,10 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useRef, type ReactNode } from 'react'
 import { ArrowLeft, X } from 'lucide-react'
-import { useEscapeKey } from '../markdown/useEscapeKey'
+import { useRef, type ReactNode } from 'react'
 
 export function TemplateDialog({
   title,
@@ -14,6 +15,7 @@ export function TemplateDialog({
   onClose,
   busy = false,
   embedded = false,
+  kind = 'dialog',
 }: {
   title: string
   description?: string
@@ -23,26 +25,10 @@ export function TemplateDialog({
   onClose(): void
   busy?: boolean
   embedded?: boolean
+  kind?: 'dialog' | 'alertdialog'
 }) {
-  const ref = useRef<HTMLDialogElement>(null)
-  useEscapeKey(
-    () => {
-      if (!busy) onClose()
-    },
-    true,
-    ref
-  )
-  const attachDialog = useCallback((dialog: HTMLDialogElement | null) => {
-    ref.current = dialog
-    if (!dialog) return
-    const previous = document.activeElement
-    dialog.showModal()
-    return () => {
-      dialog.close()
-      ref.current = null
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
-    }
-  }, [])
+  const ref = useRef<HTMLDivElement>(null)
+
   const content = (
     <>
       <header>
@@ -50,7 +36,8 @@ export function TemplateDialog({
           <h2>{title}</h2>
           {description && <p>{description}</p>}
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-template-icon-button"
           aria-label={closeLabel}
@@ -59,7 +46,7 @@ export function TemplateDialog({
           onClick={onClose}
         >
           {embedded ? <ArrowLeft aria-hidden="true" /> : <X aria-hidden="true" />}
-        </button>
+        </ControlButton>
       </header>
       <div className="collaboration-template-dialog-body">{children}</div>
       {footer && <footer>{footer}</footer>}
@@ -74,18 +61,22 @@ export function TemplateDialog({
       {content}
     </section>
   ) : (
-    <dialog
-      ref={attachDialog}
-      className="collaboration-template-dialog"
-      aria-label={title}
-      data-testid="collaboration-template-dialog"
-      onCancel={event => {
-        event.preventDefault()
-        event.stopPropagation()
+    <DialogSurface
+      inline={false}
+      kind={kind}
+      onClose={() => {
         if (!busy) onClose()
       }}
+      render={
+        <div
+          ref={ref}
+          className="collaboration-template-dialog"
+          aria-label={title}
+          data-testid="collaboration-template-dialog"
+        />
+      }
     >
       {content}
-    </dialog>
+    </DialogSurface>
   )
 }

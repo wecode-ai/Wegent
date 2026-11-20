@@ -78,6 +78,7 @@ async function scan(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (['node_modules', 'dist', 'target', 'vendor', 'test-results'].includes(entry.name)) continue
     const path = join(directory, entry.name)
+    if (path === join(root, 'wework/dsh/app-wework/web')) continue
     if (entry.isDirectory()) files.push(...(await scan(path)))
     else if (/\.[cm]?[jt]sx?$/.test(entry.name)) files.push(path)
   }

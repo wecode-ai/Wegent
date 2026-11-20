@@ -1,0 +1,34 @@
+/* Native HTML controls for surfaces that must render before the app runtime. */
+.offline-action {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 6px 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font: inherit;
+  font-size: var(--text-sm, 13px);
+  font-weight: var(--font-weight-ui, 445);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.offline-action:focus-visible {
+  outline: 2px solid rgb(var(--color-focus, 37 99 235));
+  outline-offset: 2px;
+}
+
+:root[data-theme='dark'] .offline-action:focus-visible {
+  outline-color: rgb(var(--color-focus, 51 156 255));
+}
+
+.offline-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+@media (max-width: 767px) {
+  .offline-action {
+    min-height: 44px;
+  }
+}

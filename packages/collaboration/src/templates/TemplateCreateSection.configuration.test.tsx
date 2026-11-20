@@ -1,3 +1,4 @@
+import { sdkSelectValue } from '../test/selectControl'
 // @vitest-environment jsdom
 import { act, useState, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -143,29 +144,20 @@ it('shows template details inline and returns to the catalog without another dia
 it('keeps an incomplete configuration editable after returning to the project', async () => {
   await act(async () => root.render(<Harness initial />))
   await click('project-create-configure-template')
-  const disclosure = target.querySelector<HTMLDetailsElement>('details')!
-  expect(disclosure.open).toBe(false)
+  const disclosure = target.querySelector<HTMLElement>('[data-testid^="template-customize-"]')!
+  expect(disclosure.getAttribute('aria-expanded')).toBe('false')
   await act(async () => {
-    disclosure.open = true
-    disclosure.dispatchEvent(new Event('toggle'))
+    disclosure.click()
   })
-  const select = target.querySelector<HTMLSelectElement>(
-    '[data-testid="template-role-main-role-0"]'
-  )!
-  const original = select.value
-  await act(async () => {
-    select.value = ''
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  const select = target.querySelector<HTMLElement>('[data-testid="template-role-main-role-0"]')!
+  const original = await sdkSelectValue(select)
+  await sdkSelectValue(select, '')
   expect(button('project-create-template-configuration-apply').disabled).toBe(true)
   await click('collaboration-project-create-configuration-back')
   expect(container.textContent).toContain('Some roles need members.')
   await click('project-create-configure-template')
-  expect(select.value).toBe('')
-  await act(async () => {
-    select.value = original
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  expect(await sdkSelectValue(select)).toBe('')
+  await sdkSelectValue(select, original)
   expect(button('project-create-template-configuration-apply').disabled).toBe(false)
   await click('project-create-template-configuration-apply')
   expect(document.activeElement).toBe(button('project-create-configure-template'))

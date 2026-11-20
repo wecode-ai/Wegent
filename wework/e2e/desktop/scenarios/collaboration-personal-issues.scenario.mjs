@@ -191,7 +191,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: 'Discuss a company-wide improvement without creating a project.',
       })
       await wait(control, '[data-testid="independent-issue-search-people"]', { visible: true })
-      await wait(control, 'details:not([open]) > [data-testid="independent-issue-options"]')
+      await wait(control, '[data-testid="independent-issue-options"][aria-expanded="false"]')
       // User story: runtime setup is available without blocking a draft or starting work.
       await click(control, 'independent-issue-execution-settings')
       await control.command('waitFor', '[data-testid="settings-default-runner"]', { visible: true })
@@ -444,7 +444,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await verifyIssueDeviceLayout(control, appDevice.id)
       await captureScreenshot(control, 'new-issue-project-devices.png')
-      await click(control, 'issue-environment-picker-trigger')
+      await control.command('nativePress', '[data-testid="issue-environment-picker"]', {
+        key: 'Escape',
+      })
+      await wait(control, '[data-testid="issue-environment-picker"]', { visible: false })
       assert.equal(
         await control.command('getValue', '[data-testid="independent-issue-title"]'),
         `Project selection ${process.pid}`,

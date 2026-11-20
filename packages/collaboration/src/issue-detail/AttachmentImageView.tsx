@@ -1,9 +1,11 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
-import { useIntersectionEvent, useWindowEvent } from '../dom-events'
+import { useFocusRequest, useIntersectionEvent, useWindowEvent } from '../dom-events'
 import { useCollaborationPortalTheme } from '../theme'
 import {
   useCallback,
@@ -236,6 +238,12 @@ function AttachmentImageContent<T extends ImageAttachment>({
     },
     { enabled: isLightboxOpen && !disableLightbox }
   )
+  const lightboxRef = useRef<HTMLDivElement>(null)
+  useFocusRequest(lightboxRef, undefined, {
+    enabled: isLightboxOpen && !disableLightbox,
+    selector: '[data-testid="attachment-image-lightbox-close"]',
+    restoreFocus: true,
+  })
   const openLightbox = () => {
     setLightboxIndex(clampIndex(galleryIndex, gallery.length))
     setLightboxFailed(false)
@@ -267,11 +275,14 @@ function AttachmentImageContent<T extends ImageAttachment>({
     const lightbox =
       !disableLightbox && isLightboxOpen && typeof document !== 'undefined'
         ? createPortal(
+            <DialogSurface
+              onClose={() => setIsLightboxOpen(false)}
+              initialFocus='[data-testid="attachment-image-lightbox-close"]'
+              render={
             <div
               {...portalTheme}
+              ref={lightboxRef}
               data-testid="attachment-image-lightbox"
-              role="dialog"
-              aria-modal="true"
               aria-label={currentLightboxAttachment.filename}
               className={`${portalTheme.className} fixed inset-0 z-modal flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black/90 p-0`}
               onClick={() => setIsLightboxOpen(false)}
@@ -279,9 +290,11 @@ function AttachmentImageContent<T extends ImageAttachment>({
                 event.stopPropagation()
                 setZoom(current => clampZoom(current + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)))
               }}
+            />
+              }
             >
               <div className="absolute right-4 top-4 z-20 flex items-center gap-2.5">
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-download"
                   className="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-50"
@@ -302,8 +315,8 @@ function AttachmentImageContent<T extends ImageAttachment>({
                   aria-label="Download image"
                 >
                   <Download className="h-5 w-5" />
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-lightbox-close"
                   className="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
@@ -314,11 +327,11 @@ function AttachmentImageContent<T extends ImageAttachment>({
                   aria-label="Close image preview"
                 >
                   <X className="h-5 w-5" />
-                </button>
+                </ControlButton>
               </div>
               {canNavigateLightbox && (
                 <>
-                  <button
+                  <ControlButton variant="unstyled"
                     type="button"
                     data-testid="attachment-image-previous"
                     className="absolute left-5 top-1/2 z-20 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
@@ -329,8 +342,8 @@ function AttachmentImageContent<T extends ImageAttachment>({
                     aria-label="Previous image"
                   >
                     <ChevronLeft className="h-7 w-7" />
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton variant="unstyled"
                     type="button"
                     data-testid="attachment-image-next"
                     className="absolute right-5 top-1/2 z-20 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
@@ -341,7 +354,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
                     aria-label="Next image"
                   >
                     <ChevronRight className="h-7 w-7" />
-                  </button>
+                  </ControlButton>
                 </>
               )}
               <div
@@ -349,7 +362,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
                 className="absolute bottom-6 left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-2.5 rounded-full bg-white/15 px-1.5 text-white shadow-[0_12px_36px_rgba(0,0,0,0.35)]"
                 onClick={event => event.stopPropagation()}
               >
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-zoom-out"
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
@@ -358,14 +371,14 @@ function AttachmentImageContent<T extends ImageAttachment>({
                   aria-label="Zoom out"
                 >
                   <Minus className="h-[18px] w-[18px]" />
-                </button>
+                </ControlButton>
                 <span
                   data-testid="attachment-image-zoom-value"
                   className="min-w-14 select-none text-center text-base font-medium tabular-nums text-white"
                 >
                   {Math.round(zoom * 100)}%
                 </span>
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-zoom-in"
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
@@ -374,7 +387,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
                   aria-label="Zoom in"
                 >
                   <Plus className="h-[18px] w-[18px]" />
-                </button>
+                </ControlButton>
               </div>
               {lightboxUrl ? (
                 <img
@@ -405,7 +418,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
                   )}
                 </div>
               )}
-            </div>,
+            </DialogSurface>,
             document.body
           )
         : null
@@ -435,7 +448,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
 
     return (
       <>
-        <button
+        <ControlButton variant="unstyled"
           ref={setPreviewContainerRef}
           type="button"
           data-testid={buttonTestId}
@@ -454,7 +467,7 @@ function AttachmentImageContent<T extends ImageAttachment>({
             className={imageClassName}
             onError={handlePreviewError}
           />
-        </button>
+        </ControlButton>
         {lightbox}
       </>
     )

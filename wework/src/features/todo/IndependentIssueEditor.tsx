@@ -1,9 +1,24 @@
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
 import { useCallback, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { createIndependentIssueDraft } from './independentIssueDraft'
-import { ChevronRight, Folder } from 'lucide-react'
+import { Folder } from 'lucide-react'
 import { type SharedWorkspaceApi } from '@wegent/collaboration'
 import { usePanelData } from '@wegent/collaboration/platform'
 import { DialogForm } from '@/components/common/DialogForm'
@@ -201,14 +216,15 @@ export function IndependentIssueEditor({
           {projectError !== undefined && (
             <p role="alert" className="text-sm text-destructive">
               {t('issue_creation.projects_load_failed')}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="issue-project-retry"
                 className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
                 onClick={() => void refreshProjects()}
               >
                 {t('independentIssues.retry')}
-              </button>
+              </ControlButton>
             </p>
           )}
         </div>
@@ -241,7 +257,8 @@ export function IndependentIssueEditor({
       {!issue &&
         titleSlot &&
         createPortal(
-          <input
+          <ControlInput
+            appearance="plain"
             form={formId}
             required
             maxLength={255}
@@ -288,7 +305,7 @@ export function IndependentIssueEditor({
             {issue && (
               <label className="grid gap-1">
                 <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
-                <input
+                <ControlInput
                   required
                   maxLength={255}
                   data-testid="independent-issue-title"
@@ -334,7 +351,7 @@ export function IndependentIssueEditor({
             )}
             <label className="grid gap-1">
               <span className="text-sm text-text-secondary">{t('taskIssueShare.todo')}</span>
-              <textarea
+              <ControlTextarea
                 data-testid="independent-issue-description"
                 aria-label={t('taskIssueShare.todo')}
                 placeholder={t('taskIssueShare.todoPlaceholder')}
@@ -344,115 +361,136 @@ export function IndependentIssueEditor({
                 className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
               />
             </label>
-            <details className="group min-w-0">
-              <summary
+            <CollapsibleRoot className="group min-w-0">
+              <CollapsibleTrigger
                 data-testid="independent-issue-options"
                 className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
               >
-                <ChevronRight className="h-4 w-4 group-open:rotate-90" aria-hidden="true" />
                 {t('taskIssueShare.issueOptions')}
-              </summary>
-              <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
-                {field(
-                  t('independentIssues.status'),
-                  projectId && statuses.length ? (
-                    <select
-                      data-testid="independent-issue-project-status"
-                      className={control}
-                      value={projectStatus}
-                      onChange={event => setProjectStatus(event.target.value)}
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+                  {field(
+                    t('independentIssues.status'),
+                    projectId && statuses.length ? (
+                      <SelectRoot
+                        value={normalizeSelectValue(projectStatus)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue !== null) return setProjectStatus(selectedValue)
+                        }}
+                      >
+                        <SelectTrigger
+                          density="compact"
+                          aria-label={t('independentIssues.status')}
+                          data-testid="independent-issue-project-status"
+                          className="w-full"
+                        />
+                        <SelectContent>
+                          {statuses.map(status => (
+                            <SelectItem key={status.id} value={String(status.id)}>
+                              {status.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </SelectRoot>
+                    ) : (
+                      <SelectRoot
+                        value={normalizeSelectValue(draft.status)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue !== null)
+                            return set('status', selectedValue as IndependentIssue['status'])
+                        }}
+                      >
+                        <SelectTrigger
+                          density="compact"
+                          aria-label={t('independentIssues.status')}
+                          data-testid="independent-issue-status"
+                          className="w-full"
+                        />
+                        <SelectContent>
+                          {(['pending', 'in_progress', 'completed'] as const).map(status => (
+                            <SelectItem key={status} value={String(status)}>
+                              {t(`independentIssues.${status}`)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </SelectRoot>
+                    )
+                  )}
+                  {field(
+                    t('independentIssues.priority'),
+                    <SelectRoot
+                      value={normalizeSelectValue(draft.priority)}
+                      onValueChange={selectedValue => {
+                        if (selectedValue !== null)
+                          return set('priority', selectedValue as IndependentIssue['priority'])
+                      }}
                     >
-                      {statuses.map(status => (
-                        <option key={status.id} value={status.id}>
-                          {status.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <select
-                      data-testid="independent-issue-status"
+                      <SelectTrigger
+                        density="compact"
+                        aria-label={t('independentIssues.priority')}
+                        data-testid="independent-issue-priority"
+                        className="w-full"
+                      />
+                      <SelectContent>
+                        {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
+                          <SelectItem key={priority} value={String(priority)}>
+                            {t(`independentIssues.${priority}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectRoot>
+                  )}
+                  {field(
+                    t('independentIssues.due'),
+                    <ControlInput
+                      type="date"
+                      data-testid="independent-issue-due"
                       className={control}
-                      value={draft.status}
-                      onChange={event =>
-                        set('status', event.target.value as IndependentIssue['status'])
-                      }
-                    >
-                      {(['pending', 'in_progress', 'completed'] as const).map(status => (
-                        <option key={status} value={status}>
-                          {t(`independentIssues.${status}`)}
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
-                {field(
-                  t('independentIssues.priority'),
-                  <select
-                    data-testid="independent-issue-priority"
-                    className={control}
-                    value={draft.priority}
-                    onChange={event =>
-                      set('priority', event.target.value as IndependentIssue['priority'])
-                    }
-                  >
-                    {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
-                      <option key={priority} value={priority}>
-                        {t(`independentIssues.${priority}`)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                {field(
-                  t('independentIssues.due'),
-                  <input
-                    type="date"
-                    data-testid="independent-issue-due"
-                    className={control}
-                    value={draft.due_at ?? ''}
-                    onChange={event => set('due_at', event.target.value || null)}
-                  />
-                )}
-              </div>
-            </details>
+                      value={draft.due_at ?? ''}
+                      onChange={event => set('due_at', event.target.value || null)}
+                    />
+                  )}
+                </div>
+              </CollapsiblePanel>
+            </CollapsibleRoot>
             {!shareDraft && (
-              <details className="group min-w-0 border-t border-border pt-2">
-                <summary
+              <CollapsibleRoot className="group min-w-0 border-t border-border pt-2">
+                <CollapsibleTrigger
                   data-testid="independent-issue-execution-settings"
                   className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
                 >
-                  <ChevronRight
-                    className="h-4 w-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
-                    aria-hidden="true"
-                  />
                   {t('issue_creation.runtime_label')}
-                </summary>
-                <div className="grid min-w-0 gap-2 pt-2">
-                  <span className="text-sm text-text-secondary">
-                    {t(
-                      projectId
-                        ? 'issue_creation.project_device_settings'
-                        : 'workbench.runner_personal_default'
+                </CollapsibleTrigger>
+                <CollapsiblePanel>
+                  <div className="grid min-w-0 gap-2 pt-2">
+                    <span className="text-sm text-text-secondary">
+                      {t(
+                        projectId
+                          ? 'issue_creation.project_device_settings'
+                          : 'workbench.runner_personal_default'
+                      )}
+                    </span>
+                    {projectId && collaborationApi ? (
+                      <IssueProjectEnvironmentPicker
+                        key={projectId}
+                        api={collaborationApi}
+                        projectId={projectId}
+                        disabled={busy}
+                      />
+                    ) : (
+                      <DefaultRunnerSetting compact confirmChanges />
                     )}
-                  </span>
-                  {projectId && collaborationApi ? (
-                    <IssueProjectEnvironmentPicker
-                      key={projectId}
-                      api={collaborationApi}
-                      projectId={projectId}
-                      disabled={busy}
-                    />
-                  ) : (
-                    <DefaultRunnerSetting compact confirmChanges />
-                  )}
-                  <p className="text-xs text-text-secondary">
-                    {t(
-                      projectId
-                        ? 'issue_creation.project_device_settings_hint'
-                        : 'issue_creation.personal_runner_hint'
-                    )}
-                  </p>
-                </div>
-              </details>
+                    <p className="text-xs text-text-secondary">
+                      {t(
+                        projectId
+                          ? 'issue_creation.project_device_settings_hint'
+                          : 'issue_creation.personal_runner_hint'
+                      )}
+                    </p>
+                  </div>
+                </CollapsiblePanel>
+              </CollapsibleRoot>
             )}
           </div>
         </fieldset>
@@ -462,7 +500,8 @@ export function IndependentIssueEditor({
         className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-border bg-popover px-5 py-4"
       >
         <div className="flex shrink-0 gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={busy}
             data-testid="independent-issue-editor-cancel"
@@ -470,8 +509,9 @@ export function IndependentIssueEditor({
             className="min-h-11 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
           >
             {t('independentIssues.cancel')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="submit"
             disabled={
               busy ||
@@ -492,7 +532,7 @@ export function IndependentIssueEditor({
                     ? 'independentIssues.save'
                     : 'issue_creation.create_issue'
             )}
-          </button>
+          </ControlButton>
         </div>
       </div>
     </DialogForm>

@@ -1,3 +1,6 @@
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useSyncExternalStore } from 'react'
 import {
   createAsyncResource,
@@ -64,7 +67,7 @@ export function TargetPicker({
     <div>
       <label className="relative block">
         <Search className="absolute left-3 top-3 h-4 w-4 text-text-muted" />
-        <input
+        <ControlInput
           data-testid="smart-app-target-search"
           value={query}
           placeholder={t('workbench.smart_apps_target_search', '搜索成员或部门')}
@@ -75,7 +78,8 @@ export function TargetPicker({
       {results.length ? (
         <div className="mt-1 max-h-36 overflow-y-auto rounded-lg border bg-background p-1">
           {results.map(result => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={`${result.entityType}-${result.entityId}`}
               type="button"
               className="flex w-full justify-between rounded-md px-3 py-2 text-sm hover:bg-surface"
@@ -96,7 +100,7 @@ export function TargetPicker({
                   ? t('workbench.smart_apps_member', '成员')
                   : t('workbench.smart_apps_department', '部门')}
               </span>
-            </button>
+            </ControlButton>
           ))}
         </div>
       ) : null}
@@ -107,7 +111,8 @@ export function TargetPicker({
             className="inline-flex items-center gap-1 rounded-lg bg-surface px-2 py-1 text-sm"
           >
             {target.displayName}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               aria-label={t('workbench.smart_apps_remove_target', '移除 {{name}}').replace(
                 '{{name}}',
@@ -116,7 +121,7 @@ export function TargetPicker({
               onClick={() => onChange(targets.filter(value => value !== target))}
             >
               <X className="h-3 w-3" />
-            </button>
+            </ControlButton>
           </span>
         ))}
       </div>
@@ -149,52 +154,59 @@ export function SmartAppShareDialog({
   const { setScope, setTargets, save } = resource
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        data-testid="smart-app-share-dialog"
-        className="plugin-dialog-surface w-full max-w-lg p-5"
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            data-testid="smart-app-share-dialog"
+            className="plugin-dialog-surface w-full max-w-lg p-5"
+          />
+        }
       >
         <header className="flex justify-between">
           <div>
             <h2 className="heading-small">{t('workbench.smart_apps_manage_access', '管理分享')}</h2>
             <p className="mt-1 text-sm text-text-secondary">{item.displayName}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             aria-label={t('common.close', '关闭')}
             data-testid="smart-app-share-close"
             onClick={onClose}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         {access ? (
           <>
             <div className="mt-5 grid grid-cols-3 gap-2 rounded-xl bg-surface p-1">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className={`h-11 rounded-lg ${scope === 'private' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('private')}
                 data-testid="smart-app-share-scope-private"
               >
                 {t('workbench.smart_apps_private', '仅自己')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className={`h-11 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('restricted')}
                 data-testid="smart-app-share-scope-restricted"
               >
                 {t('workbench.smart_apps_restricted', '指定成员/部门')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className={`h-11 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('public')}
                 data-testid="smart-app-share-scope-public"
               >
                 {t('workbench.smart_apps_public', '全员')}
-              </button>
+              </ControlButton>
             </div>
             {scope === 'restricted' ? (
               <div className="mt-4">
@@ -236,7 +248,7 @@ export function SmartAppShareDialog({
             {saving ? t('workbench.smart_apps_saving', '保存中…') : t('common.save', '保存')}
           </Button>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

@@ -1,3 +1,5 @@
+@layer ui-sdk;
+
 @import './content-themes.css';
 @import './wework-theme.css';
 @import './dsh-voice-input.css';
@@ -40,6 +42,15 @@ body[data-wework-anchor-popover-open] .electron-titlebar-drag-region,
 body:has([data-wework-file-preview]) .electron-titlebar-drag-region,
 body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
+}
+
+/* Match task and collaboration navigation text in every appearance. */
+.collaboration-platform-sidebar,
+.interaction-queue {
+  --color-text-primary: var(--color-sidebar-text-primary);
+  --color-text-secondary: var(--color-sidebar-text-secondary);
+  --color-text-muted: var(--color-sidebar-text-muted);
+  color: rgb(var(--color-sidebar-text-primary));
 }
 
 /* Chromium can omit promoted sidebar overlays from a backdrop filter. */
@@ -443,30 +454,6 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   height: 54px;
 }
 
-@keyframes suffix-roll-out-up {
-  to {
-    transform: translateY(-110%);
-  }
-}
-
-@keyframes suffix-roll-in-up {
-  from {
-    transform: translateY(110%);
-  }
-}
-
-@keyframes suffix-roll-out-down {
-  to {
-    transform: translateY(110%);
-  }
-}
-
-@keyframes suffix-roll-in-down {
-  from {
-    transform: translateY(-110%);
-  }
-}
-
 @keyframes runtime-task-title-sheen {
   0% {
     opacity: 0;
@@ -526,6 +513,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 .sidebar-task-title-text {
   display: block;
+  font-weight: var(--font-weight-ui);
   width: max-content;
   white-space: nowrap;
   position: relative;
@@ -564,31 +552,6 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
     animation: none;
     opacity: 0;
   }
-}
-
-.suffix-roll-out-up,
-.suffix-roll-in-up,
-.suffix-roll-out-down,
-.suffix-roll-in-down {
-  animation-duration: 240ms;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  animation-fill-mode: both;
-}
-
-.suffix-roll-out-up {
-  animation-name: suffix-roll-out-up;
-}
-
-.suffix-roll-in-up {
-  animation-name: suffix-roll-in-up;
-}
-
-.suffix-roll-out-down {
-  animation-name: suffix-roll-out-down;
-}
-
-.suffix-roll-in-down {
-  animation-name: suffix-roll-in-down;
 }
 
 :root[data-theme='dark'] {
@@ -1040,7 +1003,6 @@ button.plugin-operation-notice-dismiss svg {
 :where(html:not([data-input-modality='pointer'])) .plugin-dialog-surface [tabindex]:focus-visible,
 :where(html:not([data-input-modality='pointer'])) button.plugin-market-action-button:focus-visible,
 :where(html:not([data-input-modality='pointer'])) button.plugin-market-icon-button:focus-visible,
-:where(html:not([data-input-modality='pointer'])) button.plugin-market-filter:focus-visible,
 :where(html:not([data-input-modality='pointer'])) button.plugin-installed-strip-item:focus-visible,
 :where(html:not([data-input-modality='pointer']))
   button.plugin-installed-overflow-button:focus-visible,
@@ -1070,6 +1032,7 @@ button.plugin-operation-notice-dismiss svg {
 }
 
 .plugin-market-body {
+  container: plugin-market / inline-size;
   display: flex;
   flex-direction: column;
 }
@@ -1126,46 +1089,6 @@ button.plugin-market-icon-button:hover:not(:disabled) {
   background-color: rgb(var(--color-bg-surface));
   border-color: rgb(var(--color-border) / 0.45);
   color: rgb(var(--color-text-primary));
-}
-
-button.plugin-market-filter {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  height: 30px;
-  flex-shrink: 0;
-  align-items: center;
-  border-radius: 10px;
-  border: 1px solid rgb(var(--color-border) / 0.38);
-  background-color: rgb(var(--color-bg-base));
-  padding: 0 11px;
-  font: inherit;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  line-height: 1;
-  color: rgb(var(--color-text-secondary));
-  transition:
-    background-color 0.12s,
-    border-color 0.12s,
-    color 0.12s;
-}
-
-button.plugin-market-filter:hover:not(:disabled) {
-  background-color: rgb(var(--color-bg-surface));
-  border-color: rgb(var(--color-border) / 0.55);
-  color: rgb(var(--color-text-primary));
-}
-
-button.plugin-market-filter[aria-selected='true'] {
-  border-color: transparent;
-  background-color: rgb(var(--color-muted));
-  font-weight: 600;
-  color: rgb(var(--color-text-primary));
-}
-
-button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
-  background-color: rgb(var(--color-border) / 0.45);
-  border-color: transparent;
 }
 
 .plugin-installed-icons-scroller {
@@ -1799,10 +1722,20 @@ button.plugin-route-back-button:hover {
   border-bottom: 1px solid rgb(var(--color-border) / 0.32);
 }
 
+@container plugin-market (min-width: 48rem) {
+  .plugin-market-toolbar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .plugin-market-toolbar-search {
+    width: 300px;
+  }
+}
+
 .plugin-market-search-input {
   height: 44px;
   width: 100%;
-  max-width: 300px;
   border: 1px solid rgb(var(--color-border) / 0.55);
   border-radius: 9px;
   background-color: rgb(var(--color-bg-base));

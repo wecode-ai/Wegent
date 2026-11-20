@@ -1,11 +1,11 @@
-import { useCollaborationPortalTheme } from '../theme'
-import { useMarkdownServices } from './MarkdownServices'
-import { useCallback, useRef, type ReactNode, type RefObject } from 'react'
-import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { useRef, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
+import { DialogSurface } from '../controls/DialogSurface'
+import { Tooltip } from "../controls/Tooltip"
+import { useCollaborationPortalTheme } from '../theme'
 import { Button } from './Button'
-import { Tooltip } from '../issue-detail/Tooltip'
-import { useEscapeKey } from './useEscapeKey'
+import { useMarkdownServices } from './MarkdownServices'
 
 export function MarkdownTableDialog({
   children,
@@ -19,22 +19,7 @@ export function MarkdownTableDialog({
   const portalTheme = useCollaborationPortalTheme()
   const { translate: t } = useMarkdownServices()
   const dialogRef = useRef<HTMLDivElement>(null)
-  useEscapeKey(onClose, true, dialogRef)
-
-  const attachClose = useCallback(
-    (button: HTMLButtonElement | null) => {
-      if (!button) return
-      const trigger = triggerRef.current
-      const previousOverflow = document.body.style.overflow
-      document.body.style.overflow = 'hidden'
-      button.focus()
-      return () => {
-        document.body.style.overflow = previousOverflow
-        trigger?.focus()
-      }
-    },
-    [triggerRef]
-  )
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   return createPortal(
     <div
@@ -45,30 +30,23 @@ export function MarkdownTableDialog({
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('table.expand')}
-        data-testid="markdown-table-dialog"
-        className="relative flex max-h-[85dvh] w-full max-w-[90rem] flex-col rounded-[20px] border border-border bg-background p-6 pt-12 text-text-primary shadow-lg md:p-12"
-        onKeyDown={event => {
-          if (event.key !== 'Tab') return
-          const elements = Array.from(
-            dialogRef.current?.querySelectorAll<HTMLElement>(
-              'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-            ) ?? []
-          )
-          const index = elements.indexOf(document.activeElement as HTMLElement)
-          const next = (index + (event.shiftKey ? -1 : 1) + elements.length) % elements.length
-          event.preventDefault()
-          elements[next]?.focus()
-        }}
+      <DialogSurface
+        initialFocus={() => closeRef.current}
+        finalFocus={() => triggerRef.current}
+        onClose={onClose}
+        render={
+          <div
+            ref={dialogRef}
+            aria-label={t('table.expand')}
+            data-testid="markdown-table-dialog"
+            className="relative flex max-h-[85dvh] w-full max-w-[90rem] flex-col rounded-[20px] border border-border bg-background p-6 pt-12 text-text-primary shadow-lg md:p-12"
+          />
+        }
       >
         <div className="absolute right-2 top-2 md:right-3 md:top-3">
           <Tooltip label={t('table.close')}>
             <Button
-              ref={attachClose}
+              ref={closeRef}
               type="button"
               variant="ghost"
               size="icon"
@@ -86,7 +64,7 @@ export function MarkdownTableDialog({
             {children}
           </table>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

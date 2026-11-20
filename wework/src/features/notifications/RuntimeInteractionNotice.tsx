@@ -1,12 +1,13 @@
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Bot, X } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Bot, X } from 'lucide-react'
-import { useRuntimeInteractions } from './RuntimeInteractionsContext'
-import { RuntimeInteractionReply } from './RuntimeInteractionReply'
 import { InteractionTime } from './InteractionTime'
+import { RuntimeInteractionReply } from './RuntimeInteractionReply'
 import { canReplyToInteraction } from './runtimeInteractions'
-import { useTranslation } from '@/hooks/useTranslation'
-import { Button } from '@/components/ui/button'
+import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 
 export function RuntimeInteractionNotice() {
   const interactions = useRuntimeInteractions()
@@ -32,17 +33,21 @@ function InteractionNotice() {
       </span>
       <div className="flex items-start gap-2">
         <Bot className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
-        <button
+        <ControlButton
+          variant="unstyled"
+          size="sm"
           type="button"
           data-testid="interaction-notice-open"
           onClick={() => interactions.open(item.id)}
-          className="min-w-0 flex-1 text-left"
+          className="min-w-0 flex-1 whitespace-normal text-left [overflow-wrap:anywhere]"
         >
           <span className="block truncate text-sm text-text-secondary">{item.task.task.title}</span>
           <InteractionTime timestamp={item.createdAt} testId="interaction-notice-time" />
           <span className="mt-2 block text-base font-medium">{item.question}</span>
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
+          size="sm"
           type="button"
           data-testid="interaction-notice-dismiss"
           aria-label={t('interactions.dismiss')}
@@ -50,7 +55,7 @@ function InteractionNotice() {
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
         >
           <X className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </div>
       {expanded || !canReplyToInteraction(item) ? (
         <div className="mt-3">

@@ -1,13 +1,15 @@
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
 import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createIndependentIssueDialogState } from './independentIssueDialogState'
 import { createPortal } from 'react-dom'
 import { Download, X, Maximize2, Minimize2 } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DialogForm } from '@/components/common/DialogForm'
 import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
@@ -94,15 +96,8 @@ function IndependentIssueDialogContent({
       onClose()
     }
   }
-  const ref = useDialogKeyboard<HTMLDivElement>(
-    requestClose,
-    presentation === 'dialog',
-    editing && !issue
-      ? '[data-testid="independent-issue-search-people"]'
-      : '[data-testid="independent-issue-title"]',
-    true,
-    !issueId && !shareDraft ? newIssueFocus : undefined
-  )
+  const ref = useRef<HTMLDivElement>(null)
+  const opener = useRef(document.activeElement)
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   const name = (id: number | null) =>
     id == null
@@ -123,14 +118,36 @@ function IndependentIssueDialogContent({
               : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
         }
       >
-        <div
-          ref={ref}
-          role={presentation === 'drawer' ? 'region' : 'dialog'}
-          aria-modal={presentation === 'dialog' ? true : undefined}
-          aria-labelledby="independent-issue-dialog-title"
-          inert={deleting}
-          data-testid="independent-issue-dialog"
-          className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]'} ${presentation === 'dialog' && !issueId && !issue ? '[@media(max-height:740px)]:h-[calc(100dvh-2rem)]' : ''}`}
+        <DialogSurface
+          onClose={requestClose}
+          active={presentation === 'dialog'}
+          suspended={Boolean(discarding || deleting)}
+          initialFocus={
+            editing && !issue
+              ? '[data-testid="independent-issue-search-people"]'
+              : '[data-testid="independent-issue-title"]'
+          }
+          finalFocus={
+            !issueId && !shareDraft
+              ? () =>
+                  opener.current instanceof HTMLElement &&
+                  opener.current !== document.body &&
+                  opener.current.isConnected
+                    ? opener.current
+                    : document.querySelector<HTMLElement>(newIssueFocus.fallbackSelector)
+              : undefined
+          }
+          render={
+            <div
+              ref={ref}
+              role={presentation === 'drawer' ? 'region' : 'dialog'}
+              aria-modal={presentation === 'dialog' ? true : undefined}
+              aria-labelledby="independent-issue-dialog-title"
+              inert={deleting}
+              data-testid="independent-issue-dialog"
+              className={`flex w-full flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] max-w-[800px] rounded-[20px]'} ${presentation === 'dialog' && !issueId && !issue ? '[@media(max-height:740px)]:h-[calc(100dvh-2rem)]' : ''}`}
+            />
+          }
         >
           <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3">
             <div className="min-w-0 flex-1">
@@ -156,7 +173,8 @@ function IndependentIssueDialogContent({
             </div>
             <div className="flex shrink-0 gap-1">
               {presentation === 'drawer' && onExpandedChange && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="independent-issue-expand"
                   aria-pressed={expanded}
@@ -169,9 +187,10 @@ function IndependentIssueDialogContent({
                   className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
                 >
                   {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
+                </ControlButton>
               )}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 disabled={busy}
                 data-testid="independent-issue-close"
@@ -180,7 +199,7 @@ function IndependentIssueDialogContent({
                 className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
               >
                 <X className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </div>
           </header>
           <div
@@ -206,23 +225,25 @@ function IndependentIssueDialogContent({
                       : error}
                 </span>
                 {!editing ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="independent-issue-retry"
                     onClick={() => state.retry()}
                     className={action}
                   >
                     {t('independentIssues.retry')}
-                  </button>
+                  </ControlButton>
                 ) : conflicted && issue ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="independent-issue-reload"
                     onClick={() => (dirty ? setDiscarding('reload') : reloadLatest())}
                     className={action}
                   >
                     {t('issue_creation.reload_latest')}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
             ) : null}
@@ -279,7 +300,8 @@ function IndependentIssueDialogContent({
             ) : issue ? (
               <>
                 <div className="mb-5 flex flex-wrap gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     disabled={busy}
                     data-testid="independent-issue-edit"
@@ -287,8 +309,9 @@ function IndependentIssueDialogContent({
                     className={action}
                   >
                     {t('independentIssues.edit')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     disabled={busy}
                     data-testid="independent-issue-archive"
@@ -300,7 +323,7 @@ function IndependentIssueDialogContent({
                         ? 'independentIssues.restore'
                         : 'independentIssues.archive'
                     )}
-                  </button>
+                  </ControlButton>
                   {issue.creator_id === userId && issue.metadata.share && (
                     <SharedIssueSourceButton api={api} issueId={issue.id} onOpen={requestClose} />
                   )}
@@ -310,7 +333,8 @@ function IndependentIssueDialogContent({
                     onError={state.reportTaskError}
                   />
                   {issue.creator_id === userId && onOpenProjectIssue ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       disabled={busy}
                       data-testid="independent-issue-associate"
@@ -318,10 +342,11 @@ function IndependentIssueDialogContent({
                       className={action}
                     >
                       {t('independentIssues.attachProject')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                   {issue.creator_id === userId ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       disabled={busy}
                       data-testid="independent-issue-delete"
@@ -332,7 +357,7 @@ function IndependentIssueDialogContent({
                       }}
                     >
                       {t('independentIssues.delete')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
                 {associating && onOpenProjectIssue ? (
@@ -392,7 +417,8 @@ function IndependentIssueDialogContent({
                     <ul className="grid gap-1" data-testid="independent-issue-attachments">
                       {issue.metadata.share?.files.map(file => (
                         <li key={file.id}>
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             className={action + ' inline-flex max-w-full items-center gap-2'}
                             data-testid={`independent-issue-attachment-${file.id}`}
@@ -405,7 +431,7 @@ function IndependentIssueDialogContent({
                           >
                             <Download className="h-4 w-4 shrink-0" aria-hidden="true" />
                             <span className="truncate">{file.filename}</span>
-                          </button>
+                          </ControlButton>
                         </li>
                       ))}
                     </ul>
@@ -417,14 +443,15 @@ function IndependentIssueDialogContent({
                 {commentError ? (
                   <p role="alert" className="mb-3 text-sm text-destructive">
                     {commentError}
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="independent-issue-comments-retry"
                       className={action}
                       onClick={() => state.retry()}
                     >
                       {t('independentIssues.retry')}
-                    </button>
+                    </ControlButton>
                   </p>
                 ) : null}
                 {comments.map(comment => (
@@ -445,7 +472,7 @@ function IndependentIssueDialogContent({
                 >
                   <label className="grid gap-2 text-sm">
                     {t('independentIssues.comment')}
-                    <textarea
+                    <ControlTextarea
                       data-testid="independent-issue-comment"
                       disabled={busy}
                       value={body}
@@ -454,19 +481,20 @@ function IndependentIssueDialogContent({
                       className="rounded-md border border-border bg-background p-3"
                     />
                   </label>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="submit"
                     disabled={busy || !body.trim()}
                     data-testid="independent-issue-comment-send"
                     className={`${action} justify-self-end`}
                   >
                     {t('independentIssues.send')}
-                  </button>
+                  </ControlButton>
                 </DialogForm>
               </>
             ) : null}
           </div>
-        </div>
+        </DialogSurface>
       </div>
       <ConfirmDialog
         open={Boolean(discarding)}

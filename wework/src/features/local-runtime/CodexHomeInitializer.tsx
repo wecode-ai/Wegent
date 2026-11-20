@@ -1,10 +1,12 @@
-import { useMemo, useSyncExternalStore } from 'react'
-import type { ReactNode } from 'react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { createCodexHomeInitializationSource } from './codexHomeInitializationSource'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { ReactNode } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import { createCodexHomeInitializationSource } from './codexHomeInitializationSource'
 
 const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
   import.meta.env.VITE_WEWORK_E2E === 'true'
@@ -40,13 +42,15 @@ function CodexHomeInitializationDialog({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
-      <div
-        data-testid={
-          checkComplete ? 'codex-home-initializer-dialog' : 'codex-home-initializer-check'
+      <DialogSurface
+        render={
+          <div
+            data-testid={
+              checkComplete ? 'codex-home-initializer-dialog' : 'codex-home-initializer-check'
+            }
+            className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
+          />
         }
-        role="dialog"
-        aria-modal="true"
-        className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
       >
         <div className="space-y-2">
           <h2 className="text-base font-medium text-text-primary">
@@ -78,39 +82,42 @@ function CodexHomeInitializationDialog({
         <div className="mt-5 flex justify-end gap-2">
           {canInitialize ? (
             <>
-              <button
+              <ControlButton
                 type="button"
                 data-testid="codex-home-initializer-create-button"
-                className="h-9 rounded-lg px-3 text-sm text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+                variant="ghost"
+                size="sm"
                 onClick={onCreate}
                 disabled={isInitializing}
               >
                 {t('workbench.codex_home_init_create')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
                 type="button"
                 data-testid="codex-home-initializer-migrate-button"
-                className="h-9 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                variant="primary"
+                size="sm"
                 onClick={onMigrate}
                 disabled={isInitializing}
               >
                 {isInitializing
                   ? t('workbench.codex_home_init_processing')
                   : t('workbench.codex_home_init_migrate')}
-              </button>
+              </ControlButton>
             </>
           ) : (
-            <button
+            <ControlButton
               type="button"
               data-testid="codex-home-initializer-status-retry-button"
-              className="h-9 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+              variant="primary"
+              size="sm"
               onClick={onRetryStatus}
             >
               {t('workbench.retry')}
-            </button>
+            </ControlButton>
           )}
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

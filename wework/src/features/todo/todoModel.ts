@@ -1,5 +1,5 @@
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
-import type { TodoViewState } from './todoViewTypes'
+import type { TodoViewState } from './todoTypes'
 
 export type TodoPrincipalType = 'unassigned' | 'human' | 'ai'
 

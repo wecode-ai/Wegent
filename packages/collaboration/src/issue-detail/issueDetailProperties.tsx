@@ -1,3 +1,6 @@
+import { Checkbox } from '../controls/Checkbox'
+import { Button as ControlButton } from '../markdown/Button'
+import { SearchableSelect } from '../controls/SearchableSelect'
 import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import { MilestonePicker } from '../milestones/MilestonePicker'
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from '../issue-card/priorityBadgeClasses'
@@ -18,7 +21,6 @@ import {
 import {
   IssueDetailCollaboratorPicker,
   IssueDetailPrioritySelect,
-  IssueDetailSearchableSelect,
   IssueDetailStatusSelect,
   issueAssigneeTarget,
   type IssueAssigneeTarget,
@@ -289,23 +291,26 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
   )
   const assigneeSelect = (
     <>
-      <IssueDetailSearchableSelect<IssueAssigneeTarget>
+      <SearchableSelect<IssueAssigneeTarget>
         testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
         accessibleLabel={t('todo.assignee', '负责人')}
+        appearance={isCreate ? 'outline' : 'property'}
+        density={isCreate ? 'default' : 'dense'}
         value={assigneeTarget}
         onSearchChange={setAssigneeQuery}
         searchStatus={
           assigneeSearch.error ? (
             <p role="alert">
               {assigneeSearch.error}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="cloud-todo-assignee-search-retry"
                 className="min-h-11 px-2 text-sm underline md:min-h-8"
                 onClick={assigneeSearch.retry}
               >
                 {t('common.retry', '重试')}
-              </button>
+              </ControlButton>
             </p>
           ) : assigneeSearch.loading ? (
             <p role="status">…</p>
@@ -378,11 +383,10 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         footer={
           !isCreate && canAssign ? (
             <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
-              <input
-                type="checkbox"
+              <Checkbox
                 data-testid="cloud-todo-assignee-notify"
                 checked={notifyAssignee}
-                onChange={event => setNotifyAssignee(event.target.checked)}
+                onCheckedChange={checked => setNotifyAssignee(checked === true)}
               />
               {t('todo.notify_assignee')}
             </label>
@@ -419,7 +423,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     options: t('todo.save_options', '保存选项'),
   }
   const parentSelect = (
-    <IssueDetailSearchableSelect
+    <SearchableSelect
       testId={isCreate ? 'cloud-todo-create-parent' : 'cloud-todo-detail-parent'}
       accessibleLabel={t('todo.parent_issue', '父任务')}
       value={parentId}
@@ -493,7 +497,8 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
   )
   const statusHistoryTrigger =
     !workspacePanel && item?.status_history?.length ? (
-      <button
+      <ControlButton
+        variant="unstyled"
         ref={setStatusHistoryTrigger}
         type="button"
         data-testid="cloud-todo-status-history-trigger"
@@ -504,7 +509,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-secondary transition hover:bg-muted hover:text-text-primary"
       >
         <History className="h-3.5 w-3.5" />
-      </button>
+      </ControlButton>
     ) : null
   const priorityChip = (
     <span className={propChipClass}>
@@ -614,7 +619,8 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
           data-testid="cloud-todo-collaborators"
         >
           {collaboratorPreview.map((collaborator, index) => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={collaborator.id}
               title={collaborator.user_name}
               type="button"
@@ -626,12 +632,13 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
               className={cn(index > 0 && '-ml-2')}
             >
               <AvatarMark name={collaborator.user_name} index={index + 1} size="sm" />
-            </button>
+            </ControlButton>
           ))}
           {collaborators.length > collaboratorPreview.length ? (
             <span className="ml-2">+{collaborators.length - collaboratorPreview.length}</span>
           ) : null}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cloud-todo-add-collaborator"
             aria-label={t('todo.add_collaborator', '添加参与者')}
@@ -649,7 +656,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
             )}
           >
             <Plus className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
           {collaboratorAvailabilityNote}
           {collaboratorEditingSupported &&
           collaborators.length === 0 &&

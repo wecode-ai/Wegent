@@ -1,5 +1,6 @@
+import { TextField as ControlInput } from '../controls/TextField'
 import type { TodoEditorProps } from './issueEditorSupport'
-import * as Popover from '@radix-ui/react-popover'
+import { Popover, PopoverTrigger, PopoverContent } from '../controls/Popover'
 import { Calendar, ChevronDown, File, Trash2 } from 'lucide-react'
 import { IssueDetailAttachments, type IssueDetailAttachment } from './index'
 import { useCollaborationPortalTheme } from '../theme'
@@ -36,74 +37,74 @@ export function ScheduleRangeControl({
   const label = scheduleRangeLabel(startDate, dueDate, notSetLabel)
 
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          className={triggerClassName}
-          disabled={!editable}
-          data-testid={`${startTestId}-trigger`}
-          aria-label={translate('todo.schedule_range', '时间范围')}
-        >
-          <Calendar className="h-4 w-4 shrink-0 text-text-muted" />
-          {showLabel ? (
-            <span className="text-text-secondary">
-              {translate('todo.schedule_range', '时间范围')}
-            </span>
-          ) : null}
-          <span
-            className={cn(
-              'max-w-64 truncate text-text-primary',
-              !startDate && !dueDate && 'text-text-secondary',
-              invalid && 'text-destructive'
-            )}
-          >
-            {label}
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className={triggerClassName}
+            disabled={!editable}
+            data-testid={`${startTestId}-trigger`}
+            aria-label={translate('todo.schedule_range', '时间范围')}
+          />
+        }
+      >
+        <Calendar className="h-4 w-4 shrink-0 text-text-muted" />
+        {showLabel ? (
+          <span className="text-text-secondary">
+            {translate('todo.schedule_range', '时间范围')}
           </span>
-          {editable ? <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" /> : null}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          {...portalTheme}
-          sideOffset={4}
-          collisionPadding={8}
-          align="start"
-          className={`z-critical w-80 rounded-xl border border-border bg-popover p-3 shadow-xl outline-none ${portalTheme.className}`}
-          style={portalTheme.style}
+        ) : null}
+        <span
+          className={cn(
+            'max-w-64 truncate text-text-primary',
+            !startDate && !dueDate && 'text-text-secondary',
+            invalid && 'text-destructive'
+          )}
         >
-          <div className="grid gap-3">
-            <label className="grid gap-1.5 text-xs text-text-secondary">
-              {translate('todo.start_date', '开始时间')}
-              <input
-                data-testid={startTestId}
-                type={inputType}
-                value={startDate}
-                onClick={event => event.currentTarget.showPicker?.()}
-                onChange={event => onStartDateChange(event.target.value)}
-                className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
-              />
-            </label>
-            <label className="grid gap-1.5 text-xs text-text-secondary">
-              {translate('todo.due_date', '结束时间')}
-              <input
-                data-testid={dueTestId}
-                type={inputType}
-                value={dueDate}
-                onClick={event => event.currentTarget.showPicker?.()}
-                onChange={event => onDueDateChange(event.target.value)}
-                className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
-              />
-            </label>
-            {invalid ? (
-              <p className="text-xs text-destructive">
-                {translate('todo.schedule_range_invalid', '开始时间不能晚于结束时间')}
-              </p>
-            ) : null}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+          {label}
+        </span>
+        {editable ? <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" /> : null}
+      </PopoverTrigger>
+      <PopoverContent
+        {...portalTheme}
+        sideOffset={4}
+        collisionPadding={8}
+        align="start"
+        className={`z-critical w-80 rounded-xl border border-border bg-popover p-3 shadow-xl outline-none ${portalTheme.className}`}
+        style={portalTheme.style}
+      >
+        <div className="grid gap-3">
+          <label className="grid gap-1.5 text-xs text-text-secondary">
+            {translate('todo.start_date', '开始时间')}
+            <ControlInput
+              data-testid={startTestId}
+              type={inputType}
+              value={startDate}
+              onClick={event => event.currentTarget.showPicker?.()}
+              onChange={event => onStartDateChange(event.target.value)}
+              className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
+            />
+          </label>
+          <label className="grid gap-1.5 text-xs text-text-secondary">
+            {translate('todo.due_date', '结束时间')}
+            <ControlInput
+              data-testid={dueTestId}
+              type={inputType}
+              value={dueDate}
+              onClick={event => event.currentTarget.showPicker?.()}
+              onChange={event => onDueDateChange(event.target.value)}
+              className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted md:h-9"
+            />
+          </label>
+          {invalid ? (
+            <p className="text-xs text-destructive">
+              {translate('todo.schedule_range_invalid', '开始时间不能晚于结束时间')}
+            </p>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 export function AvatarMark({

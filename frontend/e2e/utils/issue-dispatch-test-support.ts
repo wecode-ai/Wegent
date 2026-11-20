@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { expect, type APIRequestContext, type Page } from '@playwright/test'
 import type { DeviceListResponse } from '../../src/apis/devices'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
 import {
   openBlankProjectCreation,
+  chooseCollaborationOption,
   selectCollaborationProjectView,
   webApi,
 } from './collaboration-test-support'
@@ -44,16 +45,6 @@ interface ProjectAgent {
 
 function encoded(value: string): string {
   return encodeURIComponent(value)
-}
-
-async function firstVisibleOption(locator: Locator): Promise<Locator> {
-  await expect(locator.first()).toBeVisible({ timeout: 5_000 })
-  const count = await locator.count()
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index)
-    if (await candidate.isVisible()) return candidate
-  }
-  throw new Error('Expected at least one visible option')
 }
 
 export async function createIssueDispatchMockModel(
@@ -174,14 +165,15 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
   await page.getByTestId('collaboration-project-settings-environments').click()
   const prefix = 'collaboration-project-execution-environment'
   const initialize = page.getByTestId(`${prefix}-initialize-${device!.id}`)
-  if ((await initialize.count()) === 0) {
+  const actions = page.getByTestId(`${prefix}-actions-toggle-${device!.id}`)
+  await expect(actions.or(page.getByTestId(`${prefix}-add`)).first()).toBeVisible()
+  if ((await actions.count()) === 0) {
     await page.getByTestId(`${prefix}-add`).click()
     const candidate = page.getByTestId(`${prefix}-candidate-${device!.id}`)
     await expect(candidate).toBeVisible()
     await candidate.click()
   }
-  await expect(initialize).toBeAttached()
-  await page.getByTestId(`${prefix}-actions-toggle-${device!.id}`).click()
+  await actions.click()
   await expect(initialize).toBeVisible()
   await initialize.click()
   await expect(page.getByTestId(`${prefix}-${device!.id}`)).toHaveAttribute(
@@ -198,15 +190,18 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   await page.getByTestId('collaboration-project-settings-members').click()
   await page.getByTestId('cloud-project-members-toggle').click()
   await page.getByTestId('cloud-member-search').fill(userName)
-  await page.getByTestId('cloud-member-role').selectOption('Developer')
-  const result = await firstVisibleOption(page.locator('[data-testid^="cloud-member-result-"]'))
+  await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {
+    value: 'Developer',
+  })
+  const result = page
+    .locator('[data-testid^="cloud-member-result-"]')
+    .filter({ has: page.getByText(userName, { exact: true }) })
+  await expect(result).toBeVisible()
   const resultTestId = await result.getAttribute('data-testid')
   const userId = resultTestId?.replace('cloud-member-result-', '')
   if (!userId) throw new Error(`Member search result for ${userName} did not expose a user ID`)
   await result.click()
-  await expect(
-    page.locator('[data-testid^="cloud-project-member-"]').filter({ hasText: userName })
-  ).toBeVisible()
+  await expect(page.getByTestId(`cloud-project-member-${userId}`)).toBeVisible()
   return userId
 }
 
@@ -229,7 +224,7 @@ export async function createProjectAgent(
   await page.getByTestId('project-agent-mode-create').click()
   await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
   await page.getByTestId('web-agent-display-name').fill(name)
-  await page.getByTestId('web-agent-model').selectOption({ label: modelName })
+  await chooseCollaborationOption(page, page.getByTestId('web-agent-model'), { label: modelName })
   await page
     .getByTestId('web-agent-system-prompt')
     .fill('Execute only the assigned dispatch task and submit evidence through Delivery.')

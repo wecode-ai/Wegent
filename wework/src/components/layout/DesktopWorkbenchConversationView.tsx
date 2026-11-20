@@ -1,43 +1,44 @@
 import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
-import type { DesktopWorkbenchPaneRenderModel } from './desktopWorkbenchPaneChrome'
-import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
-import { ChevronRight, Loader2, MessageCircle } from 'lucide-react'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
-import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import { updateAppPreferences } from '@/desktop/appPreferences'
-import { cn } from '@/lib/utils'
-import { TaskDetailScrollArea } from './TaskDetailScrollArea'
-import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
-import { DeviceStatusPrompt } from './DeviceStatusPrompt'
-import { localHarnessLabel } from '@/lib/local-harness'
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   isImplementationPlanConfirmationResponse,
   isImplementationPlanRequestUserInput,
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { getErrorMessage } from '@/lib/error-message'
+import { localHarnessLabel } from '@/lib/local-harness'
+import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronRight, Loader2, MessageCircle } from 'lucide-react'
+import { BufferedChatInput } from './BufferedChatInput'
+import { CentralHarnessTerminal } from './CentralHarnessTerminal'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
+import { DESKTOP_MESSAGE_LIST_CLASS, DESKTOP_MESSAGE_LIST_WIDTH_CLASS } from './desktopChatLayout'
+import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import {
+  DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS,
+  DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+  DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+  DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
+  runtimeTaskForkModelOptions,
+} from './desktopWorkbenchMainHelpers'
+import type { DesktopWorkbenchPaneRenderModel } from './desktopWorkbenchPaneChrome'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   pendingRequestUserInputPayloads,
   pendingRequestUserInputResponses,
 } from './requestUserInputOverlay'
-import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
+import { TaskDetailScrollArea } from './TaskDetailScrollArea'
 import { SupervisorSuggestionCards } from './TaskSupervisorControl'
 import { TaskIssueShare } from '@/features/todo/TaskIssueShare'
-import { BufferedChatInput } from './BufferedChatInput'
-import { CentralHarnessTerminal } from './CentralHarnessTerminal'
-import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
-import { DESKTOP_MESSAGE_LIST_CLASS, DESKTOP_MESSAGE_LIST_WIDTH_CLASS } from './desktopChatLayout'
+import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
-import { getErrorMessage } from '@/lib/error-message'
-import {
-  DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
-  DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
-  DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
-  DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS,
-  runtimeTaskForkModelOptions,
-} from './desktopWorkbenchMainHelpers'
 
 export function DesktopWorkbenchConversationView({
   model,
@@ -196,7 +197,7 @@ export function DesktopWorkbenchConversationView({
       }
     >
       <>
-        <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid w-full flex-1 grid-cols-[minmax(0,1fr)_auto]">
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
           ) : activeLocalHarnessSession ? (
@@ -242,7 +243,7 @@ export function DesktopWorkbenchConversationView({
           ) : hasConversation ? (
             <div
               ref={conversationSurfaceRef}
-              className="relative flex min-h-full min-w-0 shrink-0 flex-col"
+              className="relative flex min-w-0 flex-col"
               onClick={focusComposerFromConversationClick}
             >
               <ScrollableMessageArea
@@ -276,12 +277,12 @@ export function DesktopWorkbenchConversationView({
                     ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
                     : null
                 }
-                className="min-h-full"
+                className="flex flex-col"
                 scrollTestId="desktop-chat-scroll"
                 externalScrollRef={workbenchScrollRef}
                 externalScrollInteractionRef={workbenchScrollbarRef}
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
-                scrollerClassName="min-h-full overflow-visible"
+                scrollerClassName="h-auto flex-1 overflow-visible"
                 contentClassName={rightPanelExpanded ? 'invisible' : undefined}
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,
@@ -338,7 +339,8 @@ export function DesktopWorkbenchConversationView({
                           data-testid="desktop-floating-composer-card"
                         >
                           {rightPanelExpanded && (
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               type="button"
                               data-testid="restore-conversation-from-expanded-workspace-button"
                               className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
@@ -346,7 +348,7 @@ export function DesktopWorkbenchConversationView({
                             >
                               <span>{t('workbench.latest_conversation_turn')}</span>
                               <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                            </button>
+                            </ControlButton>
                           )}
                           {connectorAuthCard}
                           {issueExecutionReadOnly ? (
@@ -364,14 +366,15 @@ export function DesktopWorkbenchConversationView({
                                   '此执行属于 Issue，请在 Issue 中追问或补充要求'
                                 )}
                               </span>
-                              <button
+                              <ControlButton
+                                variant="unstyled"
                                 type="button"
                                 data-testid="project-execution-open-issue"
                                 onClick={openBoundProjectSpaceTask}
                                 className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
                               >
                                 {t('workbench.back_to_work_item', '返回 Issue')}
-                              </button>
+                              </ControlButton>
                             </div>
                           ) : !rightPanelExpanded || pendingRequestUserInput ? (
                             <>

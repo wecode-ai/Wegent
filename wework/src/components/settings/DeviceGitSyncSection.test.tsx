@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event'
 import i18n from '@/i18n'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -90,7 +91,9 @@ beforeEach(() => {
 async function select() {
   await screen.findByTestId('git-device-sync-accounts')
   await waitFor(() => expect(screen.getByTestId('git-device-sync-select')).toBeEnabled())
-  fireEvent.change(screen.getByTestId('git-device-sync-select'), { target: { value: 'remote' } })
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('git-device-sync-select'))
+  await user.click(await screen.findByRole('option', { name: /Remote/i }))
 }
 
 test('publishes account metadata independently while the device inventory is pending', async () => {
@@ -139,7 +142,7 @@ test('does not refetch or clear the selected device when only a callback or lang
     await act(async () => {
       await i18n.changeLanguage('en')
     })
-    expect(screen.getByTestId('git-device-sync-select')).toHaveValue('remote')
+    expect(screen.getByTestId('git-device-sync-select')).toHaveAttribute('data-value', 'remote')
     expect(current.getGitAccountSyncSummary).toHaveBeenCalledTimes(1)
     expect(current.getAllDevices).not.toHaveBeenCalled()
   } finally {
@@ -174,7 +177,7 @@ test('does not display old metadata or an old operation receipt after the accoun
   rerender(<DeviceGitSyncSection />)
   expect(screen.queryByTestId('git-device-sync-accounts')).not.toBeInTheDocument()
   await screen.findByTestId('git-device-sync-accounts')
-  expect(screen.getByTestId('git-device-sync-select')).toHaveValue('')
+  expect(screen.getByTestId('git-device-sync-select')).toHaveAttribute('data-value', '')
   await act(async () => pending.resolve(receipt()))
   expect(screen.queryByTestId('git-device-sync-result')).not.toBeInTheDocument()
   expect(next.syncGitAccounts).not.toHaveBeenCalled()
@@ -193,7 +196,7 @@ test('cancels a clear confirmation on account changes and requires a new explici
   rerender(<DeviceGitSyncSection />)
   expect(screen.queryByTestId('git-device-sync-clear-dialog')).not.toBeInTheDocument()
   await screen.findByTestId('git-device-sync-accounts')
-  expect(screen.getByTestId('git-device-sync-select')).toHaveValue('')
+  expect(screen.getByTestId('git-device-sync-select')).toHaveAttribute('data-value', '')
   expect(old.syncGitAccounts).not.toHaveBeenCalled()
   expect(current.syncGitAccounts).not.toHaveBeenCalled()
 })
@@ -232,7 +235,7 @@ test('preserves cached summary and selection when a refresh fails', async () => 
   expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
     'Refresh unavailable'
   )
-  expect(screen.getByTestId('git-device-sync-select')).toHaveValue('remote')
+  expect(screen.getByTestId('git-device-sync-select')).toHaveAttribute('data-value', 'remote')
 })
 
 test('does not query after disconnecting or apply a pending old summary', async () => {

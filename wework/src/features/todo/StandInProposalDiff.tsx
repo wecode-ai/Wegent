@@ -1,3 +1,8 @@
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
 import type { CollaborationProject } from '@wegent/collaboration'
 import { dequal } from 'dequal'
 import type { StandInIdentity, StandInRole } from '@/api/personalStandIn'
@@ -41,23 +46,28 @@ export function StandInProposalDiff({
       )}
       <StandInProposalSources identity={identity} previous={previous} projects={projects} />
       {descriptionChanged && (
-        <details className="text-sm">
-          <summary className="min-h-8 cursor-pointer text-text-secondary">
+        <CollapsibleRoot className="text-sm">
+          <CollapsibleTrigger
+            className="min-h-8 cursor-pointer text-text-secondary"
+            data-testid="stand-in-proposal-diff-toggle"
+          >
             {t('standIn.workspace.instructions_changed')}
-          </summary>
-          {previous && description(previous) && (
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            {previous && description(previous) && (
+              <div className="mt-2">
+                <p className="text-xs text-text-muted">{t('standIn.workspace.before_change')}</p>
+                <p className="mt-1 whitespace-pre-wrap break-words">{description(previous)}</p>
+              </div>
+            )}
             <div className="mt-2">
-              <p className="text-xs text-text-muted">{t('standIn.workspace.before_change')}</p>
-              <p className="mt-1 whitespace-pre-wrap break-words">{description(previous)}</p>
+              <p className="text-xs text-text-muted">{t('standIn.workspace.after_change')}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words">
+                {description(identity) || t('standIn.workspace.instructions_cleared')}
+              </p>
             </div>
-          )}
-          <div className="mt-2">
-            <p className="text-xs text-text-muted">{t('standIn.workspace.after_change')}</p>
-            <p className="mt-1 whitespace-pre-wrap break-words">
-              {description(identity) || t('standIn.workspace.instructions_cleared')}
-            </p>
-          </div>
-        </details>
+          </CollapsiblePanel>
+        </CollapsibleRoot>
       )}
       {!dequal(identity.workspace, previous?.workspace) && (
         <p className="break-all text-sm">

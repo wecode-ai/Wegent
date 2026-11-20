@@ -377,9 +377,11 @@ describe('ModelSelector desktop layout', () => {
 
     fireEvent.click(screen.getByTestId('model-selector-button'))
     fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
-    fireEvent.click(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`))
+    const target = await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)
+    expect(target).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(target)
 
-    expect(onSelectModel).toHaveBeenCalledWith(SAMPLE_MODEL)
+    expect(onSelectModel).toHaveBeenCalledExactlyOnceWith(SAMPLE_MODEL)
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     await waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false, 'selection'))
     expect(embeddedBrowserOcclusionMock).toHaveBeenLastCalledWith('model-selector-flyout', false)

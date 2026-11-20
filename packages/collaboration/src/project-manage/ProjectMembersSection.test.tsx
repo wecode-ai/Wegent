@@ -154,10 +154,16 @@ describe('Project member settings presentation', () => {
     })
     expect(find('cloud-project-member-effective-role-1').textContent).toContain('管理员')
     const select = find<HTMLSelectElement>('cloud-project-member-role-1')
-    expect(select.value).toBe('Viewer')
+    expect(select.textContent).toContain('只读成员')
     await act(async () => {
-      select.value = 'Developer'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
+      select.click()
+    })
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      option => option.textContent?.trim() === '成员'
+    )
+    expect(option).toBeDefined()
+    await act(async () => {
+      option!.click()
     })
     expect(controller.updateMember).toHaveBeenCalledWith(
       expect.objectContaining({ user_id: 1 }),
@@ -173,12 +179,18 @@ describe('Project member settings presentation', () => {
       const member = { ...inherited, role, inherited_role: role }
       const { controller } = await render({ members: [member] })
       const select = find<HTMLSelectElement>('cloud-project-member-role-1')
-      expect(select.value).toBe(role)
+      expect(select.textContent).toContain(role === 'Viewer' ? '只读成员' : '成员')
       expect(select.disabled).toBe(false)
       expect(find('cloud-project-member-remove-1')).toBeNull()
       await act(async () => {
-        select.value = 'Maintainer'
-        select.dispatchEvent(new Event('change', { bubbles: true }))
+        select.click()
+      })
+      const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        option => option.textContent?.trim() === '管理员'
+      )
+      expect(option).toBeDefined()
+      await act(async () => {
+        option!.click()
       })
       expect(controller.updateMember).toHaveBeenCalledWith(member, 'Maintainer')
     }
@@ -187,12 +199,17 @@ describe('Project member settings presentation', () => {
   it('distinguishes a lower project override from the inherited member role', async () => {
     await render({
       members: [
-        { ...inherited, role: 'Viewer', inherited_role: 'Developer', direct_role: 'Viewer' },
+        {
+          ...inherited,
+          role: 'Viewer',
+          inherited_role: 'Developer',
+          direct_role: 'Viewer',
+        },
       ],
     })
     expect(find('cloud-project-member-effective-role-1').textContent).toBe('只读成员')
     expect(find('cloud-project-member-source-1').textContent).toBe('继承自 研发空间 · 成员')
-    expect(find<HTMLSelectElement>('cloud-project-member-role-1').value).toBe('Viewer')
+    expect(find('cloud-project-member-role-1').textContent).toContain('只读成员')
     expect(find('cloud-project-member-remove-1').getAttribute('aria-label')).toBe(
       '恢复 admin 的分组角色'
     )
@@ -227,8 +244,14 @@ describe('Project member settings presentation', () => {
     expect(find('cloud-project-membership-hint').textContent).toContain('分组管理员')
     const select = find<HTMLSelectElement>('cloud-project-membership-mode')
     await act(async () => {
-      select.value = 'inherit'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
+      select.click()
+    })
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      option => option.textContent?.trim() === '继承分组成员'
+    )
+    expect(option).toBeDefined()
+    await act(async () => {
+      option!.click()
     })
     expect(onMembershipModeChange).toHaveBeenCalledWith('inherit')
     expect(select.getAttribute('aria-describedby')).toBe('cloud-project-membership-hint')

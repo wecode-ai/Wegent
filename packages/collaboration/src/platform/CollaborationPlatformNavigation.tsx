@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -205,7 +206,7 @@ export function CollaborationPlatformNavigation({
     workspace => allowLocalProjects && workspace.location === 'local'
   )
   const createWorkspaceButton = canCreateWorkspace ? (
-    <button
+    <ControlButton variant="unstyled"
       type="button"
       className="collaboration-workspace-section-create"
       aria-label={messages.createWorkspace}
@@ -216,7 +217,7 @@ export function CollaborationPlatformNavigation({
       <span data-testid="collaboration-workspace-sidebar-create">
         <FolderPlus aria-hidden="true" />
       </span>
-    </button>
+    </ControlButton>
   ) : null
   const renderWorkspaceActions = (
     candidate: ReturnType<typeof buildWorkspaceNavigation>['workspaces'][number]['workspace'],
@@ -330,7 +331,7 @@ export function CollaborationPlatformNavigation({
           }${canManageWorkspace ? ' has-actions' : ''}`}
         >
           {canOpen ? (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-workspace-identity"
               data-testid={
@@ -350,7 +351,7 @@ export function CollaborationPlatformNavigation({
               >
                 <span className="collaboration-workspace-title">{candidate.name}</span>
               </span>
-            </button>
+            </ControlButton>
           ) : (
             <div
               className="collaboration-workspace-identity"
@@ -373,7 +374,7 @@ export function CollaborationPlatformNavigation({
             </div>
           ) : null}
           {candidateProjects.length > 0 ? (
-            <button
+            <ControlButton variant="unstyled"
               type="button"
               className="collaboration-workspace-toggle"
               aria-expanded={expanded}
@@ -382,7 +383,7 @@ export function CollaborationPlatformNavigation({
               onClick={() => toggleWorkspace(candidate.id)}
             >
               <ChevronRight aria-hidden="true" />
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {expanded ? (
@@ -449,7 +450,7 @@ export function CollaborationPlatformNavigation({
       data-navigation-expanded={mobileNavigationOpen}
     >
       {fullSidebar || projectSettings ? (
-        <button
+        <ControlButton variant="unstyled"
           ref={toggleRef}
           type="button"
           className={`collaboration-mobile-navigation-toggle${projectSettings ? ' collaboration-settings-navigation-toggle' : ''}`}
@@ -464,7 +465,7 @@ export function CollaborationPlatformNavigation({
         >
           <span>{projectSettings ? messages.settingsNavigation : messages.navigation}</span>
           <ChevronRight aria-hidden="true" />
-        </button>
+        </ControlButton>
       ) : null}
       <div
         ref={navigationRef}
@@ -496,7 +497,7 @@ export function CollaborationPlatformNavigation({
                   {messages.collaborationSpaces}
                 </span>
               ) : (
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   className="collaboration-workspace-section-toggle"
                   aria-expanded={workspacesExpanded}
@@ -505,7 +506,7 @@ export function CollaborationPlatformNavigation({
                 >
                   <span>{messages.collaborationSpaces}</span>
                   <ChevronRight aria-hidden="true" />
-                </button>
+                </ControlButton>
               )}
               <div className="collaboration-workspace-section-actions">{createWorkspaceButton}</div>
             </div>
@@ -517,7 +518,7 @@ export function CollaborationPlatformNavigation({
               data-testid="collaboration-navigation-error"
             >
               <span>{messages.navigationLoadFailed}</span>
-              <button
+              <ControlButton variant="unstyled"
                 type="button"
                 className="collaboration-link-button"
                 data-testid="collaboration-navigation-retry"
@@ -532,7 +533,7 @@ export function CollaborationPlatformNavigation({
                 }}
               >
                 {messages.retryNavigation}
-              </button>
+              </ControlButton>
             </div>
           ) : null}
           {projectFirst ? (
@@ -619,7 +620,8 @@ function ProjectNavigationRow({
     <div
       className={`collaboration-workspace-project-row${project.project_store === 'local' ? ' has-offline-project' : ''}`}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         ref={rowButton}
         onFocus={focusRequest ? onFocusRestored : undefined}
         type="button"
@@ -643,10 +645,10 @@ function ProjectNavigationRow({
       >
         {host.renderProjectSidebarBadge?.(project)}
         <span>{project.name}</span>
-      </button>
+      </ControlButton>
       {project.project_store === 'local' ? (
         host.convertLocalProjectToCloud ? (
-          <button
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-project-offline"
             data-testid={`collaboration-project-convert-${project.id}`}
@@ -655,7 +657,7 @@ function ProjectNavigationRow({
             onClick={() => host.convertLocalProjectToCloud?.(project)}
           >
             <CloudOff aria-hidden="true" />
-          </button>
+          </ControlButton>
         ) : (
           <span
             className="collaboration-project-offline"
@@ -672,6 +674,8 @@ function ProjectNavigationRow({
           <ActionMenu
             ariaLabel={`${messages.projectActions} · ${project.name}`}
             testId={`collaboration-project-menu-${project.id}`}
+            density="dense"
+            showTriggerTooltip={false}
             triggerClassName="collaboration-project-new-conversation"
             items={[
               ...(pinAction ? [pinAction] : []),

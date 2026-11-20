@@ -1,3 +1,8 @@
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useState, useCallback, useSyncExternalStore } from 'react'
 import { createMarketplacePublicationSource } from './marketplacePublicationSource'
 import { SmartAppFilePicker } from './SmartAppFilePicker'
@@ -69,11 +74,14 @@ export function SmartAppPublishDialog({
   } = resource
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        data-testid="smart-app-publish-dialog"
-        className="plugin-dialog-surface max-h-[92vh] w-full max-w-2xl overflow-y-auto p-5"
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            data-testid="smart-app-publish-dialog"
+            className="plugin-dialog-surface max-h-[92vh] w-full max-w-2xl overflow-y-auto p-5"
+          />
+        }
       >
         <header className="flex justify-between">
           <div>
@@ -86,13 +94,14 @@ export function SmartAppPublishDialog({
               {t('workbench.smart_apps_auto_publish_hint', '上传并通过安全扫描后自动发布')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             aria-label={t('common.close', '关闭')}
             data-testid="smart-app-publish-close"
             onClick={onClose}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         <div className="mt-5 grid gap-4">
           {installation ? (
@@ -146,7 +155,7 @@ export function SmartAppPublishDialog({
           ) : null}
           <label className="text-sm font-medium">
             {t('workbench.smart_apps_summary', '一句话简介')}
-            <input
+            <ControlInput
               value={summary}
               maxLength={500}
               className="mt-2 h-10 w-full rounded-lg border border-border px-3 font-normal"
@@ -155,7 +164,7 @@ export function SmartAppPublishDialog({
           </label>
           <label className="text-sm font-medium">
             {t('workbench.smart_apps_description_md', '详细介绍（Markdown）')}
-            <textarea
+            <ControlTextarea
               value={description}
               maxLength={8192}
               rows={5}
@@ -173,15 +182,12 @@ export function SmartAppPublishDialog({
                   key={tag.id}
                   className="flex items-center gap-1 rounded-lg border px-2 py-1 text-sm"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={selectedTags.includes(tag.id)}
                     disabled={!selectedTags.includes(tag.id) && selectedTags.length >= 3}
-                    onChange={event =>
+                    onCheckedChange={checked =>
                       setSelectedTags(values =>
-                        event.target.checked
-                          ? [...values, tag.id]
-                          : values.filter(value => value !== tag.id)
+                        checked ? [...values, tag.id] : values.filter(value => value !== tag.id)
                       )
                     }
                   />
@@ -255,7 +261,7 @@ export function SmartAppPublishDialog({
           </div>
           <label className="text-sm font-medium">
             {t('workbench.smart_apps_release_notes', '版本说明')}
-            <textarea
+            <ControlTextarea
               value={notes}
               maxLength={4096}
               rows={3}
@@ -276,22 +282,24 @@ export function SmartAppPublishDialog({
                 {t('workbench.smart_apps_publish_scope', '发布范围')}
               </legend>
               <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className={`h-11 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
                   onClick={() => setScope('restricted')}
                   data-testid="smart-app-publish-scope-restricted"
                 >
                   {t('workbench.smart_apps_restricted', '指定成员/部门')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className={`h-11 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
                   onClick={() => setScope('public')}
                   data-testid="smart-app-publish-scope-public"
                 >
                   {t('workbench.smart_apps_public', '全员')}
-                </button>
+                </ControlButton>
               </div>
               {scope === 'restricted' ? (
                 <div className="mt-3">
@@ -335,7 +343,7 @@ export function SmartAppPublishDialog({
             )}
           </Button>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

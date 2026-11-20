@@ -1,25 +1,28 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactElement,
-} from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
+import { usePanelResizeDrag } from '@/components/layout/usePanelResizeDrag'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type {
   ProcessExplorerClient,
   ProcessOwnerRef,
   ProcessRecord,
   ProcessSnapshot,
 } from '@wegent/process-explorer'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
+import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { DEFAULT_COLUMN_WIDTHS, resizeColumnWidths } from './columnWidths'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { describeDegradation } from './errors'
 import {
   formatAge,
@@ -81,7 +84,7 @@ export function ProcessExplorerView({
   const [collapsedOwners, setCollapsedOwners] = useState<Set<string>>(() => new Set())
   const [columnWidths, setColumnWidths] = useState<number[]>(() => [...DEFAULT_COLUMN_WIDTHS])
   const tableRef = useRef<HTMLTableElement>(null)
-  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  const { startResize: startPanelResize, stopResize } = usePanelResizeDrag()
 
   const source = useMemo(
     () => createProcessSnapshotSource(client, refreshIntervalMs),
@@ -124,13 +127,16 @@ export function ProcessExplorerView({
     })
   }
 
-  const bindTable = useCallback((table: HTMLTableElement | null) => {
-    tableRef.current = table
-    return () => {
-      resizeCleanupRef.current?.()
-      tableRef.current = null
-    }
-  }, [])
+  const bindTable = useCallback(
+    (table: HTMLTableElement | null) => {
+      tableRef.current = table
+      return () => {
+        stopResize()
+        tableRef.current = null
+      }
+    },
+    [stopResize]
+  )
 
   const copySelectedDetail = async () => {
     if (!selectedRecord || !selectedDetail) return
@@ -146,29 +152,17 @@ export function ProcessExplorerView({
     if (event.button !== 0) return
     const table = tableRef.current
     if (!table || table.clientWidth === 0) return
-    event.preventDefault()
-    resizeCleanupRef.current?.()
-
+    stopResize()
     const startX = event.clientX
     const tableWidth = table.clientWidth
     const startWidths = [...columnWidths]
-    const move = (moveEvent: PointerEvent) => {
-      const deltaPercent = ((moveEvent.clientX - startX) / tableWidth) * 100
-      setColumnWidths(resizeColumnWidths(startWidths, index, deltaPercent))
-    }
-    const cleanup = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', cleanup)
-      window.removeEventListener('pointercancel', cleanup)
-      resizeCleanupRef.current = null
-    }
-
-    // Document-level listeners keep the drag alive outside the narrow handle
-    // and avoid relying on pointer capture across React renders.
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', cleanup)
-    window.addEventListener('pointercancel', cleanup)
-    resizeCleanupRef.current = cleanup
+    startPanelResize(event, {
+      cursor: 'col-resize',
+      onMove: ({ x }) => {
+        const deltaPercent = ((x - startX) / tableWidth) * 100
+        setColumnWidths(resizeColumnWidths(startWidths, index, deltaPercent))
+      },
+    })
   }
 
   const resetColumnWidths = () => setColumnWidths([...DEFAULT_COLUMN_WIDTHS])
@@ -188,14 +182,15 @@ export function ProcessExplorerView({
     >
       <title>{t('process_explorer.title')}</title>
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
-        <input
+        <ControlInput
+          density="dense"
           type="search"
           value={filter}
           onChange={event => setFilter(event.target.value)}
           placeholder={t('process_explorer.filter_placeholder')}
           aria-label={t('process_explorer.filter_placeholder')}
           data-testid="process-explorer-filter"
-          className="h-7 min-w-0 max-w-64 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+          className="min-w-0 max-w-64 flex-1 text-xs"
         />
         <div className="ml-auto flex min-w-0 flex-1 items-center gap-3 text-xs text-text-secondary">
           <span
@@ -208,7 +203,8 @@ export function ProcessExplorerView({
             {' · '}
             {t('process_explorer.summary_processes', { processCount: totalCount })}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="process-explorer-always-on-top"
             onClick={onToggleAlwaysOnTop}
@@ -229,8 +225,10 @@ export function ProcessExplorerView({
             )}
           >
             <Pin className={cn('h-3.5 w-3.5', alwaysOnTop && 'fill-current')} />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="process-explorer-refresh"
             onClick={() => void load()}
@@ -239,7 +237,7 @@ export function ProcessExplorerView({
             className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-muted"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
         </div>
       </div>
 
@@ -344,7 +342,8 @@ export function ProcessExplorerView({
                 >
                   <tr className="border-b border-border/60 bg-surface/60">
                     <td className="overflow-hidden px-3 py-1.5">
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid={`process-explorer-toggle-${group.owner.id}`}
                         onClick={() => toggleOwner(group.owner.id)}
@@ -358,7 +357,7 @@ export function ProcessExplorerView({
                         )}
                         <span>{ownerLabel}</span>
                         <span className="text-text-muted">{group.count}</span>
-                      </button>
+                      </ControlButton>
                     </td>
                     <td />
                     <td className="overflow-hidden px-2 py-1.5 text-right text-xs tabular-nums text-text-secondary">
@@ -393,7 +392,8 @@ export function ProcessExplorerView({
                 <span className="shrink-0 text-text-muted">PID {selectedRecord.pid}</span>
               </div>
               {selectedLaunch?.command ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="process-explorer-copy-launch-details"
                   aria-label={
@@ -414,7 +414,7 @@ export function ProcessExplorerView({
                   ) : (
                     <Copy className="h-3.5 w-3.5" />
                   )}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
             {selectedLaunch?.command ? (

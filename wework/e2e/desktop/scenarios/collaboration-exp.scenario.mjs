@@ -453,10 +453,17 @@ export function createDesktopScenario({
         await control.command('waitFor', toggle, { visible: true })
         await click(control, toggle)
         await control.command('waitFor', `${toggle}[aria-checked="true"]`)
-        await control.command('scrollIntoView', '[data-testid="general-fixed-tab-add"]')
-        await control.command('select', '[data-testid="general-fixed-tab-add"]', {
-          value: 'fixed-collaboration-exp',
+        const addFixedTab = '[data-testid="general-fixed-tab-add"]'
+        await control.command('scrollIntoView', addFixedTab)
+        await control.command('setExpanded', addFixedTab, { value: 'true' })
+        const listboxId = await control.command('getAttribute', addFixedTab, {
+          value: 'aria-controls',
         })
+        assert.ok(listboxId, 'The add-tab control must own its option list')
+        await control.command(
+          'clickWhenEnabled',
+          `[id="${listboxId}"] [role="option"][data-value="fixed-collaboration-exp"]`
+        )
         await control.command('waitFor', TAB)
         await control.command('navigate', 'body', { value: route(localIssue) })
         await assertSingleton(control, localProject, localIssue, 'local')
@@ -815,7 +822,13 @@ export function createDesktopScenario({
         await control.command('navigate', 'body', {
           value: `/todo?projectStore=local&projectId=${localProject.id}&itemId=${localIssue.id}`,
         })
-        await control.command('waitFor', `${ACTIVE} [data-testid="collaboration-issue-detail"]`, {
+        const legacyDetail = `${ACTIVE} [data-testid="collaboration-issue-detail"]`
+        const legacyActivity = `${legacyDetail} [data-testid="cloud-task-activity-${localIssue.id}"]`
+        // The activity mounts below the fold after the restored board route commits.
+        await control.command('waitFor', legacyActivity)
+        await control.command('scrollIntoView', legacyActivity, { visible: true })
+        await control.command('waitFor', legacyActivity, {
+          visible: true,
           text: PUBLIC,
         })
         assert.equal((await comments()).filter(row => row.content === PUBLIC).length, 1)

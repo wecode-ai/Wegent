@@ -1,4 +1,4 @@
-import type { TodoViewState } from './todoViewTypes'
+import type { TodoViewState } from './todoTypes'
 
 export type TodoLayout = 'board' | 'list'
 export type TodoAssigneeFilter = 'all' | 'unassigned' | 'ai' | 'human'

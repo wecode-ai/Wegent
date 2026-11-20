@@ -1,22 +1,20 @@
-import { FileTree, useFileTree } from '@pierre/trees/react'
-import type {
-  FileTree as FileTreeModel,
-  FileTreeDirectoryHandle,
-  FileTreeItemHandle,
-} from '@pierre/trees'
-import { RefreshCw, Search } from 'lucide-react'
-import type { DragEvent as ReactDragEvent } from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Folder, FolderOpen, RefreshCw, Search } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import {
   createWorkspaceTreeModel,
   getEntryByTreePath,
   type WorkspaceTreeModel,
 } from './workspaceFileTreeModel'
 
-import { PIERRE_WORKSPACE_FILE_TREE_CSS } from './workspaceFileTreeStyles'
+import { createFileTreeData, resolveFileTreePath } from './fileTreeData'
+import { useFileTreeExpansion } from './useFileTreeExpansion'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 
 interface WorkspaceFileTreeProps {
   visible?: boolean
@@ -32,186 +30,100 @@ interface WorkspaceFileTreeProps {
   onRefresh: () => void
 }
 
-function isDirectoryHandle(item: FileTreeItemHandle | null): item is FileTreeDirectoryHandle {
-  if (!item) return false
-
-  const candidate = item as FileTreeItemHandle & {
-    expand?: unknown
-    isDirectory?: unknown
-  }
-  if (typeof candidate.isDirectory === 'function') {
-    return candidate.isDirectory()
-  }
-  return typeof candidate.expand === 'function'
-}
-
-function getExpandedTreePaths(model: FileTreeModel, paths: string[]): string[] {
-  const directories = new Set(
-    paths.flatMap(path => {
-      const segments = path.split('/')
-      return segments.slice(1).map((_, index) => `${segments.slice(0, index + 1).join('/')}/`)
-    })
-  )
-  return Array.from(directories).filter(path => {
-    const item = model.getItem(path)
-    return isDirectoryHandle(item) && item.isExpanded()
-  })
-}
-
-function synchronizeWorkspaceTreePaths(
-  model: FileTreeModel,
-  previous: WorkspaceTreeModel,
-  next: WorkspaceTreeModel,
-  query: string
-) {
-  const requestedExpansions = next.expandedTreePaths.filter(
-    path => !previous.expandedTreePaths.includes(path) || !model.getItem(path)
-  )
-  const pathsChanged =
-    previous.paths.length !== next.paths.length ||
-    previous.paths.some((path, index) => path !== next.paths[index])
-  if (pathsChanged) {
-    // resetPaths preserves selection, but search matches need to be recomputed.
-    model.setSearch(null)
-    const expanded = getExpandedTreePaths(model, previous.paths)
-    model.resetPaths(next.paths, { initialExpandedPaths: expanded })
-    model.setSearch(query.trim() || null)
-  }
-  requestedExpansions.forEach(path => {
-    const item = model.getItem(path)
-    if (isDirectoryHandle(item)) item.expand()
-  })
-}
-
-function revealWorkspaceTreePath(model: FileTreeModel, path: string) {
-  const segments = path.split('/')
-  for (let index = 1; index < segments.length; index += 1) {
-    const item = model.getItem(`${segments.slice(0, index).join('/')}/`)
-    if (isDirectoryHandle(item)) item.expand()
-  }
-  for (const selected of model.getSelectedPaths()) {
-    if (selected !== path) model.getItem(selected)?.deselect()
-  }
-  model.getItem(path)?.select()
-  model.scrollToPath(path, { offset: 'center', focus: false })
-}
-
-function WorkspacePierreFileTree({
+function WorkspaceSdkFileTree({
   treeModel,
   query,
   visible,
+  rootPath,
   onOpenDirectory,
   onOpenFile,
 }: {
   treeModel: WorkspaceTreeModel
   query: string
   visible: boolean
+  rootPath: string
   onOpenDirectory: (entry: WorkspaceFileEntry) => void
   onOpenFile: (entry: WorkspaceFileEntry) => void
 }) {
-  const current = useRef({ treeModel, onOpenDirectory, onOpenFile })
-  const syncingSelection = useRef(false)
-  const attached = useRef(false)
-  const previousTreeModel = useRef(treeModel)
-  const revealedPath = useRef<string | null>(null)
-  const { model } = useFileTree({
-    density: 'compact',
-    dragAndDrop: {
-      canDrop: () => false,
-    },
-    flattenEmptyDirectories: true,
-    icons: { set: 'complete', colored: true },
-    initialExpandedPaths: treeModel.expandedTreePaths,
-    initialSelectedPaths: treeModel.selectedTreePath ? [treeModel.selectedTreePath] : [],
-    itemHeight: 28,
-    onSelectionChange: selectedPaths => {
-      if (!attached.current || syncingSelection.current) return
-      const { treeModel, onOpenDirectory, onOpenFile } = current.current
-      const nextPath = selectedPaths[0]
-      if (!nextPath) return
-
-      const entry = getEntryByTreePath(
-        treeModel.entryByTreePath,
-        nextPath,
-        treeModel.caseInsensitivePaths
-      )
-      if (!entry) return
-
-      if (entry.isDirectory) {
-        const item = model.getItem(nextPath)
-        if (isDirectoryHandle(item)) {
-          item.expand()
-        }
-        onOpenDirectory(entry)
-      } else {
-        onOpenFile(entry)
-      }
-    },
-    paths: treeModel.paths,
-    search: false,
-    unsafeCSS: PIERRE_WORKSPACE_FILE_TREE_CSS,
-  })
-
-  const previousQuery = useRef<string | undefined>(undefined)
-  const bindTree = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return
-      attached.current = true
-      current.current = { treeModel, onOpenDirectory, onOpenFile }
-      syncingSelection.current = true
-      try {
-        if (previousQuery.current !== query) {
-          model.setSearch(query.trim() || null)
-          previousQuery.current = query
-        }
-        synchronizeWorkspaceTreePaths(model, previousTreeModel.current, treeModel, query)
-        previousTreeModel.current = treeModel
-        const path = treeModel.selectedTreePath
-        if (!visible || !path || !model.getItem(path)) {
-          revealedPath.current = null
-        } else if (revealedPath.current !== path) {
-          revealWorkspaceTreePath(model, path)
-          revealedPath.current = path
-        }
-      } finally {
-        syncingSelection.current = false
-      }
-      return () => {
-        attached.current = false
-      }
-    },
-    [model, onOpenDirectory, onOpenFile, query, treeModel, visible]
+  const data = useMemo(() => createFileTreeData(treeModel.paths, query), [treeModel.paths, query])
+  const { values: visibleExpanded, setValues: setExpanded } = useFileTreeExpansion(
+    data,
+    query,
+    treeModel.expandedTreePaths
   )
-
-  const handleDragStart = (event: ReactDragEvent<HTMLDivElement>) => {
-    const row = event.nativeEvent
-      .composedPath()
-      .find(target => target instanceof HTMLElement && target.hasAttribute('data-item-path')) as
-      | HTMLElement
-      | undefined
-    const treePath = row?.dataset.itemPath
-    if (!treePath) return
-
-    const entry = getEntryByTreePath(treeModel.entryByTreePath, treePath)
-    if (!entry) return
-
-    writeWorkspacePathDragData(event.dataTransfer, [
-      {
-        path: entry.path,
-        isDirectory: entry.isDirectory,
-      },
-    ])
-    event.dataTransfer.effectAllowed = 'copy'
-  }
+  const selected = resolveFileTreePath(data, treeModel.selectedTreePath)
 
   return (
-    <div ref={bindTree} className="h-full min-h-0 w-full" onDragStart={handleDragStart}>
-      <FileTree
-        data-testid="workspace-file-tree-pierre"
-        model={model}
-        className="block h-full min-h-0 w-full"
-      />
-    </div>
+    <VirtualTree
+      data-testid="workspace-file-tree-pierre"
+      aria-label={rootPath}
+      items={data.items}
+      value={selected}
+      current={selected}
+      activation="automatic"
+      expanded={visibleExpanded}
+      visible={visible}
+      scrollToValue={selected}
+      scrollAlign="center"
+      viewportClassName="h-full w-full"
+      onExpandedChange={(next, details) => {
+        setExpanded(next)
+        if (details.reason === 'item-press' || details.reason === 'imperative') return
+        for (const path of next.filter(path => !visibleExpanded.includes(path))) {
+          const entry = getEntryByTreePath(
+            treeModel.entryByTreePath,
+            path,
+            treeModel.caseInsensitivePaths
+          )
+          if (entry?.isDirectory) onOpenDirectory(entry)
+        }
+      }}
+      onValueChange={path => {
+        if (!path) return
+        const entry = getEntryByTreePath(
+          treeModel.entryByTreePath,
+          path,
+          treeModel.caseInsensitivePaths
+        )
+        if (!entry) return
+        if (entry.isDirectory) {
+          setExpanded(Array.from(new Set([...visibleExpanded, path])))
+          onOpenDirectory(entry)
+        } else onOpenFile(entry)
+      }}
+      itemProps={item => ({
+        draggable: true,
+        onDragStart: event => {
+          const entry = getEntryByTreePath(
+            treeModel.entryByTreePath,
+            item.value,
+            treeModel.caseInsensitivePaths
+          )
+          if (!entry) return
+          writeWorkspacePathDragData(event.dataTransfer, [
+            { path: entry.path, isDirectory: entry.isDirectory },
+          ])
+          event.dataTransfer.effectAllowed = 'copy'
+        },
+      })}
+      renderLabel={(item, state) => (
+        <>
+          {state.branch ? (
+            state.expanded ? (
+              <FolderOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <Folder className="h-4 w-4 shrink-0" aria-hidden="true" />
+            )
+          ) : (
+            <WorkspaceFileIcon
+              path={item.value}
+              testId={`workspace-file-tree-icon-${item.value}`}
+            />
+          )}
+          <span className="truncate">{item.label}</span>
+        </>
+      )}
+    />
   )
 }
 
@@ -249,17 +161,18 @@ export function WorkspaceFileTree({
       className="flex h-full min-h-0 w-[240px] shrink-0 flex-col border-l border-border bg-background"
     >
       <div className="px-3 pb-1.5 pt-2">
-        <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
-          <Search className="h-3.5 w-3.5 text-text-muted" />
-          <input
+        <div className="relative flex items-center gap-1.5">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
+          <ControlInput
             data-testid="workspace-file-search-input"
             value={query}
             onChange={event => setSearch({ path: selectedPath, value: event.target.value })}
             placeholder={t('workbench.workspace_file_search', '筛选文件...')}
             aria-label={t('workbench.workspace_file_search', '筛选文件...')}
-            className="min-w-0 flex-1 bg-transparent text-xs leading-4 outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 pl-9"
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-file-refresh-button"
             onClick={onRefresh}
@@ -267,7 +180,7 @@ export function WorkspaceFileTree({
             aria-label={t('workbench.workspace_file_refresh', '刷新文件')}
           >
             <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
         </div>
       </div>
 
@@ -280,19 +193,21 @@ export function WorkspaceFileTree({
         {error ? (
           <div className="px-2 py-3 text-xs text-destructive wework:text-red-500">
             <p>{error}</p>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-file-tree-retry-button"
               className="mt-2 underline"
               onClick={onRefresh}
             >
               {t('workbench.workspace_file_retry', '重试')}
-            </button>
+            </ControlButton>
           </div>
         ) : treeModel.paths.length > 0 ? (
-          <WorkspacePierreFileTree
+          <WorkspaceSdkFileTree
             key={rootPath}
             treeModel={treeModel}
+            rootPath={rootPath}
             query={query}
             visible={visible}
             onOpenDirectory={onOpenDirectory}

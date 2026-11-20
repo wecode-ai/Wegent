@@ -19,21 +19,13 @@ it('registers and renders every handoff state in both themes', async () => {
       expect(story).toBeDefined()
       for (const theme of ['light', 'dark'] as const) {
         await act(async () =>
-          root.render(
-            meta.render({ ...story.args, theme } as Parameters<
-              typeof meta.render
-            >[0]),
-          ),
+          root.render(meta.render({ ...story.args, theme } as Parameters<typeof meta.render>[0]))
         )
-        expect(
-          container.querySelectorAll(`[data-theme="${theme}"] nav`),
-        ).toHaveLength(1)
+        expect(container.querySelectorAll(`[data-theme="${theme}"] nav`)).toHaveLength(1)
         if ('play' in story) {
           await act(async () => story.play({ canvasElement: container }))
-          expect(document.querySelectorAll('[role="menu"]')).toHaveLength(1)
-          expect(
-            document.querySelector('[role="menu"]')?.getAttribute('data-theme'),
-          ).toBe(theme)
+          expect(document.querySelectorAll('[role="listbox"]')).toHaveLength(1)
+          expect(document.querySelector('[role="listbox"]')?.getAttribute('data-theme')).toBe(theme)
         }
       }
     }

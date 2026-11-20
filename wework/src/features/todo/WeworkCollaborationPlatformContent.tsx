@@ -1,3 +1,5 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { resolveIssueReference } from './resolveIssueReference'
@@ -726,12 +728,19 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                     if (event.target === event.currentTarget) onClose()
                   }}
                 >
-                  <section
-                    aria-modal="true"
-                    className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
-                    role="dialog"
+                  <DialogSurface
+                    onClose={onClose}
+                    render={
+                      <section
+                        aria-labelledby="local-device-resource-title"
+                        className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
+                      />
+                    }
                   >
-                    <h2 className="text-sm font-semibold text-text-primary">
+                    <h2
+                      id="local-device-resource-title"
+                      className="text-sm font-semibold text-text-primary"
+                    >
                       {locale === 'zh-CN' ? '本地设备' : 'Local device'}
                     </h2>
                     <p className="mt-2 text-sm leading-6 text-text-secondary">
@@ -740,16 +749,17 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                         : 'This device is already part of your personal group. Install and enable its execution environments to run Agents and teams locally.'}
                     </p>
                     <div className="mt-5 flex justify-end">
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         className="inline-flex h-8 items-center rounded-md bg-text-primary px-4 text-sm text-background"
                         data-testid="local-device-resource-confirm"
                         onClick={onClose}
                         type="button"
                       >
                         {locale === 'zh-CN' ? '知道了' : 'Done'}
-                      </button>
+                      </ControlButton>
                     </div>
-                  </section>
+                  </DialogSurface>
                 </div>
               ),
             renderProjectImporter: props.renderLocalProjectImporter
@@ -835,7 +845,8 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
               : undefined,
             sidebarHeaderActions: (
               <Tooltip label={t('todo.search_issues', '搜索 Issue')}>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="collaboration-issue-search-open"
                   aria-label={t('todo.search_issues', '搜索 Issue')}
@@ -843,7 +854,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
                 >
                   <Search className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </Tooltip>
             ),
             workspaceOwnerOptions,
@@ -864,6 +875,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
             const runtimePort = issueRuntimePort(project.project_store, props.services)
             return (
               <WeworkSharedProject
+                workspaceActive={props.workspaceActive}
                 api={projectApi}
                 projectCatalogApi={platformApi?.projects}
                 detailServices={

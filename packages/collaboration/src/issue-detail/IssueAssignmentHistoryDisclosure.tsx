@@ -1,4 +1,5 @@
-import { ChevronDown } from 'lucide-react'
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
+import {} from 'lucide-react'
 import { useId } from 'react'
 import { IssueAssignmentHistoryList, type IssueAssignmentHistoryEntry } from './IssueHistoryLists'
 import { IssuePropertyRow } from './IssuePropertyRow'
@@ -16,8 +17,8 @@ export function IssueAssignmentHistoryDisclosure({
   const historyId = useId()
 
   return (
-    <details className="issue-assignment-history-disclosure">
-      <summary
+    <CollapsibleRoot className="issue-assignment-history-disclosure">
+      <CollapsibleTrigger
         data-testid="cloud-todo-assignment-chain-trigger"
         aria-controls={historyId}
         className="issue-assignment-history-summary"
@@ -29,36 +30,34 @@ export function IssueAssignmentHistoryDisclosure({
           <span className="issue-assignment-history-hide">
             {t('todo.assignment_chain_collapse', '收起指派详情')}
           </span>
-          <ChevronDown
-            className="issue-assignment-history-chevron h-3 w-3 shrink-0"
-            aria-hidden="true"
-          />
         </IssuePropertyRow>
-      </summary>
-      <div
-        id={historyId}
-        role="region"
-        aria-label={t('todo.assignment_chain_title', '指派详情')}
-        data-testid="cloud-todo-assignment-chain-popover"
-        className="issue-assignment-history-entries"
-      >
-        <IssueAssignmentHistoryList
-          entries={entries}
-          memberName={memberName}
-          labels={{
-            system: t('todo.status_history_system', '系统/机器人'),
-            team: t('todo.assignment_chain_team', 'Wegent 智能体'),
-            agent: t('todo.assignment_chain_agent', '机器人'),
-            group: t('todo.assignment_chain_group', '协作小组'),
-            unassigned: t('todo.assignment_chain_unassigned', '未指派'),
-            actions: {
-              assign: t('todo.assignment_action_assign', '指派'),
-              reassign: t('todo.assignment_action_reassign', '转派'),
-              unassign: t('todo.assignment_action_unassign', '取消指派'),
-            },
-          }}
-        />
-      </div>
-    </details>
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div
+          id={historyId}
+          role="region"
+          aria-label={t('todo.assignment_chain_title', '指派详情')}
+          data-testid="cloud-todo-assignment-chain-popover"
+          className="issue-assignment-history-entries"
+        >
+          <IssueAssignmentHistoryList
+            entries={entries}
+            memberName={memberName}
+            labels={{
+              system: t('todo.status_history_system', '系统/机器人'),
+              team: t('todo.assignment_chain_team', 'Wegent 智能体'),
+              agent: t('todo.assignment_chain_agent', '机器人'),
+              group: t('todo.assignment_chain_group', '协作小组'),
+              unassigned: t('todo.assignment_chain_unassigned', '未指派'),
+              actions: {
+                assign: t('todo.assignment_action_assign', '指派'),
+                reassign: t('todo.assignment_action_reassign', '转派'),
+                unassign: t('todo.assignment_action_unassign', '取消指派'),
+              },
+            }}
+          />
+        </div>
+      </CollapsiblePanel>
+    </CollapsibleRoot>
   )
 }

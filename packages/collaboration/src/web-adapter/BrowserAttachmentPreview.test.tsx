@@ -52,18 +52,6 @@ describe('BrowserAttachmentPreview', () => {
         disconnect() {}
       }
     )
-    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
-      configurable: true,
-      value(this: HTMLDialogElement) {
-        this.open = true
-      },
-    })
-    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
-      configurable: true,
-      value(this: HTMLDialogElement) {
-        this.open = false
-      },
-    })
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: vi.fn().mockReturnValue('blob:attachment-preview'),
@@ -93,7 +81,7 @@ describe('BrowserAttachmentPreview', () => {
 
     expect(read).toHaveBeenCalledWith('attachment-1')
     expect(URL.createObjectURL).toHaveBeenCalledWith(blob)
-    expect(element<HTMLDialogElement>('browser-attachment-preview-dialog').open).toBe(true)
+    expect(element('browser-attachment-preview-dialog').getAttribute('aria-modal')).toBe('true')
     const image = element<HTMLImageElement>('browser-attachment-preview-image')
     expect(image.src).toBe('blob:attachment-preview')
     expect(document.querySelector('[role="status"]')).not.toBeNull()
@@ -247,9 +235,13 @@ describe('BrowserAttachmentPreview', () => {
     expect(document.querySelector('[data-testid="browser-attachment-preview-dialog"]')).toBeNull()
   })
 
-  it('handles native cancel without letting Escape dismiss the underlying Issue', async () => {
+  it('handles SDK Escape without letting Escape dismiss the underlying Issue', async () => {
     const close = vi.fn()
-    const cancelled = new Event('cancel', { bubbles: true, cancelable: true })
+    const cancelled = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    })
     await render(
       vi.fn(async () => new Blob(['image'], { type: 'image/png' })),
       close

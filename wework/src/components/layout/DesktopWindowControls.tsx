@@ -1,7 +1,8 @@
-import { Edit3, PanelLeft } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Edit3, PanelLeft } from 'lucide-react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 
 interface DesktopWindowControlsProps {
@@ -29,7 +30,8 @@ export function DesktopWindowControls({
   return (
     <div data-testid="desktop-window-controls" className={cn('flex items-center gap-3', className)}>
       <Tooltip label={toggleLabel} side="bottom" align="start">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={
             toggleTestId ?? (sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button')
@@ -39,11 +41,12 @@ export function DesktopWindowControls({
           aria-label={toggleLabel}
         >
           <PanelLeft />
-        </button>
+        </ControlButton>
       </Tooltip>
       {sidebarCollapsed && onNewChat && (
         <Tooltip label={t('workbench.new_chat', '新对话')} side="bottom" align="start">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="desktop-controls-new-chat-button"
             onClick={onNewChat}
@@ -51,7 +54,7 @@ export function DesktopWindowControls({
             aria-label={t('workbench.new_chat', '新对话')}
           >
             <Edit3 />
-          </button>
+          </ControlButton>
         </Tooltip>
       )}
     </div>

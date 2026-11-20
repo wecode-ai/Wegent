@@ -74,7 +74,8 @@ test('execution environment Git errors open domain-specific settings and keep th
     const prefix = 'collaboration-project-execution-environment'
     await page.getByTestId(`${prefix}-add`).click()
     await page.getByTestId(`${prefix}-candidate-${device!.id}`).click()
-    await page.getByTestId(`${prefix}-actions-toggle-${device!.id}`).click()
+    const actions = page.getByTestId(`${prefix}-actions-toggle-${device!.id}`)
+    await actions.click()
     const initialize = page.getByTestId(`${prefix}-initialize-${device!.id}`)
     await initialize.click()
     const configure = page.getByTestId(`${prefix}-configure-git`)
@@ -97,6 +98,7 @@ test('execution environment Git errors open domain-specific settings and keep th
     await expect(configure).toBeVisible()
 
     responseStatus = 404
+    await actions.click()
     await initialize.click()
     await expect(page.getByTestId(`${prefix}-${device!.id}`)).toHaveAttribute(
       'data-preparation-state',

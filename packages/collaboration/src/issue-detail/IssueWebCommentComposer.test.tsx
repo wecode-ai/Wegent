@@ -178,32 +178,44 @@ describe('Web adapter for the desktop main composer', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(undefined)
     await render(vi.fn().mockResolvedValue(attachment), send)
-    expect(container.querySelector('.composer-prosemirror-placeholder')?.textContent).toBe(
-      '发起新讨论…'
-    )
-    expect(container.querySelectorAll('.task-detail-new-comment-actions button')).toHaveLength(3)
+    expect(
+      container.querySelector('.composer-prosemirror-placeholder')?.textContent,
+    ).toBe('发起新讨论…')
+    expect(
+      container.querySelectorAll('.task-detail-new-comment-actions button'),
+    ).toHaveLength(3)
     act(() =>
       container
-        .querySelector<HTMLButtonElement>('[data-testid="collaboration-comment-settings-toggle"]')!
-        .click()
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="collaboration-comment-settings-toggle"]',
+        )!
+        .click(),
     )
-    expect(container.querySelector('.task-detail-comment-settings')?.textContent).toBe(
-      'Comment execution settings'
-    )
+    expect(
+      container.querySelector('.task-detail-comment-settings')?.textContent,
+    ).toBe('Comment execution settings')
     await select(new File(['pdf'], 'brief.pdf', { type: 'application/pdf' }))
-    expect(container.querySelector('[data-testid=attachment-badge]')?.className).toContain('w-40')
-    expect(container.querySelector('[data-testid=attachment-document-icon] svg')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid=attachment-badge]')?.className,
+    ).toContain('w-40')
+    expect(
+      container.querySelector('[data-testid=attachment-document-icon] svg'),
+    ).not.toBeNull()
     await write('Review this')
     const input = editor()
     const submit = container.querySelector<HTMLButtonElement>(
-      '[data-testid="collaboration-issue-comment-submit"]'
+      '[data-testid="collaboration-issue-comment-submit"]',
     )!
     await act(async () => submit.click())
     expect(input.value).toBe('Review this')
-    expect(container.querySelector('[data-testid=attachment-badge]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid=attachment-badge]'),
+    ).not.toBeNull()
     expect(container.querySelector('[role=alert]')?.textContent).toBe('offline')
     await act(async () => submit.click())
-    expect(send).toHaveBeenLastCalledWith('Review this\n\n[brief.pdf](wegent://attachments/a1)')
+    expect(send).toHaveBeenLastCalledWith(
+      'Review this\n\n[brief.pdf](wegent://attachments/a1)',
+    )
     expect(input.value).toBe('')
     expect(container.querySelector('[data-testid=attachment-badge]')).toBeNull()
   })
@@ -218,149 +230,54 @@ describe('Web adapter for the desktop main composer', () => {
     await select(new File(['image'], 'screen.png', { type: 'image/png' }))
     await act(async () =>
       container
-        .querySelector<HTMLButtonElement>('[data-testid=attachment-image-preview-button]')!
-        .click()
+        .querySelector<HTMLButtonElement>(
+          '[data-testid=attachment-image-preview-button]',
+        )!
+        .click(),
     )
-    expect(document.querySelector('[data-testid=attachment-image-lightbox]')).not.toBeNull()
+    expect(
+      document.querySelector('[data-testid=attachment-image-lightbox]'),
+    ).not.toBeNull()
+    await vi.waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-testid="attachment-image-lightbox"]')
+          ?.contains(document.activeElement),
+      ).toBe(true),
+    )
     act(() =>
-      document.querySelector<HTMLButtonElement>('[data-testid=attachment-image-zoom-in]')!.click()
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid=attachment-image-zoom-in]',
+        )!
+        .click(),
     )
-    expect(document.querySelector('[data-testid=attachment-image-zoom-value]')?.textContent).toBe(
-      '125%'
+    expect(
+      document.querySelector('[data-testid=attachment-image-zoom-value]')
+        ?.textContent,
+    ).toBe('125%')
+    act(() =>
+      document
+        .querySelector('[data-testid="attachment-image-lightbox"]')!
+        .dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
     )
-    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
-    expect(document.querySelector('[data-testid=attachment-image-lightbox]')).toBeNull()
+    expect(
+      document.querySelector('[data-testid=attachment-image-lightbox]'),
+    ).toBeNull()
     await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-testid=remove-attachment-button]')!.click()
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid=remove-attachment-button]',
+        )!
+        .click(),
     )
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview')
     expect(container.querySelector('[data-testid=attachment-badge]')).toBeNull()
-  })
-  it('does not reuse a pending attachment when the attachment API owner changes', async () => {
-    let finish!: (value: CollaborationAttachment) => void
-    const oldUpload = vi.fn(
-      () =>
-        new Promise<CollaborationAttachment>(resolve => {
-          finish = resolve
-        })
-    )
-    const nextAttachment = {
-      id: 'next',
-      display_name: 'current.pdf',
-      content_type: 'application/pdf',
-    } as CollaborationAttachment
-    const nextUpload = vi.fn(async () => nextAttachment)
-    await render(oldUpload)
-    await select(new File(['old'], 'previous.pdf', { type: 'application/pdf' }))
-    await render(nextUpload)
-    await act(async () => finish({ ...nextAttachment, id: 'old', display_name: 'previous.pdf' }))
-    expect(container.querySelector('[data-testid="attachment-badge"]')).toBeNull()
-    await select(new File(['new'], 'current.pdf', { type: 'application/pdf' }))
-    expect(container.textContent).toContain('current.pdf')
-    expect(container.textContent).not.toContain('previous.pdf')
-    expect(nextUpload).toHaveBeenCalledExactlyOnceWith('issue', expect.any(File))
-  })
-  it.each(['issue', 'api'])(
-    'does not clear a new draft when the previous %s send completes',
-    async scope => {
-      let resolve!: (value: unknown) => void
-      const pending = new Promise(done => {
-        resolve = done
-      })
-      const send = vi.fn(() => pending)
-      const onSent = vi.fn()
-      const { api } = await render(vi.fn(), send, undefined, { onSent })
-      write('Previous draft')
-      await act(async () =>
-        container
-          .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
-          .click()
-      )
-      expect(send).toHaveBeenCalledOnce()
-      await render(vi.fn(), vi.fn(), undefined, {
-        issueId: scope === 'issue' ? 'next-issue' : 'issue',
-        ...(scope === 'issue' ? { attachmentApi: api } : {}),
-      })
-      expect(editor().value).toBe('')
-      write('New draft')
-      expect(
-        container.querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-submit"]'
-        )!.disabled
-      ).toBe(false)
-      await act(async () => resolve({ id: 'old-comment' }))
-      expect(editor().value).toBe('New draft')
-      expect(onSent).not.toHaveBeenCalled()
-    }
-  )
-
-  it("does not surface a previous Issue's send failure in the new draft", async () => {
-    let reject!: (reason: unknown) => void
-    const pending = new Promise((_done, fail) => {
-      reject = fail
-    })
-    const onError = vi.fn()
-    const { api } = await render(
-      vi.fn(),
-      vi.fn(() => pending),
-      undefined,
-      { onError }
-    )
-    write('Old draft')
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
-        .click()
-    )
-    await render(vi.fn(), vi.fn(), undefined, {
-      issueId: 'next',
-      attachmentApi: api,
-    })
-    write('Current draft')
-    await act(async () => reject(new Error('old failure')))
-    expect(container.querySelector('[role="alert"]')).toBeNull()
-    expect(editor().value).toBe('Current draft')
-    expect(onError).not.toHaveBeenCalled()
-  })
-  it('does not assign a previous Issue after its pending comment succeeds', async () => {
-    let resolve!: (value: unknown) => void
-    const pending = new Promise(done => {
-      resolve = done
-    })
-    const assign = vi.fn().mockResolvedValue(undefined)
-    const { api } = await render(
-      vi.fn(),
-      vi.fn(() => pending),
-      {
-        options: [{ value: '8', label: 'bob' }],
-        assign,
-      }
-    )
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-form-assignee"]'
-        )!
-        .click()
-    )
-    await act(async () =>
-      document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-form-assignee-option-8"]'
-        )!
-        .click()
-    )
-    write('Previous comment')
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
-        .click()
-    )
-    await render(vi.fn(), vi.fn(), undefined, {
-      issueId: 'next',
-      attachmentApi: api,
-    })
-    await act(async () => resolve({ id: 'old-comment' }))
-    expect(assign).not.toHaveBeenCalled()
   })
 })

@@ -1,3 +1,8 @@
+import { RadioGroup, Radio } from '../controls/RadioGroup'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -104,7 +109,8 @@ export function ProjectEnvironmentConfiguration({
             </span>
           </h3>
           {canManage ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               className="collaboration-link-button"
               data-testid={`${testIdPrefix}-add-repository`}
               disabled={saving}
@@ -112,7 +118,7 @@ export function ProjectEnvironmentConfiguration({
               onClick={addRepository}
             >
               ＋ {translate('todo.add_repository', '添加仓库')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {repositories.length > 0 ? (
@@ -124,7 +130,8 @@ export function ProjectEnvironmentConfiguration({
           </p>
         ) : null}
         {repositories.length > 0 ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             className="collaboration-link-button mt-2"
             data-testid={`${testIdPrefix}-advanced-repositories`}
             aria-expanded={showAdvancedRepositories}
@@ -134,23 +141,35 @@ export function ProjectEnvironmentConfiguration({
             {showAdvancedRepositories
               ? translate('todo.hide_advanced_options', '收起高级选项')
               : translate('todo.show_advanced_options', '高级选项')}
-          </button>
+          </ControlButton>
         ) : null}
         {repositories.length > 0 && repositoriesLoadFailed ? (
           <p className="mt-2 text-xs text-destructive" role="alert">
             {translate('todo.repositories_load_failed', '仓库列表加载失败，可直接填写仓库地址。')}{' '}
-            <button
+            <ControlButton
+              variant="unstyled"
               className="collaboration-link-button"
               data-testid={`${testIdPrefix}-repositories-retry`}
               type="button"
               onClick={() => void loadRepositoryOptions()}
             >
               {translate('common.retry', '重试')}
-            </button>
+            </ControlButton>
           </p>
         ) : null}
 
-        <div className="mt-3 space-y-3">
+        <RadioGroup
+          value={repositories.find(repository => repository.primary)?.id ?? null}
+          name="primary-repository"
+          aria-label={translate('todo.execution_environment_primary_repository', '主仓库')}
+          onValueChange={next => {
+            const repository = repositories.find(repository => repository.id === next)
+            if (repository && canManage && !saving)
+              updateRepository(repository.id, { primary: true })
+          }}
+          render={<div />}
+          className="mt-3 space-y-3"
+        >
           {repositories.length === 0 ? (
             <p
               className="text-xs text-text-muted"
@@ -189,19 +208,19 @@ export function ProjectEnvironmentConfiguration({
               >
                 <div className="flex items-center justify-between gap-3">
                   <label className="flex items-center gap-2 text-sm font-medium">
-                    <input
-                      checked={repository.primary}
+                    <Radio
+                      aria-label={`${translate('todo.execution_environment_primary_repository', '主仓库')} ${repository.url || index + 1}`}
+                      data-testid={`${testIdPrefix}-primary-repository-${index}`}
+                      value={repository.id}
                       disabled={!canManage || saving}
-                      name={`${testIdPrefix}-primary-repository`}
-                      type="radio"
-                      onChange={() => updateRepository(repository.id, { primary: true })}
                     />
                     {repository.primary
                       ? translate('todo.execution_environment_primary_repository', '主仓库')
                       : translate('todo.execution_environment_dependency_repository', '依赖仓库')}
                   </label>
                   {canManage ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       className="text-sm text-text-secondary hover:text-text-primary"
                       data-testid={`${testIdPrefix}-remove-repository-${index}`}
                       disabled={saving}
@@ -209,7 +228,7 @@ export function ProjectEnvironmentConfiguration({
                       onClick={() => removeRepository(repository.id)}
                     >
                       {translate('common.remove', '移除')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
                 <div
@@ -217,8 +236,8 @@ export function ProjectEnvironmentConfiguration({
                 >
                   <label className="text-sm">
                     <span className="mb-1 block">{translate('todo.repository_name', '名称')}</span>
-                    <input
-                      className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                    <ControlInput
+                      className="h-9 w-full"
                       data-testid={`${testIdPrefix}-repository-name-${index}`}
                       aria-invalid={Boolean(configurationError && !repository.name.trim())}
                       aria-describedby={
@@ -238,8 +257,8 @@ export function ProjectEnvironmentConfiguration({
                   </label>
                   <label className="text-sm">
                     <span className="mb-1 block">{translate('todo.repository_path', '目录')}</span>
-                    <input
-                      className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                    <ControlInput
+                      className="h-9 w-full"
                       data-testid={`${testIdPrefix}-repository-path-${index}`}
                       aria-invalid={Boolean(configurationError && !repository.path.trim())}
                       aria-describedby={
@@ -266,38 +285,48 @@ export function ProjectEnvironmentConfiguration({
                       {translate('todo.repository_url', 'Git 仓库')}
                     </span>
                     {repositoryOptions != null && repositoryOptions.length > 0 ? (
-                      <select
-                        className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                        data-testid={`${testIdPrefix}-repository-url-${index}`}
-                        aria-invalid={Boolean(configurationError && !repository.url.trim())}
-                        aria-describedby={
-                          configurationError && !repository.url.trim()
-                            ? configurationErrorId
-                            : undefined
-                        }
+                      <SelectRoot
                         disabled={!canManage || saving}
-                        value={repositorySelectValue}
-                        onChange={event => {
-                          if (event.target.value !== CUSTOM_REPOSITORY_VALUE) {
-                            selectRepository(repository.id, event.target.value)
+                        value={normalizeSelectValue(repositorySelectValue)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue === null) return
+                          if (selectedValue !== CUSTOM_REPOSITORY_VALUE) {
+                            selectRepository(repository.id, selectedValue)
                           }
                         }}
                       >
-                        <option disabled value="">
-                          {translate('todo.repository_select_placeholder', '选择仓库')}
-                        </option>
-                        {repository.url && !matchedOption ? (
-                          <option value={CUSTOM_REPOSITORY_VALUE}>{repository.url}</option>
-                        ) : null}
-                        {repositoryOptions.map(option => (
-                          <option key={repositoryKey(option)} value={repositoryKey(option)}>
-                            {option.fullName}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="h-9 w-full"
+                          data-testid={`${testIdPrefix}-repository-url-${index}`}
+                          aria-invalid={Boolean(configurationError && !repository.url.trim())}
+                          aria-describedby={
+                            configurationError && !repository.url.trim()
+                              ? configurationErrorId
+                              : undefined
+                          }
+                        />
+                        <SelectContent>
+                          <SelectItem disabled value="">
+                            {translate('todo.repository_select_placeholder', '选择仓库')}
+                          </SelectItem>
+                          {repository.url && !matchedOption ? (
+                            <SelectItem value={String(CUSTOM_REPOSITORY_VALUE)}>
+                              {repository.url}
+                            </SelectItem>
+                          ) : null}
+                          {repositoryOptions.map(option => (
+                            <SelectItem
+                              key={repositoryKey(option)}
+                              value={String(repositoryKey(option))}
+                            >
+                              {option.fullName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </SelectRoot>
                     ) : (
-                      <input
-                        className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                      <ControlInput
+                        className="h-9 w-full"
                         data-testid={`${testIdPrefix}-repository-url-${index}`}
                         aria-invalid={Boolean(configurationError && !repository.url.trim())}
                         aria-describedby={
@@ -317,36 +346,43 @@ export function ProjectEnvironmentConfiguration({
                       {translate('todo.execution_environment_repository_ref', '分支或 Tag')}
                     </span>
                     {matchedOption && !branchesFailed ? (
-                      <select
-                        className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                        data-testid={`${testIdPrefix}-repository-ref-${index}`}
+                      <SelectRoot
                         disabled={!canManage || saving || !branchesReady}
-                        value={refSelectValue}
-                        onChange={event => {
-                          if (event.target.value !== CUSTOM_REF_VALUE) {
+                        value={normalizeSelectValue(refSelectValue)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue === null) return
+                          if (selectedValue !== CUSTOM_REF_VALUE) {
                             updateRepository(repository.id, {
-                              ref: event.target.value,
+                              ref: selectedValue,
                             })
                           }
                         }}
                       >
-                        <option disabled value="">
-                          {branchesReady
-                            ? translate('todo.repository_ref_placeholder', '选择分支或 Tag')
-                            : translate('common.loading', '加载中…')}
-                        </option>
-                        {repository.ref && !knownRef ? (
-                          <option value={CUSTOM_REF_VALUE}>{repository.ref}</option>
-                        ) : null}
-                        {branchOptions.map(branch => (
-                          <option key={branch.name} value={branch.name}>
-                            {branch.name}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="h-9 w-full"
+                          data-testid={`${testIdPrefix}-repository-ref-${index}`}
+                        />
+                        <SelectContent>
+                          <SelectItem disabled value="">
+                            {branchesReady
+                              ? translate('todo.repository_ref_placeholder', '选择分支或 Tag')
+                              : translate('common.loading', '加载中…')}
+                          </SelectItem>
+                          {repository.ref && !knownRef ? (
+                            <SelectItem value={String(CUSTOM_REF_VALUE)}>
+                              {repository.ref}
+                            </SelectItem>
+                          ) : null}
+                          {branchOptions.map(branch => (
+                            <SelectItem key={branch.name} value={String(branch.name)}>
+                              {branch.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </SelectRoot>
                     ) : (
-                      <input
-                        className="h-9 w-full rounded-lg border border-border bg-background px-3"
+                      <ControlInput
+                        className="h-9 w-full"
                         data-testid={`${testIdPrefix}-repository-ref-${index}`}
                         disabled={!canManage || saving}
                         placeholder="main"
@@ -364,14 +400,15 @@ export function ProjectEnvironmentConfiguration({
                           'todo.repository_branches_load_failed',
                           '分支加载失败，可手动填写。'
                         )}{' '}
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           className="collaboration-link-button"
                           data-testid={`${testIdPrefix}-repository-ref-retry-${index}`}
                           type="button"
                           onClick={() => void loadBranches(matchedOption)}
                         >
                           {translate('common.retry', '重试')}
-                        </button>
+                        </ControlButton>
                       </p>
                     ) : null}
                   </label>
@@ -379,7 +416,7 @@ export function ProjectEnvironmentConfiguration({
               </div>
             )
           })}
-        </div>
+        </RadioGroup>
       </div>
 
       <div className="mt-5">
@@ -388,7 +425,8 @@ export function ProjectEnvironmentConfiguration({
             {translate('todo.execution_environment_setup', '初始化步骤')}
           </h3>
           {canManage ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               className="collaboration-link-button"
               data-testid={`${testIdPrefix}-add-setup-step`}
               disabled={saving}
@@ -396,7 +434,7 @@ export function ProjectEnvironmentConfiguration({
               onClick={addSetupStep}
             >
               ＋ {translate('todo.add_setup_step', '添加步骤')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {setupSteps.length > 0 ? (
@@ -422,8 +460,8 @@ export function ProjectEnvironmentConfiguration({
                 <span className="mb-1 block">
                   {translate('todo.execution_environment_setup_command', '初始化命令')}
                 </span>
-                <input
-                  className="w-full h-11 md:h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
+                <ControlInput
+                  className="w-full h-11 md:h-9 font-mono"
                   data-testid={`${testIdPrefix}-setup-command-${index}`}
                   disabled={!canManage || saving}
                   placeholder="pnpm install"
@@ -442,8 +480,8 @@ export function ProjectEnvironmentConfiguration({
                     '工作目录（可选）'
                   )}
                 </span>
-                <input
-                  className="w-full h-11 md:h-9 rounded-lg border border-border bg-background px-3 font-mono text-sm"
+                <ControlInput
+                  className="w-full h-11 md:h-9 font-mono"
                   data-testid={`${testIdPrefix}-setup-directory-${index}`}
                   disabled={!canManage || saving}
                   placeholder={translate(
@@ -459,7 +497,8 @@ export function ProjectEnvironmentConfiguration({
                 />
               </label>
               {canManage ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   className="px-2 text-sm text-text-secondary hover:text-text-primary"
                   disabled={saving}
                   type="button"
@@ -467,7 +506,7 @@ export function ProjectEnvironmentConfiguration({
                   onClick={() => removeSetupStep(step.id)}
                 >
                   {translate('common.remove', '移除')}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ))}
@@ -488,22 +527,27 @@ export function ProjectEnvironmentConfiguration({
 
       <label className="mt-5 block text-sm">
         {translate('todo.workspace_policy', '任务工作区')}
-        <select
-          className="mt-2 block w-full rounded-md border border-border bg-background px-3 py-2"
-          data-testid={`${testIdPrefix}-workspace-policy`}
-          value={workspacePolicy}
+        <SelectRoot
+          value={normalizeSelectValue(workspacePolicy)}
           disabled={!canManage || saving}
-          onChange={event => {
-            onWorkspacePolicyChange(event.target.value as 'git_worktree' | 'project')
+          onValueChange={selectedValue => {
+            if (selectedValue === null) return
+            onWorkspacePolicyChange(selectedValue as 'git_worktree' | 'project')
           }}
         >
-          <option value="git_worktree">
-            {translate('todo.workspace_policy_isolated', '独立工作树（推荐）')}
-          </option>
-          <option value="project">
-            {translate('todo.workspace_policy_shared', '共享项目目录')}
-          </option>
-        </select>
+          <SelectTrigger
+            className="mt-2 block w-full"
+            data-testid={`${testIdPrefix}-workspace-policy`}
+          />
+          <SelectContent>
+            <SelectItem value="git_worktree">
+              {translate('todo.workspace_policy_isolated', '独立工作树（推荐）')}
+            </SelectItem>
+            <SelectItem value="project">
+              {translate('todo.workspace_policy_shared', '共享项目目录')}
+            </SelectItem>
+          </SelectContent>
+        </SelectRoot>
         <span className="mt-2 block text-xs text-text-muted">
           {translate(
             'todo.workspace_policy_description',
@@ -531,7 +575,8 @@ export function ProjectEnvironmentConfiguration({
               className="flex flex-wrap gap-3"
               data-testid={`${testIdPrefix}-configuration-recovery`}
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-secondary-button"
                 disabled={saving}
@@ -539,8 +584,9 @@ export function ProjectEnvironmentConfiguration({
                 onClick={() => void refreshConfiguration(false)}
               >
                 {translate('todo.execution_environment_reload_configuration', '载入最新配置')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-secondary-button"
                 disabled={saving}
@@ -548,7 +594,7 @@ export function ProjectEnvironmentConfiguration({
                 onClick={() => void refreshConfiguration(true)}
               >
                 {translate('todo.execution_environment_rebase_configuration', '保留草稿并刷新版本')}
-              </button>
+              </ControlButton>
             </div>
           ) : null}
           {configurationNotice ? (
@@ -579,7 +625,8 @@ export function ProjectEnvironmentConfiguration({
                 )}
               </span>
             ) : null}
-            <button
+            <ControlButton
+              variant="unstyled"
               className="collaboration-primary-button"
               data-testid={`${testIdPrefix}-save-configuration`}
               disabled={saving || !configurationDirty || configurationConflict}
@@ -596,7 +643,7 @@ export function ProjectEnvironmentConfiguration({
               }}
             >
               {translate('todo.execution_environment_save_configuration', '保存配置')}
-            </button>
+            </ControlButton>
           </div>
         </>
       ) : null}

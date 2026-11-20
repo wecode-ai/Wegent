@@ -10,6 +10,7 @@ pub mod auth;
 pub mod headers;
 pub mod internal_auth;
 pub mod jwt_compat;
+pub mod runtime_model_auth;
 pub mod user_reader;
 pub use wegent_backend_config as config;
 pub use wegent_backend_persistence::{request_sql, sql_support};
@@ -25,6 +26,7 @@ pub struct AuthServices {
     pub jwt_algorithm: String,
     pub internal_chat: config::InternalChatConfig,
     pub user_reader: Arc<dyn user_reader::UserByIdReader>,
+    pub runtime_model_keys: Arc<dyn runtime_model_auth::PersonalModelKeyReader>,
 }
 
 #[cfg(test)]

@@ -1,9 +1,11 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { DialogSurface } from '../controls/DialogSurface'
 import { useFocusRequest } from '../dom-events'
 import { collaborationTestIds } from '../testIds'
 
 interface IssueConversationDrawersProps {
   embedded?: boolean
+  active?: boolean
   label: string
   children: (close: () => void) => ReactNode
   conversation: ReactNode
@@ -15,6 +17,7 @@ interface IssueConversationDrawersProps {
 /** One overlay owns both panes, so the conversation cannot fall behind its Issue. */
 export function IssueConversationDrawers({
   embedded = false,
+  active = true,
   label,
   children,
   conversation,
@@ -66,14 +69,8 @@ export function IssueConversationDrawers({
       active = false
     }
   }, [hasConversation, dismissing, onClose])
-
-  useFocusRequest(containerRef, undefined, {
-    selector: '[data-testid="cloud-todo-detail-close"]',
-    preventScroll: true,
-    restoreFocus: true,
-  })
   useFocusRequest(containerRef, conversationKey, {
-    enabled: hasConversation,
+    enabled: active && hasConversation,
     selector: '[data-testid="ai-chat-modal-close"]',
     preventScroll: true,
     restoreFocus: true,
@@ -81,52 +78,47 @@ export function IssueConversationDrawers({
   })
 
   return (
-    <div
-      ref={containerRef}
-      className={`issue-conversation-drawers-backdrop${embedded ? ' issue-conversation-drawers-embedded' : ''}`}
-      data-testid={collaborationTestIds.issueDetail}
-      role={embedded ? 'region' : 'dialog'}
-      aria-modal={embedded ? undefined : true}
-      aria-label={label}
-      onMouseDown={event => {
-        if (event.currentTarget === event.target) {
-          if (hasConversation) onCloseConversation()
-          else requestClose()
-        }
+    <DialogSurface
+      active={!embedded}
+      suspended={!active}
+      initialFocus={() =>
+        containerRef.current?.querySelector<HTMLElement>(
+          hasConversation
+            ? '[data-testid="ai-chat-modal-close"]'
+            : '[data-testid="cloud-todo-detail-close"]'
+        ) ?? null
+      }
+      onClose={() => {
+        if (hasConversation) onCloseConversation()
+        else requestClose()
       }}
-      onKeyDown={event => {
-        if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return
-        if (event.key === 'Escape') {
-          event.stopPropagation()
-          if (hasConversation) onCloseConversation()
-          else requestClose()
-        }
-        if (embedded || event.key !== 'Tab') return
-        const focusable = Array.from(
-          event.currentTarget.querySelectorAll<HTMLElement>(
-            'button, a[href], input, textarea, select, summary, [tabindex], [contenteditable="true"]'
-          )
-        ).filter(
-          element =>
-            element.tabIndex >= 0 &&
-            !element.matches(':disabled') &&
-            !element.closest('[inert]') &&
-            element.getBoundingClientRect().right >
-              (viewportRef.current?.getBoundingClientRect().left ?? 0) &&
-            element.getBoundingClientRect().left <
-              (viewportRef.current?.getBoundingClientRect().right ?? Infinity) &&
-            element.getClientRects().length > 0
-        )
-        const first = focusable[0]
-        const last = focusable.at(-1)
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault()
-          last?.focus()
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault()
-          first?.focus()
-        }
-      }}
+      render={
+        <div
+          ref={containerRef}
+          className={`issue-conversation-drawers-backdrop${embedded ? ' issue-conversation-drawers-embedded' : ''}`}
+          data-testid={collaborationTestIds.issueDetail}
+          onKeyDown={event => {
+            if (
+              embedded &&
+              !event.defaultPrevented &&
+              event.currentTarget.contains(event.target as Node) &&
+              event.key === 'Escape'
+            ) {
+              event.stopPropagation()
+              if (hasConversation) onCloseConversation()
+              else requestClose()
+            }
+          }}
+          role={embedded ? 'region' : undefined}
+          aria-label={label}
+          onMouseDown={event => {
+            if (event.currentTarget === event.target) {
+              if (hasConversation) onCloseConversation()
+              else requestClose()
+            }
+          }}
+        />
+      }
     >
       <div ref={viewportRef} className="issue-drawer-viewport">
         <div
@@ -143,6 +135,6 @@ export function IssueConversationDrawers({
           </div>
         </div>
       </div>
-    </div>
+    </DialogSurface>
   )
 }

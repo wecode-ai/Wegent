@@ -1,32 +1,35 @@
-import { CornerDownLeft, Loader2, RotateCcw, Search, Trash2 } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore } from 'react'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { isImeComposingEvent } from '@wegent/chat-core/ime'
-import { createKeyboardShortcutsResource } from './keyboardShortcutsResource'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import {
+  COLLAPSE_READ_CONVERSATIONS_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
   getDefaultKeybindings,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
-  DECREASE_FONT_SIZE_COMMAND,
-  RESET_FONT_SIZE_COMMAND,
+  keybindingFromKeyboardEvent,
   KEYBINDINGS_CHANGED_EVENT,
+  mergeKeybindings,
+  normalizeKeybinding,
   OPEN_SEARCH_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
-  TOGGLE_SIDEBAR_COMMAND,
-  TOGGLE_SIDE_PANEL_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
+  shortcutsAvailable,
   TOGGLE_MODEL_SELECTOR_COMMAND,
   TOGGLE_PRIORITY_FILTER_COMMAND,
-  COLLAPSE_READ_CONVERSATIONS_COMMAND,
-  keybindingFromKeyboardEvent,
-  mergeKeybindings,
-  normalizeKeybinding,
-  shortcutsAvailable,
+  TOGGLE_SIDE_PANEL_COMMAND,
+  TOGGLE_SIDEBAR_COMMAND,
 } from '@/lib/keybindings'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CornerDownLeft, Loader2, RotateCcw, Search } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createKeyboardShortcutsResource } from './keyboardShortcutsResource'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
   [OPEN_TERMINAL_COMMAND]: {
@@ -210,12 +213,13 @@ export function KeyboardShortcutsSettingsPage() {
       />
       <div className="relative mb-6 max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-        <input
+        <ControlInput
+          density="compact"
           data-testid="keyboard-shortcuts-search-input"
           value={query}
           onChange={event => setQuery(event.target.value)}
           placeholder={t('workbench.keyboard_shortcuts_search', '搜索快捷键')}
-          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm leading-[18px] outline-none keyboard:focus:border-primary"
+          className="w-full pl-9 pr-3 leading-[18px]"
         />
       </div>
       <div>
@@ -254,7 +258,8 @@ export function KeyboardShortcutsSettingsPage() {
                   </div>
                 </div>
                 <div className="flex flex-col items-start gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`keyboard-shortcut-record-${item.command}`}
                     onClick={() => setRecordingCommand(item.command)}
@@ -272,13 +277,14 @@ export function KeyboardShortcutsSettingsPage() {
                         {t('workbench.keyboard_shortcuts_unassigned', '未设置')}
                       </span>
                     )}
-                  </button>
+                  </ControlButton>
                   {item.secondaryKeys?.map(key => (
                     <KeybindingPill key={key} value={key} />
                   ))}
                 </div>
                 <div className="flex items-center justify-end gap-1">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`keyboard-shortcut-reset-${item.command}`}
                     onClick={() => void saveOverride(item.command, item.defaultKey)}
@@ -292,18 +298,15 @@ export function KeyboardShortcutsSettingsPage() {
                     ) : (
                       <RotateCcw className="h-4 w-4" />
                     )}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <DeleteIconButton
                     type="button"
                     data-testid={`keyboard-shortcut-clear-${item.command}`}
                     onClick={() => void saveOverride(item.command, null)}
                     disabled={saving}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
                     title={t('workbench.keyboard_shortcuts_clear', '清除')}
                     aria-label={t('workbench.keyboard_shortcuts_clear', '清除')}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  />
                 </div>
               </div>
             )

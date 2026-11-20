@@ -1,10 +1,11 @@
 import type { TFunction } from 'i18next'
 import { beginOperation } from '@/telemetry/operationBus'
 import { pluginTelemetryIdentityFromParts } from '@/telemetry/pluginIdentity'
-import type {
-  LocalConnectorAuthResult,
-  LocalConnectorAuthTarget,
-  LocalConnectorAuthTransport,
+import {
+  isLocalConnectorAuthBusy,
+  type LocalConnectorAuthResult,
+  type LocalConnectorAuthTarget,
+  type LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
 
 export function isBrowserAuthStatus(status: LocalConnectorAuthResult | null | undefined): boolean {
@@ -66,10 +67,13 @@ export function createLocalConnectorAuthSessionSource(
     let authenticated = false
     let disposed = false
     const isCurrent = () => !disposed && revision === owner && listeners.size > 0
+    const busyMessage = (error: unknown) =>
+      isLocalConnectorAuthBusy(error) ? observer!.t('workbench.plugins_local_auth_busy') : null
     const terminalError = (result: LocalConnectorAuthResult, usesBrowser: boolean) => {
       if (result.status === 'cancelled') attempt.cancel()
       else attempt.fail('confirm')
       return (
+        busyMessage(result.errorCode ?? result.hint) ||
         result.hint ||
         (usesBrowser
           ? observer!.t(
@@ -114,9 +118,10 @@ export function createLocalConnectorAuthSessionSource(
         attempt.fail('request')
         publish({
           error:
-            error instanceof Error
+            busyMessage(error) ||
+            (error instanceof Error
               ? error.message
-              : observer!.t('workbench.plugins_local_auth_poll_failed', '检查登录状态失败'),
+              : observer!.t('workbench.plugins_local_auth_poll_failed', '检查登录状态失败')),
         })
       }
     }
@@ -148,12 +153,14 @@ export function createLocalConnectorAuthSessionSource(
         if (!isCurrent()) return
         attempt.fail('request')
         publish({
-          error: startErrorMessage(
-            error,
-            browserMode
-              ? observer!.t('workbench.plugins_local_browser_start_failed', '无法启动浏览器授权')
-              : observer!.t('workbench.plugins_local_qr_start_failed', '无法生成登录二维码')
-          ),
+          error:
+            busyMessage(error) ||
+            startErrorMessage(
+              error,
+              browserMode
+                ? observer!.t('workbench.plugins_local_browser_start_failed', '无法启动浏览器授权')
+                : observer!.t('workbench.plugins_local_qr_start_failed', '无法生成登录二维码')
+            ),
         })
       } finally {
         if (isCurrent()) publish({ busy: false })

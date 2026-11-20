@@ -1,11 +1,14 @@
-import { useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
-import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
-import { useSiteDialogScope } from './useSiteDialogScope'
-import { AlertCircle, Loader2, X } from 'lucide-react'
 import type { Site, SiteAccessAudience, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createRequestId } from '@/lib/request-id'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Loader2, X } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { useSiteDialogScope } from './useSiteDialogScope'
 
 interface SiteAccessDialogProps {
   api: SitesApi
@@ -61,13 +64,6 @@ function SiteAccessDialogContent({
   const close = () => {
     if (!operation.current) onClose()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    close,
-    true,
-    '[data-testid="site-access-close"]',
-    true,
-    restoreFocus
-  )
   const error =
     actionError ??
     (loadFailed
@@ -141,14 +137,17 @@ function SiteAccessDialogContent({
 
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4">
-      <section
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="site-access-title"
-        data-testid="site-access-dialog"
-        className="w-full max-w-lg rounded-[20px] border border-border bg-popover p-5 shadow-lg"
+      <DialogSurface
+        onClose={close}
+        initialFocus={'[data-testid="site-access-close"]'}
+        finalFocus={restoreFocus}
+        render={
+          <section
+            aria-labelledby="site-access-title"
+            data-testid="site-access-dialog"
+            className="w-full max-w-lg rounded-[20px] border border-border bg-popover p-5 shadow-lg"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -157,7 +156,8 @@ function SiteAccessDialogContent({
             </h2>
             <p className="mt-1 truncate text-sm text-text-secondary">{site.name}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="site-access-close"
             aria-label={t('close', '关闭')}
@@ -166,7 +166,7 @@ function SiteAccessDialogContent({
             className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
 
         {loading ? (
@@ -179,25 +179,31 @@ function SiteAccessDialogContent({
           </div>
         ) : loadFailed ? null : (
           <>
-            <fieldset className="mt-5 space-y-2" disabled={saving}>
+            <RadioGroup
+              value={audience}
+              name="site-access-audience"
+              aria-label={t('access_scope', '访问范围')}
+              onValueChange={next => {
+                const option = options.find(option => option.value === next)
+                if (option) {
+                  setDraft({ audience: option.value, subjectsText })
+                  setSaved(false)
+                  setError(null)
+                }
+              }}
+              render={<fieldset />}
+              className="mt-5 space-y-2"
+              disabled={saving}
+            >
               <legend className="sr-only">{t('access_scope', '访问范围')}</legend>
               {options.map(option => (
                 <label
                   key={option.value}
                   className="flex min-h-14 cursor-pointer items-start gap-3 rounded-xl border border-border/50 px-3 py-2.5 transition-colors hover:bg-surface"
                 >
-                  <input
-                    type="radio"
-                    name="site-access-audience"
+                  <Radio
                     value={option.value}
-                    checked={audience === option.value}
                     data-testid={`site-access-audience-${option.value}`}
-                    className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                    onChange={() => {
-                      setDraft({ audience: option.value, subjectsText })
-                      setSaved(false)
-                      setError(null)
-                    }}
                   />
                   <span className="min-w-0">
                     <strong className="block text-sm font-medium text-text-primary">
@@ -209,14 +215,14 @@ function SiteAccessDialogContent({
                   </span>
                 </label>
               ))}
-            </fieldset>
+            </RadioGroup>
 
             {audience === 'custom' ? (
               <label className="mt-4 block">
                 <span className="text-sm font-medium text-text-primary">
                   {t('access_custom_subjects', '指定成员用户名')}
                 </span>
-                <textarea
+                <ControlTextarea
                   value={subjectsText}
                   data-testid="site-access-subjects"
                   disabled={saving}
@@ -256,16 +262,19 @@ function SiteAccessDialogContent({
 
         <footer className="mt-5 flex justify-end gap-2">
           {loadFailed ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="site-access-retry"
               onClick={retryLoad}
               className="h-10 rounded-lg px-4 text-sm text-text-primary hover:bg-surface"
             >
               {t('retry', '重试')}
-            </button>
+            </ControlButton>
           ) : null}
-          <button
+          <ControlButton
+            variant="ghost"
+            size="sm"
             type="button"
             data-testid="site-access-cancel"
             disabled={saving}
@@ -273,19 +282,20 @@ function SiteAccessDialogContent({
             className="h-10 rounded-lg px-4 text-sm text-text-primary hover:bg-surface disabled:opacity-50"
           >
             {t('cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="site-access-save"
             disabled={loading || saving || loadFailed}
             onClick={() => void save()}
-            className="flex h-10 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             {saving ? t('access_saving', '保存中…') : t('save', '保存')}
-          </button>
+          </ControlButton>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

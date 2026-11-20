@@ -1,16 +1,18 @@
-import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
-import { ReleaseRollbackSettings } from '@/features/app-update/ReleaseRollbackSettings'
-import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
-import type { ComponentType } from 'react'
+import { ProgressBar } from '@wegent/collaboration/controls/ProgressBar'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import {
   calculateAppUpdateDownloadPercent,
   formatAppUpdateVersion,
 } from '@/features/app-update/app-update-format'
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
+import { ReleaseRollbackSettings } from '@/features/app-update/ReleaseRollbackSettings'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
+import type { ComponentType } from 'react'
 import { SettingsGroup, SettingsPage, SettingsRow, SettingsSwitch } from './settings-ui'
 
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
@@ -20,7 +22,8 @@ const SHORT_COMMIT_SHA_LENGTH = 12
 
 function AboutLink({ label, url }: { label: string; url: string }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={`about-link-${label.toLowerCase().replaceAll(' ', '-')}`}
       onClick={() => {
@@ -30,7 +33,7 @@ function AboutLink({ label, url }: { label: string; url: string }) {
     >
       <span>{label}</span>
       <ExternalLink className="h-3 w-3" />
-    </button>
+    </ControlButton>
   )
 }
 
@@ -48,16 +51,17 @@ function AboutActionButton({
   disabled?: boolean
 }) {
   return (
-    <button
+    <ControlButton
+      variant="primary"
+      size="sm"
       type="button"
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-xs font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-4 w-4" />
       <span>{label}</span>
-    </button>
+    </ControlButton>
   )
 }
 
@@ -141,7 +145,7 @@ export function AboutSettingsPage() {
           label={t('workbench.app_update_auto_update', {
             defaultValue: '自动更新',
           })}
-          control={
+          children={
             <SettingsSwitch
               data-testid="about-auto-update-switch"
               aria-label={t('workbench.app_update_auto_update', {
@@ -164,7 +168,7 @@ export function AboutSettingsPage() {
           description={t('workbench.app_update_beta_channel_description', {
             defaultValue: '同时接收 Beta 和正式版本，并优先更新到版本号更高的版本。',
           })}
-          control={
+          children={
             <SettingsSwitch
               data-testid="about-beta-update-switch"
               aria-label={t('workbench.app_update_beta_channel', {
@@ -210,25 +214,10 @@ export function AboutSettingsPage() {
         ) : null}
         {updateStatus === 'downloading' ? (
           <div data-testid="about-update-download-progress" className="w-[240px] space-y-1.5">
-            <div
-              role="progressbar"
-              aria-label={t('workbench.app_update_downloading', {
-                defaultValue: '正在下载更新',
-              })}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              {...(downloadPercent !== null ? { 'aria-valuenow': downloadPercent } : {})}
-              className="h-1.5 overflow-hidden rounded-full bg-muted"
-            >
-              <div
-                className={
-                  downloadPercent === null
-                    ? 'h-full w-1/3 animate-pulse rounded-full bg-primary'
-                    : 'h-full rounded-full bg-primary transition-[width] duration-200'
-                }
-                style={downloadPercent === null ? undefined : { width: `${downloadPercent}%` }}
-              />
-            </div>
+            <ProgressBar
+              value={downloadPercent}
+              label={t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })}
+            />
             <span className="block text-xs leading-5 text-text-secondary">
               {formatAppUpdateProgress(downloadProgress, t)}
             </span>

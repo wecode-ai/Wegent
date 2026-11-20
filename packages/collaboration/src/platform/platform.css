@@ -173,7 +173,7 @@
   background: rgb(var(--color-bg-hover));
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-primary-navigation
   button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
@@ -187,18 +187,15 @@
   stroke-width: 1.75;
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-workspace-section-actions
   > button:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-workspace-section-toggle:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-workspace-identity:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-workspace-toggle:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-workspace-project:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer'])) .collaboration-workspace-identity:focus-visible,
+:where(html:not([data-input-modality='pointer'])) .collaboration-workspace-toggle:focus-visible,
+:where(html:not([data-input-modality='pointer'])) .collaboration-workspace-project:focus-visible,
+:where(html:not([data-input-modality='pointer']))
   .collaboration-workspace-actions
   > button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
@@ -272,17 +269,13 @@
     transform 120ms ease-out;
 }
 
-.collaboration-workspace-section-toggle[aria-expanded="true"] > svg {
+.collaboration-workspace-section-toggle[aria-expanded='true'] > svg {
   transform: rotate(90deg);
 }
 
-.collaboration-workspace-section-heading:hover
-  .collaboration-workspace-section-toggle
-  > svg,
-.collaboration-workspace-section-heading:focus-within
-  .collaboration-workspace-section-toggle
-  > svg,
-.collaboration-workspace-section-toggle[aria-expanded="false"] > svg {
+.collaboration-workspace-section-heading:hover .collaboration-workspace-section-toggle > svg,
+.collaboration-workspace-section-heading:focus-within .collaboration-workspace-section-toggle > svg,
+.collaboration-workspace-section-toggle[aria-expanded='false'] > svg {
   opacity: 1;
 }
 
@@ -313,9 +306,9 @@
 }
 
 .collaboration-workspace-section-actions > button:hover,
-.collaboration-workspace-section-actions > button[aria-expanded="true"],
+.collaboration-workspace-section-actions > button[aria-expanded='true'],
 .collaboration-workspace-action-trigger:hover,
-.collaboration-workspace-action-trigger[aria-expanded="true"] {
+.collaboration-workspace-action-trigger[aria-expanded='true'] {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-hover));
 }
@@ -371,10 +364,6 @@
   background: rgb(var(--color-sidebar-active));
 }
 
-.collaboration-workspace-row.active .collaboration-workspace-identity {
-  font-weight: 600;
-}
-
 .collaboration-project-card-mark {
   display: inline-flex;
   align-items: center;
@@ -402,15 +391,13 @@
   color: inherit;
   background: transparent;
   font-size: var(--text-base);
-  font-weight: 400;
+  font-weight: var(--font-weight-ui);
   line-height: 20px;
   text-align: left;
   cursor: pointer;
 }
 
-.collaboration-platform-sidebar
-  .collaboration-ungrouped-projects
-  .collaboration-workspace-project {
+.collaboration-platform-sidebar .collaboration-ungrouped-projects .collaboration-workspace-project {
   padding-left: 10px;
 }
 
@@ -499,7 +486,7 @@
   transition: transform 120ms ease-out;
 }
 
-.collaboration-workspace-toggle[aria-expanded="true"] > svg {
+.collaboration-workspace-toggle[aria-expanded='true'] > svg {
   transform: rotate(90deg);
 }
 
@@ -519,7 +506,7 @@
 
 .collaboration-workspace-row:hover .collaboration-workspace-actions,
 .collaboration-workspace-row:focus-within .collaboration-workspace-actions,
-.collaboration-workspace-actions:has(button[aria-expanded="true"]) {
+.collaboration-workspace-actions:has(button[aria-expanded='true']) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -549,7 +536,7 @@
   color: rgb(var(--color-text-secondary));
   background: transparent;
   font-size: var(--text-base);
-  font-weight: 400;
+  font-weight: var(--font-weight-ui);
   line-height: 20px;
   text-align: left;
   cursor: pointer;
@@ -567,7 +554,6 @@
   .collaboration-workspace-project.active {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-muted));
-  font-weight: 600;
 }
 
 .collaboration-workspace-project.active::before {
@@ -578,7 +564,7 @@
   width: 3px;
   border-radius: 2px;
   background: rgb(var(--color-primary));
-  content: "";
+  content: '';
 }
 
 .collaboration-workspace-project > span {
@@ -657,9 +643,8 @@ button.collaboration-project-offline:hover {
 }
 
 .collaboration-workspace-project-row:hover .collaboration-project-row-actions,
-.collaboration-workspace-project-row:focus-within
-  .collaboration-project-row-actions,
-.collaboration-project-row-actions:has([aria-expanded="true"]) {
+.collaboration-workspace-project-row:focus-within .collaboration-project-row-actions,
+.collaboration-project-row-actions:has([aria-expanded='true']) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -673,15 +658,16 @@ button.collaboration-project-offline:hover {
   border: 0;
   border-radius: 6px;
   color: rgb(var(--color-text-secondary));
-  background: rgb(var(--color-bg-muted));
+  background: transparent;
 }
 
-.collaboration-project-new-conversation:hover {
+.collaboration-project-new-conversation:hover,
+.collaboration-project-new-conversation[aria-expanded='true'] {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-hover));
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-project-new-conversation:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
@@ -834,7 +820,7 @@ button.collaboration-project-offline:hover {
   background: rgb(var(--color-bg-muted));
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-issue-home-guides
   > button:focus-visible {
   outline: 2px solid rgb(var(--color-focus));
@@ -1006,7 +992,6 @@ button.collaboration-project-offline:hover {
 .collaboration-project-create-trigger {
   display: inline-flex;
   width: auto;
-  min-height: 36px;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -1108,12 +1093,12 @@ button.collaboration-project-offline:hover {
   background: rgb(var(--color-focus) / 0.1);
 }
 
-.collaboration-home-attention-list > button[data-tone="review"] > i {
+.collaboration-home-attention-list > button[data-tone='review'] > i {
   color: rgb(var(--color-warning));
   background: rgb(var(--color-warning) / 0.1);
 }
 
-.collaboration-home-attention-list > button[data-tone="failed"] > i {
+.collaboration-home-attention-list > button[data-tone='failed'] > i {
   color: rgb(var(--color-destructive));
   background: rgb(var(--color-destructive) / 0.1);
 }
@@ -1176,7 +1161,7 @@ button.collaboration-project-offline:hover {
   font-weight: 600;
 }
 
-.collaboration-home-attention-list > button[data-tone="review"] em {
+.collaboration-home-attention-list > button[data-tone='review'] em {
   color: rgb(var(--color-primary-contrast));
   background: rgb(var(--color-primary));
 }
@@ -1297,7 +1282,7 @@ button.collaboration-project-offline:hover {
   cursor: pointer;
 }
 
-.collaboration-platform-secondary-button[aria-pressed="true"] {
+.collaboration-platform-secondary-button[aria-pressed='true'] {
   color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
   border-color: rgb(var(--color-text-primary));
@@ -1561,19 +1546,19 @@ button.collaboration-project-offline:hover {
   padding: 0 14px;
 }
 
-.collaboration-resource-catalog-list[data-kind="agents"]
+.collaboration-resource-catalog-list[data-kind='agents']
   > :is(.collaboration-resource-catalog-list-header, article) {
   grid-template-columns: 36px minmax(180px, 1fr) 100px minmax(120px, 0.7fr) 88px;
 }
 
-.collaboration-resource-catalog-list[data-kind="teams"]
+.collaboration-resource-catalog-list[data-kind='teams']
   > :is(.collaboration-resource-catalog-list-header, article) {
   grid-template-columns:
     36px minmax(200px, 1fr) minmax(130px, 0.7fr)
     100px minmax(150px, 0.75fr) minmax(120px, 0.65fr) 88px;
 }
 
-.collaboration-resource-catalog-list[data-kind="devices"]
+.collaboration-resource-catalog-list[data-kind='devices']
   > :is(.collaboration-resource-catalog-list-header, article) {
   grid-template-columns:
     36px minmax(160px, 1fr) 80px 100px minmax(120px, 0.8fr)
@@ -1631,7 +1616,7 @@ button.collaboration-project-offline:hover {
   background: rgb(var(--color-bg-hover));
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-resource-catalog-list
   > article:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
@@ -1717,20 +1702,20 @@ button.collaboration-project-offline:hover {
   height: 7px;
   border-radius: 999px;
   background: rgb(var(--color-text-muted));
-  content: "";
+  content: '';
 }
 
-.collaboration-resource-row-status[data-tone="available"]::before,
-.collaboration-resource-row-status[data-tone="online"]::before {
+.collaboration-resource-row-status[data-tone='available']::before,
+.collaboration-resource-row-status[data-tone='online']::before {
   background: rgb(var(--color-success));
 }
 
-.collaboration-resource-row-status[data-tone="provisioning"]::before {
+.collaboration-resource-row-status[data-tone='provisioning']::before {
   background: rgb(var(--color-warning));
 }
 
-.collaboration-resource-row-status[data-tone="error"]::before,
-.collaboration-resource-row-status[data-tone="unavailable"]::before {
+.collaboration-resource-row-status[data-tone='error']::before,
+.collaboration-resource-row-status[data-tone='unavailable']::before {
   background: rgb(var(--color-destructive));
 }
 
@@ -1845,9 +1830,8 @@ button.collaboration-project-offline:hover {
   background: rgb(var(--color-bg-hover));
 }
 
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-resource-bind-button:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer'])) .collaboration-resource-bind-button:focus-visible,
+:where(html:not([data-input-modality='pointer']))
   .collaboration-resource-settings-button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
@@ -2004,16 +1988,12 @@ button.collaboration-project-offline:hover {
   gap: 16px;
 }
 
-.collaboration-group-detail-dialog
-  .collaboration-group-profile-fields
-  > label:nth-child(2) {
+.collaboration-group-detail-dialog .collaboration-group-profile-fields > label:nth-child(2) {
   grid-column: 2;
   grid-row: 1;
 }
 
-.collaboration-group-detail-dialog
-  .collaboration-group-profile-fields
-  textarea {
+.collaboration-group-detail-dialog .collaboration-group-profile-fields textarea {
   min-height: 72px;
   max-height: 120px;
 }
@@ -2276,8 +2256,7 @@ button.collaboration-project-offline:hover {
   font-weight: 700;
 }
 
-.collaboration-space-project-group[data-location="local"]
-  .collaboration-space-project-mark {
+.collaboration-space-project-group[data-location='local'] .collaboration-space-project-mark {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-subtle));
 }
@@ -2448,17 +2427,17 @@ button.collaboration-project-offline:hover {
   font-size: 12px;
 }
 
-.collaboration-workspace-operation-metrics > div[data-tone="running"] > span {
+.collaboration-workspace-operation-metrics > div[data-tone='running'] > span {
   color: rgb(var(--color-focus));
   background: rgb(var(--color-focus) / 0.1);
 }
 
-.collaboration-workspace-operation-metrics > div[data-tone="review"] > span {
+.collaboration-workspace-operation-metrics > div[data-tone='review'] > span {
   color: rgb(var(--color-warning));
   background: rgb(var(--color-warning) / 0.1);
 }
 
-.collaboration-workspace-operation-metrics > div[data-tone="failed"] > span {
+.collaboration-workspace-operation-metrics > div[data-tone='failed'] > span {
   color: rgb(var(--color-destructive));
   background: rgb(var(--color-destructive) / 0.1);
 }
@@ -2596,7 +2575,7 @@ button.collaboration-project-offline:hover {
   font-size: 11px;
 }
 
-.collaboration-workspace-operation-counts > span[data-tone="failed"] {
+.collaboration-workspace-operation-counts > span[data-tone='failed'] {
   color: rgb(var(--color-destructive));
 }
 
@@ -2617,31 +2596,31 @@ button.collaboration-project-offline:hover {
   background: rgb(var(--color-text-muted));
 }
 
-.collaboration-workspace-operation-state[data-tone="running"] > i {
+.collaboration-workspace-operation-state[data-tone='running'] > i {
   background: rgb(var(--color-focus));
 }
 
-.collaboration-workspace-operation-state[data-tone="review"] > i {
+.collaboration-workspace-operation-state[data-tone='review'] > i {
   background: rgb(var(--color-warning));
 }
 
-.collaboration-workspace-operation-state[data-tone="failed"] {
+.collaboration-workspace-operation-state[data-tone='failed'] {
   color: rgb(var(--color-destructive));
 }
 
-.collaboration-workspace-operation-state[data-tone="unavailable"] {
+.collaboration-workspace-operation-state[data-tone='unavailable'] {
   color: rgb(var(--color-destructive));
 }
 
-.collaboration-workspace-operation-state[data-tone="failed"] > i {
+.collaboration-workspace-operation-state[data-tone='failed'] > i {
   background: rgb(var(--color-destructive));
 }
 
-.collaboration-workspace-operation-state[data-tone="unavailable"] > i {
+.collaboration-workspace-operation-state[data-tone='unavailable'] > i {
   background: rgb(var(--color-destructive));
 }
 
-.collaboration-workspace-operation-state[data-tone="completed"] > i {
+.collaboration-workspace-operation-state[data-tone='completed'] > i {
   background: rgb(var(--color-success));
 }
 
@@ -2659,9 +2638,7 @@ button.collaboration-project-offline:hover {
   cursor: pointer;
 }
 
-.collaboration-workspace-attention-list
-  > button
-  > .collaboration-workspace-operation-state {
+.collaboration-workspace-attention-list > button > .collaboration-workspace-operation-state {
   grid-column: 1 / -1;
 }
 
@@ -2768,15 +2745,9 @@ button.collaboration-project-offline:hover {
   font-weight: 400;
 }
 
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-resource-form
-  input:focus,
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-resource-form
-  select:focus,
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-resource-form
-  textarea:focus {
+:where(html:not([data-input-modality='pointer'])) .collaboration-resource-form input:focus,
+:where(html:not([data-input-modality='pointer'])) .collaboration-resource-form select:focus,
+:where(html:not([data-input-modality='pointer'])) .collaboration-resource-form textarea:focus {
   border-color: rgb(var(--color-primary));
   box-shadow: 0 0 0 2px rgb(var(--color-primary) / 0.12);
 }
@@ -2994,8 +2965,7 @@ button.collaboration-project-offline:hover {
   margin-bottom: 12px;
 }
 
-.collaboration-group-people-editor.is-compact
-  .collaboration-group-people-heading {
+.collaboration-group-people-editor.is-compact .collaboration-group-people-heading {
   margin-bottom: 10px;
 }
 
@@ -3086,8 +3056,7 @@ button.collaboration-project-offline:hover {
   padding: 8px 10px;
 }
 
-.collaboration-group-people-editor.is-compact
-  .collaboration-group-people-empty {
+.collaboration-group-people-editor.is-compact .collaboration-group-people-empty {
   display: flex;
   min-height: 38px;
   align-items: center;
@@ -3278,13 +3247,13 @@ button.collaboration-project-offline:hover {
   outline: 0;
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-group-people-editor
   input:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-group-people-picker
   input:focus-visible,
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-group-people-editor
   button:focus-visible {
   border-color: rgb(var(--color-primary));
@@ -3306,7 +3275,7 @@ button.collaboration-project-offline:hover {
   text-align: left;
 }
 
-.collaboration-group-people-options > button[aria-pressed="true"] {
+.collaboration-group-people-options > button[aria-pressed='true'] {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-subtle));
 }
@@ -3672,16 +3641,13 @@ button.collaboration-project-offline:hover {
   overflow-wrap: anywhere;
 }
 
-.collaboration-group-settings-section > [role="region"]:not([hidden]) {
+.collaboration-group-settings-section > [role='region']:not([hidden]) {
   display: grid;
   gap: 16px;
   padding: 0 0 20px 26px;
 }
 
-.collaboration-group-settings-section
-  > [role="region"]
-  > .collaboration-group-section-heading
-  h3 {
+.collaboration-group-settings-section > [role='region'] > .collaboration-group-section-heading h3 {
   display: none;
 }
 
@@ -3865,7 +3831,7 @@ button.collaboration-project-offline:hover {
   width: 12px;
   height: 1px;
   background: rgb(var(--color-border-strong));
-  content: "";
+  content: '';
 }
 
 .collaboration-group-stage-card > header {
@@ -4079,7 +4045,7 @@ button.collaboration-project-offline:hover {
   border-radius: 8px;
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-resource-list
   > button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
@@ -4214,9 +4180,7 @@ button.collaboration-project-offline:hover {
   margin-top: 18px;
 }
 
-.collaboration-resource-dialog
-  footer
-  button:not(.collaboration-primary-button) {
+.collaboration-resource-dialog footer button:not(.collaboration-primary-button) {
   min-height: 34px;
   padding: 0 14px;
   border: 1px solid rgb(var(--color-border));
@@ -4654,8 +4618,7 @@ button.collaboration-project-offline:hover {
   opacity: 0.55;
 }
 
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-issue-table-sort:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .collaboration-issue-table-sort:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 1px;
 }
@@ -4742,7 +4705,7 @@ button.collaboration-project-offline:hover {
   border-radius: 4px;
 }
 
-:where(html:not([data-input-modality="pointer"]))
+:where(html:not([data-input-modality='pointer']))
   .collaboration-issue-table
   td:nth-child(2)
   button:focus-visible {
@@ -4809,8 +4772,7 @@ button.collaboration-project-offline:hover {
   background: rgb(var(--color-muted));
 }
 
-:where(html:not([data-input-modality="pointer"]))
-  .collaboration-issue-table-delete:focus-visible {
+:where(html:not([data-input-modality='pointer'])) .collaboration-issue-table-delete:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
@@ -4913,7 +4875,7 @@ button.collaboration-project-offline:hover {
     height: 16px;
   }
 
-  .collaboration-mobile-navigation-toggle[aria-expanded="true"] svg {
+  .collaboration-mobile-navigation-toggle[aria-expanded='true'] svg {
     transform: rotate(90deg);
   }
 
@@ -4921,13 +4883,11 @@ button.collaboration-project-offline:hover {
     display: none;
   }
 
-  .collaboration-platform-app:has(
-    > .collaboration-platform-sidebar-full.is-mobile-open
-  ) {
+  .collaboration-platform-app:has(> .collaboration-platform-sidebar-full.is-mobile-open) {
     grid-template-rows: minmax(0, 1fr);
   }
 
-  [data-testid="collaboration-platform-root"]:has(
+  [data-testid='collaboration-platform-root']:has(
       .collaboration-platform-sidebar-full.is-mobile-open
     )
     .collaboration-platform-main {
@@ -4938,8 +4898,7 @@ button.collaboration-project-offline:hover {
     height: 100%;
   }
 
-  .collaboration-platform-sidebar-full.is-mobile-open
-    > .collaboration-navigation-content {
+  .collaboration-platform-sidebar-full.is-mobile-open > .collaboration-navigation-content {
     display: flex;
     flex: 1;
     min-height: 0;
@@ -4962,8 +4921,7 @@ button.collaboration-project-offline:hover {
     padding: 0 12px;
   }
 
-  .collaboration-platform-sidebar-settings
-    .collaboration-settings-navigation-toggle {
+  .collaboration-platform-sidebar-settings .collaboration-settings-navigation-toggle {
     display: flex;
     width: 100%;
     min-height: 44px;
@@ -4992,7 +4950,7 @@ button.collaboration-project-offline:hover {
     padding-bottom: 8px;
   }
 
-  .collaboration-platform-sidebar-settings[data-navigation-expanded="false"]
+  .collaboration-platform-sidebar-settings[data-navigation-expanded='false']
     .collaboration-navigation-content {
     display: none;
   }
@@ -5127,8 +5085,7 @@ button.collaboration-project-offline:hover {
     grid-template-columns: 36px minmax(0, 1fr) auto auto;
   }
 
-  .collaboration-resource-catalog-list[data-kind="devices"]
-    .collaboration-device-last-seen {
+  .collaboration-resource-catalog-list[data-kind='devices'] .collaboration-device-last-seen {
     grid-column: 2;
     grid-row: 2;
   }
@@ -5144,9 +5101,7 @@ button.collaboration-project-offline:hover {
     min-height: 44px;
   }
 
-  .collaboration-delete-device-dialog
-    .collaboration-resource-form-actions
-    > button {
+  .collaboration-delete-device-dialog .collaboration-resource-form-actions > button {
     min-height: 44px;
   }
 
@@ -5156,8 +5111,7 @@ button.collaboration-project-offline:hover {
     flex-basis: 44px;
   }
 
-  .collaboration-resource-catalog-list[data-kind="teams"]
-    .collaboration-resource-row-leader {
+  .collaboration-resource-catalog-list[data-kind='teams'] .collaboration-resource-row-leader {
     display: inline-flex;
   }
 
@@ -5254,15 +5208,11 @@ button.collaboration-project-offline:hover {
   opacity: 1;
 }
 
-.collaboration-group-people-editor.is-inline
-  .collaboration-group-people-heading
-  h4 {
+.collaboration-group-people-editor.is-inline .collaboration-group-people-heading h4 {
   display: none;
 }
 
-.collaboration-group-people-editor.is-inline
-  .collaboration-group-people-heading
-  p {
+.collaboration-group-people-editor.is-inline .collaboration-group-people-heading p {
   margin: 0;
 }
 
@@ -5281,26 +5231,22 @@ button.collaboration-project-offline:hover {
   border-radius: 0;
 }
 
-.collaboration-group-people-editor.is-inline
-  .collaboration-group-roster-heading {
+.collaboration-group-people-editor.is-inline .collaboration-group-roster-heading {
   display: contents;
 }
 
-.collaboration-group-people-editor.is-inline
-  .collaboration-group-roster-identity {
+.collaboration-group-people-editor.is-inline .collaboration-group-roster-identity {
   grid-column: 1;
   grid-row: 1;
 }
 
-.collaboration-group-people-editor.is-inline
-  .collaboration-group-person-responsibility {
+.collaboration-group-people-editor.is-inline .collaboration-group-person-responsibility {
   grid-column: 2;
   grid-row: 1;
   margin: 0;
 }
 
-.collaboration-group-people-editor.is-inline
-  .collaboration-group-person-actions,
+.collaboration-group-people-editor.is-inline .collaboration-group-person-actions,
 .collaboration-group-people-editor.is-inline .collaboration-group-leader-badge {
   grid-column: 3;
   grid-row: 1;
@@ -5333,18 +5279,14 @@ button.collaboration-project-offline:hover {
     min-height: 44px;
     min-width: 44px;
   }
-  .collaboration-group-people-editor.is-inline
-    .collaboration-group-roster-item {
+  .collaboration-group-people-editor.is-inline .collaboration-group-roster-item {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .collaboration-group-people-editor.is-inline
-    .collaboration-group-person-actions,
-  .collaboration-group-people-editor.is-inline
-    .collaboration-group-leader-badge {
+  .collaboration-group-people-editor.is-inline .collaboration-group-person-actions,
+  .collaboration-group-people-editor.is-inline .collaboration-group-leader-badge {
     grid-column: 2;
   }
-  .collaboration-group-people-editor.is-inline
-    .collaboration-group-person-responsibility {
+  .collaboration-group-people-editor.is-inline .collaboration-group-person-responsibility {
     grid-column: 1 / -1;
     grid-row: 2;
   }
@@ -5354,14 +5296,12 @@ button.collaboration-project-offline:hover {
 }
 
 @media (max-width: 767px) {
-  .collaboration-project-settings
-    input:not([type="checkbox"]):not([type="radio"]),
+  .collaboration-project-settings input:not([type='checkbox']):not([type='radio']),
   .collaboration-project-settings select,
-  .collaboration-project-settings
-    button:not([role="switch"]):not([role="checkbox"]) {
+  .collaboration-project-settings button:not([role='switch']):not([role='checkbox']) {
     min-height: 44px;
   }
-  .collaboration-project-settings summary {
+  .collaboration-project-settings [data-slot='collapsible-trigger'] {
     min-height: 44px;
     min-width: 44px;
   }

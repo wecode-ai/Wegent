@@ -1,13 +1,18 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import type {
+  CollaborationUser,
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
   CollaborationWorkspaceRole,
-  CollaborationUser,
 } from '../types'
 import type { WorkspaceResourceCommands } from './WorkspaceResourceConfiguration'
 
@@ -104,29 +109,36 @@ function MemberInviteDialog({
 
   return (
     <div className="collaboration-dialog-backdrop">
-      <section
-        className="collaboration-dialog collaboration-resource-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={messages.inviteMember}
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            className="collaboration-dialog collaboration-resource-dialog"
+            aria-label={messages.inviteMember}
+          />
+        }
       >
         <h2>{messages.inviteMember}</h2>
         <p>{messages.searchHint}</p>
         <label>
           {messages.role}
-          <select
-            data-testid="collaboration-workspace-member-invite-role"
-            value={role}
-            onChange={event => setRole(event.target.value as MemberRole)}
+          <SelectRoot
+            value={normalizeSelectValue(role)}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null) return setRole(selectedValue as MemberRole)
+            }}
           >
-            <option value="Maintainer">{messages.maintainer}</option>
-            <option value="Developer">{messages.developer}</option>
-            <option value="Viewer">{messages.viewer}</option>
-          </select>
+            <SelectTrigger data-testid="collaboration-workspace-member-invite-role" />
+            <SelectContent>
+              <SelectItem value="Maintainer">{messages.maintainer}</SelectItem>
+              <SelectItem value="Developer">{messages.developer}</SelectItem>
+              <SelectItem value="Viewer">{messages.viewer}</SelectItem>
+            </SelectContent>
+          </SelectRoot>
         </label>
         <label>
           {messages.searchUser}
-          <input
+          <ControlInput
             autoFocus
             data-testid="collaboration-workspace-member-search"
             value={query}
@@ -140,7 +152,8 @@ function MemberInviteDialog({
         <div className="collaboration-resource-candidates">
           {query.trim() && !results.length ? <span>{messages.noSearchResults}</span> : null}
           {results.map(user => (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`collaboration-workspace-member-result-${user.id}`}
               disabled={savingUserId !== null}
@@ -162,19 +175,20 @@ function MemberInviteDialog({
                 <strong>{user.user_name}</strong>
                 <small>{user.email ?? ''}</small>
               </span>
-            </button>
+            </ControlButton>
           ))}
         </div>
         <footer>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="collaboration-workspace-member-invite-cancel"
             onClick={onClose}
           >
             {messages.cancel}
-          </button>
+          </ControlButton>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }
@@ -213,7 +227,8 @@ export function WorkspaceMembersConfiguration({
             <p className="mt-1 text-sm text-text-muted">{messages.memberHint}</p>
           </div>
           {canManage ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="collaboration-primary-button"
               data-testid="collaboration-workspace-member-invite"
@@ -222,7 +237,7 @@ export function WorkspaceMembersConfiguration({
               }
             >
               ＋ {messages.inviteMember}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         <ErrorMessage message={error} />
@@ -246,32 +261,39 @@ export function WorkspaceMembersConfiguration({
               {locale === 'zh-CN'
                 ? '转交分组所有权（你将保留管理员权限）'
                 : 'Transfer group ownership (you remain an administrator)'}
-              <select
-                className="min-h-11 rounded-md border border-border bg-base px-3 md:min-h-8"
-                data-testid="collaboration-workspace-transfer-user"
-                value={transferUserId}
-                onChange={event => setTransferUserId(event.target.value)}
+              <SelectRoot
+                value={normalizeSelectValue(transferUserId)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null) return setTransferUserId(selectedValue)
+                }}
               >
-                <option value="">
-                  {locale === 'zh-CN' ? '选择新所有者' : 'Select the new owner'}
-                </option>
-                {members
-                  .filter(member => member.role !== 'Owner')
-                  .map(member => (
-                    <option key={member.user_id} value={member.user_id}>
-                      {member.user_name}
-                    </option>
-                  ))}
-              </select>
+                <SelectTrigger
+                  density="compact"
+                  data-testid="collaboration-workspace-transfer-user"
+                />
+                <SelectContent>
+                  <SelectItem value="">
+                    {locale === 'zh-CN' ? '选择新所有者' : 'Select the new owner'}
+                  </SelectItem>
+                  {members
+                    .filter(member => member.role !== 'Owner')
+                    .map(member => (
+                      <SelectItem key={member.user_id} value={String(member.user_id)}>
+                        {member.user_name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </SelectRoot>
             </label>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="submit"
               className="min-h-11 rounded-md px-3 hover:bg-hover disabled:opacity-50 md:min-h-8"
               data-testid="collaboration-workspace-transfer-submit"
               disabled={!transferUserId || pendingUserId !== null}
             >
               {locale === 'zh-CN' ? '转交所有权' : 'Transfer ownership'}
-            </button>
+            </ControlButton>
           </form>
         ) : null}
         {members.length ? (
@@ -301,26 +323,32 @@ export function WorkspaceMembersConfiguration({
                 </div>
                 {canManage && member.role !== 'Owner' ? (
                   <>
-                    <select
-                      className="min-h-11 rounded-md border border-border bg-base px-3 md:min-h-8"
-                      aria-label={`${member.user_name} ${messages.role}`}
-                      data-testid={`collaboration-workspace-member-role-${member.user_id}`}
+                    <SelectRoot
                       disabled={pendingUserId === member.user_id}
-                      value={member.role}
-                      onChange={event => {
+                      value={normalizeSelectValue(member.role)}
+                      onValueChange={selectedValue => {
+                        if (selectedValue === null) return
                         setPendingUserId(member.user_id)
                         setError(null)
                         void commands
-                          .updateMember(member.user_id, event.target.value as MemberRole)
+                          .updateMember(member.user_id, selectedValue as MemberRole)
                           .catch(() => setError(messages.operationFailed))
                           .finally(() => setPendingUserId(null))
                       }}
                     >
-                      <option value="Maintainer">{messages.maintainer}</option>
-                      <option value="Developer">{messages.developer}</option>
-                      <option value="Viewer">{messages.viewer}</option>
-                    </select>
-                    <button
+                      <SelectTrigger
+                        density="compact"
+                        aria-label={`${member.user_name} ${messages.role}`}
+                        data-testid={`collaboration-workspace-member-role-${member.user_id}`}
+                      />
+                      <SelectContent>
+                        <SelectItem value="Maintainer">{messages.maintainer}</SelectItem>
+                        <SelectItem value="Developer">{messages.developer}</SelectItem>
+                        <SelectItem value="Viewer">{messages.viewer}</SelectItem>
+                      </SelectContent>
+                    </SelectRoot>
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="col-start-2 min-h-11 justify-self-end rounded-md px-2 text-destructive hover:bg-hover md:col-start-auto md:min-h-8"
                       data-testid={`collaboration-workspace-member-remove-${member.user_id}`}
@@ -335,7 +363,7 @@ export function WorkspaceMembersConfiguration({
                       }}
                     >
                       {messages.remove}
-                    </button>
+                    </ControlButton>
                   </>
                 ) : (
                   <span className="justify-self-start rounded-md bg-surface px-2 py-1 text-text-secondary">

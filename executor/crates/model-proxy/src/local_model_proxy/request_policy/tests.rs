@@ -249,6 +249,46 @@ async fn responses_adapts_agent_messages_in_auto_and_standard_modes() {
 }
 
 #[tokio::test]
+async fn chat_completions_preserves_subagent_messages_as_system_context() {
+    let upstream = super::super::upstream_from_model_config(&json!({
+        "base_url": "http://127.0.0.1:1",
+        "model_id": "provider-model",
+        "upstream_api_format": "openai-chat-completions"
+    }))
+    .unwrap()
+    .unwrap();
+    let task = "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\nReview the change";
+    let completion = "Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/worker\nPayload:\nReview complete";
+    let original = json!({"input": [
+        {"type": "agent_message", "author": "/root", "recipient": "/root/worker",
+         "content": [{"type": "input_text", "text": task}]},
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "User input"}]},
+        {"type": "agent_message", "author": "/root/worker", "recipient": "/root",
+         "content": [{"type": "input_text", "text": completion}]}
+    ]});
+    let prepared = prepare(
+        &upstream,
+        &serde_json::to_vec(&original).unwrap(),
+        None,
+        &Default::default(),
+        false,
+        false,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
+    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+    assert_eq!(
+        request["messages"],
+        json!([
+            {"role": "system", "content": format!("{task}\n\n{completion}")},
+            {"role": "user", "content": "User input"}
+        ])
+    );
+}
+
+#[tokio::test]
 async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
     let prepared = prepare(
         &upstream("standard"),
