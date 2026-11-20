@@ -368,23 +368,26 @@ function DeviceCard({
   const inputRef = useRef<HTMLInputElement>(null)
   const restart = cloudRestarts?.progress[cloudDeviceRestartKey(device)]
   const isRestartTarget = restart?.device.device_id === device.device_id
+  const { device_id: deviceId } = device
+  const { apiBaseUrl, isConnected, serviceKey, token } = cloudConnection
   const metricsResource = useMemo(
     () =>
       createAsyncResource(
-        device.device_id,
+        `${serviceKey}:${deviceId}`,
         async signal => {
           await Promise.resolve()
           signal.throwIfAborted()
-          return createSettingsDeviceApi(cloudConnection).getMetrics(device.device_id)
+          return createSettingsDeviceApi({ apiBaseUrl, isConnected, token }).getMetrics(deviceId)
         },
         {
+          refreshOnSubscribe: true,
           refreshIntervalMs: 30_000,
           failure(error) {
             console.error('Failed to load device metrics:', error)
           },
         }
       ),
-    [cloudConnection, device]
+    [apiBaseUrl, deviceId, isConnected, serviceKey, token]
   )
   const metricsEnabled = supportsDeviceMetrics(device) && device.status !== 'offline'
   const metricsSnapshot = useSyncExternalStore(

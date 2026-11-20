@@ -60,12 +60,14 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
   const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-test')
   lifecycleStore.syncRuntimeWork(props.runtimeWork)
 
-  const tree = (
+  const tree = (sidebarProps: Parameters<typeof DesktopSidebar>[0]) => (
     <RuntimeTaskLifecycleProvider store={lifecycleStore}>
-      <DesktopSidebar {...props} />
+      <DesktopSidebar {...sidebarProps} />
     </RuntimeTaskLifecycleProvider>
   )
-  return render(tree)
+  const view = render(tree(props))
+  return (next: Partial<Parameters<typeof DesktopSidebar>[0]>) =>
+    view.rerender(tree({ ...props, ...next }))
 }
 
 // Compile injected modules before the per-test hook, as in the original suite.
@@ -131,6 +133,29 @@ describe('DesktopSidebar event waits', () => {
     if (label) expect(icon).toHaveAttribute('aria-label', label)
     else expect(icon).not.toBeInTheDocument()
   })
+})
+
+test('keeps the loaded empty task list visible while refreshing and after a refresh failure', () => {
+  const rerender = renderSidebar({
+    runtimeWork: null,
+    runtimeWorkLoad: { phase: 'loading', error: null },
+  })
+  const emptyId = 'runtime-chat-empty'
+  const statusId = 'runtime-work-load-status'
+  expect(screen.queryByTestId(emptyId)).not.toBeInTheDocument()
+  expect(screen.getByTestId(statusId)).toHaveAttribute('role', 'status')
+
+  const runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+  rerender({ runtimeWork, runtimeWorkLoad: { phase: 'ready', error: null } })
+  const emptyRow = screen.getByTestId(emptyId)
+
+  rerender({ runtimeWork, runtimeWorkLoad: { phase: 'refreshing', error: null } })
+  expect(screen.getByTestId(emptyId)).toBe(emptyRow)
+  expect(screen.queryByTestId(statusId)).not.toBeInTheDocument()
+
+  rerender({ runtimeWork, runtimeWorkLoad: { phase: 'error', error: 'Request timed out' } })
+  expect(screen.getByTestId(emptyId)).toBe(emptyRow)
+  expect(screen.getByTestId(statusId)).toHaveAttribute('role', 'alert')
 })
 
 test('chat batch archive releases the sidebar while the request is pending', async () => {
