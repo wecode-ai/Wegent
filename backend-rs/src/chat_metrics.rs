@@ -63,6 +63,9 @@ impl RunLabels {
                 .and_then(|value| value.get(name))
                 .and_then(Value::as_str)
         };
+        let persisted_mode = label("execution_mode")
+            .map(|mode| known_label(mode, &EXECUTION_MODES, "unknown"))
+            .unwrap_or("unknown");
         Self {
             entrypoint: known_label(
                 label("entrypoint").unwrap_or(entrypoint),
@@ -70,11 +73,14 @@ impl RunLabels {
                 entrypoint,
             ),
             shell: known_label(label("shell").unwrap_or("unknown"), &SHELLS, "unknown"),
-            execution_mode: known_label(
-                label("execution_mode").unwrap_or(execution_mode),
-                &EXECUTION_MODES,
-                execution_mode,
-            ),
+            // Executor binding normally persists the final placement. A startup
+            // snapshot can race it and record `unknown`; the bound executor is
+            // then the authoritative fallback for the terminal observation.
+            execution_mode: if persisted_mode == "unknown" {
+                execution_mode
+            } else {
+                persisted_mode
+            },
         }
     }
 
@@ -377,6 +383,23 @@ mod tests {
         assert_eq!(
             labels.with_shell("ClaudeCode"),
             RunLabels::new("wework", "ClaudeCode", "local"),
+        );
+    }
+
+    #[test]
+    fn bound_executor_refines_an_unknown_startup_mode() {
+        let startup = json!({"_chat_metrics": {
+            "entrypoint": "wework",
+            "shell": "Codex",
+            "execution_mode": "unknown",
+        }});
+        assert_eq!(
+            RunLabels::from_task(None, Some(&startup), Some("device-123"), None),
+            RunLabels::new("wework", "Codex", "local"),
+        );
+        assert_eq!(
+            RunLabels::from_task(None, Some(&startup), Some("remote-executor"), None),
+            RunLabels::new("other", "Codex", "remote"),
         );
     }
 

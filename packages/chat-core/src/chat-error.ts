@@ -12,6 +12,7 @@ export type ChatErrorType =
   | "timeout_error"
   | "server_overloaded"
   | "llm_error"
+  | "model_unavailable"
   | "llm_unsupported"
   | "invalid_parameter"
   | "forbidden"
@@ -68,8 +69,8 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   context_length_exceeded: "context_length_exceeded",
   quota_exceeded: "quota_exceeded",
   rate_limit: "rate_limit",
-  llm_error: "llm_error",
-  model_unavailable: "llm_error",
+  llm_error: "model_unavailable",
+  model_unavailable: "model_unavailable",
   container_oom: "container_oom",
   container_error: "container_error",
   model_service_connection_error: "model_service_connection_error",
@@ -122,6 +123,7 @@ const ERROR_METADATA: Record<
   timeout_error: { category: "transport", retryPolicy: "after_backoff" },
   server_overloaded: { category: "model", retryPolicy: "after_backoff" },
   llm_error: { category: "model", retryPolicy: "after_backoff" },
+  model_unavailable: { category: "model", retryPolicy: "after_backoff" },
   llm_unsupported: { category: "input", retryPolicy: "after_change" },
   invalid_parameter: { category: "input", retryPolicy: "after_change" },
   forbidden: { category: "access", retryPolicy: "after_change" },
@@ -139,7 +141,7 @@ const ERROR_METADATA: Record<
     retryPolicy: "after_change",
   },
   skill_deploy_failed: { category: "runtime", retryPolicy: "after_change" },
-  executor_start_failed: { category: "runtime", retryPolicy: "after_change" },
+  executor_start_failed: { category: "runtime", retryPolicy: "unknown" },
   workspace_unavailable: { category: "runtime", retryPolicy: "after_change" },
   tool_execution_failed: { category: "tool", retryPolicy: "unknown" },
   connector_unavailable: { category: "tool", retryPolicy: "after_backoff" },
@@ -249,7 +251,19 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ],
   ["forbidden", ["forbidden", "not allowed", "unauthorized", "403"]],
   // Specific causes remain informative inside provider or executor wrappers.
+  [
+    "container_oom",
+    ["out of memory", /\boom\b/, "oom killed", "memory allocation"],
+  ],
   ["timeout_error", ["timeout", "timed out", "504 gateway", "超时"]],
+  [
+    "connector_unavailable",
+    [
+      "connector_unavailable",
+      "connector unavailable",
+      "connector not connected",
+    ],
+  ],
   [
     "network_error",
     [
@@ -286,7 +300,7 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
     ],
   ],
   [
-    "llm_error",
+    "model_unavailable",
     [
       "model not found",
       "model unavailable",
@@ -300,10 +314,6 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
   ],
   ["invalid_parameter", ["invalid parameter", "invalid_parameter"]],
   ["payload_too_large", ["413", "payload too large"]],
-  [
-    "container_oom",
-    ["out of memory", /\boom\b/, "oom killed", "memory allocation"],
-  ],
   [
     "skill_deploy_failed",
     [
@@ -325,7 +335,6 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
     ["workspace_unavailable", "workspace unavailable", "workspace not found"],
   ],
   ["tool_execution_failed", ["tool_execution_failed", "tool execution failed"]],
-  ["connector_unavailable", ["connector_unavailable", "connector unavailable"]],
   [
     "plugin_load_failed",
     ["plugin_load_failed", "plugin load failed", "failed to load plugin"],
@@ -365,25 +374,59 @@ export function parseChatError(
       gitFailure,
     };
   }
-  const explicitType =
-    normalizeBackendType(errorInfo?.code) ?? normalizeBackendType(backendType);
-  const structuredType = normalizeBackendType(
-    extractStructuredErrorType(error),
-  );
+  const metadataType = normalizeSpecificBackendType(errorInfo?.code);
+  const backendTypeValue = normalizeSpecificBackendType(backendType);
+  const explicitType = metadataType ?? backendTypeValue;
+  if (explicitType) {
+    const retryPolicy =
+      metadataType !== undefined ? errorInfo?.retry_policy : undefined;
+    return buildParsedChatError(explicitType, error, retryPolicy);
+  }
+
+  const structuredCode = extractStructuredErrorType(error);
+  const structuredType = normalizeSpecificBackendType(structuredCode);
+  if (structuredType) {
+    return buildParsedChatError(structuredType, error);
+  }
+
   const messageType = classifyByMessage(error);
+  const hasLegacyWrapper =
+    isLegacyLLMError(errorInfo?.code) ||
+    isLegacyLLMError(backendType) ||
+    isLegacyLLMError(structuredCode);
   const type =
-    explicitType &&
-    explicitType !== "generic_error" &&
-    explicitType !== "llm_error"
-      ? explicitType
-      : structuredType &&
-          structuredType !== "generic_error" &&
-          structuredType !== "llm_error"
-        ? structuredType
-        : messageType === "generic_error" &&
-            (explicitType === "llm_error" || structuredType === "llm_error")
-          ? "llm_error"
-          : messageType;
+    messageType !== "generic_error"
+      ? messageType
+      : hasLegacyWrapper
+        ? "model_unavailable"
+        : "generic_error";
+  return buildParsedChatError(
+    type,
+    error,
+    errorInfo?.code == null ? errorInfo?.retry_policy : undefined,
+  );
+}
+
+function normalizeSpecificBackendType(
+  type?: string | null,
+): ChatErrorType | undefined {
+  const normalizedType = normalizeBackendType(type);
+  return normalizedType &&
+    normalizedType !== "generic_error" &&
+    !isLegacyLLMError(type)
+    ? normalizedType
+    : undefined;
+}
+
+function isLegacyLLMError(type?: string | null): boolean {
+  return type?.trim().toLowerCase() === "llm_error";
+}
+
+function buildParsedChatError(
+  type: ChatErrorType,
+  error: string,
+  retryPolicy?: ChatErrorInfo["retry_policy"],
+): ParsedChatError {
   const metadata = ERROR_METADATA[type];
   const timeoutSeconds =
     type === "timeout_error"
@@ -397,8 +440,8 @@ export function parseChatError(
   return {
     type,
     category: metadata.category,
-    retryPolicy: isRetryPolicy(errorInfo?.retry_policy)
-      ? errorInfo.retry_policy
+    retryPolicy: isRetryPolicy(retryPolicy)
+      ? retryPolicy
       : metadata.retryPolicy,
     titleKey: `assistant_error.types.${type}.title`,
     descriptionKey: `assistant_error.types.${type}.${timeoutSeconds ? "description_with_seconds" : "description"}`,

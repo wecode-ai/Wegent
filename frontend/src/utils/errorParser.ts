@@ -22,9 +22,11 @@ const ERROR_DEFINITIONS = {
   rate_limit: { category: 'model', retryPolicy: 'after_backoff' },
   server_overloaded: { category: 'model', retryPolicy: 'after_backoff' },
   payload_too_large: { category: 'input', retryPolicy: 'after_change' },
+  model_service_connection_error: { category: 'transport', retryPolicy: 'after_backoff' },
   network_error: { category: 'transport', retryPolicy: 'after_backoff' },
   timeout_error: { category: 'transport', retryPolicy: 'after_backoff' },
   llm_error: { category: 'model', retryPolicy: 'after_backoff' },
+  model_unavailable: { category: 'model', retryPolicy: 'after_backoff' },
   llm_unsupported: { category: 'input', retryPolicy: 'after_change' },
   invalid_parameter: { category: 'input', retryPolicy: 'after_change' },
   forbidden: { category: 'access', retryPolicy: 'after_change' },
@@ -33,7 +35,7 @@ const ERROR_DEFINITIONS = {
   container_error: { category: 'runtime', retryPolicy: 'after_change' },
   skills_unmanaged_entries: { category: 'runtime', retryPolicy: 'after_change' },
   skill_deploy_failed: { category: 'runtime', retryPolicy: 'after_change' },
-  executor_start_failed: { category: 'runtime', retryPolicy: 'after_change' },
+  executor_start_failed: { category: 'runtime', retryPolicy: 'unknown' },
   workspace_unavailable: { category: 'runtime', retryPolicy: 'after_change' },
   content_filter: { category: 'policy', retryPolicy: 'after_change' },
   provider_error: { category: 'model', retryPolicy: 'after_backoff' },
@@ -65,13 +67,24 @@ export interface ParsedError {
 }
 
 function backendErrorType(code?: string): ErrorType | undefined {
-  const normalized = code?.trim()
-  if (normalized === 'model_unavailable') {
-    return 'llm_error'
+  const normalized = code?.trim().toLowerCase()
+  if (normalized === 'llm_error') {
+    return 'model_unavailable'
   }
   return normalized && Object.prototype.hasOwnProperty.call(ERROR_DEFINITIONS, normalized)
     ? (normalized as ErrorType)
     : undefined
+}
+
+function normalizeSpecificBackendType(code?: string): ErrorType | undefined {
+  const type = backendErrorType(code)
+  return type !== undefined && type !== 'generic_error' && !isLegacyLLMError(code)
+    ? type
+    : undefined
+}
+
+function isLegacyLLMError(code?: string): boolean {
+  return code?.trim().toLowerCase() === 'llm_error'
 }
 
 /** Explicit causes prevail; a generic code can be refined from a known message. */
@@ -81,18 +94,16 @@ export function parseError(
   errorInfo?: ErrorInfo
 ): ParsedError {
   const errorMessage = typeof error === 'string' ? error : error.message
-  const backendTypeValue = backendErrorType(errorInfo?.code) ?? backendErrorType(backendType)
-  const messageType = classifyByMessage(errorMessage)
-  const type =
-    backendTypeValue && backendTypeValue !== 'generic_error' && backendTypeValue !== 'llm_error'
-      ? backendTypeValue
-      : messageType === 'generic_error' && backendTypeValue === 'llm_error'
-        ? 'llm_error'
-        : messageType
+  const metadataType = normalizeSpecificBackendType(errorInfo?.code)
+  const explicitType = metadataType ?? normalizeSpecificBackendType(backendType)
+  const type = explicitType ?? classifyByMessage(errorMessage, errorInfo?.code, backendType)
   const definition = ERROR_DEFINITIONS[type]
-  const retryPolicy = isRetryPolicy(errorInfo?.retry_policy)
-    ? errorInfo.retry_policy
-    : definition.retryPolicy
+  const useMetadataRetryPolicy =
+    metadataType !== undefined || (explicitType === undefined && errorInfo?.code == null)
+  const retryPolicy =
+    useMetadataRetryPolicy && isRetryPolicy(errorInfo?.retry_policy)
+      ? errorInfo.retry_policy
+      : definition.retryPolicy
 
   return {
     type,
@@ -174,7 +185,13 @@ const MESSAGE_RULES: ReadonlyArray<readonly [ErrorType, ReadonlyArray<string | R
   ],
   ['forbidden', ['forbidden', 'not allowed', 'unauthorized', /\b403\b/]],
   // A transport cause remains informative even inside an executor/provider wrapper.
+  ['container_oom', ['out of memory', /\boom\b/, 'memory allocation']],
   ['timeout_error', ['timeout', 'timed out', '504 gateway', '超时']],
+  ['connector_unavailable', ['connector unavailable', 'connector not connected']],
+  [
+    'model_service_connection_error',
+    ['model proxy request failed', 'failed to send request to the model service'],
+  ],
   [
     'network_error',
     [
@@ -203,7 +220,7 @@ const MESSAGE_RULES: ReadonlyArray<readonly [ErrorType, ReadonlyArray<string | R
     ],
   ],
   [
-    'llm_error',
+    'model_unavailable',
     [
       'model not found',
       'model unavailable',
@@ -217,12 +234,10 @@ const MESSAGE_RULES: ReadonlyArray<readonly [ErrorType, ReadonlyArray<string | R
   ],
   ['invalid_parameter', [/invalid.*parameter/]],
   ['payload_too_large', [/\b413\b/, 'payload too large']],
-  ['container_oom', ['out of memory', /\boom\b/, 'memory allocation']],
   ['skill_deploy_failed', ['skill deployment failed', 'failed to deploy skill']],
   ['executor_start_failed', ['executor start failed', 'failed to start executor']],
   ['workspace_unavailable', ['workspace unavailable', 'workspace not found']],
   ['tool_execution_failed', ['tool execution failed']],
-  ['connector_unavailable', ['connector unavailable']],
   ['plugin_load_failed', ['plugin load failed', 'failed to load plugin']],
   ['stream_protocol_error', ['stream protocol error']],
   ['internal_error', ['internal_error', 'internal server error']],
@@ -243,7 +258,11 @@ const MESSAGE_RULES: ReadonlyArray<readonly [ErrorType, ReadonlyArray<string | R
   ],
 ]
 
-function classifyByMessage(errorMessage: string): ErrorType {
+function classifyByMessage(
+  errorMessage: string,
+  metadataCode?: string,
+  backendType?: string
+): ErrorType {
   const lowerMessage = errorMessage.toLowerCase()
   for (const [type, patterns] of MESSAGE_RULES) {
     if (
@@ -253,6 +272,10 @@ function classifyByMessage(errorMessage: string): ErrorType {
     ) {
       return type
     }
+  }
+
+  if (isLegacyLLMError(metadataCode) || isLegacyLLMError(backendType)) {
+    return 'model_unavailable'
   }
   return 'generic_error'
 }

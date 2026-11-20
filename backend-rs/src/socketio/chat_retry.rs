@@ -45,7 +45,14 @@ pub(crate) async fn retry(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
-    let mut observation = crate::chat_metrics::RequestObservation::new("web");
+    let entrypoint = if session.is_wework()
+        || data.get("client_origin").and_then(Value::as_str) == Some("wework")
+    {
+        "wework"
+    } else {
+        "web"
+    };
+    let mut observation = crate::chat_metrics::RequestObservation::new(entrypoint);
     let Some(payload) = RetryPayload::parse(&data) else {
         return Ok(Reply::payload(error_ack("Invalid payload")));
     };

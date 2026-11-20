@@ -482,7 +482,11 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         Some(message),
         None,
     )
-    .await;
+    .await
+    .inspect_err(|error| {
+        tracing::warn!(%error, task_id, subtask_id, "request failure result read failed");
+    })
+    .unwrap_or(None);
     let persisted = completion::persist_completed_result(
         &ctx,
         task_id,

@@ -1165,13 +1165,27 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         let failure_info = error_info(None, Some(&error.message));
-        self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
+        let mut failed_at = None;
         self.store.update_task(local_task_id, |link| {
             let diagnostic = link.runtime_handle["startupFailure"].clone();
             apply_local_task_failure(link, error);
             link.runtime_handle["startupFailure"] = diagnostic;
-            record_preparation_failure(link, &turn.request, error, &failure_info, now_ms());
+            let timestamp = link.completed_at.unwrap_or_else(now_ms);
+            record_preparation_failure(link, &turn.request, error, &failure_info, timestamp);
+            link.completed_at = Some(timestamp);
+            link.updated_at = timestamp;
+            failed_at = Some(timestamp);
         });
+        if let Some(timestamp) = failed_at {
+            self.persist_failed_assistant_message_with_timestamp(
+                local_task_id,
+                &turn.request,
+                &error.message,
+                failure_info.clone(),
+                false,
+                timestamp,
+            );
+        }
     }
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
@@ -2593,7 +2607,33 @@ impl RuntimeWorkRpcHandler {
         failure_info: Value,
         preparation: bool,
     ) {
-        let timestamp = now_ms();
+        let timestamp = if preparation {
+            self.store
+                .read_task(local_task_id, |link| link.completed_at)
+                .flatten()
+                .unwrap_or_else(now_ms)
+        } else {
+            now_ms()
+        };
+        self.persist_failed_assistant_message_with_timestamp(
+            local_task_id,
+            request,
+            error,
+            failure_info,
+            preparation,
+            timestamp,
+        );
+    }
+
+    fn persist_failed_assistant_message_with_timestamp(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        error: &str,
+        failure_info: Value,
+        preparation: bool,
+        timestamp: i64,
+    ) {
         let message = json!({
             "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
             "role": "assistant",
@@ -2609,10 +2649,14 @@ impl RuntimeWorkRpcHandler {
         });
         self.store.update_task(local_task_id, |link| {
             if preparation {
+                let diagnostic = link.runtime_handle["startupFailure"].clone();
+                let startup_error = AppIpcError::new("runtime_start_failed", error);
+                apply_local_task_failure_at(link, &startup_error, timestamp);
+                link.runtime_handle["startupFailure"] = diagnostic;
                 record_preparation_failure(
                     link,
                     request,
-                    &AppIpcError::new("runtime_start_failed", error),
+                    &startup_error,
                     &message["errorInfo"],
                     timestamp,
                 );

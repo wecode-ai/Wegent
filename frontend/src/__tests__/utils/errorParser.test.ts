@@ -74,43 +74,43 @@ describe('errorParser', () => {
     describe('general LLM errors', () => {
       it('should detect model not found errors', () => {
         const result = parseError('model not found')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect model unavailable errors', () => {
         const result = parseError('model unavailable')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect llm service error', () => {
         const result = parseError('llm service error')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect llm request failed errors', () => {
         const result = parseError('llm request failed')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect llm api error', () => {
         const result = parseError('llm api error occurred')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect llm call failed errors', () => {
         const result = parseError('llm call failed')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
       it('should detect model error', () => {
         const result = parseError('model error: invalid response')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
@@ -128,7 +128,7 @@ describe('errorParser', () => {
 
       it('should detect token limit errors', () => {
         const result = parseError('token limit reached')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
@@ -220,9 +220,9 @@ describe('errorParser', () => {
     })
 
     describe('backend-provided error types', () => {
-      it('should accept backend llm_error explicitly', () => {
+      it('uses the canonical model-unavailable cause for legacy llm_error', () => {
         const result = parseError('provider overloaded', 'llm_error')
-        expect(result.type).toBe('llm_error')
+        expect(result.type).toBe('model_unavailable')
         expect(result.retryable).toBe(true)
       })
 
@@ -238,7 +238,7 @@ describe('errorParser', () => {
       it.each([
         ['authentication_expired', 'access', 'after_change'],
         ['skill_deploy_failed', 'runtime', 'after_change'],
-        ['executor_start_failed', 'runtime', 'after_change'],
+        ['executor_start_failed', 'runtime', 'unknown'],
         ['workspace_unavailable', 'runtime', 'after_change'],
         ['tool_execution_failed', 'tool', 'unknown'],
         ['connector_unavailable', 'tool', 'after_backoff'],
@@ -268,10 +268,53 @@ describe('errorParser', () => {
         })
       })
 
-      it('uses a validated backend retry policy for a contextual failure', () => {
+      it('keeps canonical model unavailability ahead of message heuristics', () => {
+        expect(parseError('executor request failed', 'model_unavailable')).toMatchObject({
+          type: 'model_unavailable',
+          category: 'model',
+          retryPolicy: 'after_backoff',
+        })
+        expect(parseError('connection reset', 'model_unavailable').type).toBe('model_unavailable')
+      })
+
+      it('lets a specific backend type outrank generic metadata', () => {
         expect(
-          parseError('Tool failed', 'tool_execution_failed', { retry_policy: 'none' })
-        ).toMatchObject({ retryPolicy: 'none', retryable: false })
+          parseError('opaque failure', 'model_service_connection_error', {
+            code: 'generic_error',
+          })
+        ).toMatchObject({
+          type: 'model_service_connection_error',
+          category: 'transport',
+        })
+      })
+
+      it('uses the selected cause retry policy instead of generic metadata', () => {
+        expect(
+          parseError('quota exceeded', 'generic_error', {
+            code: 'generic_error',
+            retry_policy: 'unknown',
+          })
+        ).toMatchObject({
+          type: 'quota_exceeded',
+          retryPolicy: 'after_change',
+          retryable: false,
+        })
+      })
+
+      it.each([
+        ['Executor out of memory while handling a network request', 'container_oom'],
+        ['connector not connected', 'connector_unavailable'],
+        ['executor request timed out', 'timeout_error'],
+        ['connection reset', 'network_error'],
+      ])('keeps specific causes ahead of broad wrappers: %s', (message, type) => {
+        expect(parseError(message).type).toBe(type)
+      })
+
+      it('uses a validated backend retry policy for a policy-only payload', () => {
+        expect(parseError('Tool failed', undefined, { retry_policy: 'none' })).toMatchObject({
+          retryPolicy: 'none',
+          retryable: false,
+        })
       })
 
       it('ignores an unrecognized retry policy', () => {
@@ -440,6 +483,7 @@ describe('errorParser', () => {
         'errors.forbidden': 'Access forbidden',
         'errors.llm_unsupported': 'LLM unsupported',
         'errors.llm_error': 'LLM error',
+        'errors.model_unavailable': 'Model unavailable',
         'errors.invalid_parameter': 'Invalid parameter',
         'errors.payload_too_large': 'Payload too large',
         'errors.network_error': 'Network error',
@@ -483,9 +527,9 @@ describe('errorParser', () => {
         expect(message).toBe('LLM unsupported')
       })
 
-      it('should return friendly message for llm_error', () => {
+      it('should return friendly message for model_unavailable', () => {
         const message = getErrorDisplayMessage('model unavailable', mockT)
-        expect(message).toBe('LLM error')
+        expect(message).toBe('Model unavailable')
       })
 
       it('should return friendly message for forbidden errors', () => {

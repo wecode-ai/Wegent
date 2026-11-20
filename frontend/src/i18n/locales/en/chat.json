@@ -347,6 +347,8 @@
     "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size",
     "llm_unsupported": "Current model does not support this request (e.g., multi-modal messages). Please switch to a different model",
     "llm_error": "Model error: The model is temporarily unavailable. Please try again later",
+    "model_unavailable": "The selected model is currently unavailable. Please try again later or switch models",
+    "model_service_connection_error": "Unable to connect to the model service. Check your network or VPN connection and retry",
     "invalid_parameter": "Invalid parameter: Request parameters are incorrect, please check your input",
     "network_error": "Network error: Please check your connection and try again",
     "timeout_error": "Request timeout: Service response time exceeded, please try again later",

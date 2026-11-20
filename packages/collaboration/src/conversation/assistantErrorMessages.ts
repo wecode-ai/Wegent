@@ -61,6 +61,10 @@ export const assistantErrorMessages: Record<
       "模型调用失败：模型暂时不可用，请稍后重试",
     "conversation.assistant_error.types.llm_error.description":
       "模型服务当前不可用，可以稍后重试或切换模型。",
+    "conversation.assistant_error.types.model_unavailable.title":
+      "当前选择的模型暂不可用",
+    "conversation.assistant_error.types.model_unavailable.description":
+      "请稍后重试或切换其他模型。",
     "conversation.assistant_error.types.llm_unsupported.title":
       "当前模型不支持此请求，请更换其他模型",
     "conversation.assistant_error.types.llm_unsupported.description":
@@ -221,6 +225,10 @@ export const assistantErrorMessages: Record<
       "Model error: The model is temporarily unavailable",
     "conversation.assistant_error.types.llm_error.description":
       "The model service is unavailable. Try again later or switch models.",
+    "conversation.assistant_error.types.model_unavailable.title":
+      "The selected model is unavailable",
+    "conversation.assistant_error.types.model_unavailable.description":
+      "Try again later or switch to another model.",
     "conversation.assistant_error.types.llm_unsupported.title":
       "Current model does not support this request",
     "conversation.assistant_error.types.llm_unsupported.description":

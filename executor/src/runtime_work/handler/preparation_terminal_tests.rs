@@ -48,6 +48,10 @@ fn assert_preparation_terminal_state(cancelled: bool) {
     assert_eq!(wire["status"], outcome);
     if !cancelled {
         assert_eq!(wire["runtimeHandle"]["lastErrorCode"], "preparation_failed");
+        assert_eq!(
+            wire["runtimeHandle"]["startupFailure"]["failedAt"],
+            wire["completedAt"],
+        );
     }
     fs::remove_dir_all(root).unwrap();
 }

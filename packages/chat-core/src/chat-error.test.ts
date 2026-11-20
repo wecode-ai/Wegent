@@ -26,7 +26,7 @@ describe("parseChatError", () => {
     ["rate_limit", "rate_limit"],
     ["content_filter", "content_filter"],
     ["permission_denied", "permission_denied"],
-    ["model_unavailable", "llm_error"],
+    ["model_unavailable", "model_unavailable"],
     ["server_overloaded", "server_overloaded"],
     ["serverOverloaded", "server_overloaded"],
   ])(
@@ -43,7 +43,7 @@ describe("parseChatError", () => {
     ["authentication_expired", "access", "after_change"],
     ["skills_unmanaged_entries", "runtime", "after_change"],
     ["skill_deploy_failed", "runtime", "after_change"],
-    ["executor_start_failed", "runtime", "after_change"],
+    ["executor_start_failed", "runtime", "unknown"],
     ["workspace_unavailable", "runtime", "after_change"],
     ["tool_execution_failed", "tool", "unknown"],
     ["connector_unavailable", "tool", "after_backoff"],
@@ -108,7 +108,7 @@ describe("parseChatError", () => {
 
   test("uses validated backend retry policy without prescribing automatic retry", () => {
     expect(
-      parseChatError("Tool failed", "tool_execution_failed", {
+      parseChatError("Tool failed", undefined, {
         retry_policy: "none",
       }).retryPolicy,
     ).toBe("none");
@@ -179,6 +179,57 @@ describe("parseChatError", () => {
       "server_overloaded",
     );
   });
+
+  test("keeps canonical model unavailability ahead of message heuristics", () => {
+    expect(
+      parseChatError("executor request failed", "model_unavailable"),
+    ).toMatchObject({
+      type: "model_unavailable",
+      category: "model",
+      retryPolicy: "after_backoff",
+    });
+    expect(parseChatError("connection reset", "model_unavailable").type).toBe(
+      "model_unavailable",
+    );
+  });
+
+  test("lets a specific backend type outrank generic metadata", () => {
+    expect(
+      parseChatError("opaque failure", "model_service_connection_error", {
+        code: "generic_error",
+      }),
+    ).toMatchObject({
+      type: "model_service_connection_error",
+      category: "transport",
+    });
+  });
+
+  test("does not reuse metadata retry policy for a replacement cause", () => {
+    expect(
+      parseChatError("quota exceeded", "generic_error", {
+        code: "generic_error",
+        retry_policy: "unknown",
+      }),
+    ).toMatchObject({
+      type: "quota_exceeded",
+      retryPolicy: "after_change",
+    });
+  });
+
+  test.each([
+    [
+      "Executor out of memory while handling a network request",
+      "container_oom",
+    ],
+    ["connector not connected", "connector_unavailable"],
+    ["executor request timed out", "timeout_error"],
+    ["connection reset", "network_error"],
+  ])(
+    "keeps specific causes ahead of broad wrappers: %s",
+    (message, expected) => {
+      expect(parseChatError(message).type).toBe(expected);
+    },
+  );
 
   test("ignores unknown backend codes without reading object prototype entries", () => {
     expect(parseChatError("unknown error", "constructor").type).toBe(

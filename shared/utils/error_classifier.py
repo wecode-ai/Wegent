@@ -142,10 +142,8 @@ _CLASSIFICATION_RULES: list[tuple[ChatErrorCode, list[str]]] = [
         [
             "商业付费模型额度已用完",
             "quota exceeded",
-            "insufficient_quota",
             "billing limit",
             "billing quota",
-            "billing_hard_limit_reached",
             "credit balance",
             "payment required",
             "account balance",
@@ -393,7 +391,7 @@ def _classify_by_exception_type(error: Exception) -> ChatErrorCode | None:
             continue
         message_code = _classify_by_message(str(error))
         if code == ChatErrorCode.GENERIC_ERROR:
-            return message_code
+            return None if message_code == ChatErrorCode.GENERIC_ERROR else message_code
         if (
             code == ChatErrorCode.RATE_LIMIT
             and message_code == ChatErrorCode.QUOTA_EXCEEDED
@@ -411,6 +409,11 @@ def _classify_by_exception_type(error: Exception) -> ChatErrorCode | None:
 def _classify_by_message(message: str) -> ChatErrorCode:
     """Classify error by keyword matching on the message string."""
     lower = message.lower()
+    if any(
+        _contains_delimited_identifier(lower, identifier)
+        for identifier in ("insufficient_quota", "billing_hard_limit_reached")
+    ):
+        return ChatErrorCode.QUOTA_EXCEEDED
     for code, patterns in _CLASSIFICATION_RULES[:-1]:
         for pattern in patterns:
             if pattern in lower:
@@ -456,7 +459,14 @@ def classify_error(error: Union[Exception, str]) -> str:
     return _classify_by_message(error).value
 
 
-_HTTP_STATUS_PATTERN = re.compile(r"Error code:\s*(\d{3})(?!\d)", re.IGNORECASE)
+def _contains_delimited_identifier(message: str, identifier: str) -> bool:
+    """Match structured identifiers without accepting longer adjacent tokens."""
+    return bool(
+        re.search(rf"(?<![a-z0-9_]){re.escape(identifier)}(?![a-z0-9_])", message)
+    )
+
+
+_HTTP_STATUS_PATTERN = re.compile(r"Error code:\s*(\d{3})(?!\w)", re.IGNORECASE)
 
 
 @trace_sync("extract_http_status_code", "shared")

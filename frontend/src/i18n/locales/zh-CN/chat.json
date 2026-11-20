@@ -347,6 +347,8 @@
     "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小",
     "llm_unsupported": "当前模型不支持此请求（如多模态消息），请更换其他模型",
     "llm_error": "模型调用失败：模型暂时不可用，请稍后重试",
+    "model_unavailable": "当前选择的模型暂不可用，请稍后重试或切换其他模型",
+    "model_service_connection_error": "无法连接模型服务，请检查网络或 VPN 连接后重试",
     "invalid_parameter": "参数错误：请求参数不正确，请检查输入内容",
     "network_error": "网络连接失败：请检查网络连接后重试",
     "timeout_error": "请求超时：服务响应时间过长，请稍后重试",

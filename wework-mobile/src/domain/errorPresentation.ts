@@ -17,6 +17,7 @@ const copy: Record<ChatErrorType, readonly [string, string]> = {
   network_error: ['连接未完成', '请检查网络连接，稍后重试。'],
   timeout_error: ['请求超时', '服务未及时响应，请稍后重试。'],
   llm_error: ['模型暂时不可用', '请稍后重试，或切换其他模型。'],
+  model_unavailable: ['模型暂时不可用', '请稍后重试，或切换其他模型。'],
   llm_unsupported: ['模型不支持此请求', '请切换支持当前内容或附件类型的模型。'],
   invalid_parameter: ['请求内容有误', '请检查输入内容后重试。'],
   forbidden: ['无法访问此资源', '请确认账号、设备或模型的访问权限。'],

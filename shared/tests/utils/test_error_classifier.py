@@ -41,6 +41,8 @@ def test_classify_error_keeps_connection_interrupt_as_network_error():
         ("Error code: 429 - insufficient_quota", "quota_exceeded"),
         ("Reference 403913 is unavailable", "generic_error"),
         ("Error code: 4299", "generic_error"),
+        ("Error code: 429abc", "generic_error"),
+        ('Error code: 500 - {"code":"not_insufficient_quota"}', "provider_error"),
         ("max_tokens parameter is invalid", "generic_error"),
     ],
 )
@@ -84,6 +86,23 @@ def test_structured_overload_code_precedes_network_message() -> None:
     error = RuntimeError("connection reset")
     error.code = "server_overloaded"  # type: ignore[attr-defined]
     assert classify_error(error) == "server_overloaded"
+
+
+def test_bad_request_falls_through_to_http_status_when_message_is_unspecific() -> None:
+    class BadRequestError(Exception):
+        status_code = 413
+
+    assert classify_error(BadRequestError("request rejected")) == "payload_too_large"
+
+
+def test_bad_request_keeps_a_specific_message_cause_ahead_of_http_status() -> None:
+    class BadRequestError(Exception):
+        status_code = 413
+
+    assert (
+        classify_error(BadRequestError("maximum context length exceeded"))
+        == "context_length_exceeded"
+    )
 
 
 def test_http_status_precedes_a_generic_runtime_wrapper() -> None:

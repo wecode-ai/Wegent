@@ -840,6 +840,12 @@ mod write_back;
 
 pub(super) use write_back::write_back_execution_event;
 
+/// Observe a terminal transition selected by device reconciliation after its
+/// transaction commits. The live event path calls [`metrics::record`] itself.
+pub(super) fn record_reconciled_metrics(row: Option<&ExecutionRow>, message: Option<&str>) {
+    metrics::record_row(row, message);
+}
+
 /// `_project_chat_runtime_event_sync`: the execution projection then the chat
 /// projection, both inside the source's single request transaction.
 pub(super) async fn project(

@@ -25,6 +25,21 @@ pub(super) fn record(row: Option<&ExecutionRow>, identity: &RuntimeIdentity<'_>)
         });
     let message = error.map(error_text);
     let info = crate::chat_errors::classify_chat_error(code, message.as_deref());
+    record_classified(row, info.code, message.as_deref());
+}
+
+/// Record a terminal transition elected by reconciliation, where no runtime
+/// event carries the failure fields. The committed execution row is the
+/// durable source for both the outcome and its bounded diagnostic.
+pub(super) fn record_row(row: Option<&ExecutionRow>, message: Option<&str>) {
+    let Some(row) = row.filter(|row| row.is_terminal()) else {
+        return;
+    };
+    let info = crate::chat_errors::classify_chat_error(None, message);
+    record_classified(row, info.code, message);
+}
+
+fn record_classified(row: &ExecutionRow, code: &str, message: Option<&str>) {
     let entrypoint = if row
         .automation_run_id
         .as_deref()
@@ -41,9 +56,9 @@ pub(super) fn record(row: Option<&ExecutionRow>, identity: &RuntimeIdentity<'_>)
     };
     crate::chat_metrics::record_terminal(
         row.status_or_empty(),
-        Some(info.code),
-        message.as_deref(),
-        crate::chat_errors::error_stage(info.code),
+        Some(code),
+        message,
+        crate::chat_errors::error_stage(code),
         crate::chat_metrics::RunLabels::new(entrypoint, "unknown", mode),
     );
 }

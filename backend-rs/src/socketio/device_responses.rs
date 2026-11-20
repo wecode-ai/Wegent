@@ -600,7 +600,12 @@ fn local_chat_frame(
             payload.insert("type".into(), json!(info.code));
             payload.insert(
                 "error_info".into(),
-                crate::chat_errors::error_info(Some(info.code), event.error.as_deref()),
+                json!({
+                    "code": info.code,
+                    "category": info.category,
+                    "retry_policy": info.retry_policy,
+                    "stage": crate::chat_errors::error_stage(info.code),
+                }),
             );
             Some(("chat:error", payload))
         }

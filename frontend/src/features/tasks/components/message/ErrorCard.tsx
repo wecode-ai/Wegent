@@ -262,9 +262,8 @@ export function ErrorCard({
       />
       <ErrorCardCopyDeveloper
         error={error}
-        errorType={
-          errorType === 'generic_error' ? parsedError.type : (errorType ?? parsedError.type)
-        }
+        errorType={parsedError.type}
+        backendErrorType={errorType}
         errorCategory={parsedError.category}
         retryPolicy={parsedError.retryPolicy}
         subtaskId={subtaskId}
@@ -364,6 +363,7 @@ function ErrorCardDetails({
 function ErrorCardCopyDeveloper({
   error,
   errorType,
+  backendErrorType,
   errorCategory,
   retryPolicy,
   subtaskId,
@@ -378,6 +378,7 @@ function ErrorCardCopyDeveloper({
 }: {
   error: string
   errorType: string
+  backendErrorType?: string
   errorCategory: ErrorCategory
   retryPolicy: RetryPolicy
   subtaskId?: number
@@ -398,6 +399,7 @@ function ErrorCardCopyDeveloper({
       subtaskId: subtaskId ?? null,
       timestamp: new Date(timestamp).toISOString(),
       errorType,
+      backendErrorType: backendErrorType ?? null,
       errorCategory,
       retryPolicy,
       errorMessage: error,
@@ -410,6 +412,7 @@ function ErrorCardCopyDeveloper({
   }, [
     error,
     errorType,
+    backendErrorType,
     errorCategory,
     retryPolicy,
     subtaskId,

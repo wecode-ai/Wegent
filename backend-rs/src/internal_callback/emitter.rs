@@ -682,7 +682,12 @@ fn error_payload(event: &ExecutionEvent) -> Value {
     payload.insert("type".into(), json!(info.code));
     payload.insert(
         "error_info".into(),
-        crate::chat_errors::error_info(Some(info.code), Some(error)),
+        json!({
+            "code": info.code,
+            "category": info.category,
+            "retry_policy": info.retry_policy,
+            "stage": crate::chat_errors::error_stage(info.code),
+        }),
     );
     if let Some(message_id) = event.message_id {
         payload.insert("message_id".into(), json!(message_id));

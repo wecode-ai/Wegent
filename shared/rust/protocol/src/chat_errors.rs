@@ -18,17 +18,20 @@ const UNKNOWN: ChatErrorInfo = ChatErrorInfo {
 
 /// Native business codes take precedence; legacy generic messages can be refined.
 pub fn classify_chat_error(code: Option<&str>, message: Option<&str>) -> ChatErrorInfo {
-    match code.filter(|code| !code.is_empty()) {
-        Some("generic_error") | None => classify_message(message.unwrap_or_default()),
-        Some("llm_error") => {
+    let Some(code) = code.filter(|code| !code.is_empty()) else {
+        return classify_message(message.unwrap_or_default());
+    };
+    match known_error(code) {
+        Some(info) if code.eq_ignore_ascii_case("llm_error") => {
             let classified = classify_message(message.unwrap_or_default());
             if classified == UNKNOWN {
-                known_error("model_unavailable").unwrap_or(UNKNOWN)
+                info
             } else {
                 classified
             }
         }
-        Some(code) => known_error(code).unwrap_or(UNKNOWN),
+        Some(info) => info,
+        None => UNKNOWN,
     }
 }
 
@@ -178,7 +181,6 @@ const MESSAGE_RULES: &[(&str, &[&str])] = &[
         &[
             "商业付费模型额度已用完",
             "quota exceeded",
-            "insufficient_quota",
             "billing limit",
             "billing quota",
             "billing_hard_limit_reached",
@@ -321,6 +323,11 @@ const RUNTIME_WRAPPERS: &[&str] = &[
 
 fn classify_message(message: &str) -> ChatErrorInfo {
     let lower = message.to_lowercase();
+    if contains_delimited_token(&lower, "insufficient_quota")
+        || contains_delimited_token(&lower, "billing_hard_limit_reached")
+    {
+        return known_error("quota_exceeded").unwrap_or(UNKNOWN);
+    }
     for (code, patterns) in MESSAGE_RULES {
         if patterns.iter().any(|pattern| lower.contains(pattern)) {
             return known_error(code).unwrap_or(UNKNOWN);
@@ -338,14 +345,26 @@ fn classify_message(message: &str) -> ChatErrorInfo {
     UNKNOWN
 }
 
+fn contains_delimited_token(message: &str, token: &str) -> bool {
+    message.match_indices(token).any(|(index, _)| {
+        let before = message[..index].chars().next_back();
+        let after = message[index + token.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    })
+}
+
 fn message_http_status(message: &str) -> Option<u16> {
     let (_, status) = message.split_once("error code:")?;
-    let digits: String = status
-        .trim_start()
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    (digits.len() == 3).then(|| digits.parse().ok()).flatten()
+    let status = status.trim_start();
+    let digits: String = status.chars().take_while(char::is_ascii_digit).collect();
+    if digits.len() != 3 {
+        return None;
+    }
+    let boundary = status[digits.len()..].chars().next();
+    (!boundary.is_some_and(|ch| ch.is_alphanumeric() || ch == '_'))
+        .then(|| digits.parse().ok())
+        .flatten()
 }
 
 fn status_error(status: u16) -> Option<&'static str> {
@@ -432,6 +451,8 @@ mod tests {
             "Reference 403913 is unavailable",
             "Error code: 4299",
             "max_tokens parameter is invalid",
+            "Error code: 429abc",
+            r#"Error code: 500 - {"code":"not_insufficient_quota"}"#,
         ] {
             assert_eq!(classify_chat_error(None, Some(message)), UNKNOWN);
         }

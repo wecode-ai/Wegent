@@ -431,7 +431,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
     subtask_table: &str,
     task_id: i64,
     subtask_id: i64,
-    result: &Value,
+    result: Option<&Value>,
     message: &str,
 ) -> MysqlResult<Option<(MysqlRow, Option<String>, crate::chat_metrics::RunLabels)>> {
     mysql
@@ -460,7 +460,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
                 row,
                 subtask_id,
                 "FAILED",
-                Some(result),
+                result,
                 Some(message),
                 None,
                 None,
