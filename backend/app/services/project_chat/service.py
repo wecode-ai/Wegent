@@ -80,7 +80,6 @@ from app.services.project_chat.agent_permissions import (
     preserve_redacted_mcp_servers,
 )
 from app.services.project_chat.mention_notification import (
-    enqueue_issue_mention_wakeups,
     notify_project_chat_mentions,
 )
 from app.services.project_chat.workspace_binding import (
@@ -1125,14 +1124,6 @@ class ProjectChatService:
             mentions=request.mentions,
             reply_preview=reply.preview,
         )
-        if request.task_id and request.mentions:
-            enqueue_issue_mention_wakeups(
-                db,
-                project_id=request.project_id,
-                item_id=request.task_id,
-                comment_id=message_id,
-                mentions=request.mentions,
-            )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(

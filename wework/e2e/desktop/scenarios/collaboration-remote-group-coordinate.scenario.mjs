@@ -705,15 +705,20 @@ export async function createDesktopScenario({
         `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
         modelResponseTimeoutMs
       )
-      const managerEventCard = scoped(
+      const managerEventCard =
         '[data-testid^="cloud-task-activity-card-"]:has(> [data-activity-sequence] > [data-testid^="cloud-task-manager-event-"])'
-      )
-      await control.command('waitFor', `${managerEventCard} > [data-activity-sequence] time`, {
-        timeoutMs: uiTimeoutMs,
-      })
       await control.command(
-        'waitForHidden',
-        `${managerEventCard} > .task-detail-thread-actions > time`,
+        'waitFor',
+        scoped(`${managerEventCard} > [data-activity-sequence] time`),
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        scoped(
+          `${managerEventCard}:not(:has(> .task-detail-thread-actions > time)) > [data-activity-sequence] time`
+        ),
         {
           timeoutMs: uiTimeoutMs,
         }

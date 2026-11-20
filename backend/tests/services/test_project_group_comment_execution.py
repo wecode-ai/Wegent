@@ -329,6 +329,19 @@ def test_group_root_comment_keeps_agent_authorship_and_mentions(member_scenario)
     with pytest.raises(HTTPException) as error:
         add_issue_comment(s.db, **scope)
     assert error.value.status_code == 409
+    outsider = ProjectChatMention(type="user", id="999999999", label="Outsider")
+    other_identity = scope["collaboration"].model_copy(update={"message_id": "denied"})
+    scope.update(collaboration=other_identity, body="Denied comment")
+    with pytest.raises(HTTPException) as denied:
+        add_issue_comment(s.db, **scope, mentions=[mention, outsider])
+    assert denied.value.status_code == 422
+    assert (
+        s.db.query(ProjectChatMessage).filter_by(content="Denied comment").count() == 0
+    )
+    assert (
+        s.db.query(LoopNode).filter_by(resource_type="stand_in_issue_event").count()
+        == 1
+    )
 
 
 def test_autonomous_turn_publishes_one_start_and_threads_its_outputs(member_scenario):

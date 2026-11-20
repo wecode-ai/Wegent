@@ -24,7 +24,6 @@ from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
 )
 from app.services.project_chat.mention_notification import (
-    enqueue_issue_mention_wakeups,
     notify_project_chat_mentions,
 )
 from app.services.project_chat.public_replies import (
@@ -400,13 +399,6 @@ def publish_collaboration_reply(
             content=body,
             mentions=mentions,
             reply_preview=reply.preview,
-        )
-        enqueue_issue_mention_wakeups(
-            db,
-            project_id=project_id,
-            item_id=item_id,
-            comment_id=message_id,
-            mentions=mentions,
         )
     return save_public_reply(
         db, item=item, row=row, item_metadata=item.metadata_json or {}

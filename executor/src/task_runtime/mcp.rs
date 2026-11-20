@@ -2341,11 +2341,15 @@ async fn call_backend_tool(
                     "requires_confirmation": true
                 });
             }
-            client.post(format!(
+            let request = client.post(format!(
                 "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
                 encode_segment(project_id),
                 encode_segment(item)
-            )).json(&body)
+            )).json(&body);
+            if body["collaboration"].is_object() {
+                return comments::send_collaboration(request.bearer_auth(auth_token)).await;
+            }
+            request
         },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
