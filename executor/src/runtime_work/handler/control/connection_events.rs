@@ -1008,8 +1008,10 @@ impl RuntimeWorkRpcHandler {
         &self,
         task: &str,
         status: Option<&str>,
+        goal: Option<&Value>,
     ) {
-        if status == Some("blocked") {
+        let identity = goal.map(goal_identity);
+        if status == Some("blocked") && identity.is_none() {
             return;
         }
         let result = event_store::read(
@@ -1026,11 +1028,20 @@ impl RuntimeWorkRpcHandler {
                 if !matches!(phase, "preparing" | "armed" | "pending" | "resuming_goal") {
                     continue;
                 }
-                if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
+                let replaced = identity
+                    .as_ref()
+                    .is_some_and(|identity| *identity != record["waiting_goal"]);
+                if !replaced
+                    && (status == Some("blocked")
+                        || (status == Some("active")
+                            && matches!(phase, "preparing" | "resuming_goal")))
+                {
                     continue;
                 }
-                record["status"] =
-                    json!(closed_goal_wait_status(&record, status == Some("complete"),));
+                record["status"] = json!(closed_goal_wait_status(
+                    &record,
+                    identity.is_some() && !replaced && status == Some("complete"),
+                ));
                 self.save_event_subscription(&id, &record)?;
             }
             Ok(())
@@ -1040,6 +1051,7 @@ impl RuntimeWorkRpcHandler {
                 "Goal event-wait cancellation failed",
                 &[("code", error.code)],
             );
+            self.schedule_connection_goal_reconciliation(task);
         }
     }
 }

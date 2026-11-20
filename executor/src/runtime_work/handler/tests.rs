@@ -2679,7 +2679,7 @@ fn syncing_an_active_goal_does_not_start_an_idle_task() {
     link.running = false;
     handler.upsert_local_task(link);
 
-    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()), None);
 
     let task = handler
         .local_task_link("task-1")
@@ -2754,7 +2754,7 @@ fn syncing_changed_goal_status_updates_task_activity_time() {
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
 
-    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()), None);
 
     let task = handler
         .local_task_link("task-1")

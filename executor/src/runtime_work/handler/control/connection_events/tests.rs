@@ -434,6 +434,48 @@ fn current_goal_identity_phase_and_read_failures_govern_wait_cancellation() {
 }
 
 #[test]
+fn goal_status_sync_projects_native_status_when_wait_storage_fails() {
+    let _guard = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _env = EnvGuard::home(root.path().to_str().unwrap());
+    let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+    let link = seed_claude(&handler, "caller");
+    let goal = handler.set_claude_goal(
+        &link,
+        &json!({"objective":"Finish work","status":"blocked","tokenBudget":500}),
+    );
+    let waiting = json!({
+        "task_id": "caller",
+        "subscription_key": "wait",
+        "status": "armed",
+        "waiting_goal": goal_identity(&goal),
+        "session": session::binding(&link).unwrap(),
+    });
+    handler.save_event_subscription("wait", &waiting).unwrap();
+    let mut delivered = waiting.clone();
+    delivered["status"] = json!("delivered");
+    handler.save_event_subscription("delivered", &delivered).unwrap();
+    let connection = rusqlite::Connection::open(handler.event_subscription_path()).unwrap();
+    connection.execute(
+        "UPDATE records SET metadata='invalid' WHERE section='operations' AND id='delivered'",
+        [],
+    ).unwrap();
+    let mut active = goal;
+    active["status"] = json!("active");
+    handler.sync_runtime_task_goal_status("caller", Some("active".into()), Some(&active));
+    assert_eq!(
+        handler.store.get_task("caller").unwrap().goal_status.as_deref(),
+        Some("active"),
+    );
+    let wait_status: String = connection.query_row(
+        "SELECT status FROM records WHERE section='operations' AND id='wait'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(wait_status, "armed", "The failed projection must roll back");
+}
+
+#[test]
 fn goal_wait_transactions_recover_without_resetting_usage_or_overriding_user_pause() {
     let _guard = crate::test_env::lock();
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {

@@ -389,8 +389,11 @@ impl RuntimeWorkRpcHandler {
         }
         if is_claude_runtime(&link.runtime) {
             let goal = self.set_claude_goal(&link, &payload);
-            self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
-            self.sync_runtime_task_goal_status(&link.local_task_id, string_field(&goal, "status"));
+            self.sync_runtime_task_goal_status(
+                &link.local_task_id,
+                string_field(&goal, "status"),
+                Some(&goal),
+            );
             let mut response = task_action_success(&link);
             response["goal"] = goal;
             return Ok(response);
@@ -451,10 +454,10 @@ impl RuntimeWorkRpcHandler {
                     .cloned()
                     .map(normalize_runtime_goal_timestamps)
                     .unwrap_or(Value::Null);
-                self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
                 self.sync_runtime_task_goal_status(
                     &link.local_task_id,
                     string_field(&goal, "status"),
+                    Some(&goal),
                 );
                 if string_field(&goal, "status").as_deref() == Some("active") {
                     self.journal_active_goal_turn(
@@ -484,7 +487,7 @@ impl RuntimeWorkRpcHandler {
         let _mutation = self.begin_goal_status_mutation(&link.local_task_id);
         if is_claude_runtime(&link.runtime) {
             let cleared = self.clear_claude_goal(&link);
-            self.sync_runtime_task_goal_status(&link.local_task_id, None);
+            self.sync_runtime_task_goal_status(&link.local_task_id, None, None);
             let mut response = task_action_success(&link);
             response["cleared"] = Value::Bool(cleared);
             return Ok(response);
@@ -498,7 +501,7 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
-                self.sync_runtime_task_goal_status(&link.local_task_id, None);
+                self.sync_runtime_task_goal_status(&link.local_task_id, None, None);
                 let mut response = task_action_success(&link);
                 response["cleared"] = result.get("cleared").cloned().unwrap_or(Value::Bool(false));
                 Ok(response)
