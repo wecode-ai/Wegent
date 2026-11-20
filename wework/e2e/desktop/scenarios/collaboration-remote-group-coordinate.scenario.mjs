@@ -711,6 +711,7 @@ export async function createDesktopScenario({
       )
       const assignmentEvent = `[data-testid="${assignmentEventId}"]`
       const assignmentCard = `[data-testid^="cloud-task-activity-card-"]:has(> [data-activity-sequence] > ${assignmentEvent})`
+      await control.command('scrollIntoView', scoped(`${assignmentEvent} time`))
       await control.command(
         'waitFor',
         scoped(
