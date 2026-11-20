@@ -50,7 +50,7 @@ export function Tooltip({
           collisionPadding={8}
           className={cn(
             theme.className,
-            'z-tooltip inline-flex max-w-xs items-center gap-2 rounded-lg border border-border bg-popover px-2 py-1 text-sm text-text-primary shadow-lg',
+            'z-system-popover inline-flex max-w-xs items-center gap-2 rounded-lg border border-border bg-popover px-2 py-1 text-sm text-text-primary shadow-lg',
             className
           )}
         >
