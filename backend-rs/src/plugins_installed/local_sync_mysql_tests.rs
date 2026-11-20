@@ -53,10 +53,12 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     };
     let state = Arc::new(state);
     let app = Application::build(state.clone()).await?;
-    let server = crate::http_server::Server::bind_with_authenticator(
+    // The production listener allows the receipt's full 20-second write budget.
+    let server = crate::http_server::Server::bind_with_authenticator_and_config(
         "127.0.0.1:0".parse()?,
         app.routes,
         AppAuthenticator::new(state.authentication_services()),
+        crate::filters::server_config(),
     )
     .await?;
     let address = server.local_addr()?;
