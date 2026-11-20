@@ -417,7 +417,7 @@ async fn assert_write_receipt_replay(
     installed_id: i64,
     operation: &str,
     data: Value,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Value> {
     let before = installed_write_revision(mysql, installed_id).await?;
     let first = api
         .request(token, operation, data.clone(), ResultProtocol::BusinessV2)
@@ -433,14 +433,16 @@ async fn assert_write_receipt_replay(
     let replay = api
         .request(token, operation, data, ResultProtocol::BusinessV2)
         .await;
-    assert_eq!(replay.status().as_u16(), 200, "{operation}");
-    assert_eq!(replay.json::<Value>().await?, first, "{operation}");
+    let status = replay.status().as_u16();
+    let replay = replay.json::<Value>().await?;
+    assert_eq!(status, 200, "{operation} replay: {}", replay["detail"]);
+    assert_eq!(replay, first, "{operation}");
     assert_eq!(
         installed_write_revision(mysql, installed_id).await?,
         before + 1,
         "{operation} replay must only return the committed receipt"
     );
-    Ok(())
+    Ok(first)
 }
 
 async fn verify_refresh_receipt_replay(
@@ -449,11 +451,12 @@ async fn verify_refresh_receipt_replay(
     state: &AppState,
     installed_id: i64,
     data: Value,
+    expected_state: &str,
 ) -> anyhow::Result<()> {
     let redis = state.redis.as_ref().expect("real Redis fixture");
     let channel = crate::socketio_emit::SOCKETIO_CHANNEL;
     let mut subscription = redis.subscribe(channel).await?;
-    assert_write_receipt_replay(
+    let receipt = assert_write_receipt_replay(
         api,
         token,
         &state.mysql,
@@ -462,6 +465,7 @@ async fn verify_refresh_receipt_replay(
         data,
     )
     .await?;
+    assert_eq!(receipt["state"], expected_state);
     // Both HTTP replies are complete before this ordered pub/sub marker.
     // Seeing the marker second proves no duplicate notification was published.
     let marker = "native-refresh-replay-fixture-complete";
@@ -738,7 +742,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         .await;
     api.call(&other_key,"plugin.auth.oauth.finish",json!({"connection_id":lease["connection_id"],"operation_id":lease["operation_id"],"succeeded":false}),409).await;
     let finish = json!({"connection_id":lease["connection_id"],"operation_id":lease["operation_id"],"succeeded":true,"account_id":"account","credential":json!({"access_token":"fresh-business","refresh_token":"rotated-private","expires_at":chrono::Utc::now().timestamp()+600,"provider_private":{"secret":"private"}}).to_string()});
-    verify_refresh_receipt_replay(&api, token, &state, oauth, finish).await?;
+    verify_refresh_receipt_replay(&api, token, &state, oauth, finish, "finished").await?;
     let result = api
         .call(token, "plugin.auth.execute", execution.clone(), 200)
         .await;
@@ -798,7 +802,58 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     let lease = api
         .call(token, "plugin.auth.oauth.begin", execution.clone(), 200)
         .await;
-    api.call(token,"plugin.auth.oauth.finish",json!({"connection_id":lease["connection_id"],"operation_id":lease["operation_id"],"succeeded":false,"attempted":true}),200).await;
+    let connection_id = lease["connection_id"].as_str().expect("refresh connection");
+    let before: Document = mysql.fetch_one(query, (OWNER, connection_id)).await?;
+    let cancelled = json!({"connection_id":lease["connection_id"],"operation_id":lease["operation_id"],"succeeded":false,"attempted":false});
+    verify_refresh_receipt_replay(
+        &api,
+        token,
+        &state,
+        uncertain,
+        cancelled.clone(),
+        "cancelled",
+    )
+    .await?;
+    let after: Document = mysql.fetch_one(query, (OWNER, connection_id)).await?;
+    assert_eq!(
+        after.json["spec"]["revision"],
+        before.json["spec"]["revision"].as_i64().unwrap() + 1
+    );
+    let cancelled_revision = installed_write_revision(mysql, uncertain).await?;
+    let mut attempted = cancelled.clone();
+    attempted["attempted"] = json!(true);
+    let mismatched = api
+        .call(token, "plugin.auth.oauth.finish", attempted, 409)
+        .await;
+    assert_eq!(mismatched["detail"], "plugin_auth_reconnect_required");
+    let wrong_principal = api
+        .call(
+            &other_key,
+            "plugin.auth.oauth.finish",
+            cancelled.clone(),
+            409,
+        )
+        .await;
+    assert_eq!(wrong_principal["detail"], "plugin_auth_operation_mismatch");
+    assert_eq!(
+        installed_write_revision(mysql, uncertain).await?,
+        cancelled_revision
+    );
+
+    let next = api
+        .call(token, "plugin.auth.oauth.begin", execution.clone(), 200)
+        .await;
+    assert_eq!(next["state"], "claimed");
+    assert_ne!(next["operation_id"], lease["operation_id"]);
+    let stale = api
+        .call(token, "plugin.auth.oauth.finish", cancelled, 409)
+        .await;
+    assert_eq!(stale["detail"], "plugin_auth_operation_mismatch");
+    let finish = json!({"connection_id":next["connection_id"],"operation_id":next["operation_id"],"succeeded":false,"attempted":true});
+    let result = api
+        .call(token, "plugin.auth.oauth.finish", finish, 200)
+        .await;
+    assert_eq!(result["state"], "uncertain");
     let blocked = api
         .call(token, "plugin.auth.oauth.begin", execution, 409)
         .await;
@@ -846,7 +901,8 @@ async fn verify_transfer_abort(
         "plugin.auth.transfer.abort",
         json!({"migration_id":migration}),
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 async fn verify_transfer(

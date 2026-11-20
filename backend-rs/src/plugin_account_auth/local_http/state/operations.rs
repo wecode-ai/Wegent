@@ -225,6 +225,9 @@ async fn refresh_finish(
     if op["state"] == "finished" {
         return Ok(ExchangeOutcome::Replayed(json!({"state":"finished"})));
     }
+    if op["state"] == "cancelled" && !input.succeeded && !input.attempted {
+        return Ok(ExchangeOutcome::Replayed(json!({"state":"cancelled"})));
+    }
     let mut revoke = spec["oauthRevocation"].clone();
     let revoking = spec["status"] == "disconnected"
         && matches!(revoke["state"].as_str(), Some("pending" | "attention"))
