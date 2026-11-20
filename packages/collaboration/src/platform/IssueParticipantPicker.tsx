@@ -238,7 +238,7 @@ export function IssueParticipantPicker({
             </TabsList>
           </TabsRoot>
         )}
-        <label className="flex min-w-0 items-center gap-2 rounded-md border border-border px-2 focus-within:border-focus focus-within:ring-1 focus-within:ring-focus">
+        <label className="issue-participant-search flex min-w-0 items-center gap-2 rounded-md border border-border px-2 focus-within:border-focus focus-within:ring-1 focus-within:ring-focus">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <ControlInput
             appearance="plain"
@@ -256,7 +256,7 @@ export function IssueParticipantPicker({
               }
               if (event.key === 'Enter') event.preventDefault()
             }}
-            className="min-h-11 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-0 md:min-h-8"
+            className="min-h-11 min-w-0 flex-1 bg-transparent text-base placeholder:text-text-secondary md:min-h-8"
           />
         </label>
         {selected.length > 0 && <ul>{selected.map(person => personRow(person, true))}</ul>}

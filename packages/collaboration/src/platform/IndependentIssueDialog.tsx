@@ -6,7 +6,7 @@ import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createIndependentIssueDialogState } from './independentIssueDialogState'
 import { createPortal } from 'react-dom'
-import { Download, X, Maximize2, Minimize2 } from 'lucide-react'
+import { Bot, Download, X, Maximize2, Minimize2 } from 'lucide-react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
 import { usePersonalIssueTranslation } from './personalIssueMessages'
 import { DialogSurface } from '../controls/DialogSurface'
@@ -470,7 +470,16 @@ function IndependentIssueDialogContent({
                 {comments.map(comment => (
                   <article key={comment.id} className="border-t border-border py-4">
                     <div className="flex flex-wrap gap-3 text-xs text-text-secondary">
-                      <span>{comment.assistant_name ?? name(comment.author_id)}</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        {comment.assistant_name && (
+                          <Bot
+                            role="img"
+                            aria-label={t('personalHome.assistantRole')}
+                            className="h-3.5 w-3.5 shrink-0"
+                          />
+                        )}
+                        {comment.assistant_name ?? name(comment.author_id)}
+                      </span>
                       <time dateTime={comment.created_at}>{formatIssueTimestamp(comment.created_at)}</time>
                     </div>
                     <p className="mt-2 whitespace-pre-wrap break-words text-sm">{comment.body}</p>

@@ -731,6 +731,7 @@ export function createDesktopScenario({
       await click(control, selector(`independent-issue-${issue.id}`))
       await wait(control, `${dialog} article`, { text: reviewReply, visible: true })
       await wait(control, `${dialog} article`, { text: reviewerName, visible: true })
+      await wait(control, `${dialog} article [role="img"][aria-label]`, { visible: true })
       await captureScreenshot(control, '12-assigned-independent-issue-assistant-reply.png')
     },
   }
