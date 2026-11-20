@@ -174,12 +174,26 @@ test('notifies once when an unread completion survives a device alias migration'
       lifecycleSnapshot: store.getSnapshot(),
     })
 
-  const { rerender } = renderHook(useReminders, { initialProps: alias })
+  const { rerender, unmount } = renderHook(useReminders, { initialProps: alias })
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
   act(() => {
     store.syncRuntimeWork(runtimeWorkFor(canonical))
     rerender(canonical)
   })
   await new Promise(resolve => setTimeout(resolve, 200))
+  expect(send).toHaveBeenCalledTimes(1)
+  unmount()
+
+  const restarted = new RuntimeTaskLifecycleStore('alias-notification-test')
+  restarted.syncRuntimeWork(runtimeWorkFor(canonical))
+  const { result } = renderHook(() =>
+    useRuntimeTaskReminders({
+      runtimeWork: runtimeWorkFor(canonical),
+      lifecycleStore: restarted,
+      lifecycleSnapshot: restarted.getSnapshot(),
+    })
+  )
+  expect(result.current.unreadCount).toBe(1)
+  await act(async () => {})
   expect(send).toHaveBeenCalledTimes(1)
 })

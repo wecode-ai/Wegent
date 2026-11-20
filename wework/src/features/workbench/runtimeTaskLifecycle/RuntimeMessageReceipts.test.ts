@@ -36,6 +36,11 @@ describe('message-level stand-in receipts', () => {
     const store = new RuntimeMessageReceipts('baseline')
     expect(store.observe('chat', [message('a', 100), message('b', 200)], true)).toEqual([])
     expect(store.unreadCount('chat')).toBe(1)
+    vi.spyOn(Date, 'now').mockReturnValue(2000)
+    const restarted = new RuntimeMessageReceipts('baseline')
+    expect(restarted.observe('chat', [message('while-closed', 1500)], true)).toEqual([])
+    expect(restarted.unreadCount('chat')).toBe(2)
+    expect(restarted.observe('chat', [message('live', 2100)], false)).toHaveLength(1)
     expect(new RuntimeMessageReceipts('other-account').unreadCount('chat')).toBe(0)
   })
   it('merges device aliases without restoring already read messages', () => {

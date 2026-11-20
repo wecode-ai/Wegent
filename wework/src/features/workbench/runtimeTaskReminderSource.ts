@@ -76,7 +76,9 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const current = input
         const lifecycle = store.getSnapshot()
         const byKey = new Map(current.items.map(item => [item.key, item]))
-        const newlyUnread = [...lifecycle.unreadTaskKeys].filter(key => !previousUnread.has(key))
+        const newlyUnread = [...lifecycle.unreadTaskKeys].filter(
+          key => !previousUnread.has(key) && store.isNewlyUnread(key)
+        )
         previousUnread = new Set(lifecycle.unreadTaskKeys)
         for (const key of awaitingMetadata.keys())
           if (!lifecycle.unreadTaskKeys.has(key)) awaitingMetadata.delete(key)

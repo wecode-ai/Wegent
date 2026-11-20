@@ -486,7 +486,7 @@ export async function timedWorkbenchBootstrapRequest<T>(
     )
     const elapsedMs = Math.round(nowMs() - startedAt)
     if (elapsedMs > 5000) {
-      console.warn(`[Wework] Workbench bootstrap ${label} completed slowly in ${elapsedMs}ms.`)
+      console.info(`[Wework] Workbench bootstrap ${label} completed slowly in ${elapsedMs}ms.`)
     }
     return { status: 'fulfilled', value }
   } catch (reason) {
