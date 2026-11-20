@@ -4,7 +4,7 @@ import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributi
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { focusComposerAtEnd, WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
-import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { focusEditorTarget, useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useCallback, useMemo, useRef, type ReactNode } from 'react'
 
@@ -46,9 +46,14 @@ export function DesktopEmptyTaskLauncher({
   const attachLauncher = useCallback(
     (node: HTMLElement | null) => {
       launcherRef.current = node
-      if (node) focusComposer()
+      const element = node?.querySelector<HTMLElement>(composerInputSelector)
+      if (!element) return
+      focusEditorTarget(
+        { element, focus: () => focusComposerAtEnd(element) },
+        { guardModalFocus: true, onlyFromBodyOrTarget: true }
+      )
     },
-    [focusComposer]
+    [composerInputSelector]
   )
   useDOMEvent('window', WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
 
