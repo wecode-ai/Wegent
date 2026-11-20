@@ -21,6 +21,10 @@ import {
   selectTool,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import {
+  ANSWER_EDITOR_PROMPT,
+  createQuestionAnswerEditorRegression,
+} from '../modules/question-answer-editor.mjs'
 import { waitForElementWidth } from '../modules/layout-metrics.mjs'
 import {
   OTHER_TASK_PROMPT,
@@ -68,6 +72,7 @@ export function createDesktopScenario({
   let ordinaryAnswers = 0
   let firstToolName
   let nativeSourceOptions
+  const answerEditor = createQuestionAnswerEditorRegression({ workspacePath })
   return {
     async prepareApp({ appEnvironment, codexHome }) {
       nativeSourceOptions = { appEnvironment, codexHome, codexSqliteHome }
@@ -87,12 +92,15 @@ export function createDesktopScenario({
         !text.includes(QUESTION) &&
         !text.includes(OTHER_TASK_PROMPT) &&
         !text.includes(SOURCE_LOOKUP_PROMPT) &&
+        !text.includes(ANSWER_EDITOR_PROMPT) &&
         !text.includes(SOURCE_LOOKUP_SEED_PROMPT)
       )
         return false
       const id = `discussion-${Date.now()}`
       let events
-      if (text.includes(SOURCE_LOOKUP_PROMPT)) {
+      if (text.includes(ANSWER_EDITOR_PROMPT)) {
+        events = answerEditor.respond(body)
+      } else if (text.includes(SOURCE_LOOKUP_PROMPT)) {
         events = [assistantMessage(SOURCE_LOOKUP_REPLY)]
       } else if (text.includes(SOURCE_LOOKUP_SEED_PROMPT)) {
         events = [assistantMessage('已准备跨 provider 的原始会话。')]
@@ -459,6 +467,7 @@ export function createDesktopScenario({
           2
         )
       )
+      await answerEditor.verify(control)
       active = false
     },
   }

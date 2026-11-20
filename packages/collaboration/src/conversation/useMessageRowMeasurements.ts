@@ -73,16 +73,18 @@ export function useMessageRowMeasurements(
       const attached = rows.filter(row => listRef.current?.contains(row))
       // Read the complete initial batch before registering rows can update virtual layout.
       attached.forEach(row => initialBounds.set(row, row.getBoundingClientRect()))
+      // Register the whole batch before resizeItem can synchronously commit React.
+      // Otherwise that commit sees unregistered rows and starts this batch again.
+      attached.forEach(row => virtualizer.measureElement(row))
       attached.forEach(row => {
         // Native scroll observation can still be active during task restoration.
         // Commit the same DOM measurement before paint; measureElement otherwise
         // defers it until ResizeObserver and exposes the estimated row for a frame.
         const index = Number(row.dataset.index)
         const size = virtualizer.options.measureElement(row, undefined, virtualizer)
+        initialBounds.delete(row)
         const item = virtualizer.getVirtualItems().find(item => item.index === index)
         if (item && item.size !== size) virtualizer.resizeItem(index, size)
-        virtualizer.measureElement(row)
-        initialBounds.delete(row)
       })
     },
     [enabled, listRef, virtualizer]

@@ -5444,6 +5444,56 @@ describe('createLocalAppServices', () => {
     }
   )
 
+  test('preserves question attachment records while model preparation is stalled', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const prepareLocalModelCatalog = vi.fn(() => new Promise<void>(() => {}))
+    const api = createRuntimeWorkApiFromIpc(request, async () => 'device-uuid', {
+      prepareLocalModelCatalog,
+    })
+    const attachment = {
+      id: -45,
+      filename: 'brief.txt',
+      file_size: 12,
+      mime_type: 'text/plain',
+      status: 'ready' as const,
+      file_extension: '.txt',
+      created_at: '2026-11-20T00:00:00.000Z',
+      local_path: '/tmp/brief.txt',
+    }
+    const response = {
+      delivery: 'async' as const,
+      requestId: 42,
+      itemId: 'item-1',
+      interactionScope: 'turn-1',
+      answers: { goal: { answers: ['Review the brief'], attachments: [attachment] } },
+    }
+
+    const result = api.sendRuntimeMessage({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      message: 'Review the brief',
+      requestUserInputResponse: response,
+      attachmentIds: [81],
+      attachments: [attachment],
+    })
+
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        'runtime.tasks.send',
+        {
+          taskId: 'task-1',
+          address: { deviceId: 'device-uuid', taskId: 'task-1' },
+          message: 'Review the brief',
+          requestUserInputResponse: response,
+          attachmentIds: [81],
+          attachments: [attachment],
+        },
+        'device-uuid'
+      )
+    )
+    expect(prepareLocalModelCatalog).not.toHaveBeenCalled()
+    await expect(result).resolves.toEqual({ accepted: true })
+  })
+
   test('normalizes local runtime goal requests before IPC', async () => {
     const request = vi.fn().mockResolvedValue({
       accepted: true,

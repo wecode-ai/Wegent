@@ -511,6 +511,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                             source={currentRuntimeTask}
                             messages={paneMessages}
                             onCollapse={onCollapse}
+                            onSkip={() =>
+                              paneSession.skipRequestUserInput(
+                                pendingRequestUserInputPayloads(
+                                  paneMessages,
+                                  paneSession.answeredRequestUserInputIds
+                                )
+                              )
+                            }
                             onSubmit={response => {
                               const isImplementationPlanRequest =
                                 isImplementationPlanRequestUserInput(pendingRequestUserInput)

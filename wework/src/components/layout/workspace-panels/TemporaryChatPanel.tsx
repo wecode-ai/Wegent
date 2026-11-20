@@ -31,13 +31,17 @@ import {
   RequestUserInputCard,
   type RequestUserInputPayload,
 } from '@/components/chat/RequestUserInputCard'
-import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+} from '@/components/layout/requestUserInputOverlay'
 import {
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@/components/chat/requestUserInputMessages'
 import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
@@ -738,20 +742,15 @@ export function TemporaryChatPanel({
     const hosted = await requestUserInputHost?.submit(response, payload)
     if (hosted !== undefined) return hosted
     const appendUserMessage = isAsyncRequestUserInputPayload(payload)
-    // A non-blocking Codex question carries no runtime request to answer, so it
-    // is answered by the next user message: Codex steers the running turn while
-    // the model is still working and starts a new turn once it has stopped.
+    const attachments = requestUserInputResponseAttachments(response)
     if (appendUserMessage) {
-      const answerMessage: RuntimePaneQueuedMessage = {
-        id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
-        content: requestUserInputResponseText(response),
-        status: 'queued',
-        createdAt: new Date().toISOString(),
-        ...selectedModelFields,
+      return sendRuntimePaneMessage({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: { ...response, delivery: 'async' },
+        ...(attachments.length ? { attachments } : {}),
         ...runtimeContext,
-      }
-      conversationQueue.enqueue(answerMessage)
-      return sendQueuedMessageAsGuidance(answerMessage)
+      })
     }
     const key = submissionKey(requestKey)
     const fallback = t('interactions.failed')
@@ -764,6 +763,7 @@ export function TemporaryChatPanel({
           address,
           message: requestUserInputResponseText(response),
           requestUserInputResponse: response,
+          ...(attachments.length ? { attachments } : {}),
           ...runtimeContext,
         },
         {
@@ -878,6 +878,20 @@ export function TemporaryChatPanel({
                       requestUserInputHost?.setDraft(pendingRequest, answers)
                     }
                     onCollapse={onCollapse}
+                    onSkip={() => {
+                      const keys = (
+                        focusedRequest
+                          ? [pendingRequest]
+                          : pendingRequestUserInputPayloads(
+                              presentation.messages,
+                              hiddenRequestUserInputIds
+                            )
+                      )
+                        .filter(isAsyncRequestUserInputPayload)
+                        .map(requestUserInputPayloadKey)
+                        .filter((key): key is string => Boolean(key))
+                      setHiddenRequestUserInputIds(current => new Set([...current, ...keys]))
+                    }}
                     onSubmit={submitRequestUserInput}
                     onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
                   />

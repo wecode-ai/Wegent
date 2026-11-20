@@ -16,6 +16,7 @@ import {
   friendlyTitleForTask,
   loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
+  prepareRuntimeQuestionResponse,
   resolveRuntimeTaskCreateWorkspacePath,
   resolveTemporaryChatSource,
   runtimeExecutablePathForTarget,
@@ -108,6 +109,116 @@ function cacheAsyncQuestion(
     },
   ])
 }
+
+test('prepares cloud question files per answer without changing original drafts or skipped answers', async () => {
+  const file = {
+    id: -7,
+    filename: 'brief.txt',
+    local_path: '/tmp/brief.txt',
+    status: 'ready',
+  } as Attachment
+  const response = {
+    requestId: 12,
+    answers: { details: { answers: ['Review'], attachments: [file] }, skipped: { answers: [] } },
+  }
+  const upload = vi.fn().mockResolvedValue({ ...file, id: 42 })
+  const prepared = await prepareRuntimeQuestionResponse(
+    response,
+    'cloud',
+    [{ device_id: 'cloud', device_type: 'cloud' }] as DeviceInfo[],
+    upload
+  )
+  expect(prepared.answers.details).toEqual({
+    answers: ['Review'],
+    attachments: [expect.objectContaining({ id: 42 })],
+  })
+  expect(prepared.answers.details.attachments![0]).not.toHaveProperty('local_path')
+  expect(prepared.answers.skipped).toEqual({ answers: [] })
+  expect(response.answers.details.attachments[0]).toBe(file)
+  expect(upload).toHaveBeenCalledOnce()
+})
+
+test('routes files nested in native question answers through ordinary attachment transport', async () => {
+  const { address, store, send, messaging } = messagingFixture()
+  const attachment = {
+    id: -1,
+    filename: 'brief.txt',
+    local_path: '/tmp/brief.txt',
+    status: 'ready',
+  } as Attachment
+  const response = {
+    requestId: 2,
+    answers: { details: { answers: ['Review'], attachments: [attachment] } },
+  }
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage({
+        address,
+        message: 'Review',
+        requestUserInputResponse: response,
+      })
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ requestUserInputResponse: response, attachments: [attachment] })
+    )
+  } finally {
+    store.remove(address)
+  }
+})
+
+test.each([false, true])(
+  'preserves mixed local and cloud files in separate question answers (pending=%s)',
+  async pending => {
+    const { createPreparingAttachment } = await import('@/lib/runtime-attachments')
+    const { address, store, send, messaging } = messagingFixture()
+    const remote = attachment({ id: 42, filename: 'cloud.png', local_path: undefined })
+    const local = attachment({ id: -7, filename: 'local.txt', local_path: '/tmp/local.txt' })
+    let finish!: (value: Attachment) => void
+    const cloudFile = pending
+      ? createPreparingAttachment(
+          new File(['cloud bytes'], 'cloud.png'),
+          new Promise(resolve => {
+            finish = resolve
+          })
+        )
+      : remote
+    const response = {
+      requestId: 2,
+      answers: {
+        remote: { answers: ['Cloud'], attachments: [cloudFile] },
+        local: { answers: ['Local'], attachments: [local] },
+      },
+    }
+    try {
+      const sending = messaging.sendRuntimePaneMessage({
+        address,
+        message: 'Review both files',
+        requestUserInputResponse: response,
+      })
+      if (pending) {
+        await Promise.resolve()
+        expect(send).not.toHaveBeenCalled()
+        finish(remote)
+      }
+      await expect(sending).resolves.toBe(true)
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestUserInputResponse: {
+            ...response,
+            answers: {
+              remote: { answers: ['Cloud'], attachments: [remote] },
+              local: { answers: ['Local'], attachments: [local] },
+            },
+          },
+          attachmentIds: [42],
+          attachments: [local],
+        })
+      )
+    } finally {
+      store.remove(address)
+    }
+  }
+)
 
 test('compaction renders only its native turn and remains active after an early RPC response', async () => {
   const { address, store, compact, messaging } = messagingFixture()

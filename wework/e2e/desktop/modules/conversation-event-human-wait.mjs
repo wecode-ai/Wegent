@@ -15,7 +15,7 @@ const BLOCKER = 'WEWORK_CONVERSATION_EVENT_CAPACITY_BLOCKER'
 export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureScreenshot }) {
   const releases = new Map()
   let originalSettings
-  let eventRequests = 0
+  const eventMessageIds = new Set()
   const blockerTask = 'event-human-capacity-blocker'
   const waitHeld = key =>
     waitForValue(
@@ -50,8 +50,9 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         return hold('event-human-answer', response)
       return null
     },
-    eventStarted() {
-      eventRequests++
+    eventStarted(messageId) {
+      assert.ok(messageId, 'A delivered event must have a user message ID')
+      eventMessageIds.add(messageId)
     },
     release() {
       for (const release of releases.values()) release()
@@ -176,7 +177,7 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         ({ task }) =>
           turnId(task) &&
           turnId(task) !== questionTurnId &&
-          (releases.has('event-human-answer') || eventRequests > 0),
+          (releases.has('event-human-answer') || eventMessageIds.size > 0),
         'The answer must open a native turn and reach the model',
         uiTimeoutMs
       )
@@ -189,7 +190,7 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         ({ task }) =>
           !task.interactionStatus &&
           Boolean(subscription(task)?.operation_id) &&
-          ((subscription(task)?.status === 'delivered' && eventRequests > 0) ||
+          ((subscription(task)?.status === 'delivered' && eventMessageIds.size > 0) ||
             (subscription(task)?.status === 'resuming_goal' &&
               !task.running &&
               task.goalStatus === 'blocked')),
@@ -198,12 +199,12 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
       )
       if (subscription(delivery.task)?.status === 'delivered') {
         assert.equal(turnId(delivery.task), answerTurnId, 'The event must steer the answer turn')
-        assert.equal(eventRequests, 1, 'The event must enter the model once')
+        assert.equal(eventMessageIds.size, 1, 'The event must enter the model once')
         releases.get('event-capacity-blocker')()
         return
       }
       assert.equal(
-        eventRequests,
+        eventMessageIds.size,
         0,
         'Queued event work must not reach the model before capacity is released'
       )

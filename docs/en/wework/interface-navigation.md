@@ -96,6 +96,8 @@ To report a problem or export runtime logs, select **Report a problem** in the u
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
 
+At the bottom of a business question card, **Skip** hides asynchronous questions without sending a message. Blocking questions receive empty answers to end their wait. **Collapse** keeps text and attachment drafts available for later. See [Answer AI questions](./tasks.md#question-answers) for input and attachment controls.
+
 Dismiss pending work: **Needs your input → cross beside an entry (Dismiss item)**, or **Needs your input → above the left list → Dismiss all**. These actions archive locally without answering questions or changing Issue state. See [Questions and project work](./workbench.md#ai-questions).
 
 When a question is already handled but a notification reply was not sent, **Needs your input → above the left list → Unsent replies** retains selectable text and offers **Discard this draft**. See [Handle AI questions](./workbench.md#ai-questions).

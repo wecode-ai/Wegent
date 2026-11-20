@@ -191,6 +191,7 @@ test('ignores a vanished X11 window while still selecting the owned native modal
     ['windowfocus', '--sync', '1'],
     expect.anything()
   )
+  expect(native.execute.mock.calls.filter(([, args]) => args[0] === 'search')).toHaveLength(1)
 })
 
 test('re-enumerates vanished X11 windows within the original decision deadline', async () => {
@@ -222,7 +223,7 @@ test('re-enumerates vanished X11 windows within the original decision deadline',
   expect(native.execute).toHaveBeenCalledWith(
     'xdotool',
     ['windowfocus', '--sync', '99'],
-    expect.anything()
+    expect.objectContaining({ timeout: 11_900 })
   )
 })
 

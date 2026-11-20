@@ -5601,6 +5601,18 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn runtime_work_test_paths_are_independent_for_the_same_label() {
+    let paths = (0..128)
+        .map(|_| temp_runtime_work_index_path("shared-label"))
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        paths.len(),
+        128,
+        "Test cleanup must not remove another fixture"
+    );
+}
+
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-runtime-work-{label}-{}-{}.json",

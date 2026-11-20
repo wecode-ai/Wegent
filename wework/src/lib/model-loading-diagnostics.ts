@@ -1,5 +1,6 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
+import { logRuntimeTaskCreateStage } from './runtime-create-diagnostics'
 
 let sequence = 0
 let persistenceWarningLogged = false
@@ -44,6 +45,17 @@ export function logModelLoading(
   details: Record<string, number | boolean> = {}
 ): void {
   const event = { traceId, stage, timestampMs: Date.now(), ...details }
+  if (
+    (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') &&
+    stage.startsWith('workbench.')
+  ) {
+    logRuntimeTaskCreateStage('e2e-model-selection', {
+      traceId,
+      modelLoadingStage: stage,
+      timestampMs: event.timestampMs,
+      ...details,
+    })
+  }
   if (!isElectronRuntime()) return
   if (pendingEvents.length === MAX_PENDING_EVENTS) pendingEvents.shift()
   pendingEvents.push(event)

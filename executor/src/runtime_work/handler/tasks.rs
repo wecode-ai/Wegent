@@ -1082,9 +1082,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, owner_input, from_event)
+        self.send_message_with_activity_checks(payload, false, owner_input, from_event, prepared)
             .await
     }
 
@@ -1147,13 +1148,17 @@ impl RuntimeWorkRpcHandler {
                 .await
                 .map(Some);
         }
-        self.send_message_after_local_checks(payload)
+        self.send_message_after_local_checks(payload, None)
             .await
             .map(Some)
     }
 
-    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, false, false)
+    async fn send_message_after_local_checks(
+        &self,
+        payload: Value,
+        prepared: Option<PreparedQuestionReply>,
+    ) -> Result<Value, AppIpcError> {
+        self.send_message_with_activity_checks(payload, false, false, false, prepared)
             .await
     }
 
@@ -1163,18 +1168,52 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let task = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, false, false)
+        self.send_message_with_activity_checks(payload, true, false, false, prepared)
             .await
     }
 
     async fn send_message_with_activity_checks(
         &self,
+        payload: Value,
+        activity: bool,
+        owner_input: bool,
+        from_event: bool,
+        prepared: Option<PreparedQuestionReply>,
+    ) -> Result<Value, AppIpcError> {
+        // All callers hold the task send gate until acceptance is recorded.
+        let question = self.unanswered_async_question_reply(&payload)?;
+        let result = self
+            .dispatch_message_with_activity_checks(
+                payload,
+                activity,
+                owner_input,
+                from_event,
+                prepared,
+            )
+            .await;
+        if let (Some((task_id, key)), Ok(receipt)) = (question, &result) {
+            if receipt["accepted"] == true {
+                self.store.update_task(&task_id, |link| {
+                    if !link.runtime_handle["answeredAsyncQuestions"].is_object() {
+                        link.runtime_handle["answeredAsyncQuestions"] = json!({});
+                    }
+                    link.runtime_handle["answeredAsyncQuestions"][key] = json!(true);
+                });
+            }
+        }
+        result
+    }
+
+    async fn dispatch_message_with_activity_checks(
+        &self,
         mut payload: Value,
         activity: bool,
         owner_input: bool,
         from_event: bool,
+        prepared: Option<PreparedQuestionReply>,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1263,8 +1302,13 @@ impl RuntimeWorkRpcHandler {
             });
         if let Some(response) = question_response {
             if response["delivery"] == "async" {
-                self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
-                    .await?;
+                self.apply_prepared_async_question_reply(
+                    &local_task_id,
+                    &response,
+                    &mut payload,
+                    prepared,
+                )
+                .await?;
                 if self.is_busy_local_task(&local_task_id) {
                     let guided = self.send_guidance(payload.clone()).await?;
                     if guided["code"] != "no_active_turn" {
@@ -1276,9 +1320,7 @@ impl RuntimeWorkRpcHandler {
                 self.refresh_persisted_model_credentials(&mut payload)
                     .await?;
             } else {
-                return self
-                    .send_request_user_input_response(&local_task_id, response)
-                    .await;
+                return self.send_prepared_question_response(&local_task_id, response, prepared);
             }
         }
         let payload_execution_request = execution_request(&payload);
@@ -1607,6 +1649,7 @@ impl RuntimeWorkRpcHandler {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&local_task_id);
         let guard = gate.lock().await;
         let check_provider_turn = self.local_task_link(&local_task_id).map_or_else(
@@ -1644,7 +1687,9 @@ impl RuntimeWorkRpcHandler {
                 );
             }
             // Ordinary admission rechecks a newer owner under the reacquired gate.
-            return self.send_message_after_local_checks(payload).await;
+            return self
+                .send_message_after_local_checks(payload, prepared)
+                .await;
         }
         if let Some(thread_id) = thread_id.as_deref() {
             if self
@@ -1656,7 +1701,9 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await
             {
-                return self.send_message_after_local_checks(payload).await;
+                return self
+                    .send_message_after_local_checks(payload, prepared)
+                    .await;
             }
             let provider_stopped = tokio::time::timeout(
                 Duration::from_secs(10),
@@ -1671,7 +1718,8 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
-        self.send_message_after_local_checks(payload).await
+        self.send_message_after_local_checks(payload, prepared)
+            .await
     }
 
     async fn settle_local_execution_from_terminal_codex_turn(
@@ -2476,109 +2524,6 @@ impl RuntimeWorkRpcHandler {
             .get("thread")
             .and_then(|thread| string_field(thread, "id"))
             .unwrap_or_else(|| thread_id.to_owned()))
-    }
-
-    pub(super) async fn send_request_user_input_response(
-        &self,
-        local_task_id: &str,
-        response: Value,
-    ) -> Result<Value, AppIpcError> {
-        let pending_request = self
-            .active_request_user_inputs
-            .lock()
-            .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned());
-        let Some(pending_request) = pending_request else {
-            return Ok(json!({
-                "success": false,
-                "error": "request_user_input is not pending",
-                "code": "missing_request_user_input",
-                "taskId": local_task_id,
-                "runtime": "codex",
-            }));
-        };
-        let active_turn = self.active_codex_turn(local_task_id);
-        let scoped_to_other_turn = response.get("interactionScope").is_some_and(|scope| {
-            active_turn
-                .as_ref()
-                .map_or(true, |turn| scope.as_str() != Some(turn.turn_id.as_str()))
-        }) || active_turn
-            .as_ref()
-            .is_some_and(|turn| turn.execution_id != pending_request.execution_id);
-        let invalid_interaction_response = self
-            .active_codex_transcript_items
-            .lock()
-            .ok()
-            .and_then(|items| {
-                items.get(local_task_id).map(|active| {
-                    active
-                        .items
-                        .iter()
-                        .find_map(|item| {
-                            super::super::mcp_elicitation::accepts_response(item, &response)
-                        })
-                        .map(|accepted| !accepted)
-                        .unwrap_or_else(|| {
-                            if let Some(id) = super::super::mcp_elicitation::response_id(&response)
-                            {
-                                let key = id
-                                    .as_str()
-                                    .map(str::to_owned)
-                                    .unwrap_or_else(|| id.to_string());
-                                return !active
-                                    .user_input_requests
-                                    .get(&key)
-                                    .copied()
-                                    .unwrap_or(false);
-                            }
-                            super::super::mcp_elicitation::response_id(&response).is_none()
-                                && active.items.iter().any(|item| {
-                                    item["type"] == "mcpElicitation"
-                                        && item["renderPayload"]["interactionStatus"] == "pending"
-                                })
-                        })
-                })
-            })
-            .unwrap_or(false);
-        if scoped_to_other_turn || invalid_interaction_response {
-            return Ok(json!({
-                "success": false, "code": "stale_request_user_input",
-                "error": "This interaction is expired, settled, or belongs to another turn",
-                "taskId": local_task_id, "runtime": "codex",
-            }));
-        }
-        let response_key = active_turn.as_ref().and_then(|turn| {
-            self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
-        });
-        // Reserve the validated channel before recording the answer. Delivery can
-        // immediately finish the turn, so history must be updated before send.
-        let Ok(permit) = pending_request.sender.reserve().await else {
-            return Ok(json!({
-                "success": false,
-                "error": "request_user_input response channel is closed",
-                "code": "closed_request_user_input",
-                "taskId": local_task_id,
-                "runtime": "codex",
-            }));
-        };
-        if self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
-            if let Some(turn) = active_turn {
-                self.settle_request_user_input_response(
-                    local_task_id,
-                    &turn.turn_id,
-                    response_key.as_deref(),
-                    &response,
-                );
-            }
-        }
-        permit.send(response);
-        Ok(json!({
-            "success": true,
-            "accepted": true,
-            "deviceId": self.device_id,
-            "taskId": local_task_id,
-            "runtime": "codex",
-        }))
     }
 
     pub(super) async fn cancel_task(&self, payload: Value) -> Result<Value, AppIpcError> {

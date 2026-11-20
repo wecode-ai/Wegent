@@ -19,6 +19,7 @@ import { useComposerTransfers, type ComposerTransferServices } from './useCompos
 import { useComposerLinkEditing } from './useComposerLinkEditing'
 import { LinkEditPopover } from './LinkEditPopover'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
+import { Button as ControlButton } from '../markdown/Button'
 import type {
   ComposerSubmitOptions,
   ComposerFollowUpBehavior,
@@ -35,6 +36,8 @@ export interface ComposerTextInputProps {
   onCompositionEnd?: () => void
   nativeEmptyCaret?: boolean
   onPasteFiles?: (files: File[]) => void | Promise<void>
+  onTransferReadyChange?: (ready: boolean) => void
+  dismissTransferErrorLabel?: string
   sendKey?: 'enter' | 'cmd_enter'
   isStreaming?: boolean
   followUpBehavior?: ComposerFollowUpBehavior
@@ -65,6 +68,8 @@ export function ComposerTextInput({
   onCompositionEnd,
   nativeEmptyCaret,
   onPasteFiles,
+  onTransferReadyChange,
+  dismissTransferErrorLabel,
   sendKey,
   isStreaming,
   followUpBehavior,
@@ -116,31 +121,55 @@ export function ComposerTextInput({
     },
     [onChange]
   )
+  const transferReadyCallback = useRef(onTransferReadyChange)
+  useLayoutEffect(() => {
+    transferReadyCallback.current = onTransferReadyChange
+  }, [onTransferReadyChange])
+  const transfers = useComposerTransfers({
+    editorRef,
+    commitEditorValue,
+    disabled,
+    onPasteFiles,
+    onTransferReadyChange: ready => transferReadyCallback.current?.(ready),
+    services: transferServices,
+  })
+  const transferReady = !transfers.isTransferring && !transfers.transferError
   const events = useComposerInputEvents({
     editorRef,
     valueRef,
-    onSubmit,
+    onSubmit: (value, options) => {
+      if (transferReady) onSubmit(value, options)
+    },
     onBlur,
     onCompositionStart,
     onCompositionEnd,
     sendKey,
     isStreaming,
     followUpBehavior,
-    canSend,
+    canSend: canSend && transferReady,
     onKeyDown,
-  })
-  const transfers = useComposerTransfers({
-    editorRef,
-    commitEditorValue,
-    disabled,
-    onPasteFiles,
-    services: transferServices,
   })
   const links = useComposerLinkEditing(editorRef, commitEditorValue)
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
-      <ComposerErrorBanner error={transfers.transferError} />
+      <ComposerErrorBanner
+        error={transfers.transferError}
+        action={
+          dismissTransferErrorLabel && (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid={`${testId}-dismiss-transfer-error`}
+              disabled={transfers.isTransferring}
+              onClick={transfers.dismissTransferError}
+              className="ml-2 rounded px-1 underline disabled:opacity-50"
+            >
+              {dismissTransferErrorLabel}
+            </ControlButton>
+          )
+        }
+      />
       <ComposerProseMirrorEditor
         ref={editorRef}
         value={value}
