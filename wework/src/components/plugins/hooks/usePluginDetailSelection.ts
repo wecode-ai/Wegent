@@ -11,6 +11,18 @@ import {
 } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 import { isLocalMarketplaceItem, localMarketplaceDedupeKey } from '../marketplaceCatalogMerge'
+import {
+  isPersonalPluginInstallSource,
+  personalPluginInstallSource,
+} from '../workspace/personalPluginInstallSource'
+
+function localSourceIdentity(item: PluginMarketplaceItem): string | undefined {
+  if (isLocalMarketplaceItem(item)) return localMarketplaceDedupeKey(item)
+  if (item.visibility === 'personal' && item.accessRole === 'owner' && item.localPersonalSource) {
+    return `personal:${item.localPersonalSource.pluginName.trim().toLowerCase()}`
+  }
+  return undefined
+}
 
 export function findMarketplaceItemForPluginReference(
   items: PluginMarketplaceItem[],
@@ -22,6 +34,11 @@ export function findMarketplaceItemForPluginReference(
 
   const normalizedMarketplaceName = marketplaceName.toLowerCase()
   const referencesPersonalMarketplace = isPersonalMarketplaceId(normalizedMarketplaceName)
+  if (referencesPersonalMarketplace) {
+    const sourceIdentity = `personal:${pluginName.toLowerCase()}`
+    const source = items.find(item => localSourceIdentity(item) === sourceIdentity)
+    if (source) return source
+  }
   return (
     items.find(item => {
       if (item.name !== pluginName) return false
@@ -86,19 +103,15 @@ export function usePluginDetailSelection({
       item => item.id === selectedMarketplacePluginId
     )
     if (direct) return direct
-    // Disk and native listings represent the same local resource with different
-    // row IDs. Reuse the catalog's scoped identity, never a cloud name match.
+    // Publication can replace the disk-only row with its owned cloud listing.
     const matches = localIdentity
-      ? pluginMarketplaceState.items.filter(
-          item => isLocalMarketplaceItem(item) && localMarketplaceDedupeKey(item) === localIdentity
-        )
+      ? pluginMarketplaceState.items.filter(item => localSourceIdentity(item) === localIdentity)
       : []
     return matches.length === 1 ? matches[0] : null
   }, [localIdentity, pluginMarketplaceState.items, selectedMarketplacePluginId])
-  const selectedLocalIdentity =
-    selectedMarketplacePlugin && isLocalMarketplaceItem(selectedMarketplacePlugin)
-      ? localMarketplaceDedupeKey(selectedMarketplacePlugin)
-      : undefined
+  const selectedLocalIdentity = selectedMarketplacePlugin
+    ? localSourceIdentity(selectedMarketplacePlugin)
+    : undefined
   if (localSelection.key !== selectionKey || localSelection.identity !== selectedLocalIdentity) {
     setLocalSelection({ key: selectionKey, identity: selectedLocalIdentity })
   }
@@ -160,7 +173,12 @@ export function openMarketplacePluginDetailSelection({
         installed?.name,
       ])
     : null
-  if (packableCreated) {
+  const mismatchedPersonalSource =
+    item.visibility === 'personal' &&
+    packableCreated &&
+    isPersonalPluginInstallSource(packableCreated) &&
+    personalPluginInstallSource([packableCreated], item)?.installed?.id !== packableCreated.id
+  if (packableCreated && !mismatchedPersonalSource) {
     setSelectedMarketplacePluginId(null)
     setSelectedPluginId(packableCreated.id)
     return

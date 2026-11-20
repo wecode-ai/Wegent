@@ -6,10 +6,14 @@ import type { PluginMarketplaceItem } from '@/types/api'
 import { PluginMarketplaceRow } from './PluginMarketplaceRow'
 import type { PluginMarketplaceRowProps } from './pluginMarketplaceRowEquality'
 
-type GridProps = Omit<PluginMarketplaceRowProps, 'item' | 'isInstalling' | 'isUninstalling'> & {
+type GridProps = Omit<
+  PluginMarketplaceRowProps,
+  'item' | 'isInstalling' | 'isUninstalling' | 'needsAccountInstall'
+> & {
   items: PluginMarketplaceItem[]
   installingMarketplacePluginIds: Set<string | number>
   isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
+  accountInstallState?: (item: PluginMarketplaceItem) => 'needed' | 'installing' | undefined
 }
 
 const GRID_BREAKPOINT_PX = 1050
@@ -25,14 +29,18 @@ export function MarketplaceCardGrid(props: GridProps) {
 }
 
 function renderCard(props: GridProps, item: PluginMarketplaceItem) {
+  const accountInstallState = props.accountInstallState?.(item)
   return (
     <PluginMarketplaceRow
       key={item.id}
       item={item}
       isLoggedIn={props.isLoggedIn}
       isReconciling={props.isReconciling}
-      isInstalling={props.installingMarketplacePluginIds.has(item.id)}
+      isInstalling={
+        props.installingMarketplacePluginIds.has(item.id) || accountInstallState === 'installing'
+      }
       isUninstalling={props.isLocallyUninstalling(item)}
+      needsAccountInstall={accountInstallState !== undefined}
       allowPendingRetry={props.allowPendingRetry}
       showPendingAsSyncing={props.showPendingAsSyncing}
       labels={props.labels}

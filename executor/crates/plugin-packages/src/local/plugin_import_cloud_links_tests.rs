@@ -17,6 +17,7 @@ impl Mutation {
                 local_plugin_name: "target-plugin".to_owned(),
                 cloud_plugin_id: 41,
                 cloud_release_id: Some(53),
+                account_install: None,
             }),
             Self::Unlink => unlink_plugin_release(UnlinkPluginReleaseRequest {
                 marketplace_path,
@@ -65,6 +66,43 @@ fn marketplace_fixture() -> TempDir {
     )
     .unwrap();
     marketplace
+}
+
+#[test]
+fn account_install_cannot_replace_a_different_cloud_plugin_link() {
+    let marketplace = marketplace_fixture();
+    let path = plugin_cloud_link_registry_path(marketplace.path());
+    let original = fs::read(&path).unwrap();
+    for mode in [
+        AccountInstallLinkMode::KeepRelease,
+        AccountInstallLinkMode::UpdateRelease,
+    ] {
+        let result = link_plugin_release(LinkPluginReleaseRequest {
+            marketplace_path: marketplace.path().display().to_string(),
+            local_plugin_name: "target-plugin".to_owned(),
+            cloud_plugin_id: 99,
+            cloud_release_id: Some(100),
+            account_install: Some(mode),
+        });
+        assert_eq!(result.unwrap_err(), "PLUGIN_PERSONAL_SOURCE_LINK_CONFLICT");
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+}
+
+#[test]
+fn account_install_preserves_the_linked_release_when_reusing_a_cloud_plugin() {
+    let marketplace = marketplace_fixture();
+    let path = plugin_cloud_link_registry_path(marketplace.path());
+    let original = fs::read(&path).unwrap();
+    link_plugin_release(LinkPluginReleaseRequest {
+        marketplace_path: marketplace.path().display().to_string(),
+        local_plugin_name: "target-plugin".to_owned(),
+        cloud_plugin_id: 41,
+        cloud_release_id: Some(53),
+        account_install: Some(AccountInstallLinkMode::KeepRelease),
+    })
+    .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
 }
 
 fn assert_personal_state_preserved(marketplace: &Path, manifests: &[Vec<u8>]) {

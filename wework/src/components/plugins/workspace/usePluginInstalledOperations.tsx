@@ -34,6 +34,7 @@ import {
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from '../pluginDistribution'
 import { isCodexCatalogItem } from '../workspace/marketplaceWorkspaceHelpers'
 import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
+import { ownedPersonalPluginSourceKey } from './personalPluginInstallSource'
 
 export function usePluginInstalledOperations({
   installedPlugins,
@@ -235,6 +236,7 @@ export function usePluginInstalledOperations({
     }
 
     const uninstallOperations = {
+      personalSourceKey: ownedPersonalPluginSourceKey(catalogItem),
       readLocalInstalled: () =>
         localPluginApi.listInstalledPlugins({ refresh: true, requireComplete: true }),
       readCloudInstalled: () => pluginApi.readInstalledPluginsForUninstall(),

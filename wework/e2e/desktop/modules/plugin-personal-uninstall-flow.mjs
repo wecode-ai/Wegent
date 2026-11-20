@@ -13,7 +13,7 @@ import {
   testId,
   until,
 } from './plugin-regression-fixture.mjs'
-import { resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
+import { CLOUD_DEVICE_ID, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -34,7 +34,7 @@ async function sourceFiles(root, directory = root) {
   return files
 }
 
-async function snapshotPersonalSource(control, plugin) {
+export async function snapshotPersonalSource(control, plugin) {
   const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
   assert.ok(marketplace?.path, 'The real personal marketplace is unavailable')
   const sourcePath = join(marketplace.path, 'plugins', plugin.name)
@@ -118,7 +118,7 @@ async function openPersonalPluginDetail(control, plugin) {
   await control.command('waitFor', 'button[data-testid^="plugin-detail-actions-"]')
 }
 
-async function uninstallPersonalPluginInUi(control, plugin, options) {
+export async function uninstallPersonalPluginInUi(control, plugin, options) {
   await openPersonalPlugin(control, plugin, options)
   await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
   await control.command('click', 'button[data-testid^="plugin-detail-actions-"]')
@@ -128,13 +128,14 @@ async function uninstallPersonalPluginInUi(control, plugin, options) {
   )
   await control.command('waitFor', testId('uninstall-plugin-dialog'))
   await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
+  const busy = options?.expectInstallInProgress === true
   await control.command(
     'waitFor',
-    `${testId('plugin-operation-notice')}[data-notice-kind="success"]`
+    `${testId('plugin-operation-notice')}[data-notice-kind="${busy ? 'error' : 'success'}"]`
   )
   assert.match(
     await control.command('getText', testId('plugin-operation-notice')),
-    /已卸载|uninstalled/i
+    busy ? /正在检查安装状态|installation state is being checked/i : /已卸载|uninstalled/i
   )
 }
 
@@ -162,6 +163,22 @@ async function assertSharedRelease(owner, plugin, access) {
   assert.equal(current.latestReleaseId, plugin.latestReleaseId)
   assert.equal(current.version, plugin.version)
   assert.deepEqual(await pluginApi(owner, `/plugins/marketplace/${plugin.id}/access`), access)
+}
+
+export async function waitForAuthorCloudInstall(cloud, plugin) {
+  return until(
+    () => accountPlugin(cloud, plugin.name),
+    item =>
+      item?.spec.pluginId === Number(plugin.id) &&
+      item.spec.releaseId === plugin.latestReleaseId &&
+      item.status?.devices?.some(
+        receipt =>
+          receipt.deviceId === CLOUD_DEVICE_ID &&
+          receipt.state === 'installed' &&
+          receipt.actualReleaseId === plugin.latestReleaseId
+      ),
+    `The cloud device did not install the author's release for ${plugin.name}`
+  )
 }
 
 export async function disconnectPersonalPluginRuntime(control, cloud, plugin) {
@@ -351,16 +368,24 @@ export async function verifyAuthorSourceUninstall({
     )
     await assertPersonalSourceUnchanged(source)
     await assertSharedRelease(cloudEnvironment, plugin, access)
-    assert.equal(
-      await accountPlugin(cloudEnvironment, plugin.name),
-      undefined,
-      'Reinstalling author source created a cloud account install'
-    )
+    const cloudInstall = await waitForAuthorCloudInstall(cloudEnvironment, plugin)
+    const installedId = cloudInstall.metadata.labels.id
     const state = JSON.parse(
       await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })
     )
     assert.equal(state.backend.connected, false, 'Author reinstall reconnected the Runtime Socket')
+    assert.equal(state.rendererConnected, false, 'Author reinstall reconnected the renderer')
+    await assertAccountIdentity(recipientCloud, plugin, recipient)
     await captureVerificationScreenshot(control, 'personal-plugin-author-offline-reinstall.png')
+    // The following version submission uses the editable source without account membership.
+    await pluginApi(cloudEnvironment, `/plugins/installed/${installedId}`, 'DELETE')
+    await assertAccountIdentity(cloudEnvironment, plugin, null)
+    await until(
+      () =>
+        materializedPlugin(cloudEnvironment.remoteExecutorEnv.WEGENT_EXECUTOR_HOME, installedId),
+      item => !item,
+      'Cleaning up the disconnected reinstall left the package on the cloud device'
+    )
   } finally {
     await restorePersonalPluginRuntime(control, deviceId)
   }

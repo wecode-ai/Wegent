@@ -160,6 +160,7 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
     reconciliationRequest: 0,
   }
   const listeners = new Set<() => void>()
+  const detachListeners = new Set<() => void>()
   let epoch: symbol | null = null
   let stopCache: (() => void) | undefined
   let stopRecovery: (() => void) | undefined
@@ -448,10 +449,18 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
           if (context.ledger.deviceStatusReportRetryTimer !== null)
             window.clearTimeout(context.ledger.deviceStatusReportRetryTimer)
           context.ledger.deviceStatusReportRetryTimer = null
+          for (const listener of detachListeners) listener()
+          detachListeners.clear()
         })
       }
     },
     captureScope,
+    onDetach(listener: () => void) {
+      detachListeners.add(listener)
+      return () => {
+        detachListeners.delete(listener)
+      }
+    },
     refresh,
     revalidateCloud,
     selectMarketplace(selectedMarketplaceKey: string) {

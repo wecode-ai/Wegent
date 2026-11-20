@@ -91,6 +91,12 @@ On the **Plugins** page, choose **Create → Import plugin** to import a standar
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
 
+<a id="use-a-plugin-you-created-on-cloud-devices"></a>
+
+### Use a plugin you created on cloud devices
+
+Connect to your organization server and open **Plugins → Personal creations**. Choose **Install** on a card or its detail page to install your plugin for your account. **Import and install** starts the same flow from the ZIP import dialog. Wework installs an existing cloud version directly. For the first upload, confirm that the version is available only to you. Installation proceeds after the package passes its scan. If you cancel the upload, you can still use the source installed on your computer. After account installation, choose **Start chat** in the detail page. Cloud devices on your account sync in the background, and offline devices catch up after reconnecting.
+
 ## Managed local Python
 
 After startup, Wework asynchronously inspects locally installed, enabled plugins. Python adapters, commands, scripts, or runtime declarations request background preparation of the client-pinned Python 3.12.12. Installing or enabling a plugin also checks demand. Users without Python plugins do not automatically download Python; an existing healthy runtime is reused. Preparation does not block the main window or ordinary tasks. Chat execution, authorization, and background preparation share one installation. A failed automatic preparation is not retried repeatedly during the same application launch; users can retry from the notice or execution environment settings. The notice shows actual download progress and installation and verification stages. The interpreter and launchers remain under `managed-runtimes/python/` in application data without changing ordinary tasks' `PATH` or Python configuration.

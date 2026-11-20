@@ -1,7 +1,6 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type {
   LocalCodexPluginApi,
-  LocalPluginImportCompletion,
   LocalPluginImportIssue,
   LocalPluginImportPreview,
 } from '@/api/local/codexPlugins'
@@ -12,6 +11,7 @@ import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertTriangle, Archive, CheckCircle2, Download, Loader2, Upload, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { PluginInstallWarning } from './PluginInstallWarning'
+import { humanizeMarketplaceInstallError } from './marketplaceInstallError'
 
 function issueGuidance(
   issue: LocalPluginImportIssue,
@@ -131,6 +131,9 @@ function previewErrorGuidance(error: unknown, t: ReturnType<typeof useTranslatio
 
 function importErrorGuidance(error: unknown, t: ReturnType<typeof useTranslation>['t']): string {
   const message = error instanceof Error ? error.message : String(error)
+  if (message === 'PLUGIN_PERSONAL_MUTATION_IN_PROGRESS') {
+    return humanizeMarketplaceInstallError(message, t)
+  }
   if (/changed after preview/i.test(message)) {
     return t(
       'workbench.plugins_import_file_changed',
@@ -152,11 +155,11 @@ function importErrorGuidance(error: unknown, t: ReturnType<typeof useTranslation
 export function PluginImportDialog({
   pluginApi,
   onCancel,
-  onImported,
+  onImport,
 }: {
   pluginApi: LocalCodexPluginApi
   onCancel: () => void
-  onImported: (result: LocalPluginImportCompletion) => void
+  onImport: (preview: LocalPluginImportPreview) => Promise<void>
 }) {
   const { t } = useTranslation('common')
   const [preview, setPreview] = useState<LocalPluginImportPreview | null>(null)
@@ -221,8 +224,7 @@ export function PluginImportDialog({
     setImporting(true)
     setError(null)
     try {
-      const imported = await pluginApi.importPluginPackage(preview, preview.existing)
-      onImported(imported)
+      await onImport(preview)
     } catch (importError) {
       console.warn('[Wework] plugin package import failed', importError)
       setError(importErrorGuidance(importError, t))
