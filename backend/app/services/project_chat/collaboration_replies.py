@@ -213,11 +213,41 @@ def publish_collaboration_reply(
         )
         or activity
     )
+    explicit_target = identity.trigger_comment_id or reply_to_comment_id
+    reply_target = explicit_target
+    if identity.phase == "output" and identity.turn_id and not reply_target:
+        start_key = public_reply_key(
+            project_id,
+            item_id,
+            dispatch.runtime_device_id,
+            identity.task_id,
+            identity.turn_id,
+        )
+        start = (
+            db.query(ProjectChatMessage)
+            .filter_by(
+                project_id=project_id,
+                task_id=item_id,
+                sender_type="agent",
+                sender_id=agent_id,
+                client_message_id=start_key,
+            )
+            .filter(
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                ProjectChatMessage.metadata_json["collaboration_turn_start"]
+                .as_boolean()
+                .is_(True),
+            )
+            .first()
+        )
+        if start is None:
+            raise HTTPException(425, "Issue turn start comment has not been published")
+        reply_target = start.message_id
     reply = project_chat_service._resolve_reply_context(
         db,
         project_id=project_id,
         task_id=item_id,
-        reply_to_message_id=identity.trigger_comment_id or reply_to_comment_id,
+        reply_to_message_id=reply_target,
     )
     existing = existing_public_reply(db, sender_id=agent_id, key=key, body=body)
     status_reply_key = ProjectChatMessage.metadata_json[
@@ -235,12 +265,18 @@ def publish_collaboration_reply(
                 409, "The public message identity already has different content"
             )
     if existing is not None:
-        if existing.reply_to_message_id != (reply.reply_to_message_id or ""):
+        status_alias = (existing.metadata_json or {}).get(
+            "collaboration_public_reply_key"
+        ) == key
+        expected_target = (
+            "" if status_alias and not explicit_target else reply.reply_to_message_id
+        )
+        if existing.reply_to_message_id != (expected_target or ""):
             raise HTTPException(
                 409, "The public message identity has another reply target"
             )
         return public_reply_view(db, existing)
-    if not member_activity and not reply.reply_to_message_id:
+    if not member_activity and not explicit_target and identity.phase != "start":
         status_comments = (
             db.query(ProjectChatMessage)
             .filter_by(
@@ -289,6 +325,7 @@ def publish_collaboration_reply(
         metadata_json={
             "execution_dispatch": "comment_only",
             "collaboration_public_reply": True,
+            **({"collaboration_turn_start": True} if identity.phase == "start" else {}),
             "dispatch_id": identity.dispatch_id,
             **(
                 {"collaboration_execution_activity_id": mirror.message_id}
