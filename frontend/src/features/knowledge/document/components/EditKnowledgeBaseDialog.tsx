@@ -27,7 +27,7 @@ import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { getKnowledgeBase, type updateKnowledgeBaseType } from '@/apis/knowledge'
 import { codeWikiApi } from '@/apis/code-wiki'
 import type {
   DirectAccessRequirement,
@@ -55,8 +55,7 @@ interface EditKnowledgeBaseDialogProps {
   knowledgeDefaultTeamId?: number | null
   /** Optional bind model name from team's bot config as fallback */
   bindModel?: string | null
-  /** Callback when default opening view is updated */
-  onTypeConverted?: (updatedKb: KnowledgeBase) => void
+  saveView?: typeof updateKnowledgeBaseType
 }
 
 export function EditKnowledgeBaseDialog({
@@ -68,7 +67,7 @@ export function EditKnowledgeBaseDialog({
   loading,
   knowledgeDefaultTeamId,
   bindModel,
-  onTypeConverted,
+  saveView,
 }: EditKnowledgeBaseDialogProps) {
   const { t } = useTranslation('common')
   const { t: tKnowledge } = useTranslation('knowledge')
@@ -714,7 +713,7 @@ export function EditKnowledgeBaseDialog({
         open={open && showConvertDialog && kb?.id === knowledgeBase?.id}
         onOpenChange={setShowConvertDialog}
         knowledgeBase={kb && kb.id === knowledgeBase?.id ? { ...kb, kb_type: kbType } : null}
-        onSaved={onTypeConverted}
+        saveView={saveView}
         onSessionSaved={handleTypeConverted}
       />
     </>

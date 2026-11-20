@@ -503,13 +503,6 @@ function KnowledgeDocumentSession({
     [sidebar, updateUrlParams]
   )
 
-  const handleKnowledgeBaseTypeConverted = useCallback(
-    (updatedKb: KnowledgeBase) => {
-      sidebar.syncConvertedKnowledgeBase(updatedKb)
-    },
-    [sidebar]
-  )
-
   const retainsDetail =
     sidebar.selectedKb?.id === retainedKbId &&
     retainedKbId !== undefined &&
@@ -827,7 +820,7 @@ function KnowledgeDocumentSession({
           )?.displayName
         }
         onSubmit={dialogs.handleUpdate}
-        onTypeConverted={handleKnowledgeBaseTypeConverted}
+        saveView={sidebar.saveKnowledgeBaseView}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}

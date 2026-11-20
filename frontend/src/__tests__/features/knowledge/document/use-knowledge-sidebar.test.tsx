@@ -5,8 +5,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { useKnowledgeSidebar } from '@/features/knowledge/document/hooks/useKnowledgeSidebar'
-import { getKnowledgeBase } from '@/apis/knowledge'
-import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
+import { getKnowledgeBase, updateKnowledgeBaseType } from '@/apis/knowledge'
+import type {
+  AllGroupedKnowledgeResponse,
+  KnowledgeBase,
+  KnowledgeBaseWithGroupInfo,
+} from '@/types/knowledge'
 
 const mockGetAllGrouped = jest.fn()
 let mockUser = { id: 1 }
@@ -26,6 +30,7 @@ jest.mock('@/apis/knowledge-base', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  updateKnowledgeBaseType: jest.fn(),
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -302,13 +307,17 @@ it('rejects old mutation and refresh callbacks after scope changes, including re
   mockGetAllGrouped.mockResolvedValue(dataset())
   const { result, rerender } = renderHook(() => useKnowledgeSidebar())
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
-  const oldSync = result.current.syncConvertedKnowledgeBase
+  const first = result.current.allKnowledgeBases[0]
+  const mutation = pending<KnowledgeBase>()
+  jest.mocked(updateKnowledgeBaseType).mockReturnValueOnce(mutation.promise)
+  const oldSave = result.current.saveKnowledgeBaseView(first.id, 'classic')
   const oldRefresh = result.current.refreshAll
   mockUser = { id: 2 }
   rerender()
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
   await act(async () => {
-    oldSync({ ...result.current.allKnowledgeBases[0], kb_type: 'classic' })
+    mutation.resolve({ ...first, kb_type: 'classic' })
+    await oldSave
     await oldRefresh()
   })
   expect(result.current.allKnowledgeBases[0].kb_type).toBe('notebook')
@@ -325,19 +334,54 @@ it('updates only the converted library view when another library is selected', a
   jest.mocked(getKnowledgeBase).mockResolvedValueOnce(second)
   await act(async () => result.current.selectKb(second))
 
-  act(() =>
-    result.current.syncConvertedKnowledgeBase({
-      ...first,
-      name: 'Older snapshot',
-      kb_type: 'classic',
-    })
-  )
+  jest
+    .mocked(updateKnowledgeBaseType)
+    .mockResolvedValueOnce({ ...first, name: 'Older snapshot', kb_type: 'classic' })
+  await act(async () => {
+    await result.current.saveKnowledgeBaseView(first.id, 'classic')
+  })
 
   expect(result.current.allKnowledgeBases.find(kb => kb.id === first.id)).toMatchObject({
     name: first.name,
     kb_type: 'classic',
   })
   expect(result.current.selectedKb).toMatchObject({ id: second.id, kb_type: second.kb_type })
+})
+
+it('reconciles overlapping saves from the server after the older response arrives last', async () => {
+  mockUser = { id: 1 }
+  mockScope = 'backend:session-1'
+  mockGetAllGrouped.mockResolvedValueOnce(dataset())
+  jest.mocked(getKnowledgeBase).mockClear()
+  const { result } = renderHook(() => useKnowledgeSidebar())
+  await waitFor(() => expect(result.current.hasLoaded).toBe(true))
+  const [first, second] = result.current.allKnowledgeBases
+  const older = pending<KnowledgeBase>()
+  const newer = pending<KnowledgeBase>()
+  jest
+    .mocked(updateKnowledgeBaseType)
+    .mockReturnValueOnce(older.promise)
+    .mockReturnValueOnce(newer.promise)
+  const olderSave = result.current.saveKnowledgeBaseView(first.id, 'classic')
+  const newerSave = result.current.saveKnowledgeBaseView(first.id, 'notebook')
+
+  await act(async () => {
+    newer.resolve({ ...first, kb_type: 'notebook' })
+    await newerSave
+  })
+  expect(getKnowledgeBase).not.toHaveBeenCalled()
+  jest.mocked(getKnowledgeBase).mockResolvedValueOnce({ ...first, kb_type: 'notebook' })
+  await act(async () => {
+    older.resolve({ ...first, kb_type: 'classic' })
+    await olderSave
+  })
+
+  expect(getKnowledgeBase).toHaveBeenCalledTimes(1)
+  expect(getKnowledgeBase).toHaveBeenCalledWith(first.id, { cache: 'no-store' })
+  expect(result.current.allKnowledgeBases.find(kb => kb.id === first.id)?.kb_type).toBe('notebook')
+  expect(result.current.allKnowledgeBases.find(kb => kb.id === second.id)?.kb_type).toBe(
+    second.kb_type
+  )
 })
 
 it('does not resurrect a revoked library from a delayed detail response', async () => {

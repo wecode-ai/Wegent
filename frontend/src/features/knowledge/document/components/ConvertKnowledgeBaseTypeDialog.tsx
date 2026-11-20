@@ -25,7 +25,7 @@ interface ConvertKnowledgeBaseTypeDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   knowledgeBase: KnowledgeBase | null
-  onSaved?: (updatedKb: KnowledgeBase) => void
+  saveView?: typeof updateKnowledgeBaseType
   onSessionSaved?: (updatedKb: KnowledgeBase) => void
 }
 
@@ -33,7 +33,7 @@ export function ConvertKnowledgeBaseTypeDialog({
   open,
   onOpenChange,
   knowledgeBase,
-  onSaved,
+  saveView = updateKnowledgeBaseType,
   onSessionSaved,
 }: ConvertKnowledgeBaseTypeDialogProps) {
   const { t } = useTranslation('knowledge')
@@ -60,10 +60,8 @@ export function ConvertKnowledgeBaseTypeDialog({
     const requestSession = session.current
     setLoading(true)
     try {
-      const updatedKb = await updateKnowledgeBaseType(knowledgeBase.id, targetType)
-      if (updatedKb.id !== knowledgeBase.id) return
-      onSaved?.(updatedKb)
-      if (session.current !== requestSession) return
+      const updatedKb = await saveView(knowledgeBase.id, targetType)
+      if (session.current !== requestSession || updatedKb.id !== knowledgeBase.id) return
       toast({
         description: t('document.knowledgeBase.defaultViewUpdateSuccess'),
       })

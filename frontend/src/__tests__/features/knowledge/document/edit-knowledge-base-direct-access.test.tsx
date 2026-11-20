@@ -102,13 +102,18 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
         })
     )
     const onTypeConverted = jest.fn()
+    const saveView: typeof updateKnowledgeBaseType = async (id, type) => {
+      const updated = await updateKnowledgeBaseType(id, type)
+      onTypeConverted(updated)
+      return updated
+    }
     const editor = (kb: KnowledgeBase) => (
       <EditKnowledgeBaseDialog
         open
         knowledgeBase={kb}
         onOpenChange={jest.fn()}
         onSubmit={jest.fn()}
-        onTypeConverted={onTypeConverted}
+        saveView={saveView}
       />
     )
     const { rerender } = render(editor(first))
@@ -142,14 +147,12 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
     jest
       .mocked(updateKnowledgeBaseType)
       .mockImplementation(async (_id, kb_type) => ({ ...knowledgeBase, kb_type }))
-    const onTypeConverted = jest.fn()
     render(
       <EditKnowledgeBaseDialog
         open
         knowledgeBase={knowledgeBase}
         onOpenChange={jest.fn()}
         onSubmit={jest.fn()}
-        onTypeConverted={onTypeConverted}
       />
     )
 
@@ -169,9 +172,7 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
       within(nextConfirmation).getByRole('button', { name: 'common:actions.confirm' })
     )
     expect(await mainForm.findByText('document.knowledgeBase.typeNotebook')).toBeVisible()
-    expect(onTypeConverted).toHaveBeenLastCalledWith(
-      expect.objectContaining({ kb_type: 'notebook' })
-    )
+    expect(updateKnowledgeBaseType).toHaveBeenLastCalledWith(knowledgeBase.id, 'notebook')
   })
 
   it('loads and saves the direct access requirement', async () => {
