@@ -500,11 +500,11 @@ export async function verifyPluginNativeAuth({
   })
   assert.ok(runtime.ok)
   const runtimeToken = (await runtime.json()).auth_token
+  const executorRoute = { backend_url: proxy.url, auth_token: cloud.authToken }
   const configure = socket =>
     requestPluginExecutor(control, 'executor.backend.configure', {
-      backend_url: proxy.url,
+      ...executorRoute,
       socket_url: socket,
-      auth_token: cloud.authToken,
       runtime_auth_token: runtimeToken,
       device_type: 'app',
     })
@@ -543,6 +543,7 @@ export async function verifyPluginNativeAuth({
     )
     assert.equal(fault.error, null)
     const status = (await requestPluginExecutor(control, 'executor.backend.status')).payload.result
+    assert.equal(status.backend_url, executorRoute.backend_url)
     assert.equal(status.connected, false, 'Plugin authorization must not mark Device registered')
     const authorization = JSON.parse(
       await control.command('configurePluginNativeAuthorization', 'body')
@@ -570,9 +571,8 @@ export async function verifyPluginNativeAuth({
     })
     const sync = async params => {
       const response = await requestPluginExecutor(control, 'executor.plugins.local_sync', {
-        backend_url: cloud.backendUrl,
-        auth_token: cloud.authToken,
         ...params,
+        ...executorRoute,
       })
       assert.equal(response.payload.error, undefined)
       assert.equal(response.payload.result.localCompleted, true)
