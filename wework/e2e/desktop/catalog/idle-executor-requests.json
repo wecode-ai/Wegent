@@ -5,6 +5,7 @@
   "paths": [
     "wework/src/e2e/idle-executor-requests*",
     "wework/e2e/desktop/modules/idle-executor-requests*",
+    "wework/e2e/desktop/modules/idle-executor-pending-inventory*",
     "wework/e2e/desktop/modules/runtime-work-refresh-burst*",
     "executor/src/runtime_work/handler/inventory_read_tests.rs",
     "executor/src/runtime_work/handler/queries.rs",

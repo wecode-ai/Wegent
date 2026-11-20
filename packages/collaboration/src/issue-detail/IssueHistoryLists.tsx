@@ -31,6 +31,7 @@ export function IssueAssignmentHistoryList({
 }) {
   return entries.map((entry, index) => {
     const byName =
+      entry.by_agent_name ??
       entry.automation?.rule_name ??
       memberName(entry.by_user_id) ??
       (entry.by_user_id === 0 ? labels.system : null);

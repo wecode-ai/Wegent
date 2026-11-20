@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { rm } from 'node:fs/promises'
 
 import {
   CLOUD_DEVICE_ID,
@@ -158,6 +159,7 @@ export async function verifyTerminalWireCompatibility(
   let ackEvents = 0
   let lastSequence = 0
   const wireTrace = []
+  let revocationTrace
   let ackChain = Promise.resolve()
   let closed = false
   const controlPayload = () => ({
@@ -286,23 +288,38 @@ export async function verifyTerminalWireCompatibility(
     if (forceRevocation) {
       assert.equal(sessionVersion, 2, 'Forced terminal end coverage requires protocol v2')
       const forcedMarker = `WEWORK_FORCED_END_${randomUUID().replaceAll('-', '')}`
+      const readyMarker = `WEWORK_REVOCATION_READY_${randomUUID().replaceAll('-', '')}`
+      const releaseName = `.wework-terminal-release-${randomUUID()}`
+      const releasePath = join(cloudEnvironment.workspacePath, releaseName)
       const forcedSocketId = socket.id
-      const forcedExitPromise = withTimeout(
-        new Promise(resolvePromise => {
-          const receiveForcedExit = (payload, acknowledge) => {
-            socket.off('terminal:exit', receiveForcedExit)
-            acknowledge?.({ success: true })
-            resolvePromise(payload)
-          }
-          socket.on('terminal:exit', receiveForcedExit)
-        }),
-        DEFAULT_STEP_TIMEOUT_MS,
-        `The frontend terminal did not receive the forced session end on ${forcedSocketId}`
+      revocationTrace = { marker: forcedMarker, socketId: forcedSocketId }
+      // Keep the PTY alive and ready to emit after the Rust worker applies revocation.
+      await input(
+        `${markerCommand(readyMarker)}; while [ ! -f '${releaseName}' ]; do sleep 0.05; done; ${markerCommand(forcedMarker)}\r`
       )
-      await input(`sleep 0.5; ${markerCommand(forcedMarker)}\r`)
+      await waitForTerminalOutput(readText, readyMarker, 'The PTY is not ready for revocation')
+      await ackChain
+      revocationTrace.ptyReadyAt = new Date().toISOString()
+      const forcedExitPromise = new Promise(resolvePromise => {
+        socket.once('terminal:exit', (payload, acknowledge) => {
+          acknowledge?.({ success: true })
+          resolvePromise(payload)
+        })
+      })
       closed = true
-      cloudEnvironment.revokeTerminalSession(sessionId)
-      const forcedExit = await forcedExitPromise
+      await cloudEnvironment.revokeTerminalSession(sessionId)
+      revocationTrace.appliedAt = new Date().toISOString()
+      let forcedExit
+      try {
+        await writeFile(releasePath, '')
+        forcedExit = await withTimeout(
+          forcedExitPromise,
+          DEFAULT_STEP_TIMEOUT_MS,
+          `The frontend terminal did not receive the forced session end on ${forcedSocketId}`
+        )
+      } finally {
+        await rm(releasePath, { force: true })
+      }
       assert.equal(forcedExit.session_id, sessionId)
       assert.equal(forcedExit.consumer_id, consumerId)
       assert.equal(forcedExit.protocol_version, 2)
@@ -351,6 +368,13 @@ export async function verifyTerminalWireCompatibility(
       outputEvents,
       ackEvents,
       wireTrace,
+      revocation: revocationTrace && {
+        sessionId,
+        socketId: revocationTrace.socketId,
+        ptyReadyAt: revocationTrace.ptyReadyAt,
+        appliedAt: revocationTrace.appliedAt,
+        markerDelivered: outputLines(text).includes(revocationTrace.marker),
+      },
       error: error instanceof Error ? { name: error.name, message: error.message } : String(error),
     }).catch(diagnosticError => {
       console.warn(

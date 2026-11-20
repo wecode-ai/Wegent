@@ -681,7 +681,7 @@ export function seedDesktopE2ELocalModels(
       continue
     }
     saveLocalModelConfig({
-      catalogReady: localModelsCatalogReady,
+      catalogReady: localModelsCatalogReady || undefined,
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',

@@ -16,21 +16,45 @@ pub use store::stand_in_telemetry;
 pub use store::{IssueHumanRequestScope, LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\
-本轮执行的过程和最终答复会由 Executor 自动记录到当前 Issue 动态。\
-请直接在最终答复中提交结果、证据、未完成项和风险；不要调用 \
-add_board_item_comment 重复发布本轮执行结果，即使任务文本要求将结果记录为评论。\
-如果生成了需要随 Issue 交付的文件，必须调用 upload_item_attachment 上传；\
-只在工作目录中创建文件不会形成 Issue 附件。";
+The Executor records this run in the current Issue activity. Include the results, evidence, \
+open items, and risks in your final response. Do not call add_board_item_comment to repost \
+the same result. Use upload_item_attachment for files that need to appear as Issue attachments.\n\
+When the Issue requires a formal delivery, call get_delivery_requirements first. Use \
+create_delivery, upload_delivery_asset for any required files, and finalize_delivery. \
+Reference the submitted delivery in your final response. Submit the delivery yourself. \
+Use project assignments for work that requires separate tracking, approval, or delivery.";
+
+pub const NATIVE_SUBAGENT_INSTRUCTIONS: &str = "\
+Use native subagents, when available and permitted, as the default for work beyond simple steps. \
+Delegate a single nontrivial task to one subagent when the work forms a coherent whole. \
+Use multiple subagents in parallel for independent parts and give concurrent editors separate \
+files. Give each subagent the complete relevant requirements, scope, permissions, and \
+acceptance criteria. Keep user communication, verification, and final reporting with the \
+primary agent. Handle simple steps directly.";
+
+pub const PUBLIC_ISSUE_MESSAGE_INSTRUCTIONS: &str = "\
+Treat your commentary and final response as public Issue comments. Write for the \
+Issue participants and use their language. Send a progress comment only when you have a \
+verified milestone, a material blocker, or a question someone needs to answer. State what \
+changed, the concrete evidence or impact, and the next action if one is needed. Keep internal \
+reasoning, routine tool activity, subagent coordination, raw logs, credentials, and private \
+discussion out of public comments. State the verified outcome and any unresolved work once. \
+When you need to respond to a different existing comment, use list_board_item_comments to \
+find its ID and call add_board_item_comment with reply_to_comment_id. Do not repeat a \
+published reply in your commentary or final response.";
 
 pub fn collaboration_member_system_prompt(current: &str) -> String {
     let current = current.trim();
-    if current.contains(COLLABORATION_MEMBER_RESULT_INSTRUCTIONS) {
+    let instructions = format!(
+        "{COLLABORATION_MEMBER_RESULT_INSTRUCTIONS}\n\n{NATIVE_SUBAGENT_INSTRUCTIONS}\n\n{PUBLIC_ISSUE_MESSAGE_INSTRUCTIONS}"
+    );
+    if current.contains(&instructions) {
         return current.to_owned();
     }
     if current.is_empty() {
-        COLLABORATION_MEMBER_RESULT_INSTRUCTIONS.to_owned()
+        instructions
     } else {
-        format!("{current}\n\n{COLLABORATION_MEMBER_RESULT_INSTRUCTIONS}")
+        format!("{current}\n\n{instructions}")
     }
 }
 

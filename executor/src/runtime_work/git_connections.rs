@@ -521,6 +521,12 @@ fn definite_rejection(status: u16) -> bool {
 pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     let platform = provider(&input)?;
     let instance = instance(&input, platform)?;
+    if input["operation"] == "change_request_status" && platform == "github" {
+        let (response, profile) = status::read(&instance, &input).await?;
+        return Ok(
+            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
+        );
+    }
     let identity = api(platform, &instance, "GET", "user", None).await?.data;
     let id = identity["id"]
         .as_str()
@@ -534,22 +540,9 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
         return Err(invalid("Missing account ID"));
     }
     let profile = json!([instance, id]).to_string();
-    if let Some(expected) = input["profile"].as_str() {
-        if expected != profile {
-            return Err(AppIpcError::new(
-                "git_account_changed",
-                "The selected CLI account changed",
-            ));
-        }
-    }
+    verify_profile(&input, &profile)?;
     if input["operation"] == "identity" {
         return Ok(json!({"profile":profile,"accountId":id,"login":login,"instance":instance}));
-    }
-    if input["operation"] == "change_request_status" && platform == "github" {
-        let response = status::read(&instance, &input).await?;
-        return Ok(
-            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
-        );
     }
     if input["operation"] == "job_log" {
         endpoint(
@@ -611,8 +604,39 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     bound["accountId"] = json!(id);
     bound["login"] = json!(login);
     let path = endpoint(platform, &bound)?;
+    if input["operation"] == "checks" {
+        if let Some(expected) = input.get("repositoryId") {
+            let repository_path = endpoint(
+                platform,
+                &json!({"operation":"repository","repository":input["repository"]}),
+            )?;
+            let repository = api(platform, &instance, "GET", &repository_path, None).await?;
+            verify_repository_id(&repository.data["id"], expected)?;
+        }
+    }
     let data = api(platform, &instance, "GET", &path, None).await?;
     Ok(json!({"data":data.data,"profile":profile,"pollIntervalSeconds":data.poll_interval}))
+}
+
+fn verify_repository_id(actual: &Value, expected: &Value) -> Result<(), AppIpcError> {
+    let repository_id = actual.as_u64().map(|id| id.to_string());
+    if repository_id.is_none() || repository_id.as_deref() != expected.as_str() {
+        return Err(invalid("Repository identity changed"));
+    }
+    Ok(())
+}
+
+fn verify_profile(input: &Value, profile: &str) -> Result<(), AppIpcError> {
+    if input["profile"]
+        .as_str()
+        .is_some_and(|expected| expected != profile)
+    {
+        return Err(AppIpcError::new(
+            "git_account_changed",
+            "The selected CLI account changed",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn write_target(input: &Value) -> Result<(&str, String), AppIpcError> {

@@ -53,7 +53,7 @@ impl RuntimeWorkRpcHandler {
                 if ticks % LOCAL_ISSUE_HEARTBEAT_TICKS == 0 {
                     handler.heartbeat_local_issue_executions();
                     for link in handler.local_task_links(false) {
-                        handler.sync_stand_in_issue_replies(&link.local_task_id);
+                        handler.sync_public_issue_replies(&link.local_task_id);
                         if link.runtime_handle["issueHumanRequestOutbox"]
                             .as_object()
                             .is_some_and(|outbox| !outbox.is_empty())
@@ -342,8 +342,37 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(crate) async fn reconcile_bound_task_statuses(&self) {
+        if !self.task_store_path.exists() {
+            return;
+        }
+        let store = LocalTaskStore::open(self.task_store_path.as_ref());
+        let (store, bound_ids) = match store.and_then(|store| {
+            let ids = store.bound_runtime_task_ids(&self.device_id)?;
+            Ok((store, ids))
+        }) {
+            Ok(result) => result,
+            Err(error) => {
+                log_executor_event(
+                    "runtime task Issue status reconciliation unavailable",
+                    &[("error", error.to_string())],
+                );
+                return;
+            }
+        };
+        if bound_ids.is_empty() {
+            return;
+        }
         for link in self.collect_links(false).await {
-            self.project_runtime_link_status_now(&link);
+            if bound_ids.contains(&link.local_task_id) {
+                if let Some(status) = self.runtime_link_issue_execution_status(&link) {
+                    self.project_bound_task_status_in(
+                        &store,
+                        &link.local_task_id,
+                        status,
+                        next_runtime_status_observation(),
+                    );
+                }
+            }
         }
     }
 
@@ -369,6 +398,16 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         };
+        self.project_bound_task_status_in(&store, local_task_id, execution_status, observed_at_ms);
+    }
+
+    fn project_bound_task_status_in(
+        &self,
+        store: &LocalTaskStore,
+        local_task_id: &str,
+        execution_status: &str,
+        observed_at_ms: i64,
+    ) {
         match store.project_bound_task_status(
             &self.device_id,
             local_task_id,
@@ -406,6 +445,12 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn project_runtime_link_status_at(&self, link: &RuntimeTaskLink, observed_at_ms: i64) {
+        if let Some(status) = self.runtime_link_issue_execution_status(link) {
+            self.project_bound_task_status(&link.local_task_id, status, observed_at_ms);
+        }
+    }
+
+    fn runtime_link_issue_execution_status(&self, link: &RuntimeTaskLink) -> Option<&'static str> {
         let queued_private = (!link.running
             && matches!(link.status.as_str(), "queued" | "pending"))
         .then(|| {
@@ -421,9 +466,9 @@ impl RuntimeWorkRpcHandler {
         if queued_private.unwrap_or_else(|| {
             super::super::util::is_private_discussion(&runtime_event_request_from_link(link))
         }) {
-            return;
+            return None;
         }
-        let execution_status = if link.status == "archived" {
+        if link.status == "archived" {
             Some("archived")
         } else if link.running || link.status == "running" {
             Some("running")
@@ -436,9 +481,6 @@ impl RuntimeWorkRpcHandler {
                 _ if link.completed_at.is_some() => Some("succeeded"),
                 _ => None,
             }
-        };
-        if let Some(execution_status) = execution_status {
-            self.project_bound_task_status(&link.local_task_id, execution_status, observed_at_ms);
         }
     }
 

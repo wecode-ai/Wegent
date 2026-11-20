@@ -4949,6 +4949,7 @@ fn configure_codex_router(
     routing_model_id: Option<String>,
     model_switched: bool,
     vision_sidecar: Option<VisionSidecarUpstream>,
+    official_websocket: bool,
 ) {
     upstream.routing_model_id = routing_model_id;
     let official_chatgpt = upstream.is_official_chatgpt_codex();
@@ -4973,13 +4974,19 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
-    configure_codex_router_registration(launch_config, local_token, official_chatgpt);
+    configure_codex_router_registration(
+        launch_config,
+        local_token,
+        official_chatgpt,
+        official_websocket,
+    );
 }
 
 fn configure_codex_router_registration(
     launch_config: &mut CodexLaunchConfig,
     local_token: String,
     official_chatgpt: bool,
+    official_websocket: bool,
 ) {
     let provider = codex_model_catalog::PROVIDER_ID;
     launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
@@ -4993,10 +5000,10 @@ fn configure_codex_router_registration(
             .clone();
         launch_config
             .config_overrides
-            .extend(native_provider::official_proxy_overrides(format!(
-                "{}/{token}",
-                codex_router_base_url()
-            )));
+            .extend(native_provider::official_proxy_overrides(
+                format!("{}/{token}", codex_router_base_url()),
+                official_websocket,
+            ));
     } else {
         launch_config
             .config_overrides

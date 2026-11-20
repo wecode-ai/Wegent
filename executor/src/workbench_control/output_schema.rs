@@ -169,7 +169,11 @@ pub(super) fn capability(name: &str) -> Value {
         "list_connection_event_subscriptions" => {
             object(json!({"items":array(json!({"type":"object"}))}), &["items"])
         }
-        "subscribe_connection_events" | "cancel_connection_event_subscription" => {
+        "subscribe_connection_events" => object(
+            json!({"subscription":{"type":"object"},"conflict_subscription":{"type":"object"}}),
+            &["subscription"],
+        ),
+        "cancel_connection_event_subscription" => {
             object(json!({"subscription":{"type":"object"}}), &["subscription"])
         }
         "get_current_context" => object(

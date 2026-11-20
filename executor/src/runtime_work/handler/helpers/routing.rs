@@ -534,6 +534,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "cloudProjectId"
                 | "cloud_project_id"
                 | "client_user_message_id"
+                | "issue_comment_trigger_id"
                 | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"

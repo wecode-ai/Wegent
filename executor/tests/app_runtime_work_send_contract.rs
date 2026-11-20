@@ -4905,7 +4905,7 @@ async fn verify_rollback_inference_context(native: bool) {
     assert_eq!(inference_resume.1["params"]["modelProvider"], "~");
     assert_eq!(
         inference_resume.1["params"]["config"]["model_providers.~"]["supports_websockets"], false,
-        "the replacement must restore history over HTTP"
+        "replacement inference context must use HTTP Responses"
     );
     assert_eq!(
         inference_resume.1["params"]["config"]["model_providers.~"]["requires_openai_auth"],

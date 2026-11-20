@@ -14,6 +14,7 @@ pub(super) fn create_schema() -> Value {
             "space_id": {"type": "string"},
             "item_id": {"type": "string"},
             "body": {"type": "string", "minLength": 1},
+            "reply_to_comment_id": {"type": "string", "minLength": 1, "maxLength": 64},
             "mentions": {
                 "type": "array", "maxItems": 64,
                 "items": {
@@ -38,6 +39,11 @@ pub(super) async fn add_local(
     let project_id = string_argument(arguments, "space_id")?;
     let item_id = string_argument(arguments, "item_id")?;
     let body = string_argument(arguments, "body")?;
+    if arguments.get("reply_to_comment_id").is_some() {
+        return Err(TaskRuntimeError::Invalid(
+            "Threaded Issue replies require a shared Backend project".to_owned(),
+        ));
+    }
     if arguments
         .get("mentions")
         .is_some_and(|mentions| mentions != &json!([]))

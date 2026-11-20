@@ -23,8 +23,8 @@ const MAX_RETRY_INTERVAL_SECONDS: i64 = 3600;
 /// is uninstalling or past the retry cutoff.
 const PENDING_REMOVALS_QUERY: &str = "SELECT plugin_device_installations.id AS plugin_device_installations_id, plugin_device_installations.installed_kind_id AS plugin_device_installations_installed_kind_id, plugin_device_installations.user_id AS plugin_device_installations_user_id, plugin_device_installations.device_id AS plugin_device_installations_device_id, plugin_device_installations.desired_release_id AS plugin_device_installations_desired_release_id, plugin_device_installations.actual_release_id AS plugin_device_installations_actual_release_id, plugin_device_installations.state AS plugin_device_installations_state, plugin_device_installations.error_code AS plugin_device_installations_error_code, plugin_device_installations.error_message AS plugin_device_installations_error_message, plugin_device_installations.attempt_count AS plugin_device_installations_attempt_count, plugin_device_installations.last_sync_at AS plugin_device_installations_last_sync_at, plugin_device_installations.updated_at AS plugin_device_installations_updated_at FROM plugin_device_installations INNER JOIN kinds ON kinds.id = plugin_device_installations.installed_kind_id WHERE plugin_device_installations.user_id = ? AND kinds.user_id = ? AND kinds.namespace = 'default' AND kinds.kind = 'InstalledPlugin' AND kinds.is_active IS false AND (plugin_device_installations.state = 'uninstalling' OR plugin_device_installations.last_sync_at < ?)";
 
-/// `sync_pending_plugin_removals`: drain the persisted removals for one device.
-pub(crate) async fn run_pending_removals(state: &AppState, user_id: i64, device_id: &str) {
+/// Check whether this device has a persisted removal ready to reconcile.
+pub(crate) async fn has_pending_removals(state: &AppState, user_id: i64, device_id: &str) -> bool {
     let now = chrono::Local::now().naive_local();
     let cutoff = now - chrono::Duration::seconds(RETRY_INTERVAL_SECONDS);
     let rows: Vec<MysqlRow> = match state
@@ -35,7 +35,7 @@ pub(crate) async fn run_pending_removals(state: &AppState, user_id: i64, device_
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(%error, user_id, "pending plugin removal scan failed");
-            return;
+            return false;
         }
     };
     // `plugin_removal_sync.py:96`: the canonical target is resolved
@@ -44,35 +44,22 @@ pub(crate) async fn run_pending_removals(state: &AppState, user_id: i64, device_
         Ok(target) => target,
         Err(error) => {
             tracing::warn!(%error, user_id, "pending plugin removal identity failed");
-            return;
+            return false;
         }
     };
-    let mut devices = std::collections::BTreeSet::new();
     for row in rows.iter().filter(|row| removal_retry_due(row, now)) {
         let Ok(Some(row_device)) = row.get::<String>("plugin_device_installations_device_id")
         else {
             continue;
         };
-        if let Ok(mapped) = plugin_device_id(state, user_id, &row_device).await {
-            devices.insert(mapped);
+        if plugin_device_id(state, user_id, &row_device)
+            .await
+            .is_ok_and(|mapped| mapped == target)
+        {
+            return true;
         }
     }
-    // `:103` `devices & {target}`: the heartbeat only drains its own device.
-    let due: Vec<String> = devices
-        .into_iter()
-        .filter(|device| *device == target)
-        .collect();
-    if due.is_empty() {
-        return;
-    }
-    // `_sync_device` drives `device_capability_sync_service`'s delta sync, which
-    // this backend does not implement; the scan itself is the recorded work.
-    tracing::warn!(
-        user_id,
-        device_id,
-        devices = due.len(),
-        "pending plugin removals are due; capability delta sync is not migrated"
-    );
+    false
 }
 
 /// `plugin_device_id` (`plugin_device_identity.py:56-69`): the canonical plugin

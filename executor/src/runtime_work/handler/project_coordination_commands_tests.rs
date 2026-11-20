@@ -225,6 +225,7 @@ async fn cloud_command_protocol_keeps_actor_device_and_structured_error_boundari
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "fixture".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     let payload = json!({"userId":7,"projectStore":"cloud","projectId":"1001","groupId":"101","commandId":"one","input":{"generation":"current","deviceId":"forged"}});
@@ -342,6 +343,7 @@ async fn missing_cloud_project_version_never_becomes_a_valid_null_revision() {
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "fixture".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     })));
     assert_eq!(
