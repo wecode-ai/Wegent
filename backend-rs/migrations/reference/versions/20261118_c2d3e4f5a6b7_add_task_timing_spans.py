@@ -47,6 +47,8 @@ def upgrade() -> None:
         sa.Column(
             "created_at",
             sa.DateTime(timezone=False),
+            # Alembic's now() default keeps SQLite migration tests portable; the
+            # native MySQL migration still installs CURRENT_TIMESTAMP(6).
             server_default=sa.func.now(),
             nullable=False,
         ),

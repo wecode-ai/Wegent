@@ -39,7 +39,7 @@ const CLOSE_WAITING_USER_SQL: &str = "UPDATE task_timing_spans \\
 const CLOSE_TOOL_SPAN_SQL: &str = "UPDATE task_timing_spans \\
     SET end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \\
         duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms), \\
-        status = IF(status = 'running', 'completed', status) \\
+        status = IF(status = 'running', ?, status) \\
     WHERE task_id = ? AND subtask_id = ? AND span_id = ? \\
         AND kind = 'tool' AND end_at_ms IS NULL";
 
@@ -164,12 +164,22 @@ async fn close_tool_span<M: Mysql>(
     else {
         return Ok(());
     };
+    let updated_status = updates
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("done");
+    let final_status = if matches!(updated_status, "error" | "failed") {
+        "failed"
+    } else {
+        "completed"
+    };
     mysql
         .execute(
             CLOSE_TOOL_SPAN_SQL,
             (
                 completed_at,
                 completed_at,
+                final_status,
                 event.task_id,
                 event.subtask_id,
                 span_id(event, "tool", block_id),
@@ -774,9 +784,53 @@ mod tests {
             .into_iter()
             .find(|write| write.sql.contains("UPDATE task_timing_spans"))
             .expect("tool close update");
-        assert_eq!(close_write.args, 5);
+        assert_eq!(close_write.args, 6);
         assert!(close_write.sql.contains("kind = 'tool'"));
         assert!(close_write.sql.contains("end_at_ms IS NULL"));
+    }
+
+    #[tokio::test]
+    async fn failed_tool_updates_close_existing_tool_spans_as_failed() {
+        let mut created = block_event(
+            super::super::event::EventType::BlockCreated,
+            json!({
+                "block": {
+                    "id": "tool-error",
+                    "type": "tool",
+                    "tool_use_id": "tool-error",
+                    "tool_name": "exec",
+                    "status": "pending",
+                    "timestamp": 100
+                }
+            }),
+        );
+        created.task_id = 7;
+        created.subtask_id = 11;
+        let mut updated = block_event(
+            super::super::event::EventType::BlockUpdated,
+            json!({
+                "block_id": "tool-error",
+                "updates": {"status": "error", "completedAt": 250}
+            }),
+        );
+        updated.task_id = 7;
+        updated.subtask_id = 11;
+
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        persist_callback_timing(&capture, &created, None, None)
+            .await
+            .expect("persist created block");
+        persist_callback_timing(&capture, &updated, None, None)
+            .await
+            .expect("persist updated block");
+
+        let close_write = capture
+            .writes()
+            .into_iter()
+            .find(|write| write.sql.contains("UPDATE task_timing_spans"))
+            .expect("tool close update");
+        assert_eq!(close_write.args, 6);
+        assert_eq!(close_write.first_integer, Some(250));
     }
 
     #[test]

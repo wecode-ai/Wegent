@@ -22,6 +22,8 @@ def migration_config(tmp_path, monkeypatch):
     config = Config(str(backend / "alembic.ini"))
     config.set_main_option("script_location", str(backend / "alembic"))
     config.set_main_option("sqlalchemy.url", url)
+    # Do not replace the test runner's logging configuration.
+    config.config_file_name = None
     return config
 
 
