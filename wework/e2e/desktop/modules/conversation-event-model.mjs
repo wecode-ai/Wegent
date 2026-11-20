@@ -183,6 +183,13 @@ export function createConversationEventModel({
         },
       ],
     ]
+    if (preexistingChecks) {
+      steps.splice(1, 0, [
+        'provider-detail',
+        'list_connection_event_providers',
+        { provider_id: PROVIDER },
+      ])
+    }
     for (const [step, name, args] of steps) {
       const callId = `${marker}_${step}`
       if (!requestContainsToolOutput(body, callId)) {
@@ -206,6 +213,32 @@ export function createConversationEventModel({
           findEventFact(output, value => value.items?.some(item => item.id === PROVIDER)),
           output
         )
+      if (preexistingChecks && step === 'providers') {
+        const catalog = findEventFact(output, value =>
+          value.items?.some(item => item.id === PROVIDER)
+        )
+        const provider = catalog.items.find(item => item.id === PROVIDER)
+        assert.deepEqual(
+          Object.keys(provider).sort(),
+          ['availability', 'displayName', 'id', 'resourceKinds'],
+          'Default discovery must expose only provider summaries to the model'
+        )
+        assert.ok(
+          !output.includes('connectionEventProviderCatalog'),
+          'Full catalog metadata must stay out of model context'
+        )
+      }
+      if (step === 'provider-detail') {
+        const catalog = findEventFact(output, value =>
+          value.items?.some(item => item.id === PROVIDER)
+        )
+        assert.deepEqual(
+          catalog?.items.map(item => item.id),
+          [PROVIDER],
+          output
+        )
+        assert.ok(catalog.items[0].eventTypes.includes('message.received'), output)
+      }
       if (step === 'resources') {
         const resources = findEventFact(output, value =>
           value.items?.some(item => item.providerId === PROVIDER)
