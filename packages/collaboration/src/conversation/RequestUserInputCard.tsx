@@ -33,6 +33,14 @@ import {
   requestUserInputExpired,
   useRequestUserInputDeadline,
 } from './useRequestUserInputDeadline'
+import {
+  implementationPlanOptionQuestion,
+  initialActiveQuestionId,
+  initialAnswers,
+  normalizeQuestions,
+  sameAttachmentDrafts,
+  sameOptionDrafts,
+} from './requestUserInputQuestions'
 
 export interface RequestUserInputCardProps {
   payload: RequestUserInputPayload
@@ -44,10 +52,12 @@ export interface RequestUserInputCardProps {
   draftOptionAnswers?: Record<string, string>
   onDraftOptionAnswersChange?: (answers: Record<string, string>) => void
   draftAttachments?: Record<string, Attachment[]>
-  onDraftAttachmentsChange?: (
-    attachments: Record<string, Attachment[]>,
-    change: { questionId: string; previous: Attachment[]; next: Attachment[] },
-  ) => void
+  onDraftAttachmentsChange?: (attachments: Record<string, Attachment[]>) => void
+  onDraftAttachmentDelta?: (change: {
+    questionId: string
+    previous: Attachment[]
+    next: Attachment[]
+  }) => void
   composerServices?: RequestUserInputComposerServices
   allowSkip?: boolean
   onSubmit?: (
@@ -101,6 +111,7 @@ function RequestUserInputForm({
   remainingTime,
   draftAttachments,
   onDraftAttachmentsChange,
+  onDraftAttachmentDelta,
   composerServices,
   allowSkip = false,
 }: RequestUserInputCardProps & { remainingTime: string | null }) {
@@ -146,22 +157,11 @@ function RequestUserInputForm({
   )
   const answerAttachmentsRef = useRef(answerAttachments)
   const draftOptionsRef = useRef(draftOptionAnswers ?? {})
-  const optionDraftSignature = JSON.stringify(draftOptionAnswers ?? {})
-  const [previousOptionDraftSignature, setPreviousOptionDraftSignature] =
-    useState(optionDraftSignature)
+  const [previousOptionDrafts, setPreviousOptionDrafts] =
+    useState(draftOptionAnswers)
   const [processedAttachmentDrafts, setProcessedAttachmentDrafts] = useState<
-    Record<string, string>
-  >(() =>
-    Object.fromEntries(
-      Object.entries(draftAttachments ?? {}).map(([id, files]) => [
-        id,
-        JSON.stringify(files),
-      ]),
-    ),
-  )
-  const [attachmentEditorRevisions, setAttachmentEditorRevisions] = useState<
-    Record<string, number>
-  >({})
+    Record<string, Attachment[] | undefined>
+  >(() => draftAttachments ?? {})
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(
     () =>
       Object.keys(draftOptionAnswers ?? {})[0] ??
@@ -194,8 +194,8 @@ function RequestUserInputForm({
         )),
   )
   const [previousDrafts, setPreviousDrafts] = useState(draftAnswers)
-  if (previousOptionDraftSignature !== optionDraftSignature) {
-    setPreviousOptionDraftSignature(optionDraftSignature)
+  if (!sameOptionDrafts(previousOptionDrafts, draftOptionAnswers)) {
+    setPreviousOptionDrafts(draftOptionAnswers)
     const nextOptions = draftOptionAnswers ?? {}
     const changedIds = new Set([
       ...Object.keys(draftOptionsRef.current),
@@ -225,33 +225,23 @@ function RequestUserInputForm({
   const settledAttachmentIds = [...attachmentDraftIds].filter(
     (id) =>
       inputReadiness[id] !== false &&
-      processedAttachmentDrafts[id] !== JSON.stringify(nextAttachments[id] ?? []),
+      !sameAttachmentDrafts(processedAttachmentDrafts[id], nextAttachments[id]),
   )
   if (settledAttachmentIds.length) {
     const local = { ...answerAttachmentsRef.current }
     const changedIds = settledAttachmentIds.filter(
-      (id) =>
-        JSON.stringify(local[id] ?? []) !== JSON.stringify(nextAttachments[id] ?? []),
+      (id) => !sameAttachmentDrafts(local[id], nextAttachments[id]),
     )
     setProcessedAttachmentDrafts((current) => ({
       ...current,
       ...Object.fromEntries(
-        settledAttachmentIds.map((id) => [
-          id,
-          JSON.stringify(nextAttachments[id] ?? []),
-        ]),
+        settledAttachmentIds.map((id) => [id, nextAttachments[id]]),
       ),
     }))
     for (const id of changedIds) local[id] = nextAttachments[id] ?? []
     if (changedIds.length) {
       answerAttachmentsRef.current = local
       setAnswerAttachments(local)
-      setAttachmentEditorRevisions((current) => ({
-        ...current,
-        ...Object.fromEntries(
-          changedIds.map((id) => [id, (current[id] ?? 0) + 1]),
-        ),
-      }))
       setCustomModes((current) => ({
         ...current,
         ...Object.fromEntries(
@@ -311,7 +301,10 @@ function RequestUserInputForm({
   }
   const selectedQuestionId = activeQuestionId
   const [submitted, setSubmitted] = useState(false)
-  const questionIds = JSON.stringify(questions.map((question) => question.id))
+  const questionIds = useMemo(
+    () => JSON.stringify(questions.map((question) => question.id)),
+    [questions],
+  )
   const [skippedQuestionIds, setSkippedQuestionIds] = useState<string | null>(
     null,
   )
@@ -651,7 +644,6 @@ function RequestUserInputForm({
                       <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                     </span>
                     <RequestUserInputAnswerEditor
-                      key={`${question.id}-${attachmentEditorRevisions[question.id] ?? 0}`}
                       questionId={question.id}
                       labelId={`${formId}-${questionIndex}`}
                       value={
@@ -661,7 +653,7 @@ function RequestUserInputForm({
                       }
                       disabled={isDisabled}
                       services={composerServices}
-                      initialAttachments={draftAttachments?.[question.id]}
+                      initialAttachments={answerAttachments[question.id]}
                       onChange={(value) => {
                         selectCustomQuestion(question.id)
                         const next = {
@@ -691,7 +683,8 @@ function RequestUserInputForm({
                         setAnswerAttachments(next)
                         if (attachments.length)
                           selectCustomQuestion(question.id)
-                        onDraftAttachmentsChange?.(next, {
+                        onDraftAttachmentsChange?.(next)
+                        onDraftAttachmentDelta?.({
                           questionId: question.id,
                           previous: current[question.id] ?? [],
                           next: attachments,
@@ -827,56 +820,6 @@ export function RequestUserInputSummary({
   )
 }
 
-function normalizeQuestions(questions: RequestUserInputQuestion[] | undefined) {
-  return (questions ?? []).map((question, index) => {
-    const id = question.id?.trim() || `question_${index + 1}`
-    const options = (question.options ?? [])
-      .map((option) => ({
-        label: option.label?.trim() ?? '',
-        description: option.description?.trim() ?? '',
-        value: option.value?.trim() || option.label?.trim() || '',
-      }))
-      .filter((option) => option.label)
-    return {
-      id,
-      header: question.header?.trim() ?? '',
-      question: question.question?.trim() || id,
-      options,
-      allowCustom: Boolean(
-        question.is_other ?? question.isOther ?? options.length === 0,
-      ),
-    }
-  })
-}
-
-function initialAnswers(
-  questions: ReturnType<typeof normalizeQuestions>,
-): Record<string, string> {
-  return Object.fromEntries(
-    questions.map((question) => [
-      question.id,
-      question.options[0]?.value ?? '',
-    ]),
-  )
-}
-
-function initialActiveQuestionId(
-  questions: ReturnType<typeof normalizeQuestions>,
-  draftAnswers?: Record<string, string>,
-  draftAttachments?: Record<string, Attachment[]>,
-): string | null {
-  return (
-    customDraftQuestionId(questions, draftAnswers) ??
-    questions.find(
-      (question) =>
-        question.allowCustom && draftAttachments?.[question.id]?.length,
-    )?.id ??
-    implementationPlanOptionQuestion(questions)?.id ??
-    questions[0]?.id ??
-    null
-  )
-}
-
 const CODEX_APPROVAL_QUESTION_ID = '__codex_approval'
 
 function highlightRm(commandText: string) {
@@ -889,20 +832,6 @@ function highlightRm(commandText: string) {
       part
     )
   )
-}
-
-function customDraftQuestionId(
-  questions: ReturnType<typeof normalizeQuestions>,
-  draftAnswers?: Record<string, string>,
-): string | undefined {
-  return questions.find(
-    (question) =>
-      question.allowCustom &&
-      draftAnswers?.[question.id]?.trim() &&
-      !question.options.some(
-        (option) => option.value === draftAnswers[question.id],
-      ),
-  )?.id
 }
 
 function localizeApprovalQuestions(
@@ -1039,18 +968,6 @@ function isImplementationPlanQuestions(
   questions: ReturnType<typeof normalizeQuestions>,
 ): boolean {
   return Boolean(implementationPlanOptionQuestion(questions))
-}
-
-function implementationPlanOptionQuestion(
-  questions: ReturnType<typeof normalizeQuestions>,
-): ReturnType<typeof normalizeQuestions>[number] | undefined {
-  return questions.find((question) => {
-    if (question.id.trim().toLowerCase() === 'implement') return true
-    if (hasImplementationPlanText(question.question)) return true
-    return question.options.some((option) =>
-      hasImplementationPlanText(option.label),
-    )
-  })
 }
 
 function responseAnswerText(

@@ -43,6 +43,7 @@ export function RequestUserInputAnswerEditor({
   const { t, translate } = useConversationTranslation()
   const textareaRef = useRef<HTMLElement | null>(null)
   const mountedRef = useRef(false)
+  const appliedAttachmentsRef = useRef(initialAttachments)
   const readyCallback = useRef(onReadyChange)
   useLayoutEffect(() => {
     readyCallback.current = onReadyChange
@@ -67,11 +68,27 @@ export function RequestUserInputAnswerEditor({
     transferReady && attachments.isAttachmentReadyToSend && attachments.errors.size === 0
   const bindEditor = useCallback(
     (node: HTMLDivElement | null) => {
-      if (!node && mountedRef.current) readyCallback.current(true)
-      mountedRef.current = node !== null
-      if (node) textareaRef.current?.setAttribute('aria-labelledby', labelId)
+      if (!node) {
+        mountedRef.current = false
+        queueMicrotask(() => {
+          if (!mountedRef.current) readyCallback.current(true)
+        })
+        return
+      }
+      mountedRef.current = true
+      textareaRef.current?.setAttribute('aria-labelledby', labelId)
     },
     [labelId]
+  )
+  const bindAndSync = useCallback(
+    (node: HTMLDivElement | null) => {
+      bindEditor(node)
+      if (node && appliedAttachmentsRef.current !== initialAttachments) {
+        appliedAttachmentsRef.current = initialAttachments
+        attachments.source.adoptExternalAttachments(initialAttachments ?? [])
+      }
+    },
+    [attachments.source, bindEditor, initialAttachments]
   )
   const notifyReadiness = (transferIsReady = transferReady) => {
     if (!mountedRef.current) return
@@ -89,7 +106,7 @@ export function RequestUserInputAnswerEditor({
   }
 
   return (
-    <div ref={bindEditor} className="min-w-0 flex-1">
+    <div ref={bindAndSync} className="min-w-0 flex-1">
       {services?.renderAttachments?.({
         state: attachments.state,
         remove: id => {

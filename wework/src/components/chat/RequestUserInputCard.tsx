@@ -303,8 +303,11 @@ export function RequestUserInputCard({
             })
           }
         }}
-        onDraftAttachmentsChange={(attachments, change) => {
-          props.onDraftAttachmentsChange?.(attachments, change)
+        onDraftAttachmentsChange={attachments => {
+          props.onDraftAttachmentsChange?.(attachments)
+        }}
+        onDraftAttachmentDelta={change => {
+          props.onDraftAttachmentDelta?.(change)
           if (!store || !address) return
           const target = requestUserInputQuestionTarget(props.payload, change.questionId)
           const previousById = new Map(change.previous.map(file => [file.id, file] as const))

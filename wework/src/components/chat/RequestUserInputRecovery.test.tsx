@@ -303,9 +303,20 @@ describe('question answer recovery', () => {
         },
       })
     pasteFile(retainedInput, 'slow.txt')
+    retainedInput.focus()
+    const caretNode = retainedInput.querySelector('p')?.firstChild
+    expect(caretNode?.textContent).toBe('Retained text')
+    const caret = document.createRange()
+    caret.setStart(caretNode!, 4)
+    caret.collapse(true)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(caret)
     pasteFile(senderInput, 'fast.txt')
     await waitFor(() => expect(within(editor).getByText('Remove fast.txt')).toBeVisible())
     expect(within(retained).getByTestId('request-user-input-custom-scope')).toBe(retainedInput)
+    expect(document.activeElement).toBe(retainedInput)
+    expect(window.getSelection()?.anchorNode).toBe(caretNode)
+    expect(window.getSelection()?.anchorOffset).toBe(4)
     fireEvent.click(within(editor).getByText('Remove brief.txt'))
     await act(async () =>
       finishSlow({ ...file, id: ++nextFileId, filename: 'slow.txt', local_path: '/tmp/slow.txt' })
@@ -315,6 +326,10 @@ describe('question answer recovery', () => {
       expect(within(retained).getByText('Remove slow.txt')).toBeVisible()
       expect(within(retained).queryByText('Remove brief.txt')).not.toBeInTheDocument()
     })
+    expect(within(retained).getByTestId('request-user-input-custom-scope')).toBe(retainedInput)
+    expect(document.activeElement).toBe(retainedInput)
+    expect(window.getSelection()?.anchorNode).toBe(caretNode)
+    expect(window.getSelection()?.anchorOffset).toBe(4)
     fireEvent.click(within(retained).getByTestId('request-user-input-submit-button'))
     await waitFor(() =>
       expect(send).toHaveBeenCalledWith(
@@ -468,13 +483,10 @@ describe('question answer recovery', () => {
       finish.get('other.txt')!(other)
     })
     await waitFor(() =>
-      expect(drafts).toHaveBeenLastCalledWith(
-        {
-          details: [expect.objectContaining({ ...file, text_content: 'brief' })],
-          other: [expect.objectContaining({ ...other, text_content: 'other' })],
-        },
-        expect.objectContaining({ questionId: 'other' })
-      )
+      expect(drafts).toHaveBeenLastCalledWith({
+        details: [expect.objectContaining({ ...file, text_content: 'brief' })],
+        other: [expect.objectContaining({ ...other, text_content: 'other' })],
+      })
     )
   })
 
