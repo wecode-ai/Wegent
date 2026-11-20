@@ -58,6 +58,38 @@ test("capacity scales selected runners and stays bounded by available work", () 
     );
 });
 
+test("Cloud CLI preserves checkpoint coverage and the configured runner budget", () => {
+  const matrix = {
+    include: [
+      { id: "cloud-1", segments: "core-task-flow,goal-lifecycle" },
+      { id: "cloud-2", segments: "model-routing,conversation-state" },
+    ],
+  };
+  for (const scale of [1, 1.5]) {
+    const result = execFileSync(
+      process.execPath,
+      [".github/scripts/order-wework-linux-e2e.mjs", "--balance-cloud"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CORE_MATRIX: JSON.stringify(matrix),
+          CORE_RUNNER_SCALE: String(scale),
+          WEWORK_E2E_SEGMENTS: "",
+        },
+      },
+    ).trim();
+    assert(result.startsWith("matrix="));
+    const balanced = JSON.parse(result.slice("matrix=".length));
+    assert.deepEqual(checkpoints(balanced), checkpoints(matrix));
+    assert.equal(balanced.include.length, Math.ceil(matrix.include.length * scale));
+    assert(balanced.include.every((entry) => entry.id.startsWith("cloud-")));
+    assert(balanced.include.every((entry) => entry.segments.length > 0));
+    assert.equal(new Set(checkpoints(balanced)).size, checkpoints(matrix).length);
+  }
+});
+
 test("benchmark checkpoints cannot create empty ordinary runners in narrow selections", () => {
   const matrix = {
     include: [
