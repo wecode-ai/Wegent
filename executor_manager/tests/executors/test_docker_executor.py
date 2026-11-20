@@ -580,6 +580,7 @@ class TestDockerExecutor:
         timing = task["metadata"]["timing"]
         assert "instanceReadyAt" in timing
         assert "taskDispatchedAt" in timing
+        assert "provisionDurationMs" in timing
         assert timing["dispatchDurationMs"] >= 0
 
     @patch.dict(

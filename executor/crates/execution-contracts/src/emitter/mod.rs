@@ -392,7 +392,8 @@ impl ResponsesEventBuilder {
         let mut updates = json!({
             "tool_input": input,
             "tool_output": output,
-            "status": if is_error { "error" } else { "done" }
+            "status": if is_error { "error" } else { "done" },
+            "completedAt": current_epoch_millis()
         });
         if let Some(parent_tool_use_id) = parent_tool_use_id {
             updates["parent_tool_use_id"] = json!(parent_tool_use_id);

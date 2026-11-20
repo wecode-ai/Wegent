@@ -76,8 +76,12 @@ def _stage_durations(
         if value is not None:
             durations.setdefault(key, value)
 
-    def boundary(name: str) -> Any:
-        return boundaries.get(name, timing.get(name))
+    def boundary(*names: str) -> Any:
+        for name in names:
+            value = boundaries.get(name, timing.get(name))
+            if value is not None:
+                return value
+        return None
 
     set_duration("queueDurationMs", timing.get("enqueuedAt"), timing.get("dequeuedAt"))
     set_duration(
@@ -85,7 +89,7 @@ def _stage_durations(
     )
     set_duration(
         "provisionDurationMs",
-        boundary("instanceCreateStartedAt"),
+        boundary("instanceCreateStartedAt", "instanceReadyAt"),
         boundary("taskDispatchedAt"),
     )
     set_duration(

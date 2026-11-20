@@ -395,7 +395,7 @@ fn suggestion(span: &SpanView) -> String {
         "agent" => "inspect_model".to_string(),
         "waiting_user" => "confirm_waiting".to_string(),
         "queue" | "provision" => "inspect_infra".to_string(),
-        _ => "inspect_timeline".to_string(),
+        _ => "inspect_tool".to_string(),
     }
 }
 

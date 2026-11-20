@@ -33,8 +33,15 @@ const CLOSE_WAITING_USER_SQL: &str = "UPDATE task_timing_spans \\
     SET status = 'completed', \\
         end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \\
         duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms) \\
-    WHERE task_id = ? AND subtask_id = ? \\
+    WHERE task_id = ? \\
         AND kind = 'waiting_user' AND status = 'waiting'";
+
+const CLOSE_TOOL_SPAN_SQL: &str = "UPDATE task_timing_spans \\
+    SET end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \\
+        duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms), \\
+        status = IF(status = 'running', 'completed', status) \\
+    WHERE task_id = ? AND subtask_id = ? AND span_id = ? \\
+        AND kind = 'tool' AND end_at_ms IS NULL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NewTimingSpan {
@@ -64,6 +71,9 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
 ) -> Result<(), brz_mysql::MysqlError> {
     if event.event_type == "start" {
         close_waiting_user_span(mysql, event).await?;
+    }
+    if event.event_type == "block_updated" {
+        close_tool_span(mysql, event).await?;
     }
     let mut spans = event_timing_spans(event);
     if let Some(timing) = event.data.get("timing").filter(|timing| timing.is_object()) {
@@ -115,6 +125,57 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
             )
             .await?;
     }
+    Ok(())
+}
+
+/// Close an existing tool span from a block update without creating one.
+///
+/// Streaming tool blocks are created as open spans; updates provide the final
+/// status and completion boundary. A guarded UPDATE avoids synthesizing a
+/// subagent or tool span when the original block payload was never observed.
+async fn close_tool_span<M: Mysql>(
+    mysql: &M,
+    event: &ExecutionEvent,
+) -> Result<(), brz_mysql::MysqlError> {
+    let Some(updates) = event
+        .data
+        .get("updates")
+        .filter(|updates| updates.is_object())
+    else {
+        return Ok(());
+    };
+    let completed_at = integer_field(updates, "completedAt")
+        .or_else(|| integer_field(updates, "completed_at"))
+        .or_else(|| {
+            let started = integer_field(updates, "startedAt")
+                .or_else(|| integer_field(updates, "started_at"))?;
+            integer_field(updates, "durationMs")
+                .or_else(|| integer_field(updates, "duration_ms"))
+                .and_then(|duration| started.checked_add(duration))
+        });
+    let Some(completed_at) = completed_at else {
+        return Ok(());
+    };
+    let Some(block_id) = event
+        .data
+        .get("block_id")
+        .and_then(Value::as_str)
+        .filter(|block_id| !block_id.is_empty())
+    else {
+        return Ok(());
+    };
+    mysql
+        .execute(
+            CLOSE_TOOL_SPAN_SQL,
+            (
+                completed_at,
+                completed_at,
+                event.task_id,
+                event.subtask_id,
+                span_id(event, "tool", block_id),
+            ),
+        )
+        .await?;
     Ok(())
 }
 
@@ -220,7 +281,7 @@ async fn close_waiting_user_span<M: Mysql>(
     mysql
         .execute(
             CLOSE_WAITING_USER_SQL,
-            (start_at_ms, start_at_ms, event.task_id, event.subtask_id),
+            (start_at_ms, start_at_ms, event.task_id),
         )
         .await?;
     Ok(())
@@ -561,8 +622,7 @@ mod tests {
             "dequeuedAt": 2,
             "instanceCreateStartedAt": 3,
             "taskDispatchedAt": 5,
-            "agentStartedAt": 6,
-            "agentFinishedAt": 20
+            "agentStartedAt": 6
         });
         let started = parser::shared()
             .parse(7, 11, None, "response.created", &json!({"timing": timing}))
@@ -582,21 +642,39 @@ mod tests {
             .expect("parse done")
             .expect("done event");
 
+        let done_timing = json!({
+            "enqueuedAt": 1,
+            "dequeuedAt": 2,
+            "instanceCreateStartedAt": 3,
+            "taskDispatchedAt": 5,
+            "agentStartedAt": 6,
+            "agentFinishedAt": 20
+        });
+        let mut done = done;
+        done.data.insert("timing".to_string(), done_timing);
+
         let capture = crate::sql_test_support::KindQueryCapture::writing();
         persist_callback_timing(&capture, &started, None, None)
             .await
             .expect("persist start timing");
-        assert_eq!(capture.writes().len(), 4);
+        let start_writes = capture.writes();
+        assert_eq!(start_writes.len(), 4);
+        let mut start_inserts = start_writes
+            .iter()
+            .filter(|write| write.sql.contains("INSERT INTO task_timing_spans"));
+        assert_eq!(start_inserts.clone().count(), 3);
+        assert!(start_inserts.all(|write| write.args == 16));
 
         persist_callback_timing(&capture, &done, None, None)
             .await
             .expect("persist done timing");
         let writes = capture.writes();
         assert_eq!(writes.len(), 8);
-        assert_eq!(writes[3].args, 16);
-        assert!(writes[3].sql.contains("INSERT INTO task_timing_spans"));
-        assert_eq!(writes[6].args, 16);
-        assert!(writes[6].sql.contains("INSERT INTO task_timing_spans"));
+        let mut span_inserts = writes
+            .iter()
+            .filter(|write| write.sql.contains("INSERT INTO task_timing_spans"));
+        assert_eq!(span_inserts.clone().count(), 7);
+        assert!(span_inserts.all(|write| write.args == 16));
 
         let next_started = parser::shared()
             .parse(
@@ -611,14 +689,23 @@ mod tests {
         persist_callback_timing(&capture, &next_started, None, None)
             .await
             .expect("persist next start timing");
-        let close_write = capture
+        let close_writes: Vec<_> = capture
             .writes()
             .into_iter()
-            .find(|write| write.sql.contains("UPDATE task_timing_spans"))
-            .expect("waiting-user close update");
-        assert_eq!(close_write.args, 4);
-        assert!(close_write.sql.contains("kind = 'waiting_user'"));
-        assert!(close_write.sql.contains("status = 'waiting'"));
+            .filter(|write| write.sql.contains("UPDATE task_timing_spans"))
+            .collect();
+        assert_eq!(close_writes.len(), 2);
+        assert!(close_writes.iter().all(|write| write.args == 3));
+        assert!(
+            close_writes
+                .iter()
+                .all(|write| write.sql.contains("kind = 'waiting_user'"))
+        );
+        assert!(
+            close_writes
+                .iter()
+                .all(|write| write.sql.contains("status = 'waiting'"))
+        );
     }
 
     #[test]
@@ -643,6 +730,53 @@ mod tests {
         assert_eq!(spans[0].kind, "tool");
         assert_eq!(spans[0].actor_label, "exec");
         assert_eq!(spans[0].duration_ms(), Some(150));
+    }
+
+    #[tokio::test]
+    async fn block_updates_close_existing_tool_spans_without_creating_one() {
+        let mut created = block_event(
+            super::super::event::EventType::BlockCreated,
+            json!({
+                "block": {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "tool_use_id": "tool-1",
+                    "tool_name": "exec",
+                    "status": "pending",
+                    "timestamp": 100
+                }
+            }),
+        );
+        created.task_id = 7;
+        created.subtask_id = 11;
+        let mut updated = block_event(
+            super::super::event::EventType::BlockUpdated,
+            json!({
+                "block_id": "tool-1",
+                "updates": {"status": "done", "completedAt": 250}
+            }),
+        );
+        updated.task_id = 7;
+        updated.subtask_id = 11;
+
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        persist_callback_timing(&capture, &created, None, None)
+            .await
+            .expect("persist created block");
+        let before_update = capture.writes().len();
+        assert_eq!(before_update, 1);
+
+        persist_callback_timing(&capture, &updated, None, None)
+            .await
+            .expect("persist updated block");
+        let close_write = capture
+            .writes()
+            .into_iter()
+            .find(|write| write.sql.contains("UPDATE task_timing_spans"))
+            .expect("tool close update");
+        assert_eq!(close_write.args, 5);
+        assert!(close_write.sql.contains("kind = 'tool'"));
+        assert!(close_write.sql.contains("end_at_ms IS NULL"));
     }
 
     #[test]
