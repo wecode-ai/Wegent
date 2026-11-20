@@ -2,6 +2,59 @@ use super::*;
 use rusqlite::StatementStatus;
 
 #[test]
+fn admission_write_waits_for_an_external_database_transaction() {
+    use std::sync::mpsc;
+    use std::thread;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("events.sqlite");
+    update(&path, Scope::Row("operations", "admission"), |state| {
+        state["operations"]["admission"] = json!({"task_id":"task","status":"armed"});
+        Ok(())
+    })
+    .unwrap();
+    let writer = Connection::open(&path).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let (starting, started) = mpsc::channel();
+    let (finished, completion) = mpsc::channel();
+    thread::scope(|scope| {
+        let path = path.as_path();
+        let admission = scope.spawn(move || {
+            starting.send(()).unwrap();
+            finished
+                .send(update(
+                    path,
+                    Scope::Row("operations", "admission"),
+                    |state| {
+                        state["operations"]["admission"]["status"] = json!("pending");
+                        Ok(())
+                    },
+                ))
+                .unwrap();
+        });
+        started.recv().unwrap();
+        let while_locked = completion.recv_timeout(Duration::from_millis(750));
+        writer.execute_batch("COMMIT").unwrap();
+        admission.join().unwrap();
+        assert!(
+            matches!(&while_locked, Err(mpsc::RecvTimeoutError::Timeout)),
+            "Admission must wait for the database writer: {while_locked:?}"
+        );
+        completion
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+    });
+    assert_eq!(
+        read(&path, Scope::Row("operations", "admission"), |state| {
+            Ok(state["operations"]["admission"]["status"].clone())
+        })
+        .unwrap(),
+        json!("pending")
+    );
+}
+
+#[test]
 fn legacy_data_is_ignored_and_cannot_block_the_new_store() {
     let root = tempfile::tempdir().unwrap();
     for (index, legacy) in [
@@ -262,57 +315,4 @@ fn renewal_waits_for_an_in_process_collection_transaction() {
         ));
         renewal_finished.recv().unwrap().unwrap();
     });
-}
-
-#[test]
-fn admission_write_waits_for_an_external_database_transaction() {
-    use std::sync::mpsc;
-    use std::thread;
-
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("events.sqlite");
-    update(&path, Scope::Row("operations", "admission"), |state| {
-        state["operations"]["admission"] = json!({"task_id":"task","status":"armed"});
-        Ok(())
-    })
-    .unwrap();
-    let writer = Connection::open(&path).unwrap();
-    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let (starting, started) = mpsc::channel();
-    let (finished, completion) = mpsc::channel();
-    thread::scope(|scope| {
-        let path = path.as_path();
-        let admission = scope.spawn(move || {
-            starting.send(()).unwrap();
-            finished
-                .send(update(
-                    path,
-                    Scope::Row("operations", "admission"),
-                    |state| {
-                        state["operations"]["admission"]["status"] = json!("pending");
-                        Ok(())
-                    },
-                ))
-                .unwrap();
-        });
-        started.recv().unwrap();
-        let while_locked = completion.recv_timeout(Duration::from_millis(750));
-        writer.execute_batch("COMMIT").unwrap();
-        admission.join().unwrap();
-        assert!(
-            matches!(&while_locked, Err(mpsc::RecvTimeoutError::Timeout)),
-            "Admission must wait for the database writer: {while_locked:?}"
-        );
-        completion
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .unwrap();
-    });
-    assert_eq!(
-        read(&path, Scope::Row("operations", "admission"), |state| {
-            Ok(state["operations"]["admission"]["status"].clone())
-        })
-        .unwrap(),
-        json!("pending")
-    );
 }
