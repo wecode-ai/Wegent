@@ -98,6 +98,14 @@ function IndependentIssueDialogContent({
   }
   const ref = useRef<HTMLDivElement>(null)
   const opener = useRef(document.activeElement)
+  const discardClosesEditor = useRef(false)
+  const restoreCreateFocus = !issueId && !shareDraft
+  const getCreateOpener = () =>
+    opener.current instanceof HTMLElement &&
+    opener.current !== document.body &&
+    opener.current.isConnected
+      ? opener.current
+      : document.querySelector<HTMLElement>(newIssueFocus.fallbackSelector)
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   const name = (id: number | null) =>
     id == null
@@ -127,16 +135,7 @@ function IndependentIssueDialogContent({
               ? '[data-testid="independent-issue-search-people"]'
               : '[data-testid="independent-issue-title"]'
           }
-          finalFocus={
-            !issueId && !shareDraft
-              ? () =>
-                  opener.current instanceof HTMLElement &&
-                  opener.current !== document.body &&
-                  opener.current.isConnected
-                    ? opener.current
-                    : document.querySelector<HTMLElement>(newIssueFocus.fallbackSelector)
-              : undefined
-          }
+          finalFocus={restoreCreateFocus ? getCreateOpener : undefined}
           render={
             <div
               ref={ref}
@@ -521,9 +520,15 @@ function IndependentIssueDialogContent({
         confirmTestId="independent-issue-discard-confirm"
         dialogTestId="independent-issue-discard-dialog"
         destructive
+        finalFocus={
+          restoreCreateFocus
+            ? () => (discardClosesEditor.current ? getCreateOpener() : null)
+            : undefined
+        }
         onClose={() => setDiscarding(null)}
         onConfirm={() => {
           const action = discarding
+          discardClosesEditor.current = action === 'close'
           setDiscarding(null)
           if (action === 'reload') {
             reloadLatest()
