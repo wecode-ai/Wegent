@@ -167,7 +167,6 @@ export function KnowledgeBaseForm({
   const panel = useRef<HTMLDivElement>(null)
   const sidebar = useRef<HTMLElement>(null)
   const [modelsOpened, setModelsOpened] = useState(false)
-  const [retrievalOpened, setRetrievalOpened] = useState(false)
 
   useLayoutEffect(() => {
     if (selection.section === 'models') setModelsOpened(true)
@@ -531,10 +530,7 @@ export function KnowledgeBaseForm({
                 aria-current={selected ? 'true' : undefined}
                 aria-controls={panelId}
                 data-testid={`${testId}-section-trigger`}
-                onClick={() => {
-                  if (section === 'retrieval') setRetrievalOpened(true)
-                  selectSection(section)
-                }}
+                onClick={() => selectSection(section)}
                 className={cn(
                   'min-h-11 shrink-0 whitespace-nowrap rounded-md px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:whitespace-normal',
                   selected
@@ -555,12 +551,8 @@ export function KnowledgeBaseForm({
       >
         {sections.map(([section, , label]) => {
           const selected = selection.section === section
-          // Keep the repository picker draft, summary default, and initialized retrieval settings.
-          const keepMounted =
-            section === 'basic' ||
-            section === 'models' ||
-            (section === 'retrieval' && retrievalOpened)
-          if (!selected && !keepMounted) return null
+          // Keep the repository picker draft and the summary default selection.
+          if (!selected && section !== 'basic' && section !== 'models') return null
           return (
             <section
               key={section}

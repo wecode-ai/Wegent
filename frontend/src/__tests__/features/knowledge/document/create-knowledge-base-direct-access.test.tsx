@@ -202,7 +202,9 @@ it('creates with automatic DingTalk updates enabled and resets it on the next op
     )
   )
   rerender(<CreateKnowledgeBaseDialog open={false} onOpenChange={jest.fn()} onSubmit={onSubmit} />)
-  rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  await act(async () => {
+    rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+  })
   expect(screen.getByTestId('knowledge-dingtalk-auto-sync')).not.toBeChecked()
 })
 

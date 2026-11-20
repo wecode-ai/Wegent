@@ -104,7 +104,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(() => new Promise(() => undefined))
   })
 
-  it('loads retrieval resources for the selected group rather than the opening scope', async () => {
+  it('loads only the active retrieval panel and ignores late responses from the previous space', async () => {
     let resolvePersonal!: () => void
     jest
       .mocked(retrieverApis.getUnifiedRetrievers)
@@ -163,6 +163,15 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-team'))
 
+    expect(retrieverApis.getUnifiedRetrievers).not.toHaveBeenCalledWith('group', 'team-space')
+    expect(modelApis.getUnifiedModels).not.toHaveBeenCalledWith(
+      undefined,
+      false,
+      'group',
+      'team-space',
+      'embedding'
+    )
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
     )
@@ -176,7 +185,6 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       )
     )
 
-    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     expect(await screen.findByText('Team index', { exact: false })).toBeVisible()
     await act(async () => resolvePersonal())
     expect(screen.getByText('Team index', { exact: false })).toBeVisible()
@@ -185,6 +193,8 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-personal'))
+    expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
+    fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('personal', undefined)
     )
