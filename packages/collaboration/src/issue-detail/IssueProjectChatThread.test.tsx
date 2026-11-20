@@ -606,12 +606,15 @@ describe("shared Issue threads", () => {
     expect(badge.textContent).toContain("查看执行");
     act(() => badge.click());
     expect(open).toHaveBeenCalledOnce();
-    expect(container.querySelector("details")?.textContent).toContain(
-      "Run run-123",
-    );
-    expect(container.querySelector("details")?.textContent).toContain(
-      "test-model",
-    );
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      '[data-testid="task-activity-run-details-' + message.messageId + '"]',
+    )!;
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    act(() => disclosure.click());
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    const metadata = container.querySelector(".task-detail-thread-run-metadata");
+    expect(metadata?.textContent).toContain("Run run-123");
+    expect(metadata?.textContent).toContain("test-model");
   });
 
   it("preserves terminal message status and distinguishes backend Task IDs from execution IDs", () => {

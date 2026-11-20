@@ -1,3 +1,6 @@
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -203,14 +206,15 @@ export function ProjectRuntimeSettings({
                 '尚未配置完整的设备和模型，AI 调度器无法启动。请在下方选择或新建执行配置。'
               )}
               {!initialCreating && configureRuntime ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-secondary-button ml-2 min-h-11"
                   data-testid="project-runtime-configure"
                   onClick={() => configureRuntime()}
                 >
                   {t('runtimeSettings.configure', '立即配置')}
-                </button>
+                </ControlButton>
               ) : null}
             </p>
           ) : null}
@@ -222,31 +226,34 @@ export function ProjectRuntimeSettings({
           <div className="mt-4 flex flex-wrap items-end gap-2">
             <label className="min-w-0 flex-1 text-sm">
               <span className="mb-1 block">{t('runtimeSettings.profile', '执行配置')}</span>
-              <select
-                className={controlClass}
-                data-testid="project-runtime-profile"
+              <SelectRoot
                 disabled={saving}
-                value={selectedId}
-                onChange={event => {
-                  setSelectedId(event.target.value)
+                value={String(selectedId)}
+                onValueChange={selectedValue => {
+                  if (selectedValue === null) return
+                  setSelectedId(selectedValue)
                   setCreating(false)
                   setSaved(false)
                 }}
               >
-                <option value="">{t('runtimeSettings.select', '选择执行配置')}</option>
-                {profiles
-                  .filter(profile => profile.status === 'active')
-                  .map(profile => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                      {complete(profile)
-                        ? ''
-                        : ` · ${t('runtimeSettings.incomplete', '缺少设备或模型')}`}
-                    </option>
-                  ))}
-              </select>
+                <SelectTrigger className={controlClass} data-testid="project-runtime-profile" />
+                <SelectContent>
+                  <SelectItem value="">{t('runtimeSettings.select', '选择执行配置')}</SelectItem>
+                  {profiles
+                    .filter(profile => profile.status === 'active')
+                    .map(profile => (
+                      <SelectItem key={profile.id} value={String(profile.id)}>
+                        {profile.name}
+                        {complete(profile)
+                          ? ''
+                          : ` · ${t('runtimeSettings.incomplete', '缺少设备或模型')}`}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </SelectRoot>
             </label>
-            <button
+            <ControlButton
+              variant="unstyled"
               className="collaboration-secondary-button min-h-11 md:min-h-9"
               type="button"
               data-testid="project-runtime-create"
@@ -261,13 +268,13 @@ export function ProjectRuntimeSettings({
               }}
             >
               {t('runtimeSettings.create', '新建配置')}
-            </button>
+            </ControlButton>
           </div>
           {creating ? (
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="text-sm sm:col-span-2">
                 <span className="mb-1 block">{t('runtimeSettings.name', '配置名称')}</span>
-                <input
+                <ControlInput
                   className={controlClass}
                   data-testid="project-runtime-name"
                   autoFocus={initialCreating}
@@ -279,40 +286,48 @@ export function ProjectRuntimeSettings({
               </label>
               <label className="text-sm">
                 <span className="mb-1 block">{t('runtimeSettings.device', '执行设备')}</span>
-                <select
-                  className={controlClass}
-                  data-testid="project-runtime-device"
-                  value={deviceId}
+                <SelectRoot
                   disabled={saving}
-                  onChange={event => {
-                    setDeviceId(event.target.value)
+                  value={String(deviceId)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    setDeviceId(selectedValue)
                     setModelIndex('')
                   }}
                 >
-                  <option value="">{t('runtimeSettings.selectDevice', '选择执行设备')}</option>
-                  {catalog?.environments.map(item => (
-                    <option key={item.deviceId} value={item.deviceId}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className={controlClass} data-testid="project-runtime-device" />
+                  <SelectContent>
+                    <SelectItem value="">
+                      {t('runtimeSettings.selectDevice', '选择执行设备')}
+                    </SelectItem>
+                    {catalog?.environments.map(item => (
+                      <SelectItem key={item.deviceId} value={String(item.deviceId)}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </label>
               <label className="text-sm">
                 <span className="mb-1 block">{t('runtimeSettings.model', '模型')}</span>
-                <select
-                  className={controlClass}
-                  data-testid="project-runtime-model"
-                  value={modelIndex}
+                <SelectRoot
                   disabled={saving || !environment}
-                  onChange={event => setModelIndex(event.target.value)}
+                  value={String(modelIndex)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return setModelIndex(selectedValue)
+                  }}
                 >
-                  <option value="">{t('runtimeSettings.selectModel', '选择模型')}</option>
-                  {models.map(item => (
-                    <option key={item.index} value={item.index}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className={controlClass} data-testid="project-runtime-model" />
+                  <SelectContent>
+                    <SelectItem value="">{t('runtimeSettings.selectModel', '选择模型')}</SelectItem>
+                    {models.map(item => (
+                      <SelectItem key={item.index} value={String(item.index)}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </label>
               {!catalog?.environments.length ? (
                 <div className="text-sm sm:col-span-2">
@@ -322,19 +337,21 @@ export function ProjectRuntimeSettings({
                       '项目没有可用的在线执行设备。请先添加执行环境。'
                     )}
                   </p>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="mt-2 min-h-11 text-text-link md:min-h-9"
                     data-testid="project-runtime-configure-environments"
                     onClick={onConfigureEnvironments}
                   >
                     {t('runtimeSettings.configureEnvironments', '配置执行环境')}
-                  </button>
+                  </ControlButton>
                 </div>
               ) : null}
             </div>
           ) : null}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-primary-button mt-4 min-h-11 md:min-h-9"
             data-testid="project-runtime-save"
@@ -352,21 +369,22 @@ export function ProjectRuntimeSettings({
                 : creating
                   ? t('runtimeSettings.createAndUse', '创建并设为默认')
                   : t('runtimeSettings.use', '设为项目默认')}
-          </button>
+          </ControlButton>
         </>
       )}
       {error ? (
         <div role="alert" className="mt-3 text-sm">
           <p>{error}</p>
           {!catalog ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="mt-2 min-h-11 md:min-h-9"
               data-testid="project-runtime-retry"
               onClick={() => void load()}
             >
               {t('common.retry', '重试')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       ) : null}

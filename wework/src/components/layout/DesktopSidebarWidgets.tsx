@@ -1,12 +1,12 @@
-import { Archive, Loader2, SquareTerminal, Sparkles, X } from 'lucide-react'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Archive, Loader2, Sparkles, SquareTerminal, X } from 'lucide-react'
 
 import { createPortal } from 'react-dom'
 
 import { Tooltip } from '@/components/ui/tooltip'
 
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
-
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -15,11 +15,11 @@ import { SidebarTaskTitle } from './SidebarTaskTitle'
 
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 
+import { getDeviceRouteLabel, getDeviceRouteTitle } from './desktopSidebarHelpers'
 import type {
   ArchiveConversationsConfirmDialogProps,
   SidebarDeviceState,
 } from './desktopSidebarTypes'
-import { getDeviceRouteLabel, getDeviceRouteTitle } from './desktopSidebarHelpers'
 export function ArchiveConversationsConfirmDialog({
   open,
   title,
@@ -31,8 +31,6 @@ export function ArchiveConversationsConfirmDialog({
   onClose,
   onConfirm,
 }: ArchiveConversationsConfirmDialogProps) {
-  useEscapeKey(onClose, open && !submitting)
-
   if (!open) return null
 
   return createPortal(
@@ -40,19 +38,25 @@ export function ArchiveConversationsConfirmDialog({
       data-testid={`${testId}-overlay`}
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/45 px-4"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${testId}-title`}
-        data-testid={testId}
-        className="w-full max-w-[460px] rounded-xl border border-border bg-popover p-5 text-text-primary shadow-[0_20px_56px_rgba(0,0,0,0.28)]"
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onClose()
+        }}
+        render={
+          <div
+            aria-labelledby={`${testId}-title`}
+            data-testid={testId}
+            className="w-full max-w-[460px] rounded-xl border border-border bg-popover p-5 text-text-primary shadow-[0_20px_56px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <div className="flex items-start justify-between gap-5">
           <h2 id={`${testId}-title`} className="heading-base tracking-normal">
             {title}
           </h2>
           <Tooltip label={cancelLabel} testId={`${testId}-close-tooltip`}>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-close-button`}
               onClick={onClose}
@@ -61,12 +65,13 @@ export function ArchiveConversationsConfirmDialog({
               aria-label={cancelLabel}
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </Tooltip>
         </div>
         <p className="mt-3 text-sm leading-6 text-text-secondary">{description}</p>
         <div className="mt-6 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${testId}-cancel-button`}
             onClick={onClose}
@@ -74,8 +79,9 @@ export function ArchiveConversationsConfirmDialog({
             className="h-8 min-w-[76px] rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
           >
             {cancelLabel}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${testId}-confirm-button`}
             onClick={() => void onConfirm()}
@@ -84,9 +90,9 @@ export function ArchiveConversationsConfirmDialog({
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
@@ -109,7 +115,8 @@ export function SidebarReleaseNotesCard({
       data-testid="sidebar-release-notes-card"
       className="relative mb-1 shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm"
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="sidebar-release-notes-open"
         onClick={onOpen}
@@ -127,13 +134,14 @@ export function SidebarReleaseNotesCard({
         <span className="mt-1 block text-xs leading-4 text-text-secondary">
           {t('workbench.app_release_notes_summary', '查看此版本的新功能和改进')}
         </span>
-      </button>
+      </ControlButton>
       <Tooltip
         label={dismissLabel}
         testId="sidebar-release-notes-dismiss-tooltip"
         className="absolute right-2 top-2"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="sidebar-release-notes-dismiss"
           aria-label={dismissLabel}
@@ -141,7 +149,7 @@ export function SidebarReleaseNotesCard({
           className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
         >
           <X className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </ControlButton>
       </Tooltip>
     </aside>
   )
@@ -208,7 +216,8 @@ export function LocalHarnessSessionRow({
 
   return (
     <div data-sidebar-task-row className="group/harness-session relative flex items-center">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`local-harness-session-row-${session.sessionId}`}
         onClick={() => onOpen?.(session.sessionId)}
@@ -226,7 +235,7 @@ export function LocalHarnessSessionRow({
           text={session.title}
           testId={`local-harness-session-title-${session.sessionId}`}
         />
-      </button>
+      </ControlButton>
       {onClose && (canArchive || canClose) && (
         <Tooltip
           label={
@@ -237,7 +246,8 @@ export function LocalHarnessSessionRow({
           testId={`local-harness-session-${session.sessionId}-action-tooltip`}
           className="absolute right-1"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-sidebar-title-actions
             data-testid={
@@ -257,7 +267,7 @@ export function LocalHarnessSessionRow({
             className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 group-has-[:focus-visible]/harness-session:opacity-100 focus-visible:opacity-100"
           >
             {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
-          </button>
+          </ControlButton>
         </Tooltip>
       )}
     </div>

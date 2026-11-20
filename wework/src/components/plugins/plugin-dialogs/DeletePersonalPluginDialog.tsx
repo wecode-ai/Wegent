@@ -1,6 +1,8 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginDeleteImpactResponse } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useRef } from 'react'
 
 interface DeletePersonalPluginDialogProps {
   pluginName: string
@@ -24,13 +26,10 @@ export function DeletePersonalPluginDialog({
   onConfirm,
 }: DeletePersonalPluginDialogProps) {
   const { t } = useTranslation('common')
+  const dialogRef = useRef<HTMLElement>(null)
   const requiresRevocation = Boolean(
     impact && (impact.affectedUserCount > 0 || impact.sharedTargetCount > 0)
   )
-
-  useDocumentEvent('keydown', event => {
-    if (event.key === 'Escape' && !deleting) onCancel()
-  })
 
   return (
     <div
@@ -39,13 +38,21 @@ export function DeletePersonalPluginDialog({
         if (!deleting) onCancel()
       }}
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-personal-plugin-dialog-title"
-        data-testid="delete-personal-plugin-dialog"
-        className="plugin-dialog-surface w-full max-w-[420px] p-6"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={() => {
+          if (!deleting) onCancel()
+        }}
+        initialFocus={'[data-testid="plugin-delete-cancel-button"]'}
+        render={
+          <section
+            ref={dialogRef}
+            tabIndex={-1}
+            aria-labelledby="delete-personal-plugin-dialog-title"
+            data-testid="delete-personal-plugin-dialog"
+            className="plugin-dialog-surface w-full max-w-[420px] p-6"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <h2
           id="delete-personal-plugin-dialog-title"
@@ -85,8 +92,8 @@ export function DeletePersonalPluginDialog({
                       })}
         </p>
         <div className="mt-5 flex justify-end gap-2">
-          <button
-            autoFocus
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={deleting}
             data-testid="plugin-delete-cancel-button"
@@ -94,8 +101,10 @@ export function DeletePersonalPluginDialog({
             onClick={onCancel}
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="destructive"
+            size="sm"
             type="button"
             disabled={deleting || (published && !impact)}
             data-testid="plugin-delete-confirm-button"
@@ -109,9 +118,9 @@ export function DeletePersonalPluginDialog({
                 : published && requiresRevocation
                   ? t('workbench.plugins_revoke_and_delete', '停用并删除')
                   : t('workbench.plugins_delete_plugin', '删除插件')}
-          </button>
+          </ControlButton>
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

@@ -1,10 +1,11 @@
-import { Folder, Loader2, X } from 'lucide-react'
-import { useState } from 'react'
-import { createPortal } from 'react-dom'
 import { DialogForm } from '@/components/common/DialogForm'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Folder, Loader2, X } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 interface ExistingLocalProjectImportDialogProps {
   open: boolean
@@ -29,9 +30,7 @@ export function ExistingLocalProjectImportDialog({
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(projects[0]?.id ?? null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!submitting) onClose()
-  })
+  const dialogRef = useRef<HTMLFormElement>(null)
 
   if (!open) return null
 
@@ -52,17 +51,22 @@ export function ExistingLocalProjectImportDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-      <DialogForm
-        aria-labelledby="existing-local-project-import-title"
-        aria-modal="true"
-        className="w-full max-w-lg rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
-        data-testid="existing-local-project-import-dialog"
-        onSubmit={event => {
-          event.preventDefault()
-          void importProject()
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onClose()
         }}
-        ref={dialogRef}
-        role="dialog"
+        render={
+          <DialogForm
+            aria-labelledby="existing-local-project-import-title"
+            className="w-full max-w-lg rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+            data-testid="existing-local-project-import-dialog"
+            onSubmit={event => {
+              event.preventDefault()
+              void importProject()
+            }}
+            ref={dialogRef}
+          />
+        }
       >
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -76,7 +80,8 @@ export function ExistingLocalProjectImportDialog({
               )}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             aria-label={t('workbench.close_dialog', '关闭')}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
             data-testid="close-existing-local-project-import-dialog"
@@ -85,7 +90,7 @@ export function ExistingLocalProjectImportDialog({
             type="button"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         {projects.length > 0 ? (
@@ -94,7 +99,8 @@ export function ExistingLocalProjectImportDialog({
               const path = projectPath(project)
               const selected = selectedProject?.id === project.id
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   aria-pressed={selected}
                   className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left ${
                     selected ? 'border-text-primary bg-muted' : 'border-transparent hover:bg-muted'
@@ -121,7 +127,7 @@ export function ExistingLocalProjectImportDialog({
                       </span>
                     ) : null}
                   </span>
-                </button>
+                </ControlButton>
               )
             })}
           </div>
@@ -142,25 +148,27 @@ export function ExistingLocalProjectImportDialog({
         ) : null}
 
         <div className="mt-5 flex justify-end gap-3">
-          <button
-            className="h-9 rounded-lg border border-border px-4 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
+          <ControlButton
+            variant="outline"
+            size="sm"
             disabled={submitting}
             onClick={onClose}
             type="button"
           >
             {t('workbench.cancel', '取消')}
-          </button>
-          <button
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             data-testid="confirm-existing-local-project-import"
             disabled={!selectedProject || submitting}
             type="submit"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {t('workbench.add_to_collaboration', '加入协作')}
-          </button>
+          </ControlButton>
         </div>
-      </DialogForm>
+      </DialogSurface>
     </div>,
     document.body
   )

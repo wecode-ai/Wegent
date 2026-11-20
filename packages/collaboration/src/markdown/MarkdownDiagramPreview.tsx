@@ -1,16 +1,17 @@
-import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
-import { useMarkdownServices } from './MarkdownServices'
 import { useCallback, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { DiagramImageActions } from './DiagramImageActions'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
+import { DialogSurface } from '../controls/DialogSurface'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
-import { useDiagramViewport } from './useDiagramViewport'
-import { useDiagramDiagnostics } from './useDiagramDiagnostics'
-import { useDiagramArtifact } from './useDiagramArtifact'
-import { diagramKind, DIAGRAM_PREVIEW_HEIGHT_REM } from './diagramLayout'
+import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
+import { Button as ControlButton } from './Button'
 import { DiagramCanvas } from './DiagramCanvas'
+import { DiagramImageActions } from './DiagramImageActions'
+import { useMarkdownServices } from './MarkdownServices'
 import type { DiagramArtifact } from './diagramArtifact'
+import { DIAGRAM_PREVIEW_HEIGHT_REM, diagramKind } from './diagramLayout'
+import { useDiagramArtifact } from './useDiagramArtifact'
+import { useDiagramDiagnostics } from './useDiagramDiagnostics'
+import { useDiagramViewport } from './useDiagramViewport'
 
 interface MarkdownDiagramPreviewProps {
   code: string
@@ -30,6 +31,7 @@ export function MarkdownDiagramPreview({
   const containerRef = useRef<HTMLElement>(null)
   const renderViewer = useDiagramViewport(containerRef)
   const fullscreenTriggerRef = useRef<HTMLButtonElement>(null)
+
   const [fullscreen, setFullscreen] = useState(false)
   const diagramType = diagramKind(language) ?? 'mermaid'
   const result = useDiagramArtifact(
@@ -61,15 +63,11 @@ export function MarkdownDiagramPreview({
   })
 
   const closeFullscreen = () => setFullscreen(false)
-  const openFullscreen = () => setFullscreen(true)
-  const restoreFullscreenTrigger = useCallback(() => fullscreenTriggerRef.current, [])
-  const fullscreenDialogRef = useDialogKeyboard<HTMLDivElement>(
-    closeFullscreen,
-    fullscreen,
-    '[data-testid="diagram-exit-fullscreen-button"]',
-    true,
-    restoreFullscreenTrigger
-  )
+  const fullscreenExitButtonRef = useRef<HTMLButtonElement>(null)
+  const fullscreenDialogRef = useRef<HTMLDivElement>(null)
+  const openFullscreen = () => {
+    setFullscreen(true)
+  }
 
   const preview = (
     <section
@@ -114,7 +112,9 @@ export function MarkdownDiagramPreview({
           </p>
           {failed && (
             <>
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="diagram-retry-button"
                 onClick={() => {
@@ -124,7 +124,7 @@ export function MarkdownDiagramPreview({
                 className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-7"
               >
                 {t('workbench.diagram_retry', '重试')}
-              </button>
+              </ControlButton>
               <pre className="mt-3 whitespace-pre-wrap text-code">{code}</pre>
             </>
           )}
@@ -156,18 +156,25 @@ export function MarkdownDiagramPreview({
       )}
       {fullscreen && typeof document !== 'undefined'
         ? createPortal(
-            <div
-              {...portalTheme}
-              ref={fullscreenDialogRef}
-              data-testid="assistant-diagram-fullscreen"
-              role="dialog"
-              aria-modal="true"
-              aria-label={t('workbench.diagram_full_screen', '全屏查看')}
-              tabIndex={-1}
-              className={`${portalTheme.className} fixed inset-0 z-modal h-dvh w-dvw bg-background`}
+            <DialogSurface
+              initialFocus={() => fullscreenExitButtonRef.current}
+              finalFocus={() => fullscreenTriggerRef.current}
+              onClose={() => {
+                if (fullscreen) closeFullscreen()
+              }}
+              render={
+                <div
+                  {...portalTheme}
+                  ref={fullscreenDialogRef}
+                  data-testid="assistant-diagram-fullscreen"
+                  aria-label={t('workbench.diagram_full_screen', '全屏查看')}
+                  tabIndex={-1}
+                  className={`${portalTheme.className} fixed inset-0 z-modal h-dvh w-dvw bg-background`}
+                />
+              }
             >
               {preview}
-            </div>,
+            </DialogSurface>,
             document.body
           )
         : null}

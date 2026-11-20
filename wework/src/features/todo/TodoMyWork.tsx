@@ -1,6 +1,7 @@
-import { Bot, CircleAlert, CircleCheck, UserRound } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { TodoDetailItem } from './todoViewTypes'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Bot, CircleAlert, CircleCheck, UserRound } from 'lucide-react'
+import type { TodoDetailItem } from './todoTypes'
 
 interface TodoMyWorkProps {
   items: TodoDetailItem[]
@@ -73,7 +74,8 @@ export function TodoMyWork({ items, onSelectItem }: TodoMyWorkProps) {
               ) : (
                 <div className="divide-y divide-border">
                   {group.entries.map(({ item, parent }) => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={`${group.key}-${item.id}`}
                       type="button"
                       data-testid={`todo-my-work-${group.key}-${item.id}`}
@@ -95,7 +97,7 @@ export function TodoMyWork({ items, onSelectItem }: TodoMyWorkProps) {
                           {item.blocker}
                         </span>
                       )}
-                    </button>
+                    </ControlButton>
                   ))}
                 </div>
               )}

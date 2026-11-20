@@ -1,19 +1,20 @@
-import { Circle, Check, LoaderCircle, MessageSquare } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { Button } from '@/components/ui/button'
 import {
   formatRelativeSidebarTime,
   useSidebarRelativeTimeRefresh,
 } from '@/components/layout/runtimeSidebarTime'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Circle, LoaderCircle, MessageSquare } from 'lucide-react'
+import { selectExperienceTaskState } from '../model'
 import type {
   ExperienceProjectData,
   ExperienceProjectScope,
   ExperienceTaskRow,
 } from '../model/types'
-import { selectExperienceTaskState } from '../model'
+import { ProjectList } from './ProjectList'
 import { TaskFilters, type TaskFilterValue, type TaskListMode } from './TaskFilters'
 import { useTaskDescription } from './taskPresentation'
-import { ProjectList } from './ProjectList'
 import './TasksExperience.css'
 
 interface Props {
@@ -154,7 +155,8 @@ function TaskRow({
       data-selected={selected || undefined}
       data-testid={`collaboration-exp-task-row-${row.id}`}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="experience-task-row-main"
         data-testid={`collaboration-exp-task-${row.id}`}
@@ -170,16 +172,17 @@ function TaskRow({
           />
         </span>
         <span className="experience-task-row-description">{description}</span>
-      </button>
+      </ControlButton>
       <div className="experience-task-row-meta">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="experience-task-row-project"
           data-testid={`collaboration-exp-task-project-${row.id}`}
           onClick={() => onOpenProject(row.project)}
         >
           {row.project.name}
-        </button>
+        </ControlButton>
         <span className="experience-task-row-signals">
           {row.conversations.state === 'ready' && row.conversations.items.length > 0 && (
             <span title={t('private.title')} className="experience-task-row-conversations">

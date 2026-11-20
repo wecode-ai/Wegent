@@ -1,8 +1,10 @@
-import { Eye, EyeOff } from 'lucide-react'
-import { useState } from 'react'
-import type { FormEvent } from 'react'
 import type { LoginRequest } from '@/api/auth'
 import { useTranslation } from '@/hooks/useTranslation'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Eye, EyeOff } from 'lucide-react'
+import type { FormEvent } from 'react'
+import { useState } from 'react'
 
 export const OUTLINED_LOGIN_BUTTON_CLASS =
   'h-11 w-full rounded-lg border border-border bg-background text-sm font-semibold text-text-primary hover:bg-muted'
@@ -105,11 +107,11 @@ export function PasswordLoginForm({
         >
           {labels?.username ?? t('workbench.login_username')}
         </label>
-        <input
+        <ControlInput
           id={resolvedTestIds.usernameInput}
           name="user_name"
           data-testid={resolvedTestIds.usernameInput}
-          className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
+          className="mt-2 h-11 w-full focus:border-text-secondary"
           value={value.user_name}
           autoComplete="username"
           onChange={event => onChange({ ...value, user_name: event.target.value })}
@@ -123,17 +125,18 @@ export function PasswordLoginForm({
           {labels?.password ?? t('workbench.login_password')}
         </label>
         <div className="relative mt-2">
-          <input
+          <ControlInput
             id={resolvedTestIds.passwordInput}
             name="password"
             data-testid={resolvedTestIds.passwordInput}
             type={showPassword ? 'text' : 'password'}
-            className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
+            className="h-11 w-full pr-11 focus:border-text-secondary"
             value={value.password}
             autoComplete="current-password"
             onChange={event => onChange({ ...value, password: event.target.value })}
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={resolvedTestIds.togglePasswordButton}
             className="absolute inset-y-0 right-0 flex h-11 w-11 items-center justify-center text-text-muted"
@@ -141,7 +144,7 @@ export function PasswordLoginForm({
             aria-label={labels?.togglePassword ?? t('workbench.toggle_password_visibility')}
           >
             {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
+          </ControlButton>
         </div>
       </div>
       {error && (
@@ -152,7 +155,8 @@ export function PasswordLoginForm({
           {error}
         </div>
       )}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="submit"
         data-testid={resolvedTestIds.submitButton}
         className={`${OUTLINED_LOGIN_BUTTON_CLASS} disabled:opacity-60`}
@@ -161,7 +165,7 @@ export function PasswordLoginForm({
         {submitting
           ? (labels?.submitting ?? t('workbench.logging_in'))
           : (labels?.submit ?? t('workbench.login_action'))}
-      </button>
+      </ControlButton>
     </form>
   )
 }
@@ -228,12 +232,12 @@ export function AdminPasswordSetupForm({
           {labels?.password ?? t('workbench.admin_password')}
         </label>
         <div className="relative mt-2">
-          <input
+          <ControlInput
             id={resolvedTestIds.passwordInput}
             name="admin-password"
             data-testid={resolvedTestIds.passwordInput}
             type={showPassword ? 'text' : 'password'}
-            className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
+            className="h-11 w-full pr-11 focus:border-text-secondary"
             value={value.password}
             minLength={6}
             required
@@ -241,7 +245,8 @@ export function AdminPasswordSetupForm({
             placeholder={labels?.passwordPlaceholder ?? t('workbench.admin_password_placeholder')}
             onChange={event => onChange({ ...value, password: event.target.value })}
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={resolvedTestIds.passwordVisibilityButton}
             className="absolute inset-y-0 right-0 flex h-11 w-11 items-center justify-center text-text-muted"
@@ -249,7 +254,7 @@ export function AdminPasswordSetupForm({
             aria-label={labels?.togglePassword ?? t('workbench.toggle_admin_password_visibility')}
           >
             {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
+          </ControlButton>
         </div>
       </div>
       <div>
@@ -260,12 +265,12 @@ export function AdminPasswordSetupForm({
           {labels?.confirmPassword ?? t('workbench.admin_password_confirm')}
         </label>
         <div className="relative mt-2">
-          <input
+          <ControlInput
             id={resolvedTestIds.confirmPasswordInput}
             name="admin-password-confirm"
             data-testid={resolvedTestIds.confirmPasswordInput}
             type={showConfirmPassword ? 'text' : 'password'}
-            className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
+            className="h-11 w-full pr-11 focus:border-text-secondary"
             value={value.confirmPassword}
             minLength={6}
             required
@@ -276,7 +281,8 @@ export function AdminPasswordSetupForm({
             }
             onChange={event => onChange({ ...value, confirmPassword: event.target.value })}
           />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={resolvedTestIds.confirmPasswordVisibilityButton}
             className="absolute inset-y-0 right-0 flex h-11 w-11 items-center justify-center text-text-muted"
@@ -284,7 +290,7 @@ export function AdminPasswordSetupForm({
             aria-label={labels?.togglePassword ?? t('workbench.toggle_admin_password_visibility')}
           >
             {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
+          </ControlButton>
         </div>
       </div>
       {error && (
@@ -295,7 +301,8 @@ export function AdminPasswordSetupForm({
           {error}
         </div>
       )}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="submit"
         data-testid={resolvedTestIds.submitButton}
         className={`${OUTLINED_LOGIN_BUTTON_CLASS} disabled:opacity-60`}
@@ -304,7 +311,7 @@ export function AdminPasswordSetupForm({
         {submitting
           ? (labels?.submitting ?? t('workbench.admin_password_setting'))
           : (labels?.submit ?? t('workbench.admin_password_submit'))}
-      </button>
+      </ControlButton>
     </form>
   )
 }

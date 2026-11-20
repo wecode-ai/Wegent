@@ -1,24 +1,18 @@
-import { useDocumentEvent } from '../dom-events'
-import { createIssueBoardCardPreview } from './issueBoardCardPreview'
-import { useIssueBoardCardDrag } from './useIssueBoardCardDrag'
-import { useCollaborationPortalTheme } from '../theme'
-import * as Popover from '@radix-ui/react-popover'
-import {
-  Fragment,
-  useCallback,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react'
+import { ActionMenu } from '../controls/ActionMenu'
+import { Popover, PopoverClose, PopoverContent } from '../controls/Popover'
 import { Archive, ArrowUpRight, Ellipsis, X } from 'lucide-react'
-import { CollaborationIssueCard, type CollaborationIssueCardProps } from './CollaborationIssueCard'
-import { IssueCardGoalSummary } from './IssueCardTaskSummary'
-import { IssueExecutionConfigurationBadge } from './IssueBoardCardContent'
-import { issueNeedsExecutionConfiguration } from './model'
-import { Tooltip } from '../issue-detail/Tooltip'
+import { Fragment, useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { Tooltip } from '../controls/Tooltip'
+import { Button as ControlButton } from '../markdown/Button'
+import { useCollaborationPortalTheme } from '../theme'
+import { CollaborationIssueCard, type CollaborationIssueCardProps } from './CollaborationIssueCard'
+import { createIssueBoardCardPreview } from './issueBoardCardPreview'
+import { IssueExecutionConfigurationBadge } from './IssueBoardCardContent'
+import { IssueCardGoalSummary } from './IssueCardTaskSummary'
+import { issueNeedsExecutionConfiguration } from './model'
+import { useIssueBoardCardDrag } from './useIssueBoardCardDrag'
 
 export interface IssueBoardCardTask {
   id: string | number
@@ -84,23 +78,20 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   onOpen,
   childrenAction,
 }: IssueBoardCardProps<T>) {
-  const drag = useIssueBoardCardDrag(item.id, dragEnabled)
+  const { setElement: setDragElement, ...drag } = useIssueBoardCardDrag(item.id, dragEnabled)
   const dragging = draggingOverride || drag.dragging
   const portalTheme = useCollaborationPortalTheme()
   const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuContainerRef = useRef<HTMLDivElement>(null)
-  useDocumentEvent(
-    'mousedown',
-    event => {
-      if (!menuContainerRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    },
-    { enabled: menuOpen }
-  )
   const [preview] = useState(createIssueBoardCardPreview)
   const setPreviewOpen = preview.setOpen
   const popupRef = useRef<HTMLDivElement>(null)
   const cardContainerRef = useRef<HTMLDivElement>(null)
+  const [previewAnchor, setPreviewAnchor] = useState<HTMLDivElement | null>(null)
+  const setCardContainer = useCallback((element: HTMLDivElement | null) => {
+    cardContainerRef.current = element
+    setPreviewAnchor(element)
+  }, [])
+
   const hasProgress =
     item.can_view_detail !== false && progressTaskBindings.length > 0 && Boolean(renderTaskSummary)
   const previewAvailable = hasProgress && !previewDisabled && !drag.boardDragging && !dragging
@@ -169,7 +160,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
           </>
         ) : null
       }
-      cardRef={drag.setNodeRef}
+      cardRef={setDragElement}
       cardStyle={dragEnabled ? { ...cardStyle, ...drag.style } : cardStyle}
       cardClassName={[cardClassName, 'group/issue-board-card', dragEnabled && 'touch-none']
         .filter(Boolean)
@@ -180,42 +171,24 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
       articleTestId={articleTestId ?? `cloud-todo-card-drop-${item.id}`}
       menu={
         onArchive ? (
-          <div ref={menuContainerRef} className="absolute right-2 top-2 z-20">
-            <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
-              <button
-                type="button"
-                data-testid={`cloud-todo-card-more-${item.id}`}
-                onClick={event => {
-                  event.stopPropagation()
-                  setMenuOpen(current => !current)
-                }}
-                className="pointer-events-none flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:pointer-events-auto focus:opacity-100 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100"
-                aria-label={t('todo.project_actions', '项目操作')}
-                aria-expanded={menuOpen}
-              >
-                <Ellipsis className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            {menuOpen ? (
-              <div
-                data-testid={`cloud-todo-card-menu-${item.id}`}
-                className="absolute right-0 top-8 w-32 rounded-lg border border-border bg-background p-1 shadow-md"
-              >
-                <button
-                  type="button"
-                  data-testid={`cloud-todo-card-archive-${item.id}`}
-                  onClick={event => {
-                    event.stopPropagation()
-                    setMenuOpen(false)
-                    onArchive?.()
-                  }}
-                  className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
-                >
-                  <Archive className="h-3.5 w-3.5" />
-                  {archiveLabel ?? t('board.card.archive', '归档任务')}
-                </button>
-              </div>
-            ) : null}
+          <div className="absolute right-2 top-2 z-20" onClick={event => event.stopPropagation()}>
+            <ActionMenu
+              ariaLabel={t('todo.project_actions', '项目操作')}
+              testId={`cloud-todo-card-more-${item.id}`}
+              menuTestId={`cloud-todo-card-menu-${item.id}`}
+              icon={Ellipsis}
+              density="dense"
+              triggerClassName="pointer-events-none bg-background/90 text-text-muted opacity-0 focus:pointer-events-auto focus:opacity-100 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100"
+              items={[
+                {
+                  testId: `cloud-todo-card-archive-${item.id}`,
+                  label: archiveLabel ?? t('board.card.archive', '归档任务'),
+                  icon: Archive,
+                  danger: true,
+                  onSelect: onArchive,
+                },
+              ]}
+            />
           </div>
         ) : null
       }
@@ -244,7 +217,8 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                 side="bottom"
                 align="end"
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`cloud-todo-card-open-task-${item.id}`}
                   aria-label={t('todo.open_task_page_named', '打开任务页：{{title}}', {
@@ -258,7 +232,7 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
                   className="pointer-events-none flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary hover:opacity-100 focus:pointer-events-auto focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/issue-board-card:pointer-events-auto group-hover/issue-board-card:opacity-100 max-md:pointer-events-auto max-md:min-h-11 max-md:min-w-11 max-md:opacity-60"
                 >
                   <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
+                </ControlButton>
               </Tooltip>
             </span>
           ) : null}
@@ -268,12 +242,19 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   )
 
   return (
-    <Popover.Root open={previewOpen} onOpenChange={setPreviewOpen}>
-      <Popover.Anchor asChild>
-        <div ref={cardContainerRef}>{card}</div>
-      </Popover.Anchor>
-      <Popover.Portal>
-        <Popover.Content
+    <Popover
+      open={previewOpen}
+      onOpenChange={(next, details) => {
+        if (details.reason === 'outside-press') details.cancel()
+        else setPreviewOpen(next)
+      }}
+    >
+      <>
+        <div ref={setCardContainer}>{card}</div>
+      </>
+      <>
+        <PopoverContent
+          anchor={previewAnchor}
           {...portalTheme}
           id={`cloud-todo-card-progress-popup-${item.id}`}
           data-testid={`cloud-todo-card-progress-popup-${item.id}`}
@@ -285,33 +266,30 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
           align="start"
           sideOffset={8}
           collisionPadding={8}
-          onOpenAutoFocus={event => {
-            event.preventDefault()
-            popupRef.current?.focus()
+          initialFocus={() => {
+            return popupRef.current
           }}
-          onInteractOutside={event => {
-            event.preventDefault()
-          }}
-          onCloseAutoFocus={event => {
-            event.preventDefault()
-            cardContainerRef.current
-              ?.querySelector<HTMLButtonElement>(`[data-testid="cloud-todo-card-${item.id}"]`)
-              ?.focus()
+          finalFocus={() => {
+            return cardContainerRef.current?.querySelector<HTMLButtonElement>(
+              `[data-testid="cloud-todo-card-${item.id}"]`
+            )
           }}
           ref={popupRef}
           tabIndex={-1}
           className={`${portalTheme.className} relative z-[78] w-[480px] max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 text-xs text-text-primary shadow-lg outline-none`}
         >
-          <Popover.Close asChild>
-            <button
-              type="button"
-              data-testid={`cloud-todo-card-progress-popup-${item.id}-close`}
-              aria-label={t('common.close', '关闭')}
-              className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </Popover.Close>
+          <PopoverClose
+            render={
+              <button
+                type="button"
+                data-testid={`cloud-todo-card-progress-popup-${item.id}-close`}
+                aria-label={t('common.close', '关闭')}
+                className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+              />
+            }
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </PopoverClose>
           {renderTaskSummary ? (
             <IssueBoardCardProgressPopup
               item={item}
@@ -320,9 +298,9 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
               translate={t}
             />
           ) : null}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      </>
+    </Popover>
   )
 }
 
@@ -367,7 +345,8 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
       {bindings.length > 1 ? (
         <div className="flex flex-wrap gap-1">
           {bindings.map(binding => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={binding.id}
               type="button"
               data-testid={`cloud-todo-card-progress-select-${item.id}-${binding.id}`}
@@ -379,7 +358,7 @@ function IssueBoardCardProgressPopup<T extends IssueBoardCardTask>({
               )}
             >
               {binding.task_title || binding.task_id}
-            </button>
+            </ControlButton>
           ))}
         </div>
       ) : null}

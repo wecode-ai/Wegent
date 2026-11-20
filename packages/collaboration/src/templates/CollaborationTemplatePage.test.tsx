@@ -21,18 +21,6 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
-  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
-    configurable: true,
-    value: function (this: HTMLDialogElement) {
-      this.open = true
-    },
-  })
-  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
-    configurable: true,
-    value: function (this: HTMLDialogElement) {
-      this.open = false
-    },
-  })
 })
 afterEach(async () => {
   await act(async () => root.unmount())
@@ -70,20 +58,30 @@ it('cancels only the nested template dialog and restores its trigger', async () 
     </TemplateDialog>
   )
   await act(async () => root.render(render(false)))
-  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="import-trigger"]')!
+  const trigger = container.ownerDocument.querySelector<HTMLButtonElement>(
+    '[data-testid="import-trigger"]'
+  )!
   trigger.focus()
   await act(async () => root.render(render(true)))
-  const nested = container.querySelectorAll('dialog')[1]
-  await act(async () => nested.dispatchEvent(new Event('cancel', { cancelable: true })))
+  const nested = container.ownerDocument.querySelectorAll('[role="dialog"]')[1]
+  await act(async () =>
+    nested.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    )
+  )
   expect(childClosed).toHaveBeenCalledOnce()
   expect(parentClosed).not.toHaveBeenCalled()
   await act(async () => root.render(render(false)))
   expect(document.activeElement).toBe(trigger)
-  expect(container.querySelector('dialog')!.open).toBe(true)
+  expect(container.ownerDocument.querySelector('[role="dialog"]')?.getAttribute('aria-modal')).toBe(
+    'true'
+  )
 })
 
 async function click(testId: string) {
-  const target = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
+  const target = container.ownerDocument.querySelector<HTMLButtonElement>(
+    `[data-testid="${testId}"]`
+  )
   expect(target).not.toBeNull()
   await act(async () => target!.click())
 }
@@ -109,13 +107,15 @@ it('browses template details within the existing picker dialog and returns witho
     )
   )
   await click('template-details-product-lifecycle')
-  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
-  expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
-  expect(container.querySelector('[data-testid="template-detail-cancel"]')).toBeNull()
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"][data-open]')).toHaveLength(1)
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
+  ).not.toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-detail-cancel"]')).toBeNull()
   await act(async () => templatePageDetail(navigation, 'en')?.onBack())
-  expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
-  expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
-  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-search"]')).not.toBeNull()
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"][data-open]')).toHaveLength(1)
 })
 
 it('retains its own Back action when the inline picker has no host navigation', async () => {
@@ -132,12 +132,14 @@ it('retains its own Back action when the inline picker has no host navigation', 
     )
   )
   await click('template-details-product-lifecycle')
-  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
-  expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"][data-open]')).toHaveLength(1)
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
+  ).not.toBeNull()
   await click('template-detail-cancel')
-  expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
-  expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
-  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-search"]')).not.toBeNull()
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"][data-open]')).toHaveLength(1)
 })
 
 function pendingRemoteDetail() {
@@ -201,19 +203,21 @@ it('prevents overlapping import and remote detail panels while a detail request 
     await act(async () => vi.advanceTimersByTimeAsync(200))
     await click('template-details-42')
     expect(fixture.backend.get).toHaveBeenCalledWith(42)
-    const importButton = container.querySelector<HTMLButtonElement>(
+    const importButton = container.ownerDocument.querySelector<HTMLButtonElement>(
       '[data-testid="template-import-open"]'
     )!
     const importBlocked = importButton.disabled
     await click('template-import-open')
     const importedWhilePending = Boolean(
-      container.querySelector('[data-testid="template-import-file"]')
+      container.ownerDocument.querySelector('[data-testid="template-import-file"]')
     )
     await act(async () => fixture.resolve(fixture.record))
-    expect(container.querySelectorAll('[data-testid="template-inline-detail"]')).toHaveLength(1)
+    expect(
+      container.ownerDocument.querySelectorAll('[data-testid="template-inline-detail"]')
+    ).toHaveLength(1)
     expect(importBlocked).toBe(true)
     expect(importedWhilePending).toBe(false)
-    expect(container.querySelector('[data-testid="template-import-file"]')).toBeNull()
+    expect(container.ownerDocument.querySelector('[data-testid="template-import-file"]')).toBeNull()
     expect(footer.querySelectorAll('button')).toHaveLength(2)
     expect(footer.querySelector('[data-testid="template-detail-cancel"]')).not.toBeNull()
     expect(footer.querySelector('[data-testid="template-use"]')).not.toBeNull()
@@ -242,7 +246,7 @@ it.each(['resolved', 'rejected'] as const)(
         )
       )
       await act(async () => vi.advanceTimersByTimeAsync(200))
-      const trigger = container.querySelector<HTMLButtonElement>(
+      const trigger = container.ownerDocument.querySelector<HTMLButtonElement>(
         '[data-testid="template-details-42"]'
       )!
       trigger.focus()
@@ -254,16 +258,22 @@ it.each(['resolved', 'rejected'] as const)(
       })
       await click('template-details-42')
       expect(trigger.disabled).toBe(true)
-      container.querySelector<HTMLInputElement>('[data-testid="template-search"]')!.focus()
+      container.ownerDocument
+        .querySelector<HTMLInputElement>('[data-testid="template-search"]')!
+        .focus()
       expect(document.activeElement).not.toBe(trigger)
       if (outcome === 'resolved') {
         await act(async () => fixture.resolve(fixture.record))
-        expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+        expect(
+          container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
+        ).not.toBeNull()
         await act(async () => templatePageDetail(navigation, 'en')!.onBack())
-        expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+        expect(
+          container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
+        ).toBeNull()
       } else {
         await act(async () => fixture.reject(new Error('detail download failed')))
-        expect(container.querySelector('[role="alert"]')).not.toBeNull()
+        expect(container.ownerDocument.querySelector('[role="alert"]')).not.toBeNull()
       }
       expect(trigger.disabled).toBe(false)
       expect(document.activeElement).toBe(trigger)
@@ -295,24 +305,36 @@ it.each(['en', 'zh-CN'] as const)(
       persistence: { read: async () => [record], write },
     })
     await act(async () => root.render(<CollaborationTemplatePage store={store} locale={locale} />))
-    expect(container.querySelector('[data-testid="template-delete-product-lifecycle"]')).toBeNull()
+    expect(
+      container.ownerDocument.querySelector('[data-testid="template-delete-product-lifecycle"]')
+    ).toBeNull()
     await click('template-tab-mine')
     await click('template-delete-imported-workflow')
-    expect(container.querySelector('dialog')?.textContent).toContain(document.spec.displayName)
+    expect(
+      container.ownerDocument.querySelector('[role="dialog"], [role="alertdialog"]')?.textContent
+    ).toContain(document.spec.displayName)
     expect(backend.delete).not.toHaveBeenCalled()
     await click('template-delete-cancel')
     expect(
-      container.querySelector('[data-testid="template-card-imported-workflow"]')
+      container.ownerDocument.querySelector('[data-testid="template-card-imported-workflow"]')
     ).not.toBeNull()
     await click('template-delete-imported-workflow')
     vi.mocked(backend.delete).mockRejectedValueOnce(new Error('network unavailable'))
     await click('template-delete-confirm')
-    expect(container.querySelector('dialog [role="alert"]')).not.toBeNull()
+    expect(
+      container.ownerDocument.querySelector(
+        '[role="dialog"] [role="alert"], [role="alertdialog"] [role="alert"]'
+      )
+    ).not.toBeNull()
     expect(write).not.toHaveBeenCalled()
     await click('template-delete-confirm')
     expect(backend.delete).toHaveBeenCalledWith(42)
-    expect(container.querySelector('dialog')).toBeNull()
-    expect(container.querySelector('[data-testid="template-card-imported-workflow"]')).toBeNull()
+    expect(
+      container.ownerDocument.querySelector('[role="dialog"], [role="alertdialog"]')
+    ).toBeNull()
+    expect(
+      container.ownerDocument.querySelector('[data-testid="template-card-imported-workflow"]')
+    ).toBeNull()
   }
 )
 
@@ -329,8 +351,10 @@ it('never offers deletion of other users’ downloaded templates', async () => {
     persistence: { read: async () => [record], write: vi.fn() },
   })
   await act(async () => root.render(<CollaborationTemplatePage store={store} locale="en" />))
-  expect(container.querySelector('[data-testid="template-card-someone-else"]')).not.toBeNull()
-  expect(container.querySelector('[data-testid^="template-delete-"]')).toBeNull()
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-card-someone-else"]')
+  ).not.toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid^="template-delete-"]')).toBeNull()
 })
 
 it('deletes account-only templates and invalidates their list metadata', async () => {
@@ -377,13 +401,13 @@ it('deletes account-only templates and invalidates their list metadata', async (
     await new Promise(resolve => setTimeout(resolve, 250))
   })
   await click('template-tab-mine')
-  expect(container.querySelector('[data-testid="template-delete-43"]')).toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-delete-43"]')).toBeNull()
   await click('template-delete-42')
   vi.mocked(backend.list).mockResolvedValue([])
   await click('template-delete-confirm')
   expect(backend.get).toHaveBeenCalledWith(42)
   expect(backend.delete).toHaveBeenCalledWith(42)
-  expect(container.querySelector('[data-testid="template-card-42"]')).toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-card-42"]')).toBeNull()
 })
 
 it('keeps the use action available after adding a marketplace template to the account', async () => {
@@ -410,7 +434,9 @@ it('keeps the use action available after adding a marketplace template to the ac
   await click('template-details-shared-workflow')
   await click('template-account-add')
   expect(backend.install).toHaveBeenCalledWith(42)
-  expect(container.querySelector('[data-testid="template-use"]')?.textContent).toBe('Use template')
+  expect(container.ownerDocument.querySelector('[data-testid="template-use"]')?.textContent).toBe(
+    'Use template'
+  )
   await click('template-use')
   expect(onUse).toHaveBeenCalledWith(record)
 })
@@ -442,15 +468,18 @@ it('preconfigures a new Agent coordinator instead of requiring an existing Agent
       />
     )
   )
-  expect(container.querySelector('[data-testid="template-role-main-role-0"]')).toBeNull()
-  const customize = container.querySelector<HTMLDetailsElement>('details')!
-  await act(async () => {
-    customize.open = true
-    customize.dispatchEvent(new Event('toggle'))
-  })
-  expect(container.querySelector('[data-testid="template-roster-main"]')).toBeNull()
   expect(
-    container.querySelector<HTMLSelectElement>('[data-testid="template-role-main-role-0"]')!.value
+    container.ownerDocument.querySelector('[data-testid="template-role-main-role-0"]')
+  ).toBeNull()
+  const customize = container.ownerDocument.querySelector<HTMLElement>(
+    '[data-slot="collapsible-trigger"]'
+  )!
+  await act(async () => customize.click())
+  expect(container.ownerDocument.querySelector('[data-testid="template-roster-main"]')).toBeNull()
+  expect(
+    container.ownerDocument
+      .querySelector('[data-testid="template-role-main-role-0"]')!
+      .getAttribute('data-value')
   ).toBe('agent:template-agent:main-role-0')
 })
 
@@ -525,7 +554,7 @@ it('keeps cached templates usable when independent discovery requests fail', asy
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, 250))
   })
-  expect(container.querySelector('[role="alert"]')).not.toBeNull()
+  expect(container.ownerDocument.querySelector('[role="alert"]')).not.toBeNull()
   await click('template-details-product-lifecycle')
   await click('template-use')
   expect(onUse).toHaveBeenCalledOnce()
@@ -630,17 +659,19 @@ it('cancels embedded import in place without writing and restores its trigger', 
       <CollaborationTemplatePage store={store} locale="en" embedded navigation={navigation} />
     )
   )
-  const trigger = container.querySelector<HTMLButtonElement>(
+  const trigger = container.ownerDocument.querySelector<HTMLButtonElement>(
     '[data-testid="template-import-open"]'
   )!
   trigger.focus()
   await click('template-import-open')
-  expect(container.querySelectorAll('dialog')).toHaveLength(0)
-  expect(container.querySelector('[data-testid="template-import-file"]')).not.toBeNull()
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-import-file"]')
+  ).not.toBeNull()
   expect(templatePageDetail(navigation, 'en')?.title).toBe('Import collaboration template')
-  expect(container.querySelector('[data-testid="template-import-cancel"]')).toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-import-cancel"]')).toBeNull()
   await act(async () => templatePageDetail(navigation, 'en')!.onBack())
-  expect(container.querySelector('[data-testid="template-import-file"]')).toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-import-file"]')).toBeNull()
   expect(document.activeElement).toBe(trigger)
   expect(backend.save).not.toHaveBeenCalled()
   expect(write).not.toHaveBeenCalled()
@@ -668,17 +699,21 @@ it('cancels embedded deletion in place without deleting and restores its trigger
     )
   )
   await click('template-tab-mine')
-  const trigger = container.querySelector<HTMLButtonElement>(
+  const trigger = container.ownerDocument.querySelector<HTMLButtonElement>(
     '[data-testid="template-delete-owned-template"]'
   )!
   trigger.focus()
   await click('template-delete-owned-template')
-  expect(container.querySelectorAll('dialog')).toHaveLength(0)
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"]')).toHaveLength(0)
   expect(templatePageDetail(navigation, 'en')?.title).toBe('Delete template')
-  expect(container.querySelector('[data-testid="template-delete-confirm"]')).not.toBeNull()
-  expect(container.querySelector('[data-testid="template-delete-cancel"]')).toBeNull()
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
+  ).not.toBeNull()
+  expect(container.ownerDocument.querySelector('[data-testid="template-delete-cancel"]')).toBeNull()
   await act(async () => templatePageDetail(navigation, 'en')!.onBack())
-  expect(container.querySelector('[data-testid="template-delete-confirm"]')).toBeNull()
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
+  ).toBeNull()
   expect(document.activeElement).toBe(trigger)
   expect(backend.delete).not.toHaveBeenCalled()
   expect(write).not.toHaveBeenCalled()
@@ -715,11 +750,17 @@ it('keeps embedded deletion open while its write is in progress', async () => {
   await click('template-delete-owned-template')
   await click('template-delete-confirm')
   await act(async () => templatePageDetail(navigation, 'en')!.onBack())
-  expect(container.querySelector('[data-testid="template-delete-confirm"]')).not.toBeNull()
-  expect(container.querySelectorAll('dialog')).toHaveLength(0)
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
+  ).not.toBeNull()
+  expect(container.ownerDocument.querySelectorAll('[role="dialog"]')).toHaveLength(0)
   await act(async () => finish())
-  expect(container.querySelector('[data-testid="template-delete-confirm"]')).toBeNull()
-  expect(document.activeElement).toBe(container.querySelector('[data-testid="template-search"]'))
+  expect(
+    container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
+  ).toBeNull()
+  expect(document.activeElement).toBe(
+    container.ownerDocument.querySelector('[data-testid="template-search"]')
+  )
 })
 
 it('uses localized builtin content and keeps raw records when switching the detail language', async () => {
@@ -783,11 +824,13 @@ it.each([0, 8])(
       await act(async () => {
         await vi.advanceTimersByTimeAsync(200)
       })
-      const firstParty = container.querySelector('[data-testid="template-card-product-lifecycle"]')!
+      const firstParty = container.ownerDocument.querySelector(
+        '[data-testid="template-card-product-lifecycle"]'
+      )!
       expect(firstParty.textContent).toContain('Product lifecycle')
       expect(firstParty.textContent).not.toContain('Server title')
       expect(
-        container.querySelector('[data-testid="template-card-42"]')?.textContent ?? ''
+        container.ownerDocument.querySelector('[data-testid="template-card-42"]')?.textContent ?? ''
       ).toEqual(publisher === 8 ? expect.stringContaining('Server title') : '')
     } finally {
       vi.useRealTimers()

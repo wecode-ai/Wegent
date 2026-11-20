@@ -1,18 +1,19 @@
-import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
-import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useContext, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { localRuntimeAttachments } from '@/lib/runtime-attachments'
-import type { WorkspaceStandInSettings } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { useStandInConversationModel } from './useStandInConversationModel'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
+import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import type { WorkspaceStandInSettings } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useContext, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useStandInConversationModel } from './useStandInConversationModel'
 
 export function StandInConversation({
   api,
@@ -101,7 +102,8 @@ export function StandInConversation({
   const failureNotice = error ? (
     <div role="alert" className="p-5 text-sm text-error">
       <p>{error}</p>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="stand-in-conversation-retry"
         className="mt-2 underline"
@@ -110,7 +112,7 @@ export function StandInConversation({
         }}
       >
         {t('standIn.reload')}
-      </button>
+      </ControlButton>
     </div>
   ) : null
   if (error && address === undefined) return failureNotice

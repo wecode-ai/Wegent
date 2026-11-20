@@ -1,11 +1,9 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Plus } from 'lucide-react'
 import { expect, test, vi } from 'vitest'
-import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
 import { track } from '@/telemetry/client'
 import { WorkspaceAddMenu } from './WorkspaceAddMenu'
 
-vi.mock('@/lib/embedded-browser', () => ({ setEmbeddedBrowserOcclusion: vi.fn() }))
 vi.mock('@/telemetry/client', () => ({ track: vi.fn() }))
 
 const props = {
@@ -23,17 +21,17 @@ test('owns browser occlusion only while mounted and respects IME Escape and insi
     />
   )
   fireEvent.click(screen.getByTestId('add-panel'))
-  expect(setEmbeddedBrowserOcclusion).toHaveBeenLastCalledWith('workspace-add-menu', true)
+  expect(screen.getByTestId('panels')).toHaveAttribute('data-embedded-browser-occlusion')
   fireEvent.pointerDown(screen.getByRole('menuitem'))
   expect(screen.getByTestId('panels')).toBeInTheDocument()
-  fireEvent.keyDown(document, { key: 'Escape', isComposing: true })
+  fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'Escape', isComposing: true })
   expect(screen.getByTestId('panels')).toBeInTheDocument()
-  fireEvent.keyDown(document, { key: 'Escape' })
+  fireEvent.keyDown(screen.getByRole('menuitem'), { key: 'Escape' })
   expect(screen.queryByTestId('panels')).toBeNull()
-  expect(setEmbeddedBrowserOcclusion).toHaveBeenLastCalledWith('workspace-add-menu', false)
+  expect(document.querySelector('[data-embedded-browser-occlusion]')).toBeNull()
   fireEvent.click(screen.getByTestId('add-panel'))
   unmount()
-  expect(setEmbeddedBrowserOcclusion).toHaveBeenLastCalledWith('workspace-add-menu', false)
+  expect(document.querySelector('[data-embedded-browser-occlusion]')).toBeNull()
 })
 
 test('closes on an outside pointer and never selects a disabled item', () => {
@@ -50,7 +48,7 @@ test('closes on an outside pointer and never selects a disabled item', () => {
   expect(screen.getByTestId('panels')).toBeInTheDocument()
   fireEvent.pointerDown(document.body)
   expect(screen.queryByTestId('panels')).toBeNull()
-  expect(setEmbeddedBrowserOcclusion).toHaveBeenLastCalledWith('workspace-add-menu', false)
+  expect(document.querySelector('[data-embedded-browser-occlusion]')).toBeNull()
 })
 
 test('removes occlusion before an asynchronous panel action finishes', async () => {
@@ -70,8 +68,8 @@ test('removes occlusion before an asynchronous panel action finishes', async () 
   fireEvent.click(screen.getByTestId('add-panel'))
   fireEvent.click(screen.getByRole('menuitem'))
   expect(screen.queryByTestId('panels')).toBeNull()
-  expect(setEmbeddedBrowserOcclusion).toHaveBeenLastCalledWith('workspace-add-menu', false)
-  expect(select).toHaveBeenCalledOnce()
+  expect(document.querySelector('[data-embedded-browser-occlusion]')).toBeNull()
+  await waitFor(() => expect(select).toHaveBeenCalledOnce())
   await act(async () => finish())
   expect(track).toHaveBeenLastCalledWith('workspace_panel_added', { panel: 'files' })
 })

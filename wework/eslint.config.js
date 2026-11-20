@@ -10,6 +10,7 @@ export default defineConfig([
   globalIgnores([
     'coverage',
     'dist',
+    'storybook-static',
     '**/target',
     'dsh/app-wework/web',
     'dummy-non-existing-folder',

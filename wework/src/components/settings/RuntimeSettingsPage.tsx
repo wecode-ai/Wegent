@@ -1,10 +1,14 @@
-import { LoaderCircle, Plus, Trash2 } from 'lucide-react'
-import { useRef, useState, useSyncExternalStore } from 'react'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { Field, FieldLabel } from '@wegent/collaboration/controls/Field'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LoaderCircle, Plus } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { CloudTodoModal } from '@/features/todo/CloudTodoModal'
@@ -15,10 +19,13 @@ import { isSupportedModelFamily } from '@/lib/model-ui'
 import { SettingsGroup, SettingsPage, SettingsPageHeader, SettingsRow } from './settings-ui'
 
 interface RuntimeSettingsPageProps {
-  runtimeProfileApi?: WorkbenchServices['runtimeProfileApi']
-  deliveryApi?: WorkbenchServices['deliveryApi']
-  deviceApi?: WorkbenchServices['deviceApi']
-  modelApi?: WorkbenchServices['modelApi']
+  runtimeProfileApi?: Pick<
+    NonNullable<WorkbenchServices['runtimeProfileApi']>,
+    'list' | 'create' | 'delete' | 'getProjectDefault' | 'setProjectDefault'
+  >
+  deliveryApi?: Pick<NonNullable<WorkbenchServices['deliveryApi']>, 'listCloudProjects'>
+  deviceApi?: Pick<NonNullable<WorkbenchServices['deviceApi']>, 'listDevices'>
+  modelApi?: Pick<NonNullable<WorkbenchServices['modelApi']>, 'listModels'>
 }
 
 function createRuntimeSettingsResources({
@@ -184,7 +191,8 @@ function RuntimeSettingsContent(
     state.status === 'error' ? (
       <div key={name} className="mb-3 text-xs text-destructive" role="alert">
         <p>{state.error instanceof Error ? state.error.message : String(state.error)}</p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={
             name === 'profiles' ? 'runtime-settings-retry' : `runtime-settings-${name}-retry`
@@ -193,7 +201,7 @@ function RuntimeSettingsContent(
           className="mt-2 min-h-11 rounded-lg border border-border px-3 text-sm md:min-h-8"
         >
           {t('common.retry')}
-        </button>
+        </ControlButton>
       </div>
     ) : null
   )
@@ -204,15 +212,16 @@ function RuntimeSettingsContent(
         title={t('workbench.runtime_profiles_title')}
         description={t('workbench.runtime_profiles_description')}
         actions={
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="runtime-profile-create"
             onClick={openCreate}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-xs font-medium text-background"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('workbench.runtime_profile_create')}
-          </button>
+          </ControlButton>
         }
       />
 
@@ -238,8 +247,8 @@ function RuntimeSettingsContent(
                   .find(device => device.device_id === profile.executionDeviceId)
                   ?.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
               }`}
-              control={
-                <button
+              children={
+                <DeleteIconButton
                   type="button"
                   data-testid={`runtime-profile-delete-${profile.id}`}
                   disabled={busyKey !== null}
@@ -253,15 +262,9 @@ function RuntimeSettingsContent(
                         ])
                     })
                   }}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-destructive disabled:opacity-40 wework:hover:text-red-600"
                   aria-label={t('workbench.runtime_profile_delete')}
-                >
-                  {busyKey === `delete:${profile.id}` ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                </button>
+                  pending={busyKey === `delete:${profile.id}`}
+                />
               }
             />
           ))
@@ -281,9 +284,10 @@ function RuntimeSettingsContent(
               <SettingsRow
                 key={project.id}
                 label={project.name}
-                control={
+                children={
                   <MenuSelect
                     testId={`runtime-project-default-${project.id}`}
+                    accessibleLabel={project.name}
                     value={projectDefaults[String(project.id)] ?? ''}
                     onChange={profileId => {
                       void perform(`default:${project.id}`, async () => {
@@ -324,17 +328,21 @@ function RuntimeSettingsContent(
             <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning wework:bg-amber-500/10 wework:text-amber-700">
               {t('workbench.runtime_profile_stay_on_page')}
             </p>
-            <label className="block text-xs text-text-secondary">
-              {t('workbench.runtime_profile_name')}
-              <input
+            <Field>
+              <FieldLabel>{t('workbench.runtime_profile_name')}</FieldLabel>
+              <ControlInput
                 data-testid="runtime-profile-name"
                 value={name}
                 onChange={event => setName(event.target.value)}
-                className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus"
+                className="w-full"
               />
-            </label>
+            </Field>
             <MenuSelect
               testId="runtime-profile-device"
+              field
+              label={t('workbench.task_activity_execution_device')}
+              description={!deviceSnapshot.settled ? t('common.loading') : undefined}
+              error={deviceSnapshot.error ? String(deviceSnapshot.error) : undefined}
               value={deviceId}
               onChange={setDeviceId}
               options={devices.map(device => ({
@@ -346,6 +354,10 @@ function RuntimeSettingsContent(
             />
             <MenuSelect
               testId="runtime-profile-model"
+              field
+              label={t('workbench.task_activity_execution_model')}
+              description={!modelSnapshot.settled ? t('common.loading') : undefined}
+              error={modelSnapshot.error ? String(modelSnapshot.error) : undefined}
               value={model}
               onChange={setModel}
               options={modelOptions}
@@ -353,26 +365,28 @@ function RuntimeSettingsContent(
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
             {failures}
             <div className="flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 disabled={busyKey !== null}
                 onClick={() => setCreating(false)}
                 className="h-8 rounded-lg px-3 text-xs text-text-secondary hover:bg-muted disabled:opacity-50"
               >
                 {t('common.cancel')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="runtime-profile-save"
                 disabled={busyKey !== null || !name.trim() || !deviceId || !model}
                 onClick={() => void create()}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-xs font-medium text-background disabled:opacity-40"
               >
                 {busyKey === 'create' ? (
                   <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                 ) : null}
                 {t('common.save')}
-              </button>
+              </ControlButton>
             </div>
           </div>
         </CloudTodoModal>

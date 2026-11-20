@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Network } from 'lucide-react'
 import { useSettingsCloudModels } from './useSettingsCloudModels'
 
@@ -136,7 +137,9 @@ export function DisconnectedCloudModelsSection({
           </p>
         </div>
         {onOpenCloudSettings && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="cloud-models-configure-button"
             onClick={onOpenCloudSettings}
@@ -144,7 +147,7 @@ export function DisconnectedCloudModelsSection({
           >
             <Network className="h-3.5 w-3.5" />
             {t('connectCloud', { ns: 'modelConnections' })}
-          </button>
+          </ControlButton>
         )}
       </div>
     </section>

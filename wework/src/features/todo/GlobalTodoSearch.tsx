@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { IssueReferenceResult, IssueReferenceLookup } from './resolveIssueReference'
-import { Cloud, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
-import { columns } from './todoShared'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Cloud, Search, X } from 'lucide-react'
 import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
 import { emptyTaskSearchFilters, matchesIssueReference, searchTasks } from './taskSearch'
+import { columns } from './todoShared'
 
 interface GlobalTodoSearchProps {
   lookupScope?: unknown
@@ -129,7 +131,8 @@ export function GlobalTodoSearch({
       <section className="w-[680px] max-w-full overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
         <div className="flex h-14 items-center gap-3 border-b border-border px-4">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
-          <input
+          <ControlInput
+            appearance="plain"
             autoFocus
             data-testid="cloud-global-search-input"
             value={query}
@@ -155,7 +158,8 @@ export function GlobalTodoSearch({
             className="h-full min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-text-muted"
           />
           {fullReference && onResolveReference && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="cloud-global-search-open-issue"
               disabled={currentLookup?.busy}
@@ -167,9 +171,10 @@ export function GlobalTodoSearch({
                   ? 'workbench.global_search_opening_issue'
                   : 'workbench.global_search_open_issue'
               )}
-            </button>
+            </ControlButton>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             aria-label={t('workbench.global_search_close')}
@@ -177,7 +182,7 @@ export function GlobalTodoSearch({
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-foreground"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
         <div className="max-h-[560px] overflow-y-auto p-2">
           {currentLookup?.error && (
@@ -186,7 +191,8 @@ export function GlobalTodoSearch({
             </p>
           )}
           {currentLookup?.matches?.map(({ project, item }) => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={projectKey(project)}
               type="button"
               data-testid={`cloud-global-search-direct-${projectKey(project)}`}
@@ -200,7 +206,7 @@ export function GlobalTodoSearch({
                   : 'workbench.global_search_source_cloud'
               )}{' '}
               · {project.name} · {item.id} · {item.title}
-            </button>
+            </ControlButton>
           ))}
           {!normalizedQuery || referenceOnly ? (
             <p className="px-4 py-12 text-center text-sm text-text-muted">
@@ -222,7 +228,8 @@ export function GlobalTodoSearch({
                     {t('workbench.global_search_projects')}
                   </h3>
                   {matchingProjects.map(project => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={projectKey(project)}
                       type="button"
                       onClick={() => onSelectProject(project)}
@@ -233,7 +240,7 @@ export function GlobalTodoSearch({
                       <span className="shrink-0 text-xs text-text-muted">
                         {project.project_key}
                       </span>
-                    </button>
+                    </ControlButton>
                   ))}
                 </section>
               )}
@@ -243,7 +250,8 @@ export function GlobalTodoSearch({
                     {t('workbench.global_search_tasks')}
                   </h3>
                   {taskResults.slice(0, 50).map(({ item, parentPath, project }) => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={`${projectKey(project)}:${item.id}`}
                       type="button"
                       data-testid={`cloud-global-search-result-${item.id}`}
@@ -268,7 +276,7 @@ export function GlobalTodoSearch({
                       <span className="shrink-0 text-xs text-text-muted">
                         {columns.find(column => column.status === item.status)?.label}
                       </span>
-                    </button>
+                    </ControlButton>
                   ))}
                 </section>
               )}

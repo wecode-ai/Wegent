@@ -1,24 +1,27 @@
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { DesktopConversationTranslation } from '@/components/chat/DesktopConversationTranslation'
+import { replyToInteractionProject } from '@/features/notifications/interactionProjectReply'
+import { issueHumanInteraction } from '@/features/notifications/issueHumanInteractions'
+import { IssueWaitingTime } from '@/features/notifications/IssueWaitingTime'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
-import { RequestUserInputCard } from '@wegent/collaboration/conversation'
-import {
-  issueHumanAssignees,
-  WaitingForPersonIcon,
-  type IssueHumanRequest,
-  type CollaborationMember,
-} from '@wegent/collaboration'
 import { requestUserInputResponseText } from '@wegent/chat-core/runtime-user-input'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { issueHumanInteraction } from '@/features/notifications/issueHumanInteractions'
-import { replyToInteractionProject } from '@/features/notifications/interactionProjectReply'
-import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
-import { IssueWaitingTime } from '@/features/notifications/IssueWaitingTime'
-import { DesktopConversationTranslation } from '@/components/chat/DesktopConversationTranslation'
+import type { CollaborationMember, IssueHumanRequest } from '@wegent/collaboration'
+import { issueHumanAssignees, WaitingForPersonIcon } from '@wegent/collaboration'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { RequestUserInputCard } from '@wegent/collaboration/conversation'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
 export function IssueHumanRequests({
   services,
@@ -161,20 +164,18 @@ export function IssueHumanRequests({
                     (request.recipient_user_id == null ? request.created_at : null)
                   }
                 />
-                <select
-                  className="min-h-11 rounded-md border border-border bg-background px-2 py-1 text-sm text-text-primary md:min-h-8"
-                  aria-label={t('issueParticipation.assign')}
-                  data-testid={`issue-human-request-assignee-${request.id}`}
-                  value={request.recipient_user_id ?? ''}
+                <SelectRoot
+                  value={normalizeSelectValue(request.recipient_user_id ?? '')}
                   disabled={
                     Boolean(error) ||
                     busy === request.id ||
                     request.status !== 'pending' ||
                     request.can_assign === false
                   }
-                  onChange={event => {
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
                     const member = candidates.find(
-                      member => String(member.user_id) === event.target.value
+                      member => String(member.user_id) === selectedValue
                     )
                     if (!member) return
                     setBusy(request.id)
@@ -188,13 +189,20 @@ export function IssueHumanRequests({
                       .finally(() => setBusy(undefined))
                   }}
                 >
-                  <option value="">{t('issueParticipation.assign')}</option>
-                  {candidates.map(member => (
-                    <option key={member.user_id} value={member.user_id}>
-                      {member.user_name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    aria-label={t('issueParticipation.assign')}
+                    data-testid={`issue-human-request-assignee-${request.id}`}
+                  />
+                  <SelectContent>
+                    <SelectItem value="">{t('issueParticipation.assign')}</SelectItem>
+                    {candidates.map(member => (
+                      <SelectItem key={member.user_id} value={String(member.user_id)}>
+                        {member.user_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
                 {request.status === 'answering' && (
                   <span>{t('issueParticipation.delivering')}</span>
                 )}

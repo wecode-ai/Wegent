@@ -1,4 +1,11 @@
-import { createContext, useContext, type RefObject } from 'react'
+import { createContext, useCallback, useContext, type RefObject } from 'react'
+import { flushSync } from 'react-dom'
+import { useDOMEvent, useWindowEvent } from '../dom-events'
+import {
+  isConversationDiagnosticsEnabled,
+  recordConversationDiagnostic,
+} from '../conversation/conversationDiagnostics'
+import { SCROLLBAR_DRAG_POSITION_EVENT } from '../conversation/conversationScrollWrite'
 
 const MAX_MARKDOWN_HEIGHT_ENTRIES = 256
 
@@ -83,4 +90,26 @@ export const MarkdownWindowingDisabledContext = createContext(false)
 
 export function useMarkdownWindowingScope(): MarkdownWindowingScope | null {
   return useContext(MarkdownWindowingContext)
+}
+
+export function useMarkdownWindowingViewport(scope: MarkdownWindowingScope) {
+  const renderScrolledMarkdown = useCallback(
+    (event: Event) => {
+      if (event.target !== scope.scrollElementRef?.current) return
+      const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
+      const renders = scope.getViewportRenders()
+      if (renders.length > 0) flushSync(() => renders.forEach(render => render()))
+      if (startedAt === null) return
+      const elapsedMs = performance.now() - startedAt
+      if (elapsedMs >= 16)
+        recordConversationDiagnostic('search-scroll-render', {
+          elapsedMs,
+          renderedCount: renders.length,
+        })
+    },
+    [scope]
+  )
+  useWindowEvent('scroll', renderScrolledMarkdown, { capture: true, passive: true })
+  // The SDK updates drag position before Chromium delivers the native scroll event.
+  useDOMEvent('window', SCROLLBAR_DRAG_POSITION_EVENT, renderScrolledMarkdown, { capture: true })
 }

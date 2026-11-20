@@ -2,15 +2,15 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { builtinCollaborationTemplates } from '../templates/builtins'
+import { CollaborationTemplateContext } from '../templates/context'
+import { CollaborationTemplateStore } from '../templates/store'
+import { CollaborationTheme } from '../theme'
+import type { CollaborationProject } from '../types'
 import { ProjectCollaboratorPicker } from './ProjectCollaboratorPicker'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { projectCreateLabels } from './labels'
 import type { ProjectCreateResourceSetup } from './types'
-import type { CollaborationProject } from '../types'
-import { CollaborationTheme } from '../theme'
-import { builtinCollaborationTemplates } from '../templates/builtins'
-import { CollaborationTemplateContext } from '../templates/context'
-import { CollaborationTemplateStore } from '../templates/store'
 
 let root: Root
 let container: HTMLDivElement
@@ -61,7 +61,11 @@ afterEach(async () => {
 })
 const get = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
 const click = async (id: string) => {
-  await act(async () => get(id).click())
+  await act(async () => {
+    const control = get(id)
+    if (control.matches('button:not(:disabled)')) control.focus()
+    control.click()
+  })
 }
 
 function deferredUsers() {
@@ -217,9 +221,8 @@ it.each(['Escape', 'unmount'])(
       const menu = get('collaboration-project-create-collaborator-menu')
       expect(menu.closest('[role="dialog"][aria-modal="true"]')).toBe(dialog)
       expect(menu.closest('.collaboration-project-create-body')).toBeNull()
-      expect(menu.closest('[data-radix-popper-content-wrapper]')?.getAttribute('style')).toContain(
-        'position: fixed'
-      )
+      expect(menu.getAttribute('data-slot')).toBe('popover-content')
+      expect(menu.getAttribute('popover')).toBe('manual')
       expect(menu.dataset.theme).toBe('dark')
       expect(dialog.contains(document.activeElement)).toBe(true)
       expect(document.activeElement).toBe(get('collaboration-project-create-people-search'))
@@ -463,18 +466,15 @@ it('retains manually added collaborators while changing template roles and creat
   await click('collaboration-project-create-add-collaborator')
   await click('collaboration-project-create-collaborator-tab-agents')
   await click('collaboration-project-create-agent-qa-agent')
-  const customize = container
-    .querySelector<HTMLDetailsElement>('[data-testid^="template-customize-"]')!
-    .closest('details')!
-  await act(async () => {
-    customize.open = true
-    customize.dispatchEvent(new Event('toggle'))
-  })
-  const role = document.querySelector<HTMLSelectElement>('[data-testid^="template-role-"]')!
-  await act(async () => {
-    role.value = 'human:2'
-    role.dispatchEvent(new Event('change', { bubbles: true }))
-  })
+  const customize = container.querySelector<HTMLElement>('[data-testid^="template-customize-"]')!
+  if (customize.getAttribute('aria-expanded') !== 'true') await act(async () => customize.click())
+  const role = document.querySelector<HTMLButtonElement>('[data-testid^="template-role-"]')!
+  await act(async () => role.click())
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option =>
+    option.textContent?.includes(person.user_name)
+  )!
+  expect(option).toBeTruthy()
+  await act(async () => option.click())
   await click('cloud-project-create-confirm')
   expect(create).toHaveBeenCalledOnce()
   const selection = configure.mock.calls[0][1]

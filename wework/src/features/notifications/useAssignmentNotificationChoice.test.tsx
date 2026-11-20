@@ -15,7 +15,7 @@ it('settles explicit choices, cancels replaced requests and releases a detached 
   act(() => {
     first = choice.request()
   })
-  expect(screen.getByRole('dialog')).toBeVisible()
+  expect(screen.getByRole('alertdialog')).toBeVisible()
   let second!: Promise<boolean | null>
   act(() => {
     second = choice.request()
@@ -23,7 +23,7 @@ it('settles explicit choices, cancels replaced requests and releases a detached 
   await expect(first).resolves.toBeNull()
   await userEvent.click(screen.getByTestId('wework-board-notify-confirm'))
   await expect(second).resolves.toBe(true)
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   act(() => {
     first = choice.request()
   })

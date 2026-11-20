@@ -1,3 +1,8 @@
+import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Check,
   CircleCheck,
@@ -10,10 +15,6 @@ import {
   Loader2,
   TriangleAlert,
 } from 'lucide-react'
-import type { CollaborationIssueBadge } from '@wegent/collaboration'
-import { Tooltip } from '@/components/ui/tooltip'
-import { useTranslation } from '@/hooks/useTranslation'
-import { openExternalUrl } from '@/lib/external-links'
 
 export function IssueBadges({
   badges,
@@ -29,7 +30,9 @@ export function IssueBadges({
   return (
     <section
       className={
-        compact ? 'mb-2 mt-1 flex flex-wrap items-center gap-1' : 'flex flex-col gap-2 px-4 py-3'
+        compact
+          ? 'mb-2 mt-1 flex flex-wrap items-center gap-1'
+          : 'flex flex-col items-start gap-2 px-4 py-3'
       }
       data-testid={testId}
       aria-label={t('todo.issue_badges_title')}
@@ -73,9 +76,10 @@ function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
       <span>{badge.label}</span>
     </>
   )
-  const className = `inline-flex h-6 items-center gap-1.5 rounded-md bg-muted/40 px-1.5 text-xs ${badgeTones[badge.tone ?? 'neutral']}`
+  const className = `inline-flex h-6 items-center gap-1.5 rounded-md px-1.5 text-xs ${badgeTones[badge.tone ?? 'neutral']}`
   const view = badge.url ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       className={`${className} hover:bg-muted`}
       data-testid={`issue-badge-${badge.id}`}
@@ -87,7 +91,7 @@ function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
       }}
     >
       {content}
-    </button>
+    </ControlButton>
   ) : (
     <span
       className={className}

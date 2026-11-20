@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../../markdown/Button'
 import { useClock } from '../../clock'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
@@ -45,7 +46,7 @@ export function ProcessFileChangesBlockItem({
           const editDuration = fileEditDurations?.get(block.id)?.get(file.path)
           return (
             <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
-              <button
+              <ControlButton variant="unstyled"
                 type="button"
                 disabled={previewLines.length === 0}
                 aria-expanded={previewLines.length > 0 ? fileExpanded : undefined}
@@ -80,7 +81,7 @@ export function ProcessFileChangesBlockItem({
                   fallbackCompletedAt={block.completedAt}
                   isRunning={isRunning}
                 />
-              </button>
+              </ControlButton>
               {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
             </div>
           )

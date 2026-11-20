@@ -1,69 +1,70 @@
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
-import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
-import { memo, useCallback, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
-import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
-import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
-import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
-import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
-import { stripAppBasePath } from '@/config/runtime'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import {
-  findWorkbenchDevice,
-  getActiveWorkbenchDeviceId,
-  getWorkbenchDeviceUnavailableDisplayName,
-  isWorkbenchDeviceOnline,
-} from '@/lib/workbench-device'
-import {
-  WEWORK_MIN_EXECUTOR_VERSION,
-  isCloudDevice,
-  isDeviceBelowWeWorkVersion,
-  isWeWorkCompatibleDevice,
-} from '@/lib/device-capabilities'
-import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
-import { DeviceStatusPrompt } from './DeviceStatusPrompt'
-import { MobileDrawer } from './MobileDrawer'
+import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   isImplementationPlanConfirmationResponse,
   isImplementationPlanRequestUserInput,
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
-import { TaskForkDialog } from './TaskForkDialog'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
-import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
-import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
-import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
-import {
-  pendingRequestUserInputPayload,
-  pendingRequestUserInputPayloads,
-  pendingRequestUserInputResponses,
-} from './requestUserInputOverlay'
-import { SubagentStatusIndicator } from './SubagentStatusIndicator'
-import { BufferedChatInput } from './BufferedChatInput'
-import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
-import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
-import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
-import type { WorkbenchMessage } from '@/types/workbench'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
+import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
+import { stripAppBasePath } from '@/config/runtime'
 import {
   defaultAppearance,
   getWorkbenchBackground,
   useOptionalAppearance,
   WorkbenchBackground,
 } from '@/features/appearance'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
+import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  isCloudDevice,
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+  WEWORK_MIN_EXECUTOR_VERSION,
+} from '@/lib/device-capabilities'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
-import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
+import { memo, useCallback, useRef, useState } from 'react'
+import { BufferedChatInput } from './BufferedChatInput'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+import { MobileDrawer } from './MobileDrawer'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
+import { SubagentStatusIndicator } from './SubagentStatusIndicator'
+import { TaskForkDialog } from './TaskForkDialog'
+import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
+import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
+import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
+import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import { isWorktreeCreationPending } from './worktreeCreationState'
+import { WorktreeCreationStatus } from './WorktreeCreationStatus'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
@@ -351,7 +352,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   : 'bg-background/95 backdrop-blur'
               )}
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
@@ -359,7 +361,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
-              </button>
+              </ControlButton>
               <div className="pointer-events-auto flex min-w-0 flex-1 justify-start">
                 {mobileModelSelector}
               </div>
@@ -371,7 +373,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     compact
                   />
                   {currentRuntimeUsesCodex && (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="mobile-fork-runtime-task-button"
                       className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
@@ -379,7 +382,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       onClick={() => setForkDialogOpen(true)}
                     >
                       <ArrowLeftRight className="h-5 w-5" />
-                    </button>
+                    </ControlButton>
                   )}
                 </div>
               ) : (
@@ -594,7 +597,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   : 'bg-background/95'
               )}
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
@@ -602,7 +606,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
-              </button>
+              </ControlButton>
               <div className="flex min-w-0 flex-1 justify-start">{mobileModelSelector}</div>
               <div className="h-11 min-w-[44px]" />
             </header>

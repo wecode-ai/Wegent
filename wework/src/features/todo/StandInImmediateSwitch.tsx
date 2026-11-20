@@ -1,6 +1,7 @@
 import type { StandInHandlingPolicy } from '@/api/personalStandIn'
-import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 
 export function StandInImmediateSwitch({
   policy,
@@ -21,7 +22,7 @@ export function StandInImmediateSwitch({
       className="px-0"
       label={t('standIn.workspace.start_timing')}
       description={t('standIn.workspace.start_timing_description')}
-      control={
+      children={
         <>
           <SettingsSwitch
             data-testid={testId}
@@ -31,7 +32,8 @@ export function StandInImmediateSwitch({
             onCheckedChange={immediate => onChange({ ...policy, immediate })}
           />
           {!policy.automatic && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-enable`}
               disabled={disabled}
@@ -39,7 +41,7 @@ export function StandInImmediateSwitch({
               className="min-h-11 px-2 text-sm underline md:min-h-8"
             >
               {t('standIn.workspace.enable_connection_handling')}
-            </button>
+            </ControlButton>
           )}
         </>
       }

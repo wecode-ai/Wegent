@@ -1,6 +1,8 @@
-import { BookOpenText, Boxes, Loader2 } from 'lucide-react'
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
+import { useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { BookOpenText, Boxes, Loader2 } from 'lucide-react'
 
 export interface SkillDetailTarget {
   name: string
@@ -32,22 +34,24 @@ export function SkillDetailDialog({
   const { t } = useTranslation('common')
   const logo = skill.pluginLogoUrl?.trim() || ''
 
-  useDocumentEvent('keydown', event => {
-    if (event.key === 'Escape' && true) onClose()
-  })
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div
       className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-6"
       onClick={onClose}
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="skill-detail-dialog-title"
-        data-testid="skill-detail-dialog"
-        className="plugin-dialog-surface w-full max-w-[680px] overflow-hidden"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={onClose}
+        initialFocus={() => closeRef.current}
+        render={
+          <section
+            aria-labelledby="skill-detail-dialog-title"
+            data-testid="skill-detail-dialog"
+            className="plugin-dialog-surface w-full max-w-[680px] overflow-hidden"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="plugin-dialog-divider flex items-start gap-3 border-b px-6 py-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface text-text-secondary">
@@ -91,7 +95,8 @@ export function SkillDetailDialog({
         </div>
         <div className="plugin-dialog-divider flex items-center justify-between border-t px-6 py-4">
           {skill.canToggle && onToggle ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="skill-detail-toggle"
               className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-surface"
@@ -100,21 +105,24 @@ export function SkillDetailDialog({
               {skill.enabled
                 ? t('workbench.plugins_disable_skill', '禁用')
                 : t('workbench.plugins_enable_skill', '恢复')}
-            </button>
+            </ControlButton>
           ) : (
             <span />
           )}
           <div className="flex gap-2">
-            <button
-              autoFocus
+            <ControlButton
+              variant="unstyled"
+              ref={closeRef}
               type="button"
               data-testid="skill-detail-close"
               className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"
               onClick={onClose}
             >
               {t('workbench.close', '关闭')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="skill-detail-run"
               disabled={!skill.installed || !skill.enabled || running}
@@ -123,10 +131,10 @@ export function SkillDetailDialog({
             >
               {running && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
               {t('workbench.plugins_run_skill', '运行技能')}
-            </button>
+            </ControlButton>
           </div>
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

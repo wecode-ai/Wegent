@@ -1,11 +1,12 @@
-import { useRef } from 'react'
-import { useDialogKeyboard } from '@wegent/collaboration/controls/useDialogKeyboard'
-import type { FormEvent } from 'react'
-import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
+import type { FormEvent } from 'react'
+import { useRef } from 'react'
 import { isMarketplaceSourceValid, type AddMarketFormData } from './marketplaceWorkspaceHelpers'
-
-const MARKETPLACE_FOCUS_RETURN = { fallbackSelector: '[data-testid="plugins-create-button"]' }
 
 export function AddMarketDialog({
   isOpen,
@@ -23,15 +24,6 @@ export function AddMarketDialog({
   onSubmit: (event: FormEvent) => void
 }) {
   const { t } = useTranslation('common')
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!isSubmitting) onClose()
-    },
-    isOpen,
-    '[data-testid="plugins-marketplace-path-input"]',
-    true,
-    MARKETPLACE_FOCUS_RETURN
-  )
   const sourceInputRef = useRef<HTMLInputElement>(null)
   const sourceIsValid = isMarketplaceSourceValid(formData.source)
   const sourceError = Boolean(formData.source.trim()) && !sourceIsValid
@@ -54,15 +46,23 @@ export function AddMarketDialog({
         if (!isSubmitting) onClose()
       }}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugins-marketplace-dialog-title"
-        tabIndex={-1}
-        data-testid="plugins-marketplace-dialog"
-        className="plugin-dialog-surface max-h-[88vh] w-full max-w-[600px] overflow-y-auto"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        initialFocus={() => sourceInputRef.current}
+        finalFocus={() =>
+          document.querySelector<HTMLElement>('[data-testid="plugins-create-button"]')
+        }
+        onClose={() => {
+          if (!isSubmitting) onClose()
+        }}
+        render={
+          <div
+            aria-labelledby="plugins-marketplace-dialog-title"
+            tabIndex={-1}
+            data-testid="plugins-marketplace-dialog"
+            className="plugin-dialog-surface max-h-[88vh] w-full max-w-[600px] overflow-y-auto"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="plugin-dialog-divider flex items-start justify-between gap-6 border-b px-6 py-5">
           <div className="min-w-0">
@@ -87,7 +87,8 @@ export function AddMarketDialog({
               </a>
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             disabled={isSubmitting}
@@ -96,7 +97,7 @@ export function AddMarketDialog({
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -105,7 +106,7 @@ export function AddMarketDialog({
               <span className="mb-1.5 block text-sm font-medium text-text-primary">
                 {t('workbench.plugins_market_source', '来源')}
               </span>
-              <input
+              <ControlInput
                 ref={sourceInputRef}
                 type="text"
                 required
@@ -117,11 +118,11 @@ export function AddMarketDialog({
                 onChange={event => onChange({ ...formData, source: event.target.value })}
                 placeholder="openai/plugins 或 git@github.com:org/repo.git"
                 className={[
-                  'h-10 w-full rounded-lg border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted',
+                  'w-full transition-colors placeholder:text-text-muted',
                   sourceError
-                    ? 'border-destructive/70 focus:border-destructive focus:ring-2 focus:ring-destructive/15 wework:border-red-500/70 wework:focus:border-red-500 wework:focus:ring-red-500/15'
-                    : 'border-border/45 keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15',
-                ].join(' ')}
+                    ? 'border-destructive/70 focus:border-destructive focus:ring-destructive/15 wework:border-red-500/70 wework:focus:border-red-500 wework:focus:ring-red-500/15'
+                    : '',
+                ].join('')}
               />
               <span
                 id="plugins-marketplace-source-note"
@@ -146,14 +147,14 @@ export function AddMarketDialog({
               <span className="mb-1.5 block text-sm font-medium text-text-primary">
                 {t('workbench.plugins_market_git_ref', 'Git 引用')}
               </span>
-              <input
+              <ControlInput
                 type="text"
                 autoComplete="off"
                 data-testid="plugins-marketplace-git-ref-input"
                 value={formData.gitRef}
                 onChange={event => onChange({ ...formData, gitRef: event.target.value })}
                 placeholder={t('workbench.plugins_market_git_ref_placeholder', '主分支')}
-                className="h-10 w-full rounded-lg border border-border/45 bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+                className="h-10 w-full transition-colors placeholder:text-text-muted"
               />
             </label>
 
@@ -161,7 +162,7 @@ export function AddMarketDialog({
               <span className="mb-1.5 block text-sm font-medium text-text-primary">
                 {t('workbench.plugins_market_sparse_path', '稀疏路径')}
               </span>
-              <textarea
+              <ControlTextarea
                 data-testid="plugins-marketplace-sparse-path-input"
                 value={formData.subPath}
                 onChange={event => onChange({ ...formData, subPath: event.target.value })}
@@ -172,7 +173,9 @@ export function AddMarketDialog({
           </div>
 
           <div className="plugin-dialog-divider flex justify-end gap-[9px] border-t px-6 py-4">
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="plugins-marketplace-cancel-button"
               onClick={onClose}
@@ -180,8 +183,10 @@ export function AddMarketDialog({
               className="h-9 rounded-lg border border-border/30 bg-surface px-4 text-sm font-medium text-text-primary transition-colors hover:bg-muted disabled:opacity-50"
             >
               {t('common.cancel', '取消')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid="plugins-marketplace-save-button"
               disabled={isSubmitting || !sourceIsValid}
@@ -190,10 +195,10 @@ export function AddMarketDialog({
               {isSubmitting
                 ? t('workbench.plugins_adding_market', '添加中...')
                 : t('workbench.plugins_confirm_add_market', '添加市场')}
-            </button>
+            </ControlButton>
           </div>
         </form>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

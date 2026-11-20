@@ -1,13 +1,14 @@
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
 import { TodoEditor } from './TodoEditor'
 
 interface WorkItemContextPanelProps {
@@ -29,6 +30,7 @@ interface WorkItemContextPanelProps {
   focusedCommentId?: string
   focusedCommentRequestKey?: string
   readFirst?: boolean
+  headerActions?: ReactNode
 }
 
 export function WorkItemContextPanel({
@@ -47,6 +49,7 @@ export function WorkItemContextPanel({
   focusedCommentId,
   focusedCommentRequestKey,
   readFirst,
+  headerActions,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
   const detailServices =
@@ -79,14 +82,15 @@ export function WorkItemContextPanel({
           className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm text-error"
         >
           {t('personalHome.relatedFailed')}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="work-item-related-retry"
             className="min-h-11 underline md:min-h-8"
             onClick={() => void resource.reload()}
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <div className="min-h-0 flex-1">
@@ -102,8 +106,10 @@ export function WorkItemContextPanel({
           onOpenRuntimeTask={onOpenRuntimeTask}
           onOpenChildTask={onOpenChildTask}
           headerActions={
-            onOpenBoard && (
-              <button
+            headerActions ??
+            (onOpenBoard && (
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="work-item-open-board"
                 onClick={onOpenBoard}
@@ -111,8 +117,8 @@ export function WorkItemContextPanel({
               >
                 {t('workbench.open_workspace', '打开工作空间')}
                 <ArrowUpRight className="h-3.5 w-3.5" />
-              </button>
-            )
+              </ControlButton>
+            ))
           }
           selectedTaskId={currentTask?.taskId}
           deviceNamesById={deviceNamesById}

@@ -8,8 +8,6 @@ import { createDesktopSidebarPreferences } from './desktopSidebarPreferences'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
 
@@ -216,11 +214,6 @@ export function useDesktopSidebarModel({
 
   const [isArchivingPriority, setIsArchivingPriority] = useState(false)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
-  const projectCreateDialogRef = useDialogKeyboard<HTMLDivElement>(
-    () => setProjectCreateDialogOpen(false),
-    projectCreateDialogOpen,
-    '[data-testid="project-create-local-option"]'
-  )
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
@@ -977,7 +970,6 @@ export function useDesktopSidebarModel({
       setStandaloneWorkspaceDialogMode,
       projectCreateDialogOpen,
       setProjectCreateDialogOpen,
-      projectCreateDialogRef,
     },
   }
 }

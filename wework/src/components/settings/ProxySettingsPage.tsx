@@ -1,8 +1,6 @@
-import { AlertCircle, Laptop, Loader2, Network, RefreshCw, ShieldCheck } from 'lucide-react'
-import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { resolveEffectiveLocalCodexProxy, resolveLocalCodexProxyUrl } from '@/desktop/systemProxy'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
@@ -13,7 +11,12 @@ import {
   type LocalProxyMode,
 } from '@/features/model-settings/localProxySettings'
 import { useTranslation } from '@/hooks/useTranslation'
-import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Laptop, Loader2, Network, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 const RESTART_CODEX_APP_SERVER_METHOD = 'runtime.codex.app_server.restart'
@@ -89,7 +92,8 @@ export function ProxySettingsPage() {
         description={t('workbench.proxy_config_subtitle')}
         actions={
           ready ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="proxy-config-refresh-button"
               onClick={() => void resource.reload()}
@@ -103,7 +107,7 @@ export function ProxySettingsPage() {
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-            </button>
+            </ControlButton>
           ) : undefined
         }
       />
@@ -239,7 +243,7 @@ function CloudProxySettingsSection({
         </div>
       )}
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <input
+        <ControlInput
           data-testid="proxy-config-url-input"
           value={proxyUrl}
           onChange={event => setProxyUrl(event.target.value)}
@@ -247,7 +251,8 @@ function CloudProxySettingsSection({
           placeholder={t('workbench.proxy_config_placeholder')}
           className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm text-text-primary placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
         />
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="proxy-config-save-button"
           onClick={() => void handleSaveProxyUrl()}
@@ -256,7 +261,7 @@ function CloudProxySettingsSection({
         >
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {saving ? t('workbench.proxy_config_saving') : t('workbench.proxy_config_save')}
-        </button>
+        </ControlButton>
       </div>
 
       <div className="mt-2 flex items-center gap-1.5 text-xs leading-5 text-text-muted">
@@ -446,7 +451,20 @@ function LocalProxySettingsSection() {
         <legend className="mb-2 text-xs font-medium text-text-secondary">
           {t('workbench.proxy_config_mode_label')}
         </legend>
-        <div className="grid gap-2 sm:grid-cols-3" role="radiogroup">
+        <RadioGroup
+          value={localProxyMode}
+          name="local-proxy-mode"
+          aria-label={t('workbench.proxy_config_mode_label')}
+          onValueChange={next => {
+            const option = localProxyModes.find(option => option.mode === next)
+            if (option) {
+              setLocalProxyMode(option.mode)
+              setLocalError(null)
+            }
+          }}
+          render={<div />}
+          className="grid gap-2 sm:grid-cols-3"
+        >
           {localProxyModes.map(option => {
             const selected = localProxyMode === option.mode
             return (
@@ -458,18 +476,10 @@ function LocalProxySettingsSection() {
                     : 'border-border bg-background hover:bg-surface'
                 }`}
               >
-                <input
-                  type="radio"
-                  name="local-proxy-mode"
+                <Radio
                   value={option.mode}
-                  checked={selected}
-                  onChange={() => {
-                    setLocalProxyMode(option.mode)
-                    setLocalError(null)
-                  }}
                   disabled={localSaving}
                   data-testid={`local-proxy-mode-${option.mode}`}
-                  className="sr-only"
                 />
                 <span className="block text-sm font-medium text-text-primary">{option.label}</span>
                 <span className="mt-1 block text-xs leading-5 text-text-muted">
@@ -478,30 +488,31 @@ function LocalProxySettingsSection() {
               </label>
             )
           })}
-        </div>
+        </RadioGroup>
       </fieldset>
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
         {localProxyMode === 'custom' && (
-          <input
+          <ControlInput
             data-testid="local-proxy-config-url-input"
             value={localProxyUrl}
             onChange={event => setLocalProxyUrl(event.target.value)}
             disabled={localSaving}
             placeholder={t('workbench.proxy_config_placeholder')}
-            className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-sm text-text-primary placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-9 min-w-0 flex-1 placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-50"
           />
         )}
-        <button
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           data-testid="local-proxy-config-save-button"
           onClick={() => void handleSaveLocalProxyUrl()}
           disabled={localSaving}
-          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {localSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {localSaving ? t('workbench.proxy_config_saving') : t('workbench.proxy_config_save')}
-        </button>
+        </ControlButton>
       </div>
 
       {localNotice && (
@@ -511,18 +522,20 @@ function LocalProxySettingsSection() {
         >
           <span>{localNotice}</span>
           {localRestartRequired && (
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="local-proxy-config-restart-codex-button"
               onClick={() => void handleRestartLocalCodex()}
               disabled={localRestarting}
-              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-xs font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0"
             >
               {localRestarting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {localRestarting
                 ? t('workbench.proxy_config_local_restarting')
                 : t('workbench.proxy_config_local_restart_action')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}
@@ -535,14 +548,15 @@ function LocalProxySettingsSection() {
           <div>
             <span>{localError}</span>
             {snapshot.status === 'error' && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="local-proxy-config-retry-resolution"
                 onClick={() => void resource.reload()}
                 className="ml-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
               >
                 {t('common.retry')}
-              </button>
+              </ControlButton>
             )}
           </div>
         </div>

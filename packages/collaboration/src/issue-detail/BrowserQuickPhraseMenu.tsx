@@ -1,12 +1,14 @@
-import { useCallback, useState, useSyncExternalStore } from 'react'
-import { createPortal } from 'react-dom'
 import type {
   createQuickPhrasePreferencesStore,
   QuickPhrase,
 } from '@wegent/chat-core/composer-quick-phrases'
-import type { CollaborationTranslate } from '../i18n'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { QuickPhraseMenu } from '../composer/QuickPhraseMenu'
 import { QuickPhrasesEditor } from '../composer/QuickPhrasesEditor'
+import { DialogSurface } from '../controls/DialogSurface'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 import { useCollaborationPortalTheme } from '../theme'
 
 export function BrowserQuickPhraseMenu({
@@ -23,15 +25,8 @@ export function BrowserQuickPhraseMenu({
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const [manage, setManage] = useState(false)
   const portalTheme = useCollaborationPortalTheme()
-  const attachDialog = useCallback((dialog: HTMLDialogElement | null) => {
-    if (!dialog) return
-    const previous = document.activeElement as HTMLElement | null
-    dialog.showModal()
-    return () => {
-      dialog.close()
-      previous?.focus()
-    }
-  }, [])
+  const dialogRef = useRef<HTMLDivElement>(null)
+
   return (
     <>
       <QuickPhraseMenu
@@ -48,7 +43,8 @@ export function BrowserQuickPhraseMenu({
       {snapshot.error && !manage && (
         <div role="alert" className="flex items-center gap-2 text-xs text-destructive">
           <span>{snapshot.error}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="quick-phrase-load-retry"
             disabled={snapshot.pending}
@@ -56,29 +52,35 @@ export function BrowserQuickPhraseMenu({
             onClick={() => void store.load()}
           >
             {t('common.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {manage &&
         createPortal(
-          <dialog
-            {...portalTheme}
-            ref={attachDialog}
-            aria-label={t('workbench.quick_phrases')}
-            data-testid="quick-phrase-preferences-dialog"
-            onCancel={() => setManage(false)}
-            className={`${portalTheme.className} m-auto max-h-[86vh] w-[min(42rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg backdrop:bg-black/30`}
+          <DialogSurface
+            inline={false}
+            onClose={() => setManage(false)}
+            render={
+              <div
+                {...portalTheme}
+                ref={dialogRef}
+                aria-label={t('workbench.quick_phrases')}
+                data-testid="quick-phrase-preferences-dialog"
+                className={`${portalTheme.className} m-auto max-h-[86vh] w-[min(42rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg backdrop:bg-black/30`}
+              />
+            }
           >
             <header className="mb-4 flex items-center justify-between gap-3">
               <h2 className="heading-sm">{t('workbench.quick_phrases')}</h2>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="quick-phrase-preferences-close"
                 className="h-8 rounded-lg px-3 text-sm hover:bg-muted max-md:min-h-11 max-md:min-w-11"
                 onClick={() => setManage(false)}
               >
                 {t('common.close')}
-              </button>
+              </ControlButton>
             </header>
             <QuickPhrasesEditor
               translate={t}
@@ -86,7 +88,7 @@ export function BrowserQuickPhraseMenu({
               disabled={snapshot.pending}
               onChange={next => store.save(next)}
             />
-          </dialog>,
+          </DialogSurface>,
           document.body
         )}
     </>

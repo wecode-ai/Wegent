@@ -1,12 +1,12 @@
-import { renderHook } from '@testing-library/react'
-import { expect, test } from 'vitest'
 import { defaultAppPreferences, defaultQuickPhrases } from '@/desktop/appPreferences'
 import {
   AppPreferencesContext,
   type AppPreferencesState,
 } from '@/features/app-preferences/appPreferencesContext'
-import { useQuickPhrases } from './useQuickPhrases'
+import { renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
+import { expect, test } from 'vitest'
+import { useQuickPhrases } from './useQuickPhrases'
 
 test('uses the shared preference snapshot and updates when the provider changes', () => {
   let state: AppPreferencesState = { preferences: defaultAppPreferences, loaded: false }

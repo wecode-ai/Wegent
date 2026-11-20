@@ -1,12 +1,12 @@
-import { X } from 'lucide-react'
-import { useRef, type KeyboardEvent } from 'react'
-import { createPortal } from 'react-dom'
-import { useFocusRequest } from '@wegent/collaboration/dom-events'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isHttpUrl, openExternalUrl } from '@/lib/external-links'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
+import { useRef } from 'react'
+import { createPortal } from 'react-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { WeworkInstalledReleaseNotes } from './app-release-notes'
 
 interface AppReleaseNotesDialogProps {
@@ -15,52 +15,14 @@ interface AppReleaseNotesDialogProps {
   onClose: () => void
 }
 
-const FOCUSABLE_SELECTOR = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(', ')
-
 export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleaseNotesDialogProps) {
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
-  useEscapeKey(onClose, open)
-
-  useFocusRequest(closeButtonRef, undefined, {
-    enabled: open,
-    animationFrame: true,
-    restoreFocus: true,
-  })
 
   if (!open) return null
 
   const closeLabel = t('workbench.app_release_notes_close', '关闭更新日志')
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Tab') return
-
-    const focusableElements = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []
-    )
-    if (focusableElements.length === 0) {
-      event.preventDefault()
-      dialogRef.current?.focus()
-      return
-    }
-
-    const firstElement = focusableElements[0]
-    const lastElement = focusableElements[focusableElements.length - 1]
-    if (event.shiftKey && document.activeElement === firstElement) {
-      event.preventDefault()
-      lastElement.focus()
-    } else if (!event.shiftKey && document.activeElement === lastElement) {
-      event.preventDefault()
-      firstElement.focus()
-    }
-  }
 
   return createPortal(
     <div
@@ -70,17 +32,23 @@ export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleas
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div
-        ref={dialogRef}
-        data-testid="app-release-notes-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="app-release-notes-dialog-title"
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-        className="relative flex max-h-[min(720px,calc(100dvh-32px))] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-text-primary shadow-2xl"
+      <DialogSurface
+        initialFocus={() => closeButtonRef.current}
+        onClose={() => {
+          if (open) onClose()
+        }}
+        render={
+          <div
+            ref={dialogRef}
+            data-testid="app-release-notes-dialog"
+            aria-labelledby="app-release-notes-dialog-title"
+            tabIndex={-1}
+            className="relative flex max-h-[min(720px,calc(100dvh-32px))] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-text-primary shadow-2xl"
+          />
+        }
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           ref={closeButtonRef}
           type="button"
           data-testid="app-release-notes-dialog-close"
@@ -89,7 +57,7 @@ export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleas
           className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-md bg-popover text-text-secondary hover:bg-muted hover:text-text-primary"
         >
           <X className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </ControlButton>
 
         <article className="min-h-0 overflow-y-auto px-7 pb-8 pt-7">
           <div className="pr-10 text-sm font-medium text-text-muted">
@@ -150,7 +118,7 @@ export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleas
             </ReactMarkdown>
           </div>
         </article>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

@@ -27,7 +27,7 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await open()
-    await control.command('waitFor', `[data-testid="${prefix}-scope-all"]:checked`)
+    await control.command('waitFor', `[data-testid="${prefix}-scope-all"][aria-checked="true"]`)
     assert.equal(await control.command('getElementCount', `[data-testid="${prefix}-query"]`), '0')
     await control.command('click', `[data-testid="${prefix}-add-all"]`)
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')

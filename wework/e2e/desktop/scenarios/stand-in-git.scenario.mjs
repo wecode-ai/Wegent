@@ -216,7 +216,6 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
         await openGit('github')
         const personalView = JSON.parse(await control.command('snapshot', 'body'))
         assert.match(personalView.text, /个人全部事件/)
-        assert.match(personalView.text, /只关注某个仓库/)
         assert.doesNotMatch(personalView.text, /Webhook|轮询/)
         assert.equal(
           Number(
@@ -225,9 +224,12 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot, modelRes
           0
         )
         await captureScreenshot(control, 'git-01-personal-scope-without-cloud-controls.png')
-        await control.command('select', '[data-testid="stand-in-git-kind"]', {
-          value: 'repository',
-        })
+        const kind = '[data-testid="stand-in-git-kind"]'
+        await control.command('setExpanded', kind, { value: 'true', visible: true })
+        const repository =
+          '[data-testid="stand-in-git-kind-options"] [role="option"][data-value="repository"]'
+        await control.command('waitFor', repository, { visible: true, text: '只关注某个仓库' })
+        await control.command('select', kind, { value: 'repository' })
         await control.command('fill', '[data-testid="stand-in-git-query"]', { value: 'wegent' })
         await captureScreenshot(control, 'git-02-repository-scope-search-layout.png')
         const remote = await request('/v1/git-connections/subscriptions')

@@ -10,7 +10,9 @@ import {
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (_key: string, fallback: string) => fallback }),
 }))
-vi.mock('@/features/dsh-runtime/DshSlotSurface', () => ({ DshSlotSurface: () => null }))
+vi.mock('@/features/dsh-runtime/DshContributionSlotSurface', () => ({
+  DshContributionSlotSurface: () => null,
+}))
 vi.mock('@/features/dsh-plugins/coreDshPlugins', () => ({
   readCoreDshPlugins: vi.fn(),
   setCoreDshPluginEnabled: vi.fn(),

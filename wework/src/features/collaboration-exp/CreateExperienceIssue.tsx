@@ -1,26 +1,30 @@
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { DEFAULT_WORK_ITEM_PROJECT_ID, isDefaultWorkItemProject } from '@/api/deliveries'
+import { DialogForm } from '@/components/common/DialogForm'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
+import { useTranslation } from '@/hooks/useTranslation'
 import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import {
-  createExperienceIssueSubmission,
-  selectableExperienceIssueMember,
-} from './createExperienceIssueSubmission'
-import { ChevronDown, Loader2, ShieldCheck, Target, X } from 'lucide-react'
-import { canAssignCollaborationIssue, IssueDetailSearchableSelect } from '@wegent/collaboration'
 import type {
   CollaborationIssue,
   CollaborationProject,
   ProjectAssistantRosterEntry,
 } from '@wegent/collaboration'
-import { DEFAULT_WORK_ITEM_PROJECT_ID, isDefaultWorkItemProject } from '@/api/deliveries'
-import { DialogForm } from '@/components/common/DialogForm'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import type { ExperienceProjectData, ExperienceProjectScope } from './model'
-import type { ExperienceSource } from './data/useExperienceSources'
+import { canAssignCollaborationIssue, SearchableSelect } from '@wegent/collaboration'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, Loader2, ShieldCheck, Target, X } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import './CreateExperienceIssue.css'
+import {
+  createExperienceIssueSubmission,
+  selectableExperienceIssueMember,
+} from './createExperienceIssueSubmission'
+import type { ExperienceSource } from './data/useExperienceSources'
+import type { ExperienceProjectData, ExperienceProjectScope } from './model'
 
 export interface CreateExperienceIssueProps {
   active: boolean
@@ -131,9 +135,7 @@ function CreateIssueForm({
   const selfId =
     targetStore === 'local' ? nativeOwnerId : (current?.project.current_user_id ?? viewerId)
   const localIdentityUnavailable = targetStore === 'local' && nativeOwnerId === undefined
-  const ref = useDialogKeyboard<HTMLElement>(() => {
-    if (!submission.getSnapshot().pending) onClose()
-  })
+  const ref = useRef<HTMLElement>(null)
 
   const members =
     current?.members.filter(
@@ -191,7 +193,7 @@ function CreateIssueForm({
     onChange: (value: string) => void,
     disabled = false
   ) => (
-    <IssueDetailSearchableSelect
+    <SearchableSelect
       value={value}
       options={items}
       accessibleLabel={t(`create.${name}`)}
@@ -212,15 +214,20 @@ function CreateIssueForm({
 
   return (
     <div className="experience-create-scrim">
-      <section
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="collaboration-exp-create-title"
-        aria-describedby="collaboration-exp-create-description"
-        tabIndex={-1}
-        data-testid="collaboration-exp-create-dialog"
-        className="experience-create-dialog"
+      <DialogSurface
+        onClose={() => {
+          if (!pending) onClose()
+        }}
+        render={
+          <section
+            ref={ref}
+            aria-labelledby="collaboration-exp-create-title"
+            aria-describedby="collaboration-exp-create-description"
+            tabIndex={-1}
+            data-testid="collaboration-exp-create-dialog"
+            className="experience-create-dialog"
+          />
+        }
       >
         <DialogForm
           onSubmit={event => {
@@ -234,7 +241,8 @@ function CreateIssueForm({
               <h2 id="collaboration-exp-create-title">{t('create.title')}</h2>
               <p id="collaboration-exp-create-description">{t('create.description')}</p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="collaboration-exp-create-close"
               aria-label={t('create.close')}
@@ -243,13 +251,13 @@ function CreateIssueForm({
               onClick={onClose}
             >
               <X aria-hidden="true" />
-            </button>
+            </ControlButton>
           </header>
           <div className="experience-create-body">
             <div className="experience-create-grid">
               <label className="experience-create-field experience-create-wide">
                 <span>{t('create.goal')}</span>
-                <input
+                <ControlInput
                   data-testid="collaboration-exp-create-goal"
                   value={title}
                   disabled={pending}
@@ -281,7 +289,7 @@ function CreateIssueForm({
               </label>
               <label className="experience-create-field">
                 <span>{t('create.dueDate')}</span>
-                <input
+                <ControlInput
                   type="date"
                   data-testid="collaboration-exp-create-dueDate"
                   value={dueDate}
@@ -291,7 +299,7 @@ function CreateIssueForm({
               </label>
               <label className="experience-create-field experience-create-wide">
                 <span>{t('create.summary')}</span>
-                <textarea
+                <ControlTextarea
                   rows={3}
                   data-testid="collaboration-exp-create-summary"
                   value={summary}
@@ -331,12 +339,11 @@ function CreateIssueForm({
                   const selected = selectedAssistants.includes(entry.id)
                   return (
                     <label key={entry.id}>
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={selected}
                         disabled={pending}
                         data-testid={`collaboration-exp-create-assistant-${entry.id}`}
-                        onChange={() => {
+                        onCheckedChange={() => {
                           submission.clearIntent()
                           setSelectedAssistants(current => {
                             if (selected) return current.filter(id => id !== entry.id)
@@ -368,7 +375,8 @@ function CreateIssueForm({
             ) : failure ? (
               <p role="alert">
                 {failure}{' '}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="collaboration-exp-create-retry"
                   onClick={() => {
@@ -378,7 +386,7 @@ function CreateIssueForm({
                   }}
                 >
                   {t('retry')}
-                </button>
+                </ControlButton>
               </p>
             ) : !ready ? (
               <p role="status">{t('create.loading')}</p>
@@ -389,18 +397,21 @@ function CreateIssueForm({
             {currentAssistantRosterError ? (
               <p role="alert">
                 {currentAssistantRosterError}{' '}
-                <button
+                <ControlButton
+                  variant="ghost"
+                  size="sm"
                   type="button"
                   data-testid="collaboration-exp-create-assistant-roster-retry"
                   onClick={() => void rosterResource.reload()}
                 >
                   {t('retry')}
-                </button>
+                </ControlButton>
               </p>
             ) : null}
           </div>
           <footer className="experience-create-footer">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="experience-create-button"
               data-testid="collaboration-exp-create-cancel"
@@ -408,8 +419,9 @@ function CreateIssueForm({
               onClick={onClose}
             >
               {t('create.cancel')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="submit"
               className="experience-create-button experience-create-primary"
               data-testid="collaboration-exp-create-submit"
@@ -421,10 +433,10 @@ function CreateIssueForm({
                 <Target aria-hidden="true" />
               )}
               {t('create.submit')}
-            </button>
+            </ControlButton>
           </footer>
         </DialogForm>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

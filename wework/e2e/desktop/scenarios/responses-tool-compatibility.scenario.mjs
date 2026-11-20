@@ -232,11 +232,11 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       try {
         await control.command('navigate', 'body', { value: '/settings/personal/models' })
         await control.command('waitFor', `[data-testid="provider-row-${MODEL_ID}"]`)
-        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] > summary`)
+        await control.command('click', `[data-testid="provider-row-${MODEL_ID}"] [data-testid="provider-settings-section-toggle"]`)
         await control.command('click', `[data-testid="provider-model-edit-${MODEL_ID}"]`)
         const editor = `[data-testid="provider-model-editor-${MODEL_ID}"]`
         const compatibility = `[data-testid="provider-model-compatibility-${MODEL_ID}"]`
-        await control.command('click', `${editor} details:has(${compatibility}) > summary`)
+        await control.command('click', `${editor} [data-testid="provider-model-fields-toggle"]`)
         await control.command('waitFor', compatibility)
         assert.equal(await control.command('getValue', compatibility), 'standard')
         await control.command('click', '[data-testid="local-model-advanced-capabilities-toggle"]')

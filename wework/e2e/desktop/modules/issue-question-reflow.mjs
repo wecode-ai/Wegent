@@ -31,7 +31,10 @@ export async function verifyIssueQuestionReflow(
     await control.command('scrollIntoViewAsUser', scope('issue-description-edit'))
     await control.command('click', scope('issue-description-edit'))
     await control.command('waitFor', `${description}[contenteditable="true"]`, { visible: true })
-    await control.command('fill', description, { value: '' })
+    const existingText = await control.command('getText', description)
+    if (existingText) {
+      await control.command('selectText', description, { value: existingText })
+    }
     await control.command('pasteText', description, { value })
     await until(
       () => control.command('getValue', description),

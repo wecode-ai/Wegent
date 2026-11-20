@@ -1,5 +1,17 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import { useOutsideClick } from '@wegent/collaboration/composer/useOutsideClick'
+import { Tooltip } from '@/components/ui/tooltip'
+import {
+  changeRequestVisualStatus,
+  type ChangeRequestVisualStatus,
+} from '@/features/workbench/changeRequestStatus'
+import type { ResourceObservation } from '@/features/workbench/resourceObservation'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import { cn } from '@/lib/utils'
+import type { ChangeRequest } from '@/types/environment'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import {
   CircleCheck,
   CircleDot,
@@ -11,19 +23,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Tooltip } from '@/components/ui/tooltip'
-import {
-  changeRequestVisualStatus,
-  type ChangeRequestVisualStatus,
-} from '@/features/workbench/changeRequestStatus'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
-import { openExternalUrl } from '@/lib/external-links'
-import { cn } from '@/lib/utils'
-import type { ChangeRequest } from '@/types/environment'
-import type { ResourceObservation } from '@/features/workbench/resourceObservation'
+import { useState } from 'react'
 import { ResourceObservationStatus } from './ResourceObservationStatus'
 
 interface ChangeRequestStatusGlyphConfig {
@@ -170,25 +170,8 @@ export function ChangeRequestStatusIcon({
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLSpanElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const popoverRef = useRef<HTMLSpanElement>(null)
   const changeRequest = snapshot?.changeRequest
-  const popoverLayout = useAnchoredPortalMenu(open, triggerRef, popoverRef, {
-    align: popoverAlign === 'left' ? 'start' : 'end',
-    gap: 4,
-  })
-
-  useOutsideClick(rootRef, open, () => setOpen(false), [popoverRef])
-  useDocumentEvent(
-    'keydown',
-    event => {
-      if (event.key !== 'Escape') return
-      setOpen(false)
-      triggerRef.current?.focus()
-    },
-    { enabled: open }
-  )
+  const theme = useCollaborationPortalTheme()
 
   if (!changeRequest) return null
   const status = changeRequestVisualStatus(changeRequest)
@@ -197,93 +180,88 @@ export function ChangeRequestStatusIcon({
 
   return (
     <span
-      ref={rootRef}
       className={cn('inline-flex shrink-0', className)}
       onClick={event => event.stopPropagation()}
     >
-      <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
-        <button
-          ref={triggerRef}
-          type="button"
-          data-testid={testId}
-          aria-label={`${prefix}${changeRequest.number} · ${label}`}
-          aria-expanded={open}
-          onClick={() => setOpen(current => !current)}
-          className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
+      <Popover open={open} onOpenChange={setOpen}>
+        <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
+          <PopoverTrigger
+            render={<button type="button" />}
+            data-testid={testId}
+            aria-label={`${prefix}${changeRequest.number} · ${label}`}
+            aria-expanded={open}
+            className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
+          >
+            <ChangeRequestStatusGlyph
+              changeRequest={changeRequest}
+              size={glyphSize}
+              mainIconTestId={mainIconTestId}
+            />
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent
+          {...theme}
+          aria-label={changeRequest.title}
+          align={popoverAlign === 'left' ? 'start' : 'end'}
+          sideOffset={4}
+          collisionPadding={8}
+          data-testid={testId + '-popover'}
+          className={cn(theme.className, controlPopup, 'w-64 p-3')}
         >
-          <ChangeRequestStatusGlyph
-            changeRequest={changeRequest}
-            size={glyphSize}
-            mainIconTestId={mainIconTestId}
-          />
-        </button>
-      </Tooltip>
-      {open && typeof document !== 'undefined'
-        ? createPortal(
-            <span
-              ref={popoverRef}
-              data-testid={`${testId}-popover`}
-              style={{
-                left: popoverLayout?.left ?? 0,
-                maxHeight: popoverLayout?.maxHeight,
-                top: popoverLayout?.top ?? 0,
-                visibility: popoverLayout ? 'visible' : 'hidden',
+          <span className="block truncate text-sm font-medium text-text-primary">
+            {prefix}
+            {changeRequest.number} · {changeRequest.title}
+          </span>
+          <span className="mt-1 block text-xs text-text-secondary">{label}</span>
+          {snapshot?.observation && (
+            <span className="mt-1 block">
+              <ResourceObservationStatus observation={snapshot.observation} />
+            </span>
+          )}
+          {changeRequest.mergeQueueReason ? (
+            <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
+              {changeRequest.mergeQueueReason}
+            </span>
+          ) : null}
+          {snapshot?.stale ? (
+            <span className="mt-1 block text-xs text-warning wework:text-amber-600">
+              {t('workbench.change_request_status_stale', '状态可能已过期')}
+            </span>
+          ) : null}
+          <span className="mt-3 flex items-center justify-end gap-2">
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid={`${testId}-open`}
+              onClick={() => {
+                setOpen(false)
+                void openExternalUrl(changeRequest.url)
               }}
-              className="fixed z-system-popover w-64 overflow-y-auto rounded-xl border border-border bg-popover p-3 text-left shadow-lg"
+              className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
             >
-              <span className="block truncate text-sm font-medium text-text-primary">
-                {prefix}
-                {changeRequest.number} · {changeRequest.title}
-              </span>
-              <span className="mt-1 block text-xs text-text-secondary">{label}</span>
-              {snapshot?.observation && (
-                <span className="mt-1 block">
-                  <ResourceObservationStatus observation={snapshot.observation} />
-                </span>
-              )}
-              {changeRequest.mergeQueueReason ? (
-                <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
-                  {changeRequest.mergeQueueReason}
-                </span>
-              ) : null}
-              {snapshot?.stale ? (
-                <span className="mt-1 block text-xs text-warning wework:text-amber-600">
-                  {t('workbench.change_request_status_stale', '状态可能已过期')}
-                </span>
-              ) : null}
-              <span className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  data-testid={`${testId}-open`}
-                  onClick={() => {
-                    setOpen(false)
-                    void openExternalUrl(changeRequest.url)
-                  }}
-                  className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                >
-                  {t('workbench.change_request_open', '打开 PR')}
-                </button>
-                {onContinueRepair ? (
-                  <button
-                    type="button"
-                    data-testid={`${testId}-repair`}
-                    disabled={repairing}
-                    onClick={() => {
-                      setOpen(false)
-                      void onContinueRepair()
-                    }}
-                    className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
-                  >
-                    {repairing
-                      ? t('workbench.change_request_repairing', 'AI 修复中')
-                      : t('workbench.change_request_continue_repair', '让 AI 继续修复')}
-                  </button>
-                ) : null}
-              </span>
-            </span>,
-            document.body
-          )
-        : null}
+              {t('workbench.change_request_open', '打开 PR')}
+            </ControlButton>
+            {onContinueRepair ? (
+              <ControlButton
+                variant="primary"
+                size="sm"
+                type="button"
+                data-testid={`${testId}-repair`}
+                disabled={repairing}
+                onClick={() => {
+                  setOpen(false)
+                  void onContinueRepair()
+                }}
+                className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
+              >
+                {repairing
+                  ? t('workbench.change_request_repairing', 'AI 修复中')
+                  : t('workbench.change_request_continue_repair', '让 AI 继续修复')}
+              </ControlButton>
+            ) : null}
+          </span>
+        </PopoverContent>
+      </Popover>
     </span>
   )
 }

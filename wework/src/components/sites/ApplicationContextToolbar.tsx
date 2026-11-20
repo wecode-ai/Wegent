@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
-import { Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Search } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 interface ApplicationContextToolbarProps {
   leading?: ReactNode
@@ -38,11 +39,11 @@ export function ApplicationContextToolbar({
           className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
           aria-hidden="true"
         />
-        <input
+        <ControlInput
           data-testid={searchTestId}
           value={value}
           placeholder={searchPlaceholder}
-          className="h-11 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 md:h-9 md:text-sm"
+          className="h-11 w-full pl-9 pr-3 text-base transition-colors placeholder:text-text-muted md:h-9 md:text-sm"
           onChange={event => onValueChange(event.target.value)}
         />
       </label>

@@ -65,6 +65,7 @@ export function usePluginWorkspaceInstallation({
   ensureMarketplaceConnectors,
   rollbackInstalledPluginAfterAuthFailure,
   ensureLocalConnectorsAfterInstall,
+  requestConfirmation,
 }: Pick<
   PluginWorkspaceServices,
   | 'selectedMarketplacePlugin'
@@ -85,7 +86,7 @@ export function usePluginWorkspaceInstallation({
   | 'ensureMarketplaceConnectors'
   | 'rollbackInstalledPluginAfterAuthFailure'
   | 'ensureLocalConnectorsAfterInstall'
->) {
+> & { requestConfirmation(message: string): Promise<boolean> }) {
   const isPersonalSourceInstall = (item: PluginMarketplaceItem) =>
     item.accessRole === 'owner' && Boolean(item.localPersonalSource)
   const capturePluginScope = catalog.captureScope
@@ -283,10 +284,10 @@ export function usePluginWorkspaceInstallation({
       !installFromLocal && (!alreadyInstalled || marketplaceItemCanRetryPluginUpdate(item))
 
     if (needsCloudPackagePush && !cloudToken) {
-      const shouldLogin = window.confirm(
+      const shouldLogin = await requestConfirmation(
         t('workbench.plugins_login_required', '安装插件需要登录 Wegent 账户。是否前往登录？')
       )
-      if (shouldLogin) {
+      if (shouldLogin && isCurrent()) {
         navigateTo('/settings/connections')
       }
       return

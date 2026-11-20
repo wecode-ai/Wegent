@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { IssueDeliveryContent } from './IssueDeliveryContent'
 import { IssueDeliveryEditor } from './IssueDeliveryEditor'
 import { ArrowLeft, X } from 'lucide-react'
@@ -39,7 +40,8 @@ export function IssueDetailDeliveryView({ model }: { model: IssueDetailModel }) 
       onKeyDown={handleKeyDown}
     >
       <header className="flex h-12 items-center border-b border-border px-4">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="todo-detail-delivery-back"
           onClick={() => {
@@ -49,9 +51,10 @@ export function IssueDetailDeliveryView({ model }: { model: IssueDetailModel }) 
           className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-hover"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> {t('todo.back', '返回')}
-        </button>
+        </ControlButton>
         <span className="flex-1" />
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="todo-detail-delivery-close"
           aria-label={t('common.close', '关闭')}
@@ -59,7 +62,7 @@ export function IssueDetailDeliveryView({ model }: { model: IssueDetailModel }) 
           className="h-7 w-7 rounded-lg hover:bg-hover"
         >
           <X className="mx-auto h-4 w-4" />
-        </button>
+        </ControlButton>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         <p className="font-mono text-xs text-text-secondary">
@@ -72,14 +75,15 @@ export function IssueDetailDeliveryView({ model }: { model: IssueDetailModel }) 
           {editable &&
             editorPort.deliveries.update &&
             editingDelivery?.id !== selectedDelivery.id && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="delivery-edit"
                 onClick={() => setEditingDelivery({ id: selectedDelivery.id })}
                 className="h-7 rounded-md px-2 text-sm hover:bg-hover"
               >
                 {t('delivery.edit')}
-              </button>
+              </ControlButton>
             )}
         </div>
         {editingDelivery?.id === selectedDelivery.id ? (

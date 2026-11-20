@@ -303,6 +303,7 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
         {
           text: SUBAGENT_DONE,
+          timeoutMs: modelResponseTimeoutMs,
         }
       )
       assert.ok(subagents.done)

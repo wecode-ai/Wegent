@@ -1,3 +1,4 @@
+import { DialogSurface } from '../controls/DialogSurface'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -130,7 +131,12 @@ it.each(['result', 'failure', 'result-back', 'failure-back'])(
           name: 'Review group',
           description: '',
           instructions: 'Review responsibilities',
-          leader: { kind: 'human', id: '7', name: 'Me', responsibility: 'Coordinate work' },
+          leader: {
+            kind: 'human',
+            id: '7',
+            name: 'Me',
+            responsibility: 'Coordinate work',
+          },
           members: [
             {
               kind: 'agent',
@@ -325,7 +331,7 @@ it.each(['zh-CN', 'en'] as const)(
   }
 )
 
-it.each(['Escape', 'close', 'cancel'])(
+it.each(['Escape', 'Escape on close', 'close', 'cancel'])(
   'protects a project draft when leaving through %s, then explicitly discards it',
   async action => {
     const onClose = vi.fn(() => root.render(null))
@@ -350,13 +356,19 @@ it.each(['Escape', 'close', 'cancel'])(
       name.dispatchEvent(new Event('input', { bubbles: true }))
     })
     const leave = async () => {
-      if (action === 'Escape')
+      if (action === 'Escape' || action === 'Escape on close') {
+        const target = action === 'Escape' ? name : get('collaboration-project-create-close')
+        await act(async () => target.focus())
         await act(async () =>
-          name.dispatchEvent(
-            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          target.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 'Escape',
+              bubbles: true,
+              cancelable: true,
+            })
           )
         )
-      else
+      } else
         await click(
           action === 'close'
             ? 'collaboration-project-create-close'
@@ -365,6 +377,7 @@ it.each(['Escape', 'close', 'cancel'])(
     }
     await leave()
     const confirmation = get('collaboration-project-create-discard')
+    expect(confirmation).not.toBeNull()
     const keep = confirmation.querySelector<HTMLButtonElement>(
       '[data-testid="collaboration-project-create-configuration-back"]'
     )!
@@ -374,7 +387,11 @@ it.each(['Escape', 'close', 'cancel'])(
     expect(document.activeElement).toBe(keep)
     await act(async () =>
       keep.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
     expect(
@@ -468,7 +485,11 @@ it.each([false, true])(
     expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
     if (modelMenuOpen) {
       const editor = get('collaboration-project-create-generation-instructions')
+      const status = get('collaboration-project-create-generation-status')
+      expect(status.getAttribute('role')).toBe('status')
       await click('model-selector-button')
+      expect(status.hasAttribute('role')).toBe(false)
+      expect(status.hasAttribute('aria-live')).toBe(false)
       expect(
         get('model-selector-menu').closest('[role="dialog"]')?.contains(document.activeElement)
       ).toBe(true)
@@ -485,6 +506,8 @@ it.each([false, true])(
         )
       })
       expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
+      expect(status.getAttribute('role')).toBe('status')
+      expect(status.getAttribute('aria-live')).toBe('polite')
       expect(get('collaboration-project-create-model-picker')).toBe(configuration)
       expect(document.activeElement).toBe(editor)
       expect(onClose).not.toHaveBeenCalled()
@@ -558,20 +581,32 @@ it('contains keyboard focus, respects a child dialog and restores the opener on 
   )
   expect(document.activeElement).toBe(last)
 
-  const child = document.createElement('dialog')
-  child.setAttribute('open', '')
-  get('collaboration-project-create-dialog').append(child)
-  const nativeEscape = new KeyboardEvent('keydown', {
+  const childContainer = document.createElement('div')
+  get('collaboration-project-create-dialog').append(childContainer)
+  const childRoot = createRoot(childContainer)
+  const closeChild = vi.fn(() => childRoot.render(null))
+  await act(async () =>
+    childRoot.render(
+      <DialogSurface
+        onClose={closeChild}
+        render={<section aria-label="Child dialog" data-testid="child-dialog" />}
+      >
+        <button type="button">Child action</button>
+      </DialogSurface>
+    )
+  )
+  const childEscape = new KeyboardEvent('keydown', {
     key: 'Escape',
     bubbles: true,
     cancelable: true,
   })
-  await act(async () => {
-    child.dispatchEvent(nativeEscape)
-  })
+  await act(async () => get('child-dialog').dispatchEvent(childEscape))
+  expect(closeChild).toHaveBeenCalledOnce()
   expect(onClose).not.toHaveBeenCalled()
-  expect(nativeEscape.defaultPrevented).toBe(false)
-  child.remove()
+  expect(childEscape.defaultPrevented).toBe(true)
+  expect(get<HTMLInputElement>('cloud-project-name').value).toBe('')
+  await act(async () => childRoot.unmount())
+  childContainer.remove()
   await act(async () =>
     last.dispatchEvent(
       new KeyboardEvent('keydown', {

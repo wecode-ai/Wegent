@@ -1,3 +1,4 @@
+import { sdkSelectValue } from '../../../../../packages/collaboration/src/test/selectControl'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -210,8 +211,8 @@ describe('ProjectAutomaticProcessing loading', () => {
       { id: 'hook-1', name: 'GitHub', sourceType: 'github' },
     ])
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-external'))
-    await waitFor(() =>
-      expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
+    await waitFor(async () =>
+      expect(await sdkSelectValue(screen.getByTestId('automatic-processing-hook'))).toBe('hook-1')
     )
     expect(screen.getByTestId('automatic-processing-save')).toBeEnabled()
     expect(api.incomingHooks.list).toHaveBeenCalledTimes(2)
@@ -235,8 +236,8 @@ describe('ProjectAutomaticProcessing loading', () => {
       { id: 'hook-1', name: 'GitHub', sourceType: 'github' },
     ])
     fireEvent.click(screen.getByTestId('automatic-processing-hooks-refresh'))
-    await waitFor(() =>
-      expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
+    await waitFor(async () =>
+      expect(await sdkSelectValue(screen.getByTestId('automatic-processing-hook'))).toBe('hook-1')
     )
     expect(screen.queryByTestId('automatic-processing-hooks-empty')).not.toBeInTheDocument()
     expect(api.automations.create).not.toHaveBeenCalled()
@@ -282,15 +283,15 @@ describe('ProjectAutomaticProcessing status triggers', () => {
       target: { value: prompt },
     })
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
-    fireEvent.change(screen.getByTestId('automatic-processing-status'), {
-      target: { value: 'completed' },
-    })
+    await sdkSelectValue(screen.getByTestId('automatic-processing-status'), 'completed')
     expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
     expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
     expect(api.automations.create).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
-    expect(screen.getByTestId('automatic-processing-status')).toHaveValue('completed')
+    expect(await sdkSelectValue(screen.getByTestId('automatic-processing-status'))).toBe(
+      'completed'
+    )
     fireEvent.click(screen.getByTestId('automatic-processing-save'))
     await waitFor(() =>
       expect(api.automations.create).toHaveBeenCalledWith(
@@ -317,8 +318,12 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
     expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
-    expect(screen.getByRole('option', { name: '安全评审' })).toHaveValue('custom-review')
-    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'custom-review' } })
+    fireEvent.click(screen.getByTestId('automatic-processing-status'))
+    expect(screen.getByRole('option', { name: '安全评审' })).toHaveAttribute(
+      'data-value',
+      'custom-review'
+    )
+    await sdkSelectValue(screen.getByTestId('automatic-processing-status'), 'custom-review')
     expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent(
       '进入指定状态后 · 安全评审'
     )
@@ -356,10 +361,10 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     )
     fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
     expect(screen.getByTestId('automatic-processing-trigger-status_changed')).toBeChecked()
-    expect(screen.getByTestId('automatic-processing-status')).toHaveValue('in_review')
-    fireEvent.change(screen.getByTestId('automatic-processing-status'), {
-      target: { value: 'completed' },
-    })
+    expect(await sdkSelectValue(screen.getByTestId('automatic-processing-status'))).toBe(
+      'in_review'
+    )
+    await sdkSelectValue(screen.getByTestId('automatic-processing-status'), 'completed')
     fireEvent.click(screen.getByTestId('automatic-processing-save'))
     await waitFor(() =>
       expect(api.automations.update).toHaveBeenCalledWith(
@@ -446,7 +451,9 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     render(view())
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
-    expect(screen.getByTestId('automatic-processing-status')).toHaveValue('__entered_processing__')
+    expect(await sdkSelectValue(screen.getByTestId('automatic-processing-status'))).toBe(
+      '__entered_processing__'
+    )
     expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('进入处理阶段后')
     fireEvent.click(screen.getByTestId('automatic-processing-save'))
     await waitFor(() =>
@@ -467,9 +474,7 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
-    fireEvent.change(screen.getByTestId('automatic-processing-status'), {
-      target: { value: 'completed' },
-    })
+    await sdkSelectValue(screen.getByTestId('automatic-processing-status'), 'completed')
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-tag_added'))
     fireEvent.change(screen.getByTestId('automatic-processing-tag'), {
       target: { value: 'review' },
@@ -499,9 +504,7 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-edit-rule-1'))
     expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
-    fireEvent.change(screen.getByTestId('automatic-processing-status'), {
-      target: { value: 'custom-review' },
-    })
+    await sdkSelectValue(screen.getByTestId('automatic-processing-status'), 'custom-review')
     expect(screen.getByTestId('automatic-processing-save')).toBeEnabled()
   })
 
@@ -512,7 +515,9 @@ describe('ProjectAutomaticProcessing status triggers', () => {
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
     expect(screen.getByText('Status reached')).toBeInTheDocument()
-    expect(screen.getByLabelText('Status')).toHaveValue('')
+    expect(screen.getByTestId('automatic-processing-status')).toHaveAccessibleName('Status')
+    expect(await sdkSelectValue(screen.getByTestId('automatic-processing-status'))).toBe('')
+    fireEvent.click(screen.getByTestId('automatic-processing-status'))
     expect(screen.getByRole('option', { name: 'Select a status' })).toBeInTheDocument()
   })
 })
@@ -543,12 +548,12 @@ describe('ProjectAutomaticProcessing prompts', () => {
           target: { value: 'review' },
         })
       } else if (trigger === 'status_changed') {
-        fireEvent.change(screen.getByTestId('automatic-processing-status'), {
-          target: { value: 'custom-review' },
-        })
+        await sdkSelectValue(screen.getByTestId('automatic-processing-status'), 'custom-review')
       } else if (trigger === 'external') {
-        await waitFor(() =>
-          expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
+        await waitFor(async () =>
+          expect(await sdkSelectValue(screen.getByTestId('automatic-processing-hook'))).toBe(
+            'hook-1'
+          )
         )
       }
       expect(field).toHaveValue(prompt)

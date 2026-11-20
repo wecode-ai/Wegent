@@ -1,15 +1,8 @@
-import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import { useDeadlineExpired } from '@wegent/collaboration/clock'
-import {
-  createWorktreeSettingsResource,
-  type WorktreeSettingsChange,
-} from './worktreeSettingsResource'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
-import { useTranslation } from '@/hooks/useTranslation'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { deviceSupportsManagedWorktrees } from '@/lib/worktree-availability'
 import type {
   DeviceInfo,
   RuntimeManagedWorktree,
@@ -17,7 +10,20 @@ import type {
   RuntimeWorktreeConversation,
   RuntimeWorktreeSettings,
 } from '@/types/api'
-import { deviceSupportsManagedWorktrees } from '@/lib/worktree-availability'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   SettingsGroup,
   SettingsPage,
@@ -25,6 +31,10 @@ import {
   SettingsRow,
   SettingsSwitch,
 } from './settings-ui'
+import {
+  createWorktreeSettingsResource,
+  type WorktreeSettingsChange,
+} from './worktreeSettingsResource'
 
 type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
 
@@ -96,7 +106,8 @@ function WorktreeRow({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${item.state === 'restorable' ? 'restore' : 'delete'}-worktree-button-${item.worktreeId}`}
             onClick={item.state === 'restorable' ? onRestore : onDelete}
@@ -113,7 +124,7 @@ function WorktreeRow({
                 ? 'workbench.worktrees_restore'
                 : 'workbench.worktrees_delete'
             )}
-          </button>
+          </ControlButton>
         </div>
       </div>
       <div className="flex flex-col gap-1">
@@ -125,7 +136,8 @@ function WorktreeRow({
         ) : (
           <div className="flex flex-col gap-1">
             {item.conversations.map(conversation => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 key={`${conversation.deviceId}-${conversation.taskId}`}
                 data-testid="worktree-linked-task"
@@ -137,7 +149,7 @@ function WorktreeRow({
                   <Loader2 className="mr-2 h-3.5 w-3.5 shrink-0 animate-spin" />
                 )}
                 <span className="truncate">{conversation.title}</span>
-              </button>
+              </ControlButton>
             ))}
           </div>
         )}
@@ -353,18 +365,21 @@ export function WorktreesSettingsPage({
       {availableDevices.length > 1 && (
         <label className="block text-sm text-text-secondary">
           <span className="mb-2 block">{t('workbench.worktrees_device')}</span>
-          <select
-            data-testid="worktrees-device-select"
-            value={selectedDeviceId}
-            onChange={event => setDeviceId(event.target.value)}
-            className="h-9 w-full max-w-[360px] rounded-md border border-border bg-background px-3 text-sm text-text-primary"
+          <SelectRoot
+            value={normalizeSelectValue(selectedDeviceId)}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null) return setDeviceId(selectedValue)
+            }}
           >
-            {availableDevices.map(device => (
-              <option key={device.device_id} value={device.device_id}>
-                {device.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger data-testid="worktrees-device-select" className="w-full max-w-[360px]" />
+            <SelectContent>
+              {availableDevices.map(device => (
+                <SelectItem key={device.device_id} value={String(device.device_id)}>
+                  {device.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </SelectRoot>
         </label>
       )}
 
@@ -378,8 +393,8 @@ export function WorktreesSettingsPage({
             <SettingsRow
               label={t('workbench.worktrees_root')}
               description={t('workbench.worktrees_root_description')}
-              control={
-                <input
+              children={
+                <ControlInput
                   data-testid="worktrees-root-input"
                   value={rootDraft}
                   onChange={event => patchUI({ rootDraft: event.target.value })}
@@ -392,14 +407,14 @@ export function WorktreesSettingsPage({
                   }}
                   placeholder={t('workbench.worktrees_default')}
                   disabled={saving}
-                  className="w-56 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary disabled:opacity-50 max-sm:w-full"
+                  className="w-56 max-sm:w-full"
                 />
               }
             />
             <SettingsRow
               label={t('workbench.worktrees_auto_cleanup')}
               description={t('workbench.worktrees_auto_cleanup_description')}
-              control={
+              children={
                 <SettingsSwitch
                   checked={settings.autoCleanupEnabled}
                   data-testid="worktrees-auto-cleanup-switch"
@@ -421,9 +436,9 @@ export function WorktreesSettingsPage({
             <SettingsRow
               label={t('workbench.worktrees_keep_count')}
               description={t('workbench.worktrees_keep_count_description')}
-              control={
+              children={
                 <div className="ml-6 max-sm:ml-0">
-                  <input
+                  <ControlInput
                     type="number"
                     min={1}
                     data-testid="worktrees-keep-count-input"
@@ -434,7 +449,7 @@ export function WorktreesSettingsPage({
                       if (event.key === 'Enter') event.currentTarget.blur()
                     }}
                     disabled={saving || !settings.autoCleanupEnabled}
-                    className="w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="w-24"
                   />
                 </div>
               }
@@ -455,7 +470,8 @@ export function WorktreesSettingsPage({
         ) : groups.length === 0 ? (
           <div>
             <div className="mb-3 flex justify-end">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="worktrees-refresh-button"
                 onClick={() => void load()}
@@ -464,7 +480,7 @@ export function WorktreesSettingsPage({
                 aria-label={t('workbench.worktrees_refresh')}
               >
                 <RefreshCw className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </div>
             {listQuery.data !== undefined && listQuery.status !== 'error' && (
               <div className="rounded-2xl border border-border bg-surface px-4 py-4 text-sm text-text-secondary">
@@ -487,7 +503,8 @@ export function WorktreesSettingsPage({
                     {group.sourcePath || group.name}
                   </h3>
                   {index === 0 && (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="worktrees-refresh-button"
                       onClick={() => void load()}
@@ -496,7 +513,7 @@ export function WorktreesSettingsPage({
                       aria-label={t('workbench.worktrees_refresh')}
                     >
                       <RefreshCw className="h-4 w-4" />
-                    </button>
+                    </ControlButton>
                   )}
                 </div>
                 <SettingsGroup className="bg-background">
@@ -530,7 +547,8 @@ export function WorktreesSettingsPage({
         >
           <CircleCheck className="h-5 w-5 text-primary" />
           <span>{savedNotice}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="dismiss-worktrees-saved-notice-button"
             onClick={() => patchUI({ savedReceipt: null })}
@@ -538,7 +556,7 @@ export function WorktreesSettingsPage({
             aria-label={t('workbench.worktrees_dismiss_saved_notice')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       )}
 
@@ -564,11 +582,16 @@ export function WorktreesSettingsPage({
               patchUI({ pendingDisableCleanup: false })
           }}
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            data-testid="disable-worktree-cleanup-dialog"
-            className="w-full max-w-[640px] rounded-[28px] border border-border bg-popover px-8 py-7 shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
+          <DialogSurface
+            onClose={() => {
+              if (!saving) patchUI({ pendingDisableCleanup: false })
+            }}
+            render={
+              <div
+                data-testid="disable-worktree-cleanup-dialog"
+                className="w-full max-w-[640px] rounded-[28px] border border-border bg-popover px-8 py-7 shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
+              />
+            }
           >
             <h2 className="heading-base text-text-primary">
               {t('workbench.worktrees_disable_cleanup_title')}
@@ -577,7 +600,8 @@ export function WorktreesSettingsPage({
               {t('workbench.worktrees_disable_cleanup_description')}
             </p>
             <div className="mt-6 flex justify-end gap-3">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="keep-worktree-cleanup-button"
                 onClick={() => patchUI({ pendingDisableCleanup: false })}
@@ -585,8 +609,10 @@ export function WorktreesSettingsPage({
                 className="h-10 rounded-xl px-5 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
               >
                 {t('workbench.worktrees_keep_cleanup_enabled')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
+                size="sm"
                 type="button"
                 data-testid="disable-worktree-cleanup-button"
                 onClick={() => {
@@ -598,12 +624,11 @@ export function WorktreesSettingsPage({
                   })
                 }}
                 disabled={saving}
-                className="h-10 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:opacity-50 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
               >
                 {t('workbench.worktrees_disable_cleanup')}
-              </button>
+              </ControlButton>
             </div>
-          </div>
+          </DialogSurface>
         </div>
       )}
     </SettingsPage>

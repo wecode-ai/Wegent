@@ -1,9 +1,10 @@
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { Menu } from 'lucide-react'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
-import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Menu } from 'lucide-react'
 
 function openApplicationMenu(): void {
   void invokeDesktopHost('applicationMenu.popup', { windowLabel: getDesktopWindowLabel() }).catch(
@@ -29,7 +30,8 @@ export function ApplicationMenuButton() {
 
   return (
     <Tooltip label={label} side="bottom">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="application-menu-button"
         aria-label={label}
@@ -38,7 +40,7 @@ export function ApplicationMenuButton() {
         className="electron-titlebar-interactive-region mx-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary md:h-7 md:w-7"
       >
         <Menu className="h-4 w-4" />
-      </button>
+      </ControlButton>
     </Tooltip>
   )
 }

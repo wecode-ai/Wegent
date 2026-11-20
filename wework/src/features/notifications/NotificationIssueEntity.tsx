@@ -1,16 +1,17 @@
-import { useMemo, useSyncExternalStore } from 'react'
+import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
+import type { RuntimeTaskAddress } from '@/types/api'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
-import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { openWeworkScheme } from './schemeEvents'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { openWeworkScheme } from './schemeEvents'
 
 class UnavailableNotificationEntity extends Error {}
 
@@ -23,6 +24,7 @@ export function NotificationIssueEntity({
   url,
   address,
   active,
+  headerActions,
 }: {
   projectId: string
   issueId: string
@@ -31,6 +33,7 @@ export function NotificationIssueEntity({
   url: string
   address?: RuntimeTaskAddress
   active: boolean
+  headerActions?: ReactNode
 }) {
   const { state, services } = useWorkbench()
   const { t } = useTranslation('common')
@@ -73,30 +76,37 @@ export function NotificationIssueEntity({
   if (!api || snapshot.status === 'error')
     return (
       <div className="space-y-3 p-5">
+        {headerActions}
         <p role="alert" className="text-sm text-error">
           {error ?? t('interactions.entity_unavailable')}
         </p>
         {api && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="notification-entity-retry"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
             onClick={() => void resource?.reload()}
           >
             {t('workbench.retry')}
-          </button>
+          </ControlButton>
         )}
       </div>
     )
   if (!result)
     return (
-      <p role="status" className="p-5 text-sm text-text-secondary">
-        {t('interactions.loading')}
-      </p>
+      <>
+        {headerActions}
+        <p role="status" className="p-5 text-sm text-text-secondary">
+          {t('interactions.loading')}
+        </p>
+      </>
     )
   return (
     <WorkItemContextPanel
       readFirst
+      headerActions={headerActions}
       key={url}
       api={api}
       services={services}

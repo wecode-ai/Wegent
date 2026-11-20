@@ -1,9 +1,12 @@
-import { useCallback, useState, useSyncExternalStore, type DragEvent } from 'react'
-import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { createSystemDragPanelModel, type DropAction } from './systemDragPanelModel'
 import { readWorkspacePathDragData } from '@/lib/workspace-path-transfer'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Archive, Check, CornerDownRight, MessageSquarePlus, X } from 'lucide-react'
+import type { DragEvent } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
+import type { DropAction } from './systemDragPanelModel'
+import { createSystemDragPanelModel } from './systemDragPanelModel'
 
 const panelMarkers = new WeakMap<
   HTMLElement,
@@ -153,15 +156,18 @@ export function SystemDragPanel() {
               dismiss()
             }}
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="system-drag-close-button"
               aria-label={t('common.close', '关闭')}
+              title={t('common.close', '关闭')}
+              showTooltip={false}
               onClick={dismiss}
               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
+            </ControlButton>
           </div>
         </div>
       </section>

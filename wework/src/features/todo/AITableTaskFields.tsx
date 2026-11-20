@@ -1,6 +1,16 @@
-import { useMemo, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, Pencil, Sparkles, X } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
 import type { AITableApi, AITableField } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -132,31 +142,39 @@ function FieldEditor({
   return (
     <div className="space-y-2">
       {field.type === 'singleSelect' && options.length > 0 ? (
-        <select
-          autoFocus
-          data-testid={`aitable-detail-edit-${field.id}`}
-          value={draft}
-          onChange={event => setDraft(event.target.value)}
-          className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none keyboard:focus:border-focus"
+        <SelectRoot
+          value={normalizeSelectValue(draft)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null) return setDraft(selectedValue)
+          }}
         >
-          <option value="">—</option>
-          {options.map(option => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label={field.name}
+            autoFocus
+            data-testid={`aitable-detail-edit-${field.id}`}
+            className="h-9 w-full"
+          />
+          <SelectContent>
+            <SelectItem value="">—</SelectItem>
+            {options.map(option => (
+              <SelectItem key={option} value={String(option)}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       ) : field.type === 'checkbox' ? (
         <label className="flex h-9 items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Checkbox
+            aria-label={field.name}
             checked={draft === 'true' || value === true}
-            onChange={event => setDraft(String(event.target.checked))}
+            onCheckedChange={checked => setDraft(String(checked === true))}
           />
           已选中
         </label>
       ) : (
-        <textarea
+        <ControlTextarea
+          aria-label={field.name}
           autoFocus
           data-testid={`aitable-detail-edit-${field.id}`}
           value={draft}
@@ -166,21 +184,24 @@ function FieldEditor({
         />
       )}
       <div className="flex justify-end gap-2">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           onClick={onCancel}
           className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
         >
           <X className="h-3.5 w-3.5" /> 取消
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="button"
           disabled={saving}
           onClick={() => void save(field.type === 'checkbox' ? draft === 'true' : draft)}
           className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
         >
           {saving ? '保存中…' : '保存'}
-        </button>
+        </ControlButton>
       </div>
     </div>
   )
@@ -215,14 +236,15 @@ function ContentBlock({
         ) : null}
         <span className="flex-1" />
         {canEdit && editableField(field) && !editing ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`aitable-detail-edit-button-${field.id}`}
             onClick={() => setEditing(true)}
             className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
           >
             <Pencil className="h-3.5 w-3.5" /> 编辑
-          </button>
+          </ControlButton>
         ) : null}
       </header>
       {editing ? (
@@ -245,7 +267,8 @@ function ContentBlock({
             <FieldValue field={field} value={value} />
           </div>
           {long ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`aitable-detail-expand-${field.id}`}
               onClick={() => setExpanded(current => !current)}
@@ -257,7 +280,7 @@ function ContentBlock({
                 <ChevronRight className="h-3.5 w-3.5" />
               )}
               {expanded ? '收起' : '展开全部'}
-            </button>
+            </ControlButton>
           ) : null}
         </>
       )}
@@ -296,7 +319,8 @@ function PropertyItem({
           )}
         </div>
         {canEdit && editableField(field) && !editing ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`aitable-detail-edit-button-${field.id}`}
             onClick={() => setEditing(true)}
@@ -304,7 +328,7 @@ function PropertyItem({
             aria-label={`编辑${field.name}`}
           >
             <Pencil className="h-3.5 w-3.5" />
-          </button>
+          </ControlButton>
         ) : null}
       </div>
     </div>
@@ -453,7 +477,8 @@ export function AITableTaskFields({
 
       {layout.more.length > 0 ? (
         <section className="mt-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="aitable-detail-more-toggle"
             aria-expanded={moreOpen}
@@ -462,7 +487,7 @@ export function AITableTaskFields({
           >
             {moreOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             更多字段 <span className="text-xs">{layout.more.length}</span>
-          </button>
+          </ControlButton>
           {moreOpen ? (
             <div className="grid gap-x-8 md:grid-cols-2" data-testid="aitable-detail-more-fields">
               {layout.more.map(field => (

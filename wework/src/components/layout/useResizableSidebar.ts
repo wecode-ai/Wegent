@@ -1,5 +1,5 @@
 import { useState, type PointerEvent } from 'react'
-import { setPanelResizeShieldActive } from '@/lib/panel-resize-shield'
+import { usePanelResizeDrag } from './usePanelResizeDrag'
 
 const DEFAULT_SIDEBAR_WIDTH = 240
 const MIN_SIDEBAR_WIDTH = 240
@@ -39,50 +39,30 @@ export function useResizableSidebar({
 }: ResizableSidebarOptions = {}) {
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [resizing, setResizing] = useState(false)
+  const { startResize, stopResize } = usePanelResizeDrag()
 
   const handleResizeStart = (event: PointerEvent<HTMLButtonElement>) => {
-    event.preventDefault()
-    const previousCursor = document.body.style.cursor
-    const previousUserSelect = document.body.style.userSelect
-    let collapsed = false
-
+    if (event.button !== 0) return
+    stopResize()
     setResizing(true)
     onResizeStateChange?.(true)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    setPanelResizeShieldActive(true)
-
-    const finishResize = () => {
-      setResizing(false)
-      onResizeStateChange?.(false)
-      document.body.style.cursor = previousCursor
-      document.body.style.userSelect = previousUserSelect
-      setPanelResizeShieldActive(false)
-      document.removeEventListener('pointermove', handlePointerMove)
-      document.removeEventListener('pointerup', handlePointerUp)
-    }
-
-    const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
-      if (collapsed) return
-
-      if (moveEvent.clientX <= COLLAPSE_SIDEBAR_WIDTH) {
-        collapsed = true
-        finishResize()
-        onCollapse?.()
-        return
-      }
-
-      const nextWidth = clampSidebarWidth(moveEvent.clientX)
-      setSidebarWidth(nextWidth)
-      storeSidebarWidth(nextWidth)
-    }
-
-    const handlePointerUp = () => {
-      if (!collapsed) finishResize()
-    }
-
-    document.addEventListener('pointermove', handlePointerMove)
-    document.addEventListener('pointerup', handlePointerUp)
+    startResize(event, {
+      cursor: 'col-resize',
+      onFinish: () => {
+        setResizing(false)
+        onResizeStateChange?.(false)
+      },
+      onMove: ({ x }) => {
+        if (x <= COLLAPSE_SIDEBAR_WIDTH) {
+          stopResize()
+          onCollapse?.()
+          return
+        }
+        const nextWidth = clampSidebarWidth(x)
+        setSidebarWidth(nextWidth)
+        storeSidebarWidth(nextWidth)
+      },
+    })
   }
 
   return {

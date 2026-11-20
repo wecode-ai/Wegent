@@ -1,30 +1,45 @@
-import './toolbar.css'
-import { ProjectBoardCardContext } from './projectBoardCardContext'
-import { registerBoardCursorPolicy } from './boardCursorPolicy'
+import type {ProjectBoardTransferEvents} from './ProjectBoardTransfer'
 import {
-  Plus,
-  ChevronDown,
   ChevronRight,
   ListFilter,
-  Search,
   Maximize2,
   Minimize2,
+  Plus,
+  Search,
 } from 'lucide-react'
-import { Tooltip } from '../issue-detail/Tooltip'
+import { SelectField } from '../controls/SelectField'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Tooltip } from '../controls/Tooltip'
+import { Button as ControlButton } from '../markdown/Button'
+import { registerBoardCursorPolicy } from './boardCursorPolicy'
+import { ProjectBoardCardContext } from './projectBoardCardContext'
+import './toolbar.css'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from 'react'
 import type { CollaborationTranslate } from '../i18n'
-import { KanbanBoard, type KanbanBoardProps, type KanbanEmptyState } from '../kanban/KanbanBoard'
-import type { ProjectBoardGroupBy } from './useProjectBoardState'
-import type { ProjectBoardSort, ProjectBoardSortLabels } from './projectBoardSorting'
-import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
+import {
+  KanbanBoard,
+  type KanbanEmptyState,
+} from '../kanban/KanbanBoard'
 import { isExecutionBoardColumn } from './projectBoardColumns'
-import { ProjectBoardParentRows, type ProjectBoardParentRowsProps } from './ProjectBoardParentRows'
+import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
+import {
+  ProjectBoardParentRows,
+  type ProjectBoardParentRowsProps,
+} from './ProjectBoardParentRows'
+import type {
+  ProjectBoardSort,
+  ProjectBoardSortLabels,
+} from './projectBoardSorting'
+import type { ProjectBoardGroupBy } from './useProjectBoardState'
 
-function classNames(...values: Array<string | false | null | undefined>): string {
+function classNames(
+  ...values: Array<string | false | null | undefined>
+): string {
   return values.filter(Boolean).join(' ')
 }
 
@@ -97,7 +112,7 @@ export interface ProjectBoardLocalProjectOption {
   name: string
 }
 
-export interface ProjectBoardBodyProps<TItem> {
+export interface ProjectBoardBodyProps<TItem> extends ProjectBoardTransferEvents {
   parentRows?: ProjectBoardParentRowsProps<TItem>
   emptyState?: ReactNode
   viewNavigation?: ReactNode
@@ -111,8 +126,6 @@ export interface ProjectBoardBodyProps<TItem> {
   columns: readonly ProjectBoardColumn[]
   currentParent: ProjectBoardBreadcrumbItem | null
   currentParentId: string | null
-  dnd: KanbanBoardProps<ProjectBoardColumn, TItem>['dnd']
-  dndContextProps: Record<string, unknown>
   externalGroupLabel: string
   externalGroupValues: readonly string[]
   externalManagedLabel: string
@@ -125,9 +138,12 @@ export interface ProjectBoardBodyProps<TItem> {
   getColumnDragHint(column: ProjectBoardColumn): string | undefined
   getColumnEmptyState(
     column: ProjectBoardColumn,
-    items: readonly TItem[]
+    items: readonly TItem[],
   ): KanbanEmptyState | undefined
-  getColumnItems(column: ProjectBoardColumn, state: ProjectBoardStatePort): readonly TItem[]
+  getColumnItems(
+    column: ProjectBoardColumn,
+    state: ProjectBoardStatePort,
+  ): readonly TItem[]
   getItemKey(item: TItem): string
   groupFields: readonly ProjectBoardGroupField[]
   isExternalBoard: boolean
@@ -147,23 +163,29 @@ export interface ProjectBoardBodyProps<TItem> {
   renderColumnFooter?(
     column: ProjectBoardColumn,
     items: readonly TItem[],
-    state: ProjectBoardStatePort
+    state: ProjectBoardStatePort,
   ): ReactNode
   renderColumnHeaderActions?(
     column: ProjectBoardColumn,
     items: readonly TItem[],
-    state: ProjectBoardStatePort
+    state: ProjectBoardStatePort,
   ): ReactNode
-  renderDragOverlay(): ReactNode
   renderExternalGroupPicker(): ReactNode
-  renderItem(item: TItem, column: ProjectBoardColumn, state: ProjectBoardStatePort): ReactNode
-  renderItemsFooter?(column: ProjectBoardColumn, items: readonly TItem[]): ReactNode
+  renderItem(
+    item: TItem,
+    column: ProjectBoardColumn,
+    state: ProjectBoardStatePort,
+  ): ReactNode
+  renderItemsFooter?(
+    column: ProjectBoardColumn,
+    items: readonly TItem[],
+  ): ReactNode
   renderQuickStart?(state: ProjectBoardStatePort): ReactNode
   renderSkeleton(): ReactNode
   renderStatus?(): ReactNode
   renderGroupPicker(
     value: ProjectBoardGroupBy,
-    onChange: (value: ProjectBoardGroupBy) => void
+    onChange: (value: ProjectBoardGroupBy) => void,
   ): ReactNode
   renderBoardSettingsAction?(): ReactNode
   filterAction?: ReactNode
@@ -194,8 +216,9 @@ export function ProjectBoardBody<TItem>({
   columns,
   currentParent,
   currentParentId,
-  dnd,
-  dndContextProps,
+  onDragStart,
+  onDragCancel,
+  onDrop,
   externalGroupLabel,
   externalGroupValues,
   externalManagedLabel,
@@ -214,7 +237,6 @@ export function ProjectBoardBody<TItem>({
   onSaveGlobalGroupBy,
   renderColumnFooter,
   renderColumnHeaderActions,
-  renderDragOverlay,
   renderExternalGroupPicker,
   renderGroupPicker,
   renderBoardSettingsAction,
@@ -238,22 +260,30 @@ export function ProjectBoardBody<TItem>({
 }: ProjectBoardBodyProps<TItem>) {
   const isExecutionColumn = (column: ProjectBoardColumn) =>
     isExecutionBoardColumn(column, state.groupBy)
-  const selectedGroupColumn = columns.find(column => column.key === state.groupFilter)
+  const selectedGroupColumn = columns.find(
+    (column) => column.key === state.groupFilter,
+  )
   const groupFilterLabel = state.groupFilter
     ? (selectedGroupColumn?.label ?? state.groupFilter)
     : translate('todo.board_all_groups', undefined, {
         group:
-          groupFields.find(field => field.id === state.groupBy)?.name ??
+          groupFields.find((field) => field.id === state.groupBy)?.name ??
           translate('todo.board_group_items'),
       })
   const leafCount = (parentId?: string | null) =>
     new Set(
       parentRows?.rows
-        .filter(row => row.parent === null && (parentId === undefined || row.parentId === parentId))
-        .flatMap(row => [...row.items.values()].flat().map(getItemKey))
+        .filter(
+          (row) =>
+            row.parent === null &&
+            (parentId === undefined || row.parentId === parentId),
+        )
+        .flatMap((row) => [...row.items.values()].flat().map(getItemKey)),
     ).size
   const otherCount =
-    leafCount() - leafCount(null) - (currentParentId ? leafCount(currentParentId) : 0)
+    leafCount() -
+    leafCount(null) -
+    (currentParentId ? leafCount(currentParentId) : 0)
   const parentSummary = parentRows?.translate(
     currentParentId
       ? 'todo.parent_board_nested_summary'
@@ -262,13 +292,16 @@ export function ProjectBoardBody<TItem>({
         : 'todo.parent_board_summary',
     undefined,
     {
-      parents: parentRows.rows.filter(row => row.parent !== null).length,
+      parents: parentRows.rows.filter((row) => row.parent !== null).length,
       standalone: leafCount(null),
       children: leafCount(currentParentId),
       other: otherCount,
-    }
+    },
   )
-  const columnHeaderActions = (column: ProjectBoardColumn, items: readonly TItem[]) => (
+  const columnHeaderActions = (
+    column: ProjectBoardColumn,
+    items: readonly TItem[],
+  ) => (
     <>
       {renderColumnHeaderActions?.(column, items, state)}
       {sortLabels && !isExternalBoard ? (
@@ -277,20 +310,25 @@ export function ProjectBoardBody<TItem>({
           columnLabel={column.label}
           labels={sortLabels}
           value={state.getColumnSort(column.key)}
-          onChange={value => state.selectColumnSort(column.key, value)}
+          onChange={(value) => state.selectColumnSort(column.key, value)}
         />
       ) : null}
     </>
   )
   const boardCard = (item: TItem, column: ProjectBoardColumn) => {
     const highlighted =
-      dropFeedback?.itemId === getItemKey(item) && dropFeedback.columnKey === column.key
+      dropFeedback?.itemId === getItemKey(item) &&
+      dropFeedback.columnKey === column.key
     // Preserve the card's drag registration when feedback changes.
     return (
-      <ProjectBoardCardContext.Provider value={{ columnKey: column.key, groupBy: state.groupBy }}>
+      <ProjectBoardCardContext.Provider
+        value={{ columnKey: column.key, groupBy: state.groupBy }}
+      >
         <div
           data-testid={highlighted ? 'board-drop-highlight' : undefined}
-          className={highlighted ? 'rounded-xl ring-2 ring-focus/50' : undefined}
+          className={
+            highlighted ? 'rounded-xl ring-2 ring-focus/50' : undefined
+          }
         >
           {renderItem(item, column, state)}
         </div>
@@ -298,43 +336,48 @@ export function ProjectBoardBody<TItem>({
     )
   }
   return (
-    <div ref={registerBoardCursorPolicy} className="flex min-h-0 min-w-0 flex-1 flex-col pt-4">
+    <div
+      ref={registerBoardCursorPolicy}
+      className="flex min-h-0 min-w-0 flex-1 flex-col pt-4"
+    >
       {isExternalBoard ? (
         <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
           {renderExternalGroupPicker()}
-          <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
-            {state.externalGroupFilter ||
-              translate('todo.board_all_groups', undefined, {
-                group: externalGroupLabel,
-              })}
-            <ChevronDown className={'ml-2 h-3 w-3'} />
-            <select
-              data-testid="dingtalk-board-assignee-filter"
-              value={state.externalGroupFilter}
-              onChange={event => state.setExternalGroupFilter(event.target.value)}
-              className="absolute inset-0 cursor-pointer opacity-0"
-              aria-label={translate('todo.board_filter_group')}
-            >
-              <option value="">{translate('todo.board_all')}</option>
-              {externalGroupValues.map(name => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </span>
+          <SelectField
+            testId="dingtalk-board-assignee-filter"
+            accessibleLabel={translate('todo.board_filter_group')}
+            value={normalizeSelectValue(state.externalGroupFilter)}
+            onChange={state.setExternalGroupFilter}
+            options={[
+              { value: '', label: translate('todo.board_all') },
+              ...externalGroupValues.map((name) => ({
+                value: name,
+                label: name,
+              })),
+            ]}
+            triggerContent={
+              <span className="truncate">
+                {state.externalGroupFilter ||
+                  translate('todo.board_all_groups', undefined, {
+                    group: externalGroupLabel,
+                  })}
+              </span>
+            }
+          />
           {filterAction}
-          <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
-            <Search className="h-3.5 w-3.5" />
-            <input
+          <label className="relative min-w-52">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+            <ControlInput
               data-testid="dingtalk-board-search"
               value={state.externalQuery}
-              onChange={event => state.setExternalQuery(event.target.value)}
+              onChange={(event) => state.setExternalQuery(event.target.value)}
               placeholder={externalSearchPlaceholder}
-              className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+              className="w-full pl-9"
             />
           </label>
-          <span className="ml-auto text-xs text-text-muted">{externalManagedLabel}</span>
+          <span className="ml-auto text-xs text-text-muted">
+            {externalManagedLabel}
+          </span>
         </div>
       ) : (
         <div className="project-board-toolbar flex min-w-0 shrink-0 items-start">
@@ -342,73 +385,81 @@ export function ProjectBoardBody<TItem>({
             data-testid="cloud-board-toolbar"
             className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
           >
-            {isMyTasksBoard && localProjectFilter && localProjectFilter.options.length > 0 ? (
-              <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
-                <span className="sr-only">{localProjectFilter.ariaLabel}</span>
-                <span className="pointer-events-none min-w-0 truncate">
-                  {localProjectFilter.label.replace('{{project}}', localProjectFilter.selectedName)}
-                </span>
-                <ChevronDown
-                  className={'pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted'}
-                />
-                <select
-                  data-testid="cloud-local-project-filter"
-                  aria-label={localProjectFilter.ariaLabel}
-                  value={localProjectFilter.activeId}
-                  onChange={event => {
-                    state.setQuickCreateStatus(null)
-                    localProjectFilter.onChange(event.target.value)
-                  }}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                >
-                  <option value="all">{localProjectFilter.allLabel}</option>
-                  {localProjectFilter.options.map(project => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            {isMyTasksBoard &&
+            localProjectFilter &&
+            localProjectFilter.options.length > 0 ? (
+              <SelectField
+                testId="cloud-local-project-filter"
+                accessibleLabel={localProjectFilter.ariaLabel}
+                value={normalizeSelectValue(localProjectFilter.activeId)}
+                onChange={(value) => {
+                  state.setQuickCreateStatus(null)
+                  localProjectFilter.onChange(value)
+                }}
+                options={[
+                  { value: 'all', label: localProjectFilter.allLabel },
+                  ...localProjectFilter.options.map((project) => ({
+                    value: String(project.id),
+                    label: project.name,
+                  })),
+                ]}
+                triggerContent={
+                  <span className="truncate">
+                    {localProjectFilter.label.replace(
+                      '{{project}}',
+                      localProjectFilter.selectedName,
+                    )}
+                  </span>
+                }
+                className="min-w-40 shrink-0"
+              />
             ) : null}
-            {!customView && renderGroupPicker(state.groupBy, state.selectGroupBy)}
+            {!customView &&
+              renderGroupPicker(state.groupBy, state.selectGroupBy)}
             <Tooltip label={groupFilterLabel} side="bottom">
-              <label className="project-board-compact-action relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
-                <ListFilter className="project-board-action-icon h-4 w-4" aria-hidden="true" />
-                <span
-                  className="project-board-action-label"
-                  data-testid="cloud-board-group-filter-label"
-                >
-                  {groupFilterLabel}
-                </span>
-                <ChevronDown className="project-board-action-chevron ml-2 h-3 w-3" />
-                <select
-                  data-testid="cloud-board-group-filter"
-                  value={state.groupFilter}
-                  onChange={event => state.setGroupFilter(event.target.value)}
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                  aria-label={translate('todo.board_filter_group')}
-                >
-                  <option value="">{translate('todo.board_all')}</option>
-                  {state.groupFilter && !selectedGroupColumn ? (
-                    <option value={state.groupFilter}>{groupFilterLabel}</option>
-                  ) : null}
-                  {columns.map(column => (
-                    <option key={column.key} value={column.key}>
-                      {column.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <span className="inline-flex shrink-0">
+                <SelectField
+                  testId="cloud-board-group-filter"
+                  accessibleLabel={translate('todo.board_filter_group')}
+                  value={normalizeSelectValue(state.groupFilter)}
+                  onChange={state.setGroupFilter}
+                  options={[
+                    { value: '', label: translate('todo.board_all') },
+                    ...(state.groupFilter && !selectedGroupColumn
+                      ? [{ value: state.groupFilter, label: groupFilterLabel }]
+                      : []),
+                    ...columns.map((column) => ({
+                      value: column.key,
+                      label: column.label,
+                    })),
+                  ]}
+                  triggerContent={
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ListFilter
+                        className="h-4 w-4 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span
+                        data-testid="cloud-board-group-filter-label"
+                        className="truncate"
+                      >
+                        {groupFilterLabel}
+                      </span>
+                    </span>
+                  }
+                  className="shrink-0"
+                />
+              </span>
             </Tooltip>
             {filterAction}
-            <label className="project-board-search flex h-8 min-w-52 flex-1 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
-              <Search className="h-3.5 w-3.5" />
-              <input
+            <label className="project-board-search relative min-w-52 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+              <ControlInput
                 data-testid="cloud-board-search"
                 value={state.query}
-                onChange={event => state.setQuery(event.target.value)}
+                onChange={(event) => state.setQuery(event.target.value)}
                 placeholder={searchPlaceholder}
-                className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+                className="w-full pl-9"
               />
             </label>
             <div
@@ -416,18 +467,29 @@ export function ProjectBoardBody<TItem>({
               className="ml-auto flex shrink-0 items-center gap-2"
             >
               {columns.some(isExecutionColumn) ? (
-                <Tooltip label={state.focusExecutionColumns ? focusLabels.exit : focusLabels.enter}>
-                  <button
+                <Tooltip
+                  label={
+                    state.focusExecutionColumns
+                      ? focusLabels.exit
+                      : focusLabels.enter
+                  }
+                >
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="cloud-board-focus-running"
                     aria-pressed={state.focusExecutionColumns}
-                    aria-label={state.focusExecutionColumns ? focusLabels.exit : focusLabels.enter}
+                    aria-label={
+                      state.focusExecutionColumns
+                        ? focusLabels.exit
+                        : focusLabels.enter
+                    }
                     onClick={state.toggleFocusExecutionColumns}
                     className={classNames(
                       'project-board-compact-action inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
                       state.focusExecutionColumns
                         ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
-                        : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
+                        : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
                     )}
                   >
                     {state.focusExecutionColumns ? (
@@ -435,12 +497,16 @@ export function ProjectBoardBody<TItem>({
                     ) : (
                       <Maximize2 className="h-3.5 w-3.5" />
                     )}
-                    <span className="project-board-action-label">{focusLabels.title}</span>
-                  </button>
+                    <span className="project-board-action-label">
+                      {focusLabels.title}
+                    </span>
+                  </ControlButton>
                 </Tooltip>
               ) : null}
               {!customView && showSaveGlobal ? (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="cloud-board-save-global"
                   disabled={saveGlobalDisabled}
@@ -448,7 +514,7 @@ export function ProjectBoardBody<TItem>({
                   className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
                 >
                   {saveGlobalLabel}
-                </button>
+                </ControlButton>
               ) : null}
               {renderBoardSettingsAction?.()}
               {viewNavigation}
@@ -465,38 +531,53 @@ export function ProjectBoardBody<TItem>({
         </div>
       )}
       {viewNotice}
-      <nav data-testid="cloud-todo-board-breadcrumb" aria-label="任务层级" className="px-6">
+      <nav
+        data-testid="cloud-todo-board-breadcrumb"
+        aria-label="任务层级"
+        className="px-6"
+      >
         {currentParent ? (
           <>
             <div className="flex h-7 items-center gap-1 text-xs">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 onClick={() => onBreadcrumbSelect(null)}
                 className="rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
               >
                 Issue
-              </button>
-              {breadcrumb.map(parent => (
-                <span key={parent.id} className="flex min-w-0 items-center gap-1">
-                  <ChevronRight className={'h-3.5 w-3.5 shrink-0 text-text-muted'} />
-                  <button
+              </ControlButton>
+              {breadcrumb.map((parent) => (
+                <span
+                  key={parent.id}
+                  className="flex min-w-0 items-center gap-1"
+                >
+                  <ChevronRight
+                    className={'h-3.5 w-3.5 shrink-0 text-text-muted'}
+                  />
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
                     onClick={() => onBreadcrumbSelect(parent.id)}
                     className={classNames(
                       'max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary',
-                      parent.id === currentParentId && 'font-medium text-text-primary'
+                      parent.id === currentParentId &&
+                        'font-medium text-text-primary',
                     )}
                   >
                     {parent.title}
-                  </button>
+                  </ControlButton>
                 </span>
               ))}
             </div>
             <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-              <h1 className="text-heading-sm font-semibold">{currentParent.title}</h1>
+              <h1 className="text-heading-sm font-semibold">
+                {currentParent.title}
+              </h1>
               <span className="text-xs text-text-muted">
-                {parentSummary ?? `${layerCount} 个任务 · 仅显示当前层的直接子任务`}
+                {parentSummary ??
+                  `${layerCount} 个任务 · 仅显示当前层的直接子任务`}
               </span>
             </div>
           </>
@@ -535,33 +616,40 @@ export function ProjectBoardBody<TItem>({
               {...parentRows}
               currentParentId={currentParentId}
               columns={columns}
-              dnd={dnd}
-              dndContextProps={dndContextProps}
+              onDragStart={onDragStart}
+              onDragCancel={onDragCancel}
+              onDrop={onDrop}
               getItemKey={getItemKey}
               renderItem={boardCard}
               renderColumnHeaderActions={columnHeaderActions}
               getColumnEmptyState={getColumnEmptyState}
-              renderColumnFooter={(column, items) => renderColumnFooter?.(column, items, state)}
+              renderColumnFooter={(column, items) =>
+                renderColumnFooter?.(column, items, state)
+              }
               getColumnDragHint={getColumnDragHint}
-              renderDragOverlay={renderDragOverlay}
-              getColumnWidthClassName={column =>
-                state.focusExecutionColumns && isExecutionColumn(column) ? 'w-[480px]' : 'w-[292px]'
+              getColumnWidthClassName={(column) =>
+                state.focusExecutionColumns && isExecutionColumn(column)
+                  ? 'w-[480px]'
+                  : 'w-[292px]'
               }
             />
           ) : (
             <KanbanBoard
               columns={columns}
               activeDragItemId={activeDragItemId}
-              dnd={dnd}
-              dndContextProps={dndContextProps}
+              onDragStart={onDragStart}
+              onDragCancel={onDragCancel}
+              onDrop={onDrop}
               dropIdPrefix="todo-column:"
               testIdPrefix="cloud-todo"
-              getColumnKey={column => column.key}
-              getColumnLabel={column => column.label}
-              getColumnDotClassName={column => column.dotClass}
-              getColumnItems={column => getColumnItems(column, state)}
-              getColumnWidthClassName={column =>
-                state.focusExecutionColumns && isExecutionColumn(column) ? 'w-[480px]' : 'w-[292px]'
+              getColumnKey={(column) => column.key}
+              getColumnLabel={(column) => column.label}
+              getColumnDotClassName={(column) => column.dotClass}
+              getColumnItems={(column) => getColumnItems(column, state)}
+              getColumnWidthClassName={(column) =>
+                state.focusExecutionColumns && isExecutionColumn(column)
+                  ? 'w-[480px]'
+                  : 'w-[292px]'
               }
               getColumnDragHint={getColumnDragHint}
               renderColumnHeaderActions={columnHeaderActions}
@@ -570,8 +658,9 @@ export function ProjectBoardBody<TItem>({
               renderItemsFooter={renderItemsFooter}
               getColumnEmptyState={getColumnEmptyState}
               renderAddIcon={() => <Plus className="h-5 w-5" />}
-              renderColumnFooter={(column, items) => renderColumnFooter?.(column, items, state)}
-              renderDragOverlay={renderDragOverlay}
+              renderColumnFooter={(column, items) =>
+                renderColumnFooter?.(column, items, state)
+              }
             />
           )}
         </ProjectBoardScrollArea>

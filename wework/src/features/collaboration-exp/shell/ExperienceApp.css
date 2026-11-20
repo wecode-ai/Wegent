@@ -128,8 +128,8 @@
   background: transparent;
 }
 
-.experience-pane-separator[data-separator='hover']::after,
-.experience-pane-separator[data-separator='active']::after {
+.experience-pane-separator[data-hovering]::after,
+.experience-pane-separator[data-dragging]::after {
   background: rgb(var(--color-text-muted));
 }
 

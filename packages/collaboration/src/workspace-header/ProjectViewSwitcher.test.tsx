@@ -1,3 +1,4 @@
+import { sdkSelectValue, sdkSelectItems } from '../test/selectControl'
 // @vitest-environment jsdom
 
 import {
@@ -74,6 +75,36 @@ async function click(id: string) {
 }
 const tabLabels = (selector: string) =>
   [...container.querySelectorAll(`${selector} [role="tab"]`)].map(node => node.textContent)
+
+function stableStructure(element: HTMLElement) {
+  const clone = element.cloneNode(true) as HTMLElement
+  const ids = new Map(
+    Array.from(clone.querySelectorAll<HTMLElement>('[id]'), (node, index) => [
+      node.id,
+      'catalog-id-' + index,
+    ])
+  )
+  for (const node of clone.querySelectorAll<HTMLElement>('*')) {
+    if (node.id) node.id = ids.get(node.id)!
+    for (const name of [
+      'aria-controls',
+      'aria-labelledby',
+      'aria-describedby',
+      'aria-activedescendant',
+    ]) {
+      const value = node.getAttribute(name)
+      if (value)
+        node.setAttribute(
+          name,
+          value
+            .split(' ')
+            .map(id => ids.get(id) ?? id)
+            .join(' ')
+        )
+    }
+  }
+  return clone.innerHTML
+}
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -286,7 +317,7 @@ describe('grouped project navigation', () => {
   it.each(['table', 'files', 'manage'] as const)(
     'keeps the old %s selector actionable without duplicate IDs',
     async view => {
-      render(<Harness value={view === 'table' ? 'gantt' : 'files'} />)
+      render(<Harness value={view === 'table' ? 'gantt' : view === 'files' ? 'manage' : 'files'} />)
       const alias = byId(`collaboration-tab-${view}`)
       expect(alias.closest('button')?.dataset.testid).toBe(`view-${view}`)
       await click(`collaboration-tab-${view}`)
@@ -319,15 +350,16 @@ describe('compact navigation', () => {
     render(<Harness value="gantt" compact />)
     expect(tabLabels('.project-view-switcher-primary')).toEqual(['工作', '计划', '管理'])
     expect(container.querySelector('.project-view-switcher-tabs')).toBeNull()
-    expect(byId('view-calendar').closest('[role="menu"]')).toBeNull()
+    expect(byId('view-calendar').closest('[role="listbox"]')).toBeNull()
     await click('collaboration-compact-trigger')
-    expect(
-      [...document.querySelectorAll('[role="menuitemradio"]')].map(node => node.textContent)
-    ).toEqual(['时间线', '里程碑', '表格'])
-    expect(byId('collaboration-sub-timeline').getAttribute('aria-checked')).toBe('true')
+    expect([...document.querySelectorAll('[role="option"]')].map(node => node.textContent)).toEqual(
+      ['时间线', '里程碑', '表格']
+    )
+    expect(byId('collaboration-sub-timeline').getAttribute('aria-selected')).toBe('true')
     await click('view-table')
     expect(change).toHaveBeenLastCalledWith('table')
-    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="listbox"]:not([hidden])')).toBeNull()
+    expect(byId('collaboration-compact-trigger').getAttribute('aria-expanded')).toBe('false')
     expect(byId('collaboration-compact-trigger').textContent).toContain('表格')
     expect(container.querySelector('.project-view-switcher-segments')).toBeNull()
   })
@@ -335,19 +367,30 @@ describe('compact navigation', () => {
   it('handles menu keyboard navigation and Escape', async () => {
     render(<Harness value="gantt" compact />)
     await click('collaboration-compact-trigger')
+    const trigger = byId('collaboration-compact-trigger')
     await act(async () => {
-      byId('collaboration-sub-timeline').focus()
-      byId('collaboration-sub-timeline').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'End', bubbles: true })
+      trigger.focus()
+      trigger.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'End',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     })
-    expect(document.activeElement).toBe(byId('view-table'))
+    expect(document.activeElement).toBe(trigger)
+    expect(trigger.getAttribute('aria-activedescendant')).toBe(byId('view-table').id)
     await act(async () => {
-      byId('view-table').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      trigger.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     })
-    expect(document.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="listbox"]:not([hidden])')).toBeNull()
+    expect(byId('collaboration-compact-trigger').getAttribute('aria-expanded')).toBe('false')
     expect(change).not.toHaveBeenCalled()
   })
 })
@@ -368,13 +411,10 @@ describe('flat compatibility and themes', () => {
       )
       if (compact) {
         const select = byId('collaboration-project-view-select') as HTMLSelectElement
-        expect([...select.options].map(option => option.textContent)).toEqual(
+        expect((await sdkSelectItems(select)).map(option => option.label)).toEqual(
           ids.map(id => names[id])
         )
-        await act(async () => {
-          select.value = 'files'
-          select.dispatchEvent(new Event('change', { bubbles: true }))
-        })
+        await sdkSelectValue(select, 'files')
       } else {
         expect([...container.querySelectorAll('button')].map(node => node.textContent)).toEqual(
           ids.map(id => names[id])
@@ -412,8 +452,8 @@ describe('flat compatibility and themes', () => {
           .map(node => node.getAttribute('aria-label'))
           .join(' ')
       ).not.toMatch(/surface|mode|resolver|legacyView|lossy/)
-      if (theme === 'light') lightStructure = nav.innerHTML
-      else expect(nav.innerHTML).toBe(lightStructure)
+      if (theme === 'light') lightStructure = stableStructure(nav)
+      else expect(stableStructure(nav)).toBe(lightStructure)
     }
   })
 

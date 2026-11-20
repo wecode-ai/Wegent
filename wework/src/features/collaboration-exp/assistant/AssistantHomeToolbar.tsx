@@ -1,7 +1,8 @@
-import { History, Settings2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { AssistantHomePanel } from './types'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { History, Settings2 } from 'lucide-react'
 import './AssistantExperience.css'
+import type { AssistantHomePanel } from './types'
 
 export function AssistantHomeToolbar({
   panel,
@@ -19,7 +20,8 @@ export function AssistantHomeToolbar({
           ['team', Settings2, 'assistant.manageTeam'],
         ] as const
       ).map(([id, Icon, label]) => (
-        <button
+        <ControlButton
+          variant="unstyled"
           key={id}
           type="button"
           className="assistant-activity-button text-xs"
@@ -29,7 +31,7 @@ export function AssistantHomeToolbar({
         >
           <Icon size={15} aria-hidden="true" />
           {t(label)}
-        </button>
+        </ControlButton>
       ))}
     </div>
   )

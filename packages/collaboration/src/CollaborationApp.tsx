@@ -1,3 +1,4 @@
+import { Button as ControlButton } from './markdown/Button'
 import { milestonePageProps } from './collaborationAppMilestoneFilter'
 import {
   collaborationAppProjectViewCatalog,
@@ -564,7 +565,7 @@ export function CollaborationApp({
               assistantOpen={false}
               backAction={
                 showProjectBack ? (
-                  <button
+                  <ControlButton variant="unstyled"
                     type="button"
                     className="relative z-10 mr-2 flex h-8 items-center rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                     data-testid="collaboration-project-back"
@@ -578,7 +579,7 @@ export function CollaborationApp({
                     aria-label={messages.back}
                   >
                     ←
-                  </button>
+                  </ControlButton>
                 ) : undefined
               }
               embedded
@@ -603,7 +604,7 @@ export function CollaborationApp({
                 <>
                   {host.renderProjectHeaderAction?.(project)}
                   {hasHeaderCreateAction ? (
-                    <button
+                    <ControlButton variant="primary"
                       ref={actionRefs.add}
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
@@ -614,10 +615,10 @@ export function CollaborationApp({
                     >
                       <span aria-hidden="true">＋</span>
                       {showLabels ? messages.createIssue : null}
-                    </button>
+                    </ControlButton>
                   ) : null}
                   {host.projectActions?.map(action => (
-                    <button
+                    <ControlButton variant="outline"
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
                       data-testid={action.testId}
@@ -628,7 +629,7 @@ export function CollaborationApp({
                     >
                       {action.renderIcon?.()}
                       {showLabels ? action.label : null}
-                    </button>
+                    </ControlButton>
                   ))}
                 </>
               )}
@@ -653,14 +654,14 @@ export function CollaborationApp({
                             </span>
                             <h2>{messages.emptyProjectTitle}</h2>
                             <p>{messages.emptyProjectHint}</p>
-                            <button
+                            <ControlButton variant="unstyled"
                               type="button"
                               className="collaboration-primary-button"
                               data-testid="collaboration-empty-project-create"
                               onClick={requestIssueCreate}
                             >
                               {messages.createIssue}
-                            </button>
+                            </ControlButton>
                             <div className="collaboration-empty-project-flow">
                               {[
                                 [

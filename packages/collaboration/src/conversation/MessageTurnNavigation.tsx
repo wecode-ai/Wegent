@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { useWindowEvent } from '../dom-events'
 import { createTurnNavigationGeometrySource } from './turnNavigationGeometrySource'
 import {
@@ -574,7 +575,7 @@ export function MessageTurnNavigation({
                 onMouseEnter={() => setHoveredMarkerId(marker.id)}
                 onMouseLeave={() => setHoveredMarkerId(null)}
               >
-                <button
+                <ControlButton variant="unstyled"
                   type="button"
                   aria-label={t('conversation.message_navigation.jump_to_message', undefined, {
                     index: marker.turnIndex + 1,
@@ -601,7 +602,7 @@ export function MessageTurnNavigation({
                       width: `${getMarkerWidthPx(hoverDistance, isLoading)}px`,
                     }}
                   />
-                </button>
+                </ControlButton>
               </div>
             )
           })}

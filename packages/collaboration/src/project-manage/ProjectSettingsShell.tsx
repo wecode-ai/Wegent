@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -63,7 +64,8 @@ export function ProjectSettingsShell({
             </h2>
             <nav aria-label={group.label} className="flex gap-1 md:block md:space-y-0.5">
               {group.sections.map(section => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   aria-current={selected.id === section.id ? 'page' : undefined}
                   className={
@@ -79,7 +81,7 @@ export function ProjectSettingsShell({
                   }}
                 >
                   {section.label}
-                </button>
+                </ControlButton>
               ))}
             </nav>
           </section>

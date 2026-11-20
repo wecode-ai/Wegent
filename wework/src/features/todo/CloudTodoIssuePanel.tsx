@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { LocatedLoopItem } from './cloudTodoWorkspaceTypes'
 import { formatCompactFileSize, selectedTaskBindingAddress } from './cloudTodoWorkspaceSupport'
 import { IssueResourceSection } from './CloudTodoWorkspaceControls'
@@ -91,7 +92,8 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
               className="task-conversation-issue-context flex min-h-0 flex-col bg-background"
             >
               <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-compact-issue-back"
                   onClick={closeTaskPanel}
@@ -99,11 +101,12 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                </button>
+                </ControlButton>
                 <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
                   {selectedItem.id} · Issue 附件
                 </span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-panel-close"
                   onClick={closeIssuePanelStack}
@@ -111,7 +114,7 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </header>
               <div className="min-h-0 flex-1 overflow-y-auto py-2">
                 <IssueResourceSection
@@ -121,7 +124,8 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                   empty={issueResourceAttachmentsLoading ? '正在加载…' : '暂无文件附件'}
                 >
                   {issueResourceAttachments.map(attachment => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={attachment.id}
                       type="button"
                       data-testid={`cloud-todo-resource-attachment-${attachment.id}`}
@@ -144,7 +148,7 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                       <span className="shrink-0 text-xs text-text-muted">
                         {formatCompactFileSize(attachment.size_bytes)}
                       </span>
-                    </button>
+                    </ControlButton>
                   ))}
                 </IssueResourceSection>
 
@@ -157,7 +161,8 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                   {(activeItemTaskBindings[selectedItem.id] ?? []).map(binding => {
                     const selected = selectedTaskBinding?.id === binding.id
                     return (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         key={binding.id}
                         type="button"
                         data-testid={`cloud-todo-resource-conversation-${binding.id}`}
@@ -180,7 +185,7 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                           {binding.task_title || binding.task_id}
                         </span>
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                      </button>
+                      </ControlButton>
                     )
                   })}
                 </IssueResourceSection>
@@ -197,7 +202,8 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                   {detailAllItems
                     .filter(candidate => candidate.parent_id === selectedItem.id)
                     .map(child => (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         key={child.id}
                         type="button"
                         data-testid={`cloud-todo-resource-child-${child.id}`}
@@ -215,7 +221,7 @@ export function CloudTodoIssuePanel({ model }: { model: CloudTodoWorkspaceViewMo
                         />
                         <span className="min-w-0 flex-1 truncate">{child.title}</span>
                         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                      </button>
+                      </ControlButton>
                     ))}
                 </IssueResourceSection>
               </div>

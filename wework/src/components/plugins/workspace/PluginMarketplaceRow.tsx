@@ -1,12 +1,18 @@
-import { memo, useMemo } from 'react'
-import * as Popover from '@radix-ui/react-popover'
-import { MoreHorizontal, RefreshCw, UserRoundX } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
 import { useOptionalAppearance } from '@/features/appearance'
 import { marketplaceItemOffersDeviceSyncRetry } from '@/features/plugins/pluginDeviceAutoSync'
-import { resolvePluginLogo } from '../plugin-assets'
-import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from '../marketplacePluginLock'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from '@wegent/collaboration/controls/Popover'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { MoreHorizontal, RefreshCw, UserRoundX } from 'lucide-react'
+import { memo, useMemo } from 'react'
 import { shouldShowInstalledMarketplaceActions } from '../marketplaceCatalogMerge'
+import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from '../marketplacePluginLock'
+import { resolvePluginLogo } from '../plugin-assets'
 import { marketplacePluginDistribution } from '../pluginDistribution'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
 import { marketplaceRowMetaItems } from './marketplaceWorkspaceHelpers'
@@ -88,7 +94,8 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
       className={['plugin-market-card', installLock ? 'is-locked' : ''].filter(Boolean).join(' ')}
       onClick={() => onAction('open', item)}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="plugin-market-card-main"
         aria-label={`${t('workbench.plugins_view_plugin', '查看')} ${item.displayName || item.name}`}
@@ -118,7 +125,7 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             ))}
           </div>
         </div>
-      </button>
+      </ControlButton>
       <div className="plugin-market-card-action">
         {installLock ? (
           <div
@@ -144,81 +151,91 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             <span>{pendingLabel}</span>
           </span>
         ) : showInstalledState ? (
-          <Popover.Root>
-            <Popover.Trigger asChild>
-              <button
-                type="button"
-                data-testid={`plugin-marketplace-actions-${item.id}`}
-                aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${
-                  item.displayName || item.name
-                }`}
-                className="plugin-market-card-menu"
-                onClick={event => {
-                  event.stopPropagation()
-                }}
-              >
-                <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
-              </button>
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Content
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  data-testid={`plugin-marketplace-actions-${item.id}`}
+                  aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${
+                    item.displayName || item.name
+                  }`}
+                  className="plugin-market-card-menu"
+                  onClick={event => {
+                    event.stopPropagation()
+                  }}
+                />
+              }
+            >
+              <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
+            </PopoverTrigger>
+            <>
+              <PopoverContent
                 data-testid={`plugin-marketplace-actions-menu-${item.id}`}
                 aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${item.displayName || item.name}`}
                 align="end"
                 sideOffset={4}
                 collisionPadding={8}
-                hideWhenDetached
-                className="z-system-popover max-h-[var(--radix-popover-content-available-height)] w-44 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/30 bg-popover p-1 shadow-lg outline-none"
+                className="z-system-popover max-h-[var(--available-height)] w-44 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl border border-border/30 bg-popover p-1 shadow-lg outline-none"
                 onClick={event => event.stopPropagation()}
               >
-                <Popover.Close asChild>
-                  <button
-                    type="button"
-                    data-testid={`plugin-marketplace-try-${item.id}`}
-                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
-                    onClick={() => onAction('try', item)}
-                  >
-                    {labels.try}
-                  </button>
-                </Popover.Close>
-                {item.accessRole === 'recipient' && item.allowCopy ? (
-                  <Popover.Close asChild>
+                <PopoverClose
+                  render={
                     <button
                       type="button"
-                      data-testid={`plugin-marketplace-copy-${item.id}`}
+                      data-testid={`plugin-marketplace-try-${item.id}`}
                       className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
-                      onClick={() => onAction('copy', item)}
-                    >
-                      {labels.copy}
-                    </button>
-                  </Popover.Close>
+                      onClick={() => onAction('try', item)}
+                    />
+                  }
+                >
+                  {labels.try}
+                </PopoverClose>
+                {item.accessRole === 'recipient' && item.allowCopy ? (
+                  <PopoverClose
+                    render={
+                      <button
+                        type="button"
+                        data-testid={`plugin-marketplace-copy-${item.id}`}
+                        className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
+                        onClick={() => onAction('copy', item)}
+                      />
+                    }
+                  >
+                    {labels.copy}
+                  </PopoverClose>
                 ) : null}
-                <Popover.Close asChild>
-                  <button
-                    type="button"
-                    data-testid={`plugin-marketplace-manage-${item.id}`}
-                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
-                    onClick={() => onAction('manage', item)}
-                  >
-                    {labels.manage}
-                  </button>
-                </Popover.Close>
+                <PopoverClose
+                  render={
+                    <button
+                      type="button"
+                      data-testid={`plugin-marketplace-manage-${item.id}`}
+                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
+                      onClick={() => onAction('manage', item)}
+                    />
+                  }
+                >
+                  {labels.manage}
+                </PopoverClose>
                 <div className="my-1 border-t border-border/25" />
-                <Popover.Close asChild>
-                  <button
-                    type="button"
-                    data-testid={`plugin-marketplace-uninstall-${item.id}`}
-                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10 wework:text-red-600 wework:hover:bg-red-50"
-                    onClick={() => onAction('uninstall', item)}
-                  >
-                    {labels.uninstall}
-                  </button>
-                </Popover.Close>
-              </Popover.Content>
-            </Popover.Portal>
-          </Popover.Root>
+                <PopoverClose
+                  render={
+                    <button
+                      type="button"
+                      data-testid={`plugin-marketplace-uninstall-${item.id}`}
+                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-destructive transition-colors hover:bg-destructive/10 wework:text-red-600 wework:hover:bg-red-50"
+                      onClick={() => onAction('uninstall', item)}
+                    />
+                  }
+                >
+                  {labels.uninstall}
+                </PopoverClose>
+              </PopoverContent>
+            </>
+          </Popover>
         ) : (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${testIdPrefix}plugin-marketplace-install-${item.id}`}
             aria-label={`${actionLabel} ${item.displayName || item.name}`}
@@ -241,7 +258,7 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             ) : (
               <span>{labels.install}</span>
             )}
-          </button>
+          </ControlButton>
         )}
       </div>
     </article>

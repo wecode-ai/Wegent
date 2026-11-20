@@ -1,22 +1,26 @@
+import { Checkbox } from '../controls/Checkbox'
+import { DialogSurface } from '../controls/DialogSurface'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ArrowDown, ArrowUp, ChevronDown, Plus, X } from 'lucide-react'
-import { useCallback, useId, useRef, useState, type ComponentProps } from 'react'
-import { DialogForm } from '../controls/DialogForm'
+import { ArrowDown, ArrowUp, Plus, X } from 'lucide-react'
+import { useId, useRef, useState } from 'react'
 import { ActionMenu } from '../controls/ActionMenu'
+import { DialogForm } from '../controls/DialogForm'
 import type { CollaborationTranslate } from '../i18n'
-import type { CollaborationProject, CollaborationStatus } from '../types'
 import { BoardLayoutEditor } from '../project-manage/BoardLayoutEditor'
+import { isTagNameTooLong } from '../tagging'
+import type { CollaborationProject, CollaborationStatus } from '../types'
+import { BoardViewTagPicker } from './BoardViewTagPicker'
 import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
 import { createProjectBoardSortLabels } from './projectBoardSorting'
 import type { BoardViewSaveSettings, SavedBoardView } from './projectBoardViews'
-import { BoardViewTagPicker } from './BoardViewTagPicker'
-import { isTagNameTooLong } from '../tagging'
 
-const control =
-  'min-h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:min-h-8 [&>option]:bg-popover [&>option]:text-text-primary [&>option:disabled]:text-text-muted'
 const action =
   'inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-2 text-sm hover:bg-muted disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:min-h-8 md:min-w-8'
 
@@ -25,18 +29,6 @@ export interface BoardViewEditorSettings {
   cardDisplay?: CollaborationProject['card_display']
   boardConfig?: CollaborationProject['board_config']
   canEditStatuses: boolean
-}
-
-function AlignedSelect({ className = '', ...props }: ComponentProps<'select'>) {
-  return (
-    <span className={`relative flex min-w-0 ${className}`}>
-      <select {...props} className={`${control} w-full appearance-none pr-9`} />
-      <ChevronDown
-        className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-        aria-hidden="true"
-      />
-    </span>
-  )
 }
 
 export function BoardViewEditor({
@@ -77,7 +69,7 @@ export function BoardViewEditor({
     showDate: settings?.cardDisplay?.show_date ?? true,
   }))
   const lock = useRef(false)
-  const [dialog, setDialog] = useState<HTMLDialogElement | null>(null)
+  const [dialog, setDialog] = useState<HTMLDivElement | null>(null)
   const titleId = useId()
   const tagOptions = [
     ...new Set([
@@ -88,19 +80,7 @@ export function BoardViewEditor({
       ...draft.filter.tags,
     ]),
   ]
-  const attachDialog = useCallback(
-    (node: HTMLDialogElement | null) => {
-      setDialog(node)
-      if (!node) return
-      const previous = returnFocus ?? document.activeElement
-      node.showModal()
-      return () => {
-        node.close()
-        if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
-      }
-    },
-    [returnFocus]
-  )
+
   const submit = async (remove = false) => {
     if (lock.current) return
     if (
@@ -170,16 +150,21 @@ export function BoardViewEditor({
     setDraft({ ...draft, columns })
   }
   return (
-    <dialog
-      ref={attachDialog}
-      aria-labelledby={titleId}
-      aria-busy={pending}
-      data-testid="board-view-editor"
-      className="m-auto max-h-[86vh] w-[min(800px,92vw)] overflow-hidden rounded-[20px] border border-border bg-background p-0 text-text-primary shadow-lg backdrop:bg-black/15"
-      onCancel={event => {
-        event.preventDefault()
+    <DialogSurface
+      finalFocus={() => returnFocus ?? null}
+      inline={false}
+      onClose={() => {
         if (!lock.current) onClose()
       }}
+      render={
+        <div
+          ref={setDialog}
+          aria-labelledby={titleId}
+          aria-busy={pending}
+          data-testid="board-view-editor"
+          className="m-auto max-h-[86vh] w-[min(800px,92vw)] overflow-hidden rounded-[20px] border border-border bg-background p-0 text-text-primary shadow-lg backdrop:bg-black/15"
+        />
+      }
     >
       <DialogForm
         className="flex max-h-[86vh] flex-col"
@@ -195,7 +180,8 @@ export function BoardViewEditor({
             </h2>
             <p className="mt-1 text-xs text-text-muted">{t('todo.board_view_settings_hint')}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={pending}
             data-testid="board-view-close"
@@ -204,19 +190,19 @@ export function BoardViewEditor({
             onClick={onClose}
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
         <div className="min-h-0 overflow-y-auto px-6 py-5">
           <fieldset disabled={pending} className="flex min-w-0 flex-col gap-6">
             {!builtIn && (
               <label className="flex flex-col gap-2 text-sm font-medium">
                 {t('todo.board_view_name')}
-                <input
+                <ControlInput
+                  density="compact"
                   autoFocus
                   required
                   maxLength={100}
                   value={draft.name}
-                  className={control}
                   data-testid="board-view-name"
                   onChange={event => setDraft({ ...draft, name: event.target.value })}
                 />
@@ -224,13 +210,12 @@ export function BoardViewEditor({
             )}
             {settings && (
               <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border p-3">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={isDefault}
                   disabled={pending || (builtIn && settings.defaultViewId === 'default')}
                   data-testid="board-view-set-default"
                   className="mt-0.5 h-4 w-4 accent-text-primary"
-                  onChange={event => setIsDefault(event.target.checked)}
+                  onCheckedChange={checked => setIsDefault(checked === true)}
                 />
                 <span>
                   <span className="block text-sm font-medium">
@@ -255,74 +240,84 @@ export function BoardViewEditor({
                       className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2 rounded-xl border border-border p-2 sm:grid-cols-[100px_minmax(0,1fr)_auto]"
                       data-testid={`board-view-lane-${index}`}
                     >
-                      <AlignedSelect
-                        aria-label={t('todo.board_view_columns')}
-                        data-testid={`board-view-lane-type-${index}`}
-                        value={column.type}
-                        onChange={event =>
-                          setDraft({
-                            ...draft,
-                            columns: draft.columns.map(candidate =>
-                              candidate.id === column.id
-                                ? {
-                                    ...candidate,
-                                    type: event.target
-                                      .value as SavedBoardView['columns'][number]['type'],
-                                    value: event.target.value === 'unmatched' ? 'Backlog' : '',
-                                  }
-                                : candidate
-                            ),
-                          })
-                        }
-                      >
-                        <option value="status">{t('todo.board_view_status')}</option>
-                        <option value="tag">{t('todo.board_view_tag')}</option>
-                        <option
-                          value="unmatched"
-                          disabled={draft.columns.some(
-                            candidate =>
-                              candidate.id !== column.id && candidate.type === 'unmatched'
-                          )}
-                        >
-                          {t('todo.board_view_unmatched')}
-                        </option>
-                      </AlignedSelect>
-                      {column.type === 'status' ? (
-                        <AlignedSelect
-                          aria-label={t('todo.board_view_status')}
-                          data-testid={`board-view-lane-value-${index}`}
-                          value={column.value}
-                          required
-                          className="min-w-0"
-                          onChange={event =>
-                            setDraft({
+                      <SelectRoot
+                        value={normalizeSelectValue(column.type)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue !== null)
+                            return setDraft({
                               ...draft,
                               columns: draft.columns.map(candidate =>
                                 candidate.id === column.id
-                                  ? { ...candidate, value: event.target.value }
+                                  ? {
+                                      ...candidate,
+                                      type: selectedValue as SavedBoardView['columns'][number]['type'],
+                                      value: selectedValue === 'unmatched' ? 'Backlog' : '',
+                                    }
                                   : candidate
                               ),
                             })
-                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          aria-label={t('todo.board_view_columns')}
+                          data-testid={`board-view-lane-type-${index}`}
+                        />
+                        <SelectContent>
+                          <SelectItem value="status">{t('todo.board_view_status')}</SelectItem>
+                          <SelectItem value="tag">{t('todo.board_view_tag')}</SelectItem>
+                          <SelectItem
+                            value="unmatched"
+                            disabled={draft.columns.some(
+                              candidate =>
+                                candidate.id !== column.id && candidate.type === 'unmatched'
+                            )}
+                          >
+                            {t('todo.board_view_unmatched')}
+                          </SelectItem>
+                        </SelectContent>
+                      </SelectRoot>
+                      {column.type === 'status' ? (
+                        <SelectRoot
+                          value={normalizeSelectValue(column.value)}
+                          required
+                          onValueChange={selectedValue => {
+                            if (selectedValue !== null)
+                              return setDraft({
+                                ...draft,
+                                columns: draft.columns.map(candidate =>
+                                  candidate.id === column.id
+                                    ? { ...candidate, value: selectedValue }
+                                    : candidate
+                                ),
+                              })
+                          }}
                         >
-                          <option value="" disabled>
-                            {t('todo.board_view_status')}
-                          </option>
-                          {column.value && !statuses.some(status => status.id === column.value) && (
-                            <option value={column.value}>{column.value}</option>
-                          )}
-                          {statuses.map(status => (
-                            <option key={status.id} value={status.id}>
-                              {status.name}
-                            </option>
-                          ))}
-                        </AlignedSelect>
+                          <SelectTrigger
+                            aria-label={t('todo.board_view_status')}
+                            data-testid={`board-view-lane-value-${index}`}
+                            className="min-w-0"
+                          />
+                          <SelectContent>
+                            <SelectItem value="" disabled>
+                              {t('todo.board_view_status')}
+                            </SelectItem>
+                            {column.value &&
+                              !statuses.some(status => status.id === column.value) && (
+                                <SelectItem value={String(column.value)}>{column.value}</SelectItem>
+                              )}
+                            {statuses.map(status => (
+                              <SelectItem key={status.id} value={String(status.id)}>
+                                {status.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </SelectRoot>
                       ) : column.type === 'unmatched' ? (
                         <label className="flex min-w-0 flex-col gap-1">
-                          <input
+                          <ControlInput
+                            density="compact"
                             aria-label={t('todo.board_view_unmatched_name')}
                             data-testid={`board-view-lane-value-${index}`}
-                            className={control}
                             required
                             maxLength={80}
                             value={column.value}
@@ -381,7 +376,8 @@ export function BoardViewEditor({
                             })
                           }
                         />
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           className={action}
                           disabled={index === 0}
@@ -390,8 +386,9 @@ export function BoardViewEditor({
                           onClick={() => move(index, -1)}
                         >
                           <ArrowUp className="h-4 w-4" />
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           className={action}
                           disabled={index === draft.columns.length - 1}
@@ -400,8 +397,9 @@ export function BoardViewEditor({
                           onClick={() => move(index, 1)}
                         >
                           <ArrowDown className="h-4 w-4" />
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           className={action}
                           aria-label={t('todo.board_view_remove_column')}
@@ -416,11 +414,12 @@ export function BoardViewEditor({
                           }
                         >
                           <X className="h-4 w-4" />
-                        </button>
+                        </ControlButton>
                       </div>
                     </div>
                   ))}
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className={`${action} self-start gap-1`}
                     disabled={draft.columns.length >= 50}
@@ -437,20 +436,19 @@ export function BoardViewEditor({
                   >
                     <Plus className="h-4 w-4" />
                     {t('todo.board_view_add_column')}
-                  </button>
+                  </ControlButton>
                 </div>
                 <div className="flex flex-col gap-2">
                   <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       data-testid="board-view-needs-my-input"
                       checked={draft.filter.needs_my_input === true}
-                      onChange={event =>
+                      onCheckedChange={checked =>
                         setDraft({
                           ...draft,
                           filter: {
                             ...draft.filter,
-                            needs_my_input: event.target.checked,
+                            needs_my_input: checked === true,
                           },
                         })
                       }
@@ -458,41 +456,46 @@ export function BoardViewEditor({
                     {t('todo.board_view_needs_my_input')}
                   </label>
                   <span className="text-sm">{t('todo.board_view_filter')}</span>
-                  <AlignedSelect
-                    aria-label={t('todo.board_view_filter')}
-                    data-testid="board-view-filter-match"
-                    value={draft.filter.match}
-                    onChange={event =>
-                      setDraft({
-                        ...draft,
-                        filter: {
-                          ...draft.filter,
-                          match: event.target.value as 'all' | 'any',
-                        },
-                      })
-                    }
+                  <SelectRoot
+                    value={normalizeSelectValue(draft.filter.match)}
+                    onValueChange={selectedValue => {
+                      if (selectedValue !== null)
+                        return setDraft({
+                          ...draft,
+                          filter: {
+                            ...draft.filter,
+                            match: selectedValue as 'all' | 'any',
+                          },
+                        })
+                    }}
                   >
-                    <option value="all">{t('todo.board_view_all')}</option>
-                    <option value="any">{t('todo.board_view_any')}</option>
-                  </AlignedSelect>
+                    <SelectTrigger
+                      aria-label={t('todo.board_view_filter')}
+                      data-testid="board-view-filter-match"
+                    />
+                    <SelectContent>
+                      <SelectItem value="all">{t('todo.board_view_all')}</SelectItem>
+                      <SelectItem value="any">{t('todo.board_view_any')}</SelectItem>
+                    </SelectContent>
+                  </SelectRoot>
                   <div className="flex flex-wrap gap-2">
                     {tagOptions.map(tag => (
                       <label
                         key={tag}
                         className="flex min-h-11 items-center gap-2 rounded-lg bg-muted px-3 text-sm md:min-h-8"
                       >
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           data-testid={`board-view-filter-tag-${tag}`}
                           checked={draft.filter.tags.includes(tag)}
-                          onChange={event =>
+                          onCheckedChange={checked =>
                             setDraft({
                               ...draft,
                               filter: {
                                 ...draft.filter,
-                                tags: event.target.checked
-                                  ? [...draft.filter.tags, tag]
-                                  : draft.filter.tags.filter(value => value !== tag),
+                                tags:
+                                  checked === true
+                                    ? [...draft.filter.tags, tag]
+                                    : draft.filter.tags.filter(value => value !== tag),
                               },
                             })
                           }
@@ -551,7 +554,8 @@ export function BoardViewEditor({
             <p className="basis-full text-sm">{t('todo.board_view_delete_confirm')}</p>
           )}
           {onDelete && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               disabled={pending}
               className={`${action} mr-auto text-destructive`}
@@ -559,9 +563,10 @@ export function BoardViewEditor({
               onClick={() => (confirmDelete ? void submit(true) : setConfirmDelete(true))}
             >
               {t('todo.board_view_delete')}
-            </button>
+            </ControlButton>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={pending}
             className={action}
@@ -569,17 +574,18 @@ export function BoardViewEditor({
             onClick={onClose}
           >
             {t('todo.board_view_cancel')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="submit"
             disabled={pending}
             data-testid="board-view-save"
             className={`${action} bg-text-primary text-background hover:bg-text-primary/80`}
           >
             {t('todo.board_view_save')}
-          </button>
+          </ControlButton>
         </footer>
       </DialogForm>
-    </dialog>
+    </DialogSurface>
   )
 }

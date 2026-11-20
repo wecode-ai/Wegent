@@ -1,6 +1,8 @@
-import { useMemo, useState, useSyncExternalStore } from 'react'
-import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
-import { createMiniProgramLinkCopy } from './miniProgramLinkCopy'
+import type { ApplicationCapability, MiniProgram, Site } from '@/api/sites'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   AlertCircle,
   Check,
@@ -14,9 +16,8 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import type { ApplicationCapability, MiniProgram, Site } from '@/api/sites'
-import { useTranslation } from '@/hooks/useTranslation'
-import { openExternalUrl } from '@/lib/external-links'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createMiniProgramLinkCopy } from './miniProgramLinkCopy'
 import { createQrCodeModules, qrCodeOffset, qrCodeViewBox } from './qrCodeSvg'
 import { SiteActionsMenu } from './SiteActionsMenu'
 
@@ -103,7 +104,8 @@ export function SiteApplicationRow({
           <h2 className="truncate text-base font-medium leading-5 text-text-primary">
             {site.name}
           </h2>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`site-internal-url-${site.siteid}`}
             aria-label={t('open_internal', { name: site.name })}
@@ -112,7 +114,7 @@ export function SiteApplicationRow({
           >
             <span className="truncate">{site.internal_url}</span>
             <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </div>
       </div>
 
@@ -130,7 +132,9 @@ export function SiteApplicationRow({
             </span>
           ) : null}
         </div>
-        <button
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           data-testid={`site-continue-development-${site.siteid}`}
           disabled={deleting || continuing}
@@ -143,7 +147,7 @@ export function SiteApplicationRow({
             <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
           )}
           {t('continue_development', '继续开发')}
-        </button>
+        </ControlButton>
         {context.capabilities.has('publish') ||
         context.capabilities.has('edit') ||
         context.capabilities.has('configure_environment') ||
@@ -188,11 +192,6 @@ function QrCodeDialog({
   onClose: () => void
 }) {
   const { t } = useTranslation('sites')
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(
-    onClose,
-    true,
-    '[data-testid="mini-program-qrcode-close"]'
-  )
   const modules = useMemo(() => {
     try {
       return createQrCodeModules(url)
@@ -210,15 +209,17 @@ function QrCodeDialog({
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        ref={dialogRef}
-        tabIndex={-1}
-        aria-labelledby="mini-program-qrcode-title"
-        data-testid="mini-program-qrcode-dialog"
-        className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={onClose}
+        initialFocus={'[data-testid="mini-program-qrcode-close"]'}
+        render={
+          <div
+            aria-labelledby="mini-program-qrcode-title"
+            data-testid="mini-program-qrcode-dialog"
+            className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -230,7 +231,9 @@ function QrCodeDialog({
             </h2>
             <p className="mt-1 truncate text-xs leading-5 text-text-secondary">{url}</p>
           </div>
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="mini-program-qrcode-close"
             onClick={onClose}
@@ -238,7 +241,7 @@ function QrCodeDialog({
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
             {t('close', '关闭')}
-          </button>
+          </ControlButton>
         </div>
         <div className="mt-5 flex justify-center">
           {modules ? (
@@ -265,7 +268,7 @@ function QrCodeDialog({
             </p>
           )}
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }
@@ -338,7 +341,8 @@ export function MiniProgramApplicationRow({
         <span className="text-text-muted md:hidden">{t('qrcode_column', '二维码')}</span>
         {canUseExperienceUrl ? (
           <>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`mini-program-qrcode-${program.siteid}`}
               onClick={() => setQrCodeOpen(true)}
@@ -346,7 +350,7 @@ export function MiniProgramApplicationRow({
             >
               <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
               {t('view_qrcode', '查看二维码')}
-            </button>
+            </ControlButton>
             {qrCodeOpen ? (
               <QrCodeDialog
                 title={program.name}
@@ -362,7 +366,8 @@ export function MiniProgramApplicationRow({
       <div className="flex items-center justify-between gap-4 pl-[62px] text-sm md:block md:pl-0">
         <span className="text-text-muted md:hidden">{t('link_column', '链接')}</span>
         {canUseExperienceUrl ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`mini-program-copy-link-${program.siteid}`}
             onClick={copyExperienceUrl}
@@ -378,7 +383,7 @@ export function MiniProgramApplicationRow({
               : copyState === 'failed'
                 ? t('copy_link_failed', '复制失败')
                 : t('copy_link', '复制链接')}
-          </button>
+          </ControlButton>
         ) : (
           <span className="text-text-muted">—</span>
         )}

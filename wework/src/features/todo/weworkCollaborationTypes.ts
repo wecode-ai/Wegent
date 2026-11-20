@@ -72,6 +72,7 @@ export interface WeworkCollaborationPlatformProps {
   }) => ReactNode
 }
 export interface WeworkSharedProjectProps {
+  workspaceActive?: boolean
   personalIssue?: PersonalHomeIssueDetailContext
   api: SharedWorkspaceApi
   projectCatalogApi?: SharedWorkspaceApi['projects']

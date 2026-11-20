@@ -1,4 +1,7 @@
 {
+  "homePage": {
+    "workspaceComingSoon": "Multi-platform workspace — coming soon."
+  },
   "personalHome": {
     "backToIssues": "Back to issues",
     "codeWorkspace": "Code workspace (optional)",
@@ -4489,6 +4492,9 @@
     "remote_task_access_save_failed": "Could not save the setting. Remote task access has not changed.",
     "agent_creator_environment_automatic": "Choose from project environments",
     "agent_creator_environment_configured": "Environment configured; expand to view",
+    "codex_personality_read_failed": "Could not load the communication style. Try again.",
+    "codex_personality_save_failed": "Could not save the communication style. Try again.",
+    "reorder_item": "Reorder {{name}}",
     "codex_home_check_title": "Check Codex configuration",
     "codex_home_check_loading": "Reading this device’s configuration. You can retry the check.",
     "codex_home_check_recovery": "Use the error below to repair the device configuration or local runtime, then retry the check.",

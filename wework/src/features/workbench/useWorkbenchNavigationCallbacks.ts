@@ -1,4 +1,5 @@
 import { getWorkbenchPaneKey } from '@/components/layout/workbenchPaneIdentity'
+import { isPopoutWindowRuntime } from '@/appWindowIdentity'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type { DeviceInfo } from '@/types/api'
 import type { RefreshWorkLists, WorkbenchSelectionOptions } from './workbenchContextTypes'
@@ -462,7 +463,7 @@ export function useStartNewChat({
   user: User
 }) {
   return useCallback(() => {
-    navigateTo('/')
+    if (!isPopoutWindowRuntime()) navigateTo('/')
     if (!canNavigateWorkspaceTab()) {
       requestWorkbenchNewChat()
       return

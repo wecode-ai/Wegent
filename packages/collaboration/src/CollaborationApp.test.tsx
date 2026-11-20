@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from 'react-dom/server'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -637,22 +638,32 @@ describe('CollaborationApp API boundary', () => {
       membersContent: <div data-testid="members-content" />,
       membersLabel: '项目成员',
       groupsContent: <div data-testid="groups-content" />,
-      groupsLabel: '协作小组',
-    })
-    const tabs = descendants(participants).filter(element => element.props.role === 'tab')
-
-    expect(tabs.map(tab => tab.props['data-testid'])).toEqual([
-      'collaboration-participants-tab-agents',
-      'collaboration-participants-tab-members',
-      'collaboration-participants-tab-groups',
-    ])
-    expect(tabs.map(tab => tab.props.children)).toEqual(['智能体', '项目成员', '协作小组'])
-    expect(tabs.map(tab => tab.props['aria-selected'])).toEqual([true, false, false])
-    expect(findByTestId(participants, 'collaboration-participants-panel-agents')).toBeDefined()
-    expect(findByTestId(participants, 'agents-content')).toBeDefined()
-    expect(findByTestId(participants, 'members-content')).toBeUndefined()
-    expect(findByTestId(participants, 'groups-content')).toBeUndefined()
-  })
+      groupsLabel: "协作小组",
+    });
+    const markup = renderToStaticMarkup(participants);
+    const tabs = Array.from(
+      markup.matchAll(/<button\b([^>]*)>(.*?)<\/button>/g),
+    ).filter(([, attributes]) => attributes.includes('role="tab"'));
+    expect(
+      tabs.map(([, attributes]) => attributes.match(/data-testid="([^"]+)"/)?.[1]),
+    ).toEqual([
+      "collaboration-participants-tab-agents",
+      "collaboration-participants-tab-members",
+      "collaboration-participants-tab-groups",
+    ]);
+    expect(tabs.map(([, , label]) => label)).toEqual([
+      "智能体",
+      "项目成员",
+      "协作小组",
+    ]);
+    expect(
+      tabs.map(([, attributes]) => attributes.match(/aria-selected="([^"]+)"/)?.[1]),
+    ).toEqual(["true", "false", "false"]);
+    expect(markup).toContain('data-testid="collaboration-participants-panel-agents"');
+    expect(markup).toContain('data-testid="agents-content"');
+    expect(markup).not.toContain('data-testid="members-content"');
+    expect(markup).not.toContain('data-testid="groups-content"');
+  });
 
   it('mounts files as a top-level project view instead of a settings section', () => {
     const host = createHost(false, 'home')

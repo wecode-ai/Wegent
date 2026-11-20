@@ -1,8 +1,9 @@
+import { useTranslation } from '@/hooks/useTranslation'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Check, ChevronDown, ChevronUp, ListChecks } from 'lucide-react'
 import { useMemo, useSyncExternalStore } from 'react'
-import { useDeadlineExpired } from '@wegent/collaboration/clock'
 import { BoardQuickStartSession } from './boardQuickStartProgress'
-import { useTranslation } from '@/hooks/useTranslation'
 
 interface BoardQuickStartGuideProps {
   storageKey: string
@@ -81,15 +82,17 @@ export function BoardQuickStartGuide({
           })}
         </span>
         <span className="flex-1" />
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="cloud-board-quick-start-dismiss"
           onClick={() => session.update({ dismissed: true })}
           className="h-7 rounded-lg px-2 text-xs text-text-muted transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {t('todo.quick_start_dismiss', '不再显示')}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="cloud-board-quick-start-toggle"
           aria-expanded={!state.collapsed}
@@ -104,7 +107,7 @@ export function BoardQuickStartGuide({
           ) : (
             <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
           )}
-        </button>
+        </ControlButton>
       </div>
       {!state.collapsed ? (
         <ol className="grid gap-px border-t border-border bg-border lg:grid-cols-3">
@@ -193,7 +196,9 @@ function QuickStartStep({
         <span className="block text-sm font-medium text-text-primary">{title}</span>
         <span className="mt-1 block text-xs leading-4 text-text-muted">{description}</span>
         {actionLabel && !complete ? (
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid={`${testId}-action`}
             disabled={actionDisabled}
@@ -201,7 +206,7 @@ function QuickStartStep({
             className="mt-2 h-7 rounded-lg bg-muted px-2.5 text-xs font-medium text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-40"
           >
             {actionLabel}
-          </button>
+          </ControlButton>
         ) : null}
       </span>
     </li>

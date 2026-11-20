@@ -1,6 +1,3 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import { Check, Circle, ExternalLink, FileWarning, RotateCcw, X, XCircle } from 'lucide-react'
-import { useCallback, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatUTC8DateTime } from '@/lib/utc-date'
@@ -10,6 +7,10 @@ import type {
   PluginPublicationRequestItem,
   PluginPublicationStatus,
 } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Circle, ExternalLink, FileWarning, RotateCcw, X, XCircle } from 'lucide-react'
+import { useRef, useState } from 'react'
 
 interface PluginPublicationProgressDrawerProps {
   publication: PluginPublicationRequestItem
@@ -60,15 +61,7 @@ export function PluginPublicationProgressDrawer({
   const { t } = useTranslation('common')
   const [confirmingWithdraw, setConfirmingWithdraw] = useState(false)
   const drawerRef = useRef<HTMLElement>(null)
-  const focusCloseButton = useCallback((button: HTMLButtonElement | null) => {
-    if (!button) return
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    button.focus()
-    return () => {
-      previousFocus?.focus()
-    }
-  }, [])
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const revision = publication.revision
   const revisionHistory = [...publication.revisions].sort(
     (left, right) => right.number - left.number
@@ -114,32 +107,6 @@ export function PluginPublicationProgressDrawer({
     )
   }
 
-  useDocumentEvent('keydown', event => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    onClose()
-  })
-
-  const trapDrawerFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== 'Tab') return
-    const focusable = Array.from(
-      drawerRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ) ?? []
-    )
-    if (focusable.length === 0) return
-    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
-    const nextIndex = event.shiftKey
-      ? currentIndex <= 0
-        ? focusable.length - 1
-        : currentIndex - 1
-      : currentIndex === focusable.length - 1
-        ? 0
-        : currentIndex + 1
-    event.preventDefault()
-    focusable[nextIndex]?.focus()
-  }
-
   return (
     <div
       data-testid="plugin-publication-progress-overlay"
@@ -155,14 +122,19 @@ export function PluginPublicationProgressDrawer({
         }
       }}
     >
-      <section
-        ref={drawerRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugin-publication-progress-title"
-        data-testid="plugin-publication-progress-drawer"
-        className="flex h-full w-full max-w-[520px] flex-col border-l border-border/30 bg-background shadow-xl"
-        onKeyDown={trapDrawerFocus}
+      <DialogSurface
+        initialFocus={() => closeButtonRef.current}
+        onClose={() => {
+          if (!loading && !withdrawing && !confirmingWithdraw) onClose()
+        }}
+        render={
+          <section
+            ref={drawerRef}
+            aria-labelledby="plugin-publication-progress-title"
+            data-testid="plugin-publication-progress-drawer"
+            className="flex h-full w-full max-w-[520px] flex-col border-l border-border/30 bg-background shadow-xl"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4 border-b border-border/25 px-5 py-5">
           <div>
@@ -175,7 +147,7 @@ export function PluginPublicationProgressDrawer({
             </p>
           </div>
           <Button
-            ref={focusCloseButton}
+            ref={closeButtonRef}
             type="button"
             size="icon"
             variant="ghost"
@@ -196,7 +168,8 @@ export function PluginPublicationProgressDrawer({
               <ul className="overflow-hidden rounded-xl border border-border/30">
                 {requestHistory.map(item => (
                   <li key={item.id} className="border-b border-border/25 last:border-b-0">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className={cn(
                         'flex w-full items-center justify-between gap-3 px-3 py-3 text-left text-sm hover:bg-surface',
@@ -212,7 +185,7 @@ export function PluginPublicationProgressDrawer({
                       <span className="text-xs text-text-muted">
                         {t('workbench.plugins_publication_status_' + item.status, item.status)}
                       </span>
-                    </button>
+                    </ControlButton>
                   </li>
                 ))}
               </ul>
@@ -286,7 +259,8 @@ export function PluginPublicationProgressDrawer({
             <ul className="overflow-hidden rounded-xl border border-border/30">
               {revisionHistory.map(item => (
                 <li key={item.id} className="border-b border-border/25 last:border-b-0">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={'plugin-publication-revision-' + item.number}
                     aria-current={item.number === revision.number ? 'true' : undefined}
@@ -308,7 +282,7 @@ export function PluginPublicationProgressDrawer({
                     <span className="mt-1 block break-all font-mono text-xs leading-4 text-text-muted">
                       {item.snapshotSha256}
                     </span>
-                  </button>
+                  </ControlButton>
                 </li>
               ))}
             </ul>
@@ -580,7 +554,7 @@ export function PluginPublicationProgressDrawer({
             </div>
           )}
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

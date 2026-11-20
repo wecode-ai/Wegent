@@ -3,7 +3,6 @@ import { Loader2, Pencil, ScanLine, Trash2 } from 'lucide-react'
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
   defaultAppPreferences,
   getAppPreferences,
@@ -14,6 +13,9 @@ import {
   openAppshotsPermissionSettings,
   type AppshotPermission,
 } from '@/desktop/appshots'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import {
   SettingsGroup,
@@ -160,14 +162,15 @@ export function AppshotsSettingsPage() {
         {t('workbench.appshots_permission_granted', '已允许')}
       </span>
     ) : (
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid={testId}
         onClick={() => openPermissionSettings(permission)}
-        className="h-8 rounded-md border border-border px-2.5 text-xs font-medium text-text-primary hover:bg-muted"
       >
         {t('workbench.appshots_open_permission_settings', '打开系统设置')}
-      </button>
+      </ControlButton>
     )
 
   return (
@@ -210,19 +213,21 @@ export function AppshotsSettingsPage() {
         <SettingsRow
           label={t('workbench.appshots_shortcut', '快捷键')}
           description={shortcutDescription}
-          control={
+          children={
             loading ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
             ) : statusState.status === 'error' ? (
               <span className="text-xs text-text-secondary">{loadFailedText}</span>
             ) : (
               <div className="flex min-w-[200px] items-center justify-end gap-1">
-                <button
+                <ControlButton
+                  variant="ghost"
+                  size="sm"
                   type="button"
                   data-testid="appshots-shortcut-record-button"
                   disabled={savingShortcut || !status?.supported}
                   onClick={() => setRecordingShortcut(true)}
-                  className="inline-flex min-h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  className="gap-2"
                   aria-label={t('workbench.appshots_shortcut_edit', '录制快捷键')}
                 >
                   {recordingShortcut ? (
@@ -238,18 +243,16 @@ export function AppshotsSettingsPage() {
                     <span>{t('workbench.keyboard_shortcuts_unassigned', '未设置')}</span>
                   )}
                   <Pencil className="h-4 w-4" />
-                </button>
-                <button
+                </ControlButton>
+                <IconButton
                   type="button"
                   data-testid="appshots-shortcut-clear-button"
                   disabled={savingShortcut || !status?.supported || !status.shortcut}
                   onClick={() => void saveShortcut(null)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label={t('workbench.keyboard_shortcuts_clear', '清除')}
-                  title={t('workbench.keyboard_shortcuts_clear', '清除')}
                 >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                  <Trash2 aria-hidden="true" className="h-4 w-4" />
+                </IconButton>
               </div>
             )
           }
@@ -260,7 +263,7 @@ export function AppshotsSettingsPage() {
             'workbench.appshots_screen_capture_permission_description',
             '用于截取最前面的应用窗口'
           )}
-          control={permissionControl(
+          children={permissionControl(
             'screenCapture',
             status?.screenCapturePermissionGranted,
             'appshots-open-screen-capture-settings-button'
@@ -272,7 +275,7 @@ export function AppshotsSettingsPage() {
             'workbench.appshots_accessibility_permission_description_short',
             '用于读取窗口可用文本，包括滚动区域外文本'
           )}
-          control={permissionControl(
+          children={permissionControl(
             'accessibility',
             status?.accessibilityPermissionGranted,
             'appshots-open-accessibility-settings-button'
@@ -284,7 +287,7 @@ export function AppshotsSettingsPage() {
             'workbench.appshots_target_description',
             '快照会自动添加到当前 Wework 输入框'
           )}
-          control={
+          children={
             <span className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-text-secondary">
               {t('workbench.appshots_target_auto', '自动')}
             </span>
@@ -293,7 +296,7 @@ export function AppshotsSettingsPage() {
         <SettingsRow
           label={t('workbench.appshots_play_sound', '播放声音')}
           description={t('workbench.appshots_play_sound_description', '成功截取窗口时播放系统声音')}
-          control={
+          children={
             <SettingsSwitch
               data-testid="appshots-play-sound-toggle"
               checked={playSound}

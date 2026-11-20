@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { useIntersectionEvent } from '../dom-events'
 import { useMemo, useRef } from 'react'
 
@@ -51,7 +52,7 @@ export function RuntimeTranscriptGapMarker({
       data-runtime-transcript-gap={`${gap.start}:${gap.end}`}
       data-testid="runtime-transcript-gap-marker"
     >
-      <button
+      <ControlButton variant="outline"
         type="button"
         disabled={loading || !onLoad}
         onClick={() => void onLoad?.(gap, 'click')}
@@ -67,7 +68,7 @@ export function RuntimeTranscriptGapMarker({
         <span>
           {loading ? t('message_navigation.loading_gap') : t('message_navigation.gap_missing')}
         </span>
-      </button>
+      </ControlButton>
     </div>
   )
 }

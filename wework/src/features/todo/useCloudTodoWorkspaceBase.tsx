@@ -20,7 +20,6 @@ import { createCollaborationTranslator } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react'
-import { useProjectBoardSensors } from '@wegent/collaboration/project-board/projectBoardDnd'
 import type { CloudProject } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
@@ -373,7 +372,6 @@ export function useCloudTodoWorkspaceBase({
     advanceTaskPanelSession()
     setTaskComposerRequest(request)
   }
-  const boardSensors = useProjectBoardSensors()
   const clearTaskDispatchError = useCallback(
     () => setTaskDispatchError(null),
     [setTaskDispatchError]
@@ -581,7 +579,6 @@ export function useCloudTodoWorkspaceBase({
     openProjectAssistant,
     advanceTaskPanelSession,
     openTaskComposer,
-    boardSensors,
     clearTaskDispatchError,
     connectDingTalkBoard,
     selectedProject,

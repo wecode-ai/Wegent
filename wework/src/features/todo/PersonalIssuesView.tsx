@@ -1,19 +1,28 @@
-import { useIndependentIssuePage } from './useIndependentIssuePage'
-import { IndependentIssueList } from './IndependentIssueList'
-import { useIndependentIssues } from './independentIssuesContext'
-import { useState } from 'react'
-import type { ReactNode } from 'react'
-import type { PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
-import { IndependentIssueDialog } from './IndependentIssueDialog'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
   WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
-import { useTranslation } from '@/hooks/useTranslation'
-import { PersonalIssueList } from './PersonalIssueList'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { ReactNode } from 'react'
+import { useState } from 'react'
+import { IndependentIssueDialog } from './IndependentIssueDialog'
+import { IndependentIssueList } from './IndependentIssueList'
+import { useIndependentIssues } from './independentIssuesContext'
 import { PersonalIssueErrors } from './PersonalIssueErrors'
+import { PersonalIssueList } from './PersonalIssueList'
+import { useIndependentIssuePage } from './useIndependentIssuePage'
 import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
+import type { PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 
 export function PersonalIssuesView({
   scope,
@@ -87,14 +96,16 @@ export function PersonalIssuesView({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-heading-md font-medium">{t(`personalIssues.${scope}`)}</h1>
             {independent ? (
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="personal-issues-create"
                 onClick={independent.create}
                 className="min-h-11 rounded-md bg-text-primary px-3 text-sm text-background md:min-h-8"
               >
                 {t('independentIssues.create')}
-              </button>
+              </ControlButton>
             ) : null}
           </div>
           <p className="mt-2 text-base text-text-secondary">{t(`personalIssues.${scope}Hint`)}</p>
@@ -104,38 +115,53 @@ export function PersonalIssuesView({
           >
             {independent ? (
               <label className="mr-auto flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-                <input
-                  type="checkbox"
+                <Checkbox
                   data-testid="personal-issues-archived"
                   checked={archived}
-                  onChange={event => setArchived(event.target.checked)}
+                  onCheckedChange={checked => setArchived(checked === true)}
                 />
                 {t('independentIssues.showArchived')}
               </label>
             ) : null}
-            <select
-              aria-label={t('personalHome.sort')}
-              data-testid="personal-issues-sort"
-              value={order}
-              onChange={event => setOrder(event.target.value as PersonalHomeIssueOrder)}
-              className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
+            <SelectRoot
+              value={normalizeSelectValue(order)}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null) return setOrder(selectedValue as PersonalHomeIssueOrder)
+              }}
             >
-              {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
-                <option key={value} value={value}>
-                  {t(`personalHome.sort_${value}`)}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label={t('personalHome.filter')}
-              data-testid="personal-issues-filter"
-              value={showCompleted ? 'all' : 'open'}
-              onChange={event => setShowCompleted(event.target.value === 'all')}
-              className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
+              <SelectTrigger
+                density="compact"
+                appearance="plain"
+                aria-label={t('personalHome.sort')}
+                data-testid="personal-issues-sort"
+                className="wework-native-select"
+              />
+              <SelectContent>
+                {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
+                  <SelectItem key={value} value={String(value)}>
+                    {t(`personalHome.sort_${value}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </SelectRoot>
+            <SelectRoot
+              value={normalizeSelectValue(showCompleted ? 'all' : 'open')}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null) return setShowCompleted(selectedValue === 'all')
+              }}
             >
-              <option value="open">{t('personalHome.open')}</option>
-              <option value="all">{t('personalHome.all')}</option>
-            </select>
+              <SelectTrigger
+                density="compact"
+                appearance="plain"
+                aria-label={t('personalHome.filter')}
+                data-testid="personal-issues-filter"
+                className="wework-native-select"
+              />
+              <SelectContent>
+                <SelectItem value="open">{t('personalHome.open')}</SelectItem>
+                <SelectItem value="all">{t('personalHome.all')}</SelectItem>
+              </SelectContent>
+            </SelectRoot>
           </div>
           <PersonalIssueErrors
             projects={archived ? undefined : state}
@@ -170,7 +196,8 @@ export function PersonalIssuesView({
             />
           ) : null}
           {!archived && state.hasMore ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               disabled={state.loading}
               data-testid="personal-issues-load-more"
@@ -178,7 +205,7 @@ export function PersonalIssuesView({
               className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
             >
               {t('personalHome.loadMore')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       </main>

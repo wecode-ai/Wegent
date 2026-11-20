@@ -1,13 +1,16 @@
-import { Check, ChevronLeft, Folder, FolderPlus, Loader2 } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
+import type { DeviceInfo } from '@/types/api'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isImeEnterEvent } from '@/lib/ime'
-import type { DeviceInfo } from '@/types/api'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, ChevronLeft, Folder, FolderPlus, Loader2 } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import {
   directoryMatchesQuery,
   getParentPath,
@@ -278,7 +281,8 @@ export function DeviceFolderPicker({
         }
       >
         {remoteLayout && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="device-folder-parent-button"
             disabled={pickerDisabled || submitting || !currentPath || currentPath === '/'}
@@ -287,7 +291,7 @@ export function DeviceFolderPicker({
             aria-label={t('workbench.project_directory_parent', '返回上级目录')}
           >
             <ChevronLeft className="h-5 w-5" />
-          </button>
+          </ControlButton>
         )}
         <label
           className={
@@ -297,7 +301,7 @@ export function DeviceFolderPicker({
           }
         >
           <span className="sr-only">{t('workbench.project_directory_path', '目录地址')}</span>
-          <input
+          <ControlInput
             data-testid="device-folder-path-input"
             value={pathInput}
             disabled={pickerDisabled || submitting}
@@ -315,20 +319,19 @@ export function DeviceFolderPicker({
             }}
             className={
               remoteLayout
-                ? 'h-10 w-full border border-transparent bg-transparent font-mono text-sm text-text-primary outline-none disabled:opacity-60'
-                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus focus:bg-background keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60'
+                ? 'w-full border-transparent bg-transparent font-mono disabled:opacity-60'
+                : 'w-full border-transparent bg-transparent font-mono focus:bg-background disabled:opacity-60'
             }
             placeholder={t('workbench.project_directory_loading', '正在加载目录...')}
           />
         </label>
         {!remoteLayout && (
           <label className="flex shrink-0 items-center gap-2 text-xs font-medium text-text-secondary">
-            <input
+            <Checkbox
               data-testid="device-folder-hidden-toggle"
-              type="checkbox"
               checked={showHiddenDirectories}
               disabled={pickerDisabled || submitting}
-              onChange={event => setShowHiddenDirectories(event.target.checked)}
+              onCheckedChange={checked => setShowHiddenDirectories(checked === true)}
               className="h-4 w-4 rounded border-border accent-primary disabled:opacity-50"
             />
             {t('workbench.project_show_hidden_directories', '显示隐藏目录')}
@@ -339,7 +342,7 @@ export function DeviceFolderPicker({
       {mode === 'create' && (
         <div className={'flex items-center gap-2 border-b border-border px-3 py-2'}>
           <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
-          <input
+          <ControlInput
             data-testid="device-folder-name-input"
             value={folderName}
             disabled={pickerDisabled || submitting}
@@ -356,8 +359,8 @@ export function DeviceFolderPicker({
             }}
             className={
               remoteLayout
-                ? 'h-10 min-w-0 flex-1 rounded-xl border border-border bg-muted px-3 text-sm text-text-primary outline-none focus:border-text-secondary disabled:opacity-60'
-                : 'h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60'
+                ? 'min-w-0 flex-1 bg-muted focus:border-text-secondary disabled:opacity-60'
+                : 'min-w-0 flex-1 disabled:opacity-60'
             }
             placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
           />
@@ -382,7 +385,8 @@ export function DeviceFolderPicker({
         }
       >
         {!remoteLayout && !pickerDisabled && currentPath && currentPath !== '/' && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="device-folder-parent-button"
             onClick={() => browsePath(getParentPath(currentPath))}
@@ -390,7 +394,7 @@ export function DeviceFolderPicker({
           >
             <ChevronLeft className="h-4 w-4" />
             ..
-          </button>
+          </ControlButton>
         )}
         {loadingDirectories && (
           <p className="px-2 py-3 text-sm text-text-secondary">
@@ -402,7 +406,8 @@ export function DeviceFolderPicker({
             const childPath = joinPath(currentPath, directory)
             const selected = selectedPath === childPath
             return (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={childPath}
                 type="button"
                 data-testid="device-folder-entry-button"
@@ -416,7 +421,7 @@ export function DeviceFolderPicker({
                 <Folder className="h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="min-w-0 flex-1 truncate">{directory}</span>
                 {selected && <Check className="h-4 w-4 shrink-0" />}
-              </button>
+              </ControlButton>
             )
           })}
         {!pickerDisabled && !loadingDirectories && !error && filteredDirectories.length === 0 && (
@@ -433,7 +438,8 @@ export function DeviceFolderPicker({
             : 'flex justify-end gap-2 border-t border-border px-3 py-3'
         }
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="cancel-device-folder-picker-button"
           disabled={submitting}
@@ -445,8 +451,9 @@ export function DeviceFolderPicker({
           }
         >
           {t('workbench.cancel', '取消')}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="confirm-device-folder-picker-button"
           disabled={confirmDisabled}
@@ -462,7 +469,7 @@ export function DeviceFolderPicker({
             (mode === 'create'
               ? t('workbench.project_create_folder_confirm', '创建')
               : t('workbench.project_directory_select_confirm', '选择'))}
-        </button>
+        </ControlButton>
       </div>
     </div>
   )

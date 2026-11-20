@@ -1,3 +1,8 @@
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from "../controls/Collapsible";
 import type { HTMLAttributes, ReactNode } from "react";
 import type { ProjectChatMessage } from "@wegent/chat-core";
 import { IssueActivityCard } from "./IssueActivityPresentation";
@@ -178,10 +183,14 @@ export function IssueActivityThread({
         {composer}
       </IssueActivityCard>
       {events ? (
-        <details className="task-detail-run-events" open>
-          <summary data-testid={eventTestId}>{eventLabel}</summary>
-          <div>{events}</div>
-        </details>
+        <CollapsibleRoot className="task-detail-run-events" defaultOpen>
+          <CollapsibleTrigger data-testid={eventTestId}>
+            {eventLabel}
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <div>{events}</div>
+          </CollapsiblePanel>
+        </CollapsibleRoot>
       ) : null}
     </div>
   );

@@ -1,11 +1,24 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import { Check, ChevronDown, Folder, ListFilter, Loader2, Search, Trash2 } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ArchivedConversationItem, ArchivedConversationsListRequest } from '@/types/api'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import {
+  Menu,
+  MenuContent,
+  MenuGroupLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+  MenuSeparator as UiMenuSeparator,
+} from '@wegent/collaboration/controls/MenuParts'
+import { controlOption, controlPopup, controlTrigger } from '@wegent/collaboration/controls/recipes'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import { Check, ChevronDown, Folder, ListFilter, Loader2, Search, Trash2 } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useState } from 'react'
 
 export type ArchivedSourceFilter = NonNullable<ArchivedConversationsListRequest['source']>
 export type ArchivedSortFilter = NonNullable<ArchivedConversationsListRequest['sort']>
@@ -64,91 +77,71 @@ function ArchiveDropdown({
   children,
 }: ArchiveDropdownProps) {
   const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useDocumentEvent(
-    'pointerdown',
-    event => {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
-    },
-    { enabled: open }
-  )
-  useDocumentEvent(
-    'keydown',
-    event => {
-      if (event.key === 'Escape') setOpen(false)
-    },
-    { enabled: open }
-  )
+  const theme = useCollaborationPortalTheme()
 
   return (
-    <div ref={containerRef} className="relative min-w-0">
-      <button
-        type="button"
+    <Menu open={open} onOpenChange={setOpen}>
+      <MenuTrigger
+        render={<button type="button" />}
         data-testid={testId}
         aria-label={ariaLabel}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
-        className={cn(
-          'flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 text-left text-sm text-text-primary outline-none hover:bg-muted keyboard:focus-visible:border-primary max-md:h-11',
-          triggerClassName
-        )}
+        className={cn(controlTrigger, 'w-full', triggerClassName)}
       >
         <span className="shrink-0 text-text-secondary">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          data-testid={`${testId}-menu`}
-          className={cn(
-            'absolute right-0 top-[calc(100%+6px)] z-system-popover min-w-[240px] rounded-xl border border-border bg-popover p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.18)] ring-1 ring-black/5',
-            menuClassName
-          )}
-        >
-          {children(() => setOpen(false))}
-        </div>
-      )}
-    </div>
+      </MenuTrigger>
+      <MenuContent
+        {...theme}
+        aria-label={ariaLabel}
+        align="end"
+        sideOffset={4}
+        collisionPadding={8}
+        data-testid={testId + '-menu'}
+        className={cn(controlPopup, 'min-w-60', menuClassName)}
+      >
+        {children(() => setOpen(false))}
+      </MenuContent>
+    </Menu>
   )
 }
 
 function MenuSectionLabel({ children }: { children: ReactNode }) {
-  return <div className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-text-muted">{children}</div>
+  return (
+    <MenuGroupLabel className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-text-muted">
+      {children}
+    </MenuGroupLabel>
+  )
 }
 
 function MenuSeparator() {
-  return <div className="my-1 h-px bg-border" />
+  return <UiMenuSeparator className="my-1 h-px bg-border" />
 }
 
 function MenuOption({
   testId,
+  value,
   selected,
   icon,
   children,
-  onSelect,
 }: {
   testId: string
+  value: string
   selected: boolean
   icon?: ReactNode
   children: ReactNode
-  onSelect: () => void
 }) {
   return (
-    <button
-      type="button"
-      role="menuitemradio"
-      aria-checked={selected}
+    <MenuRadioItem
+      value={value}
+      render={<button type="button" />}
       data-testid={testId}
-      onClick={onSelect}
-      className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm leading-[18px] text-text-primary hover:bg-muted max-md:h-11"
+      className={controlOption}
     >
       {icon && <span className="shrink-0 text-text-secondary">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
-    </button>
+    </MenuRadioItem>
   )
 }
 
@@ -184,12 +177,12 @@ export function ArchivedConversationsFilters({
     >
       <label className="relative block min-w-0 flex-1">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-        <input
+        <ControlInput
           data-testid="archived-search-input"
           value={search}
           onChange={event => onSearchChange(event.target.value)}
           placeholder={t('workbench.archived_search_placeholder', '搜索已归档任务')}
-          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none keyboard:focus:border-primary max-md:h-11"
+          className="w-full pl-9"
         />
       </label>
 
@@ -202,35 +195,49 @@ export function ArchivedConversationsFilters({
       >
         {close => (
           <>
-            <MenuSectionLabel>{t('workbench.archived_filter_type_label', '类型')}</MenuSectionLabel>
-            {sourceOptions.map(option => (
-              <MenuOption
-                key={option.value}
-                testId={`archived-source-option-${option.value}`}
-                selected={source === option.value}
-                onSelect={() => {
-                  onSourceChange(option.value)
-                  close()
-                }}
-              >
-                {option.label}
-              </MenuOption>
-            ))}
+            <MenuRadioGroup
+              value={source}
+              onValueChange={next => {
+                const option = sourceOptions.find(option => option.value === next)
+                if (option) onSourceChange(option.value)
+                close()
+              }}
+            >
+              <MenuSectionLabel>
+                {t('workbench.archived_filter_type_label', '类型')}
+              </MenuSectionLabel>
+              {sourceOptions.map(option => (
+                <MenuOption
+                  key={option.value}
+                  value={option.value}
+                  testId={`archived-source-option-${option.value}`}
+                  selected={source === option.value}
+                >
+                  {option.label}
+                </MenuOption>
+              ))}
+            </MenuRadioGroup>
             <MenuSeparator />
-            <MenuSectionLabel>{t('workbench.archived_sort_label', '排序方式')}</MenuSectionLabel>
-            {sortOptions.map(option => (
-              <MenuOption
-                key={option.value}
-                testId={`archived-sort-option-${option.value}`}
-                selected={sort === option.value}
-                onSelect={() => {
-                  onSortChange(option.value)
-                  close()
-                }}
-              >
-                {option.label}
-              </MenuOption>
-            ))}
+            <MenuRadioGroup
+              value={sort}
+              onValueChange={next => {
+                const option = sortOptions.find(option => option.value === next)
+                if (option) onSortChange(option.value)
+                close()
+              }}
+            >
+              <MenuSectionLabel>{t('workbench.archived_sort_label', '排序方式')}</MenuSectionLabel>
+              {sortOptions.map(option => (
+                <MenuOption
+                  key={option.value}
+                  value={option.value}
+                  testId={`archived-sort-option-${option.value}`}
+                  selected={sort === option.value}
+                >
+                  {option.label}
+                </MenuOption>
+              ))}
+            </MenuRadioGroup>
           </>
         )}
       </ArchiveDropdown>
@@ -244,15 +251,18 @@ export function ArchivedConversationsFilters({
         menuClassName="max-h-[360px] overflow-y-auto md:min-w-[280px]"
       >
         {close => (
-          <>
+          <MenuRadioGroup
+            value={projectKey}
+            onValueChange={next => {
+              onProjectChange(next)
+              close()
+            }}
+          >
             <MenuOption
+              value="all"
               testId="archived-project-option-all"
               selected={projectKey === 'all'}
               icon={<Folder className="h-4 w-4" />}
-              onSelect={() => {
-                onProjectChange('all')
-                close()
-              }}
             >
               {t('workbench.archived_project_all', '所有项目')}
             </MenuOption>
@@ -260,18 +270,15 @@ export function ArchivedConversationsFilters({
             {projects.map(project => (
               <MenuOption
                 key={project.key}
+                value={project.key}
                 testId={`archived-project-option-${sanitizeTestId(project.key)}`}
                 selected={projectKey === project.key}
                 icon={<Folder className="h-4 w-4" />}
-                onSelect={() => {
-                  onProjectChange(project.key)
-                  close()
-                }}
               >
                 {project.name}
               </MenuOption>
             ))}
-          </>
+          </MenuRadioGroup>
         )}
       </ArchiveDropdown>
     </div>
@@ -309,7 +316,8 @@ export function ArchivedConversationGroups({
                   ariaLabel={t('workbench.archived_project_actions', '项目操作')}
                   testId={`archived-project-actions-${sanitizeTestId(group.key)}`}
                   placement="bottom-end"
-                  triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
+                  density="compact"
+                  triggerClassName="flex items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
                   items={[
                     {
                       label: t('workbench.archived_delete_project', '删除此项目中的全部任务'),
@@ -356,22 +364,17 @@ export function ArchivedConversationGroups({
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
-                    <button
+                    <DeleteIconButton
                       type="button"
                       data-testid={`archived-delete-button-${suffix}`}
                       aria-label={deleteLabel}
                       title={deleteLabel}
                       onClick={() => onDelete(item)}
                       disabled={busyKey !== null}
-                      className="flex h-8 w-8 items-center justify-center rounded-md text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 max-md:w-11 wework:text-red-500 wework:hover:bg-red-500/10"
-                    >
-                      {busyKey === `delete:${item.id}` ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </button>
-                    <button
+                      pending={busyKey === `delete:${item.id}`}
+                    />
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`archived-unarchive-button-${suffix}`}
                       onClick={() => onUnarchive(item)}
@@ -383,7 +386,7 @@ export function ArchivedConversationGroups({
                       ) : (
                         t('workbench.archived_unarchive', '取消归档')
                       )}
-                    </button>
+                    </ControlButton>
                   </div>
                 </div>
               )

@@ -1,31 +1,35 @@
-import { createAssistantParticipationSource } from './assistantParticipationSource'
-import { useMarkdownServices } from '@wegent/collaboration/markdown'
-import type { AssistantParticipation } from '@wegent/collaboration'
-import { isPublishedTimelineConclusion } from '../model/messageLayer'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
-import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
+import type { AssistantParticipation, SharedWorkspaceApi } from '@wegent/collaboration'
 import {
   IssueActivityMarkdown,
   issueNeedsUser,
   pendingIssueHumanRequests,
 } from '@wegent/collaboration'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
-import { Button } from '@/components/ui/button'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
+import { useMarkdownServices } from '@wegent/collaboration/markdown'
+import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ExperienceIssueData } from '../data/useExperienceIssue'
 import type { ExperienceTimelineData } from '../data/useExperienceTimeline'
+import { isPublishedTimelineConclusion } from '../model/messageLayer'
+import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import type {
   ExperienceAttachmentReference,
   ExperiencePrivateConversation,
   ExperienceTimelineNode,
 } from '../model/types'
+import { createAssistantParticipationSource } from './assistantParticipationSource'
+import './TimelineExperience.css'
 import { TimelineFilters, type TimelineFilter } from './TimelineFilters'
 import { TimelineNode } from './TimelineNode'
-import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
-import './TimelineExperience.css'
 
 export interface TimelineAttachmentSelection {
   id: string
@@ -198,18 +202,22 @@ export function TaskTimeline(props: Props) {
       <div ref={contentRef} className="experience-matter-scroll">
         <div className="experience-matter-document">
           {filter === 'all' && issue.description ? (
-            <details
+            <CollapsibleRoot
               className="experience-matter-background"
               data-testid="collaboration-exp-background"
             >
-              <summary>{t('timeline.background')}</summary>
-              <IssueActivityMarkdown
-                content={issue.description}
-                onOpenAttachment={(id, name) =>
-                  props.onAttachment({ id, name, sourceNodeId: null })
-                }
-              />
-            </details>
+              <CollapsibleTrigger data-testid="task-timeline-toggle">
+                {t('timeline.background')}
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <IssueActivityMarkdown
+                  content={issue.description}
+                  onOpenAttachment={(id, name) =>
+                    props.onAttachment({ id, name, sourceNodeId: null })
+                  }
+                />
+              </CollapsiblePanel>
+            </CollapsibleRoot>
           ) : null}
           <TimelineFilters
             value={filter}

@@ -1,7 +1,8 @@
-import { useState, useSyncExternalStore } from 'react'
-import { RotateCcw } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { RotateCcw } from 'lucide-react'
+import { useState, useSyncExternalStore } from 'react'
 import { createReleaseRollbackSource } from './releaseRollbackSource'
 
 export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
@@ -24,7 +25,8 @@ export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
   return (
     <>
       {previous ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="about-rollback-button"
           disabled={disabled || busy}
@@ -33,7 +35,7 @@ export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
         >
           <RotateCcw className="h-4 w-4" />
           {t('workbench.app_update_rollback_action', { version: previous.version })}
-        </button>
+        </ControlButton>
       ) : null}
       {error ? (
         <span

@@ -1,17 +1,30 @@
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import type { LocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import type {
   LocalModelApiFormat,
   LocalModelCodexToolCompatibility,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
-import { Plus, Trash2, X } from 'lucide-react'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Plus, X } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-
-const FIELD_CLASS =
-  'h-9 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary'
-const TEXTAREA_CLASS =
-  'w-full resize-y rounded-md border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none keyboard:focus:border-primary'
 
 type CatalogObject = Record<string, unknown>
 
@@ -88,11 +101,10 @@ function BooleanSelect({
   const { t } = useTranslation('common')
   return (
     <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-normal text-text-secondary">
-      <input
-        type="checkbox"
+      <Checkbox
         data-testid={testId}
         checked={value}
-        onChange={event => onChange(event.target.checked)}
+        onCheckedChange={checked => onChange(checked === true)}
         className="h-4 w-4 rounded border-border text-primary"
       />
       {t('workbench.local_model_codex_feature_enabled')}
@@ -130,7 +142,8 @@ function TagListEditor({
               className="inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-xs text-text-secondary"
             >
               {item}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`${testId}-remove-${item}`}
                 aria-label={t('common.delete', '删除')}
@@ -138,13 +151,13 @@ function TagListEditor({
                 className="text-text-muted hover:text-text-primary"
               >
                 <X className="h-3 w-3" />
-              </button>
+              </ControlButton>
             </span>
           ))}
         </div>
       )}
       <div className="flex gap-2">
-        <input
+        <ControlInput
           data-testid={`${testId}-input`}
           value={draft}
           onChange={event => setDraft(event.target.value)}
@@ -155,9 +168,11 @@ function TagListEditor({
             }
           }}
           placeholder={placeholder}
-          className={FIELD_CLASS}
+          className="w-full"
         />
-        <button
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           data-testid={`${testId}-add`}
           onClick={addDraft}
@@ -166,7 +181,7 @@ function TagListEditor({
         >
           <Plus className="h-3.5 w-3.5" />
           {t('common.add', '添加')}
-        </button>
+        </ControlButton>
       </div>
     </div>
   )
@@ -201,7 +216,7 @@ function StructuredListEditor({
           {fields.map(field => (
             <label key={field.key} className="grid gap-1 text-xs font-normal text-text-muted">
               {field.label}
-              <input
+              <ControlInput
                 data-testid={`${testId}-${index}-${field.key}`}
                 value={stringValue(item[field.key])}
                 onChange={event => {
@@ -210,22 +225,23 @@ function StructuredListEditor({
                   onChange(next)
                 }}
                 placeholder={field.placeholder}
-                className={FIELD_CLASS}
+                className="w-full"
               />
             </label>
           ))}
-          <button
-            type="button"
-            data-testid={`${testId}-${index}-delete`}
-            aria-label={t('common.delete', '删除')}
-            onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
-            className="mt-5 inline-flex h-9 w-8 items-center justify-center self-start rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <span className="mt-5 self-start">
+            <DeleteIconButton
+              type="button"
+              data-testid={`${testId}-${index}-delete`}
+              aria-label={t('common.delete', '删除')}
+              onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
+            />
+          </span>
         </div>
       ))}
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid={`${testId}-add`}
         onClick={() =>
@@ -235,7 +251,7 @@ function StructuredListEditor({
       >
         <Plus className="h-3.5 w-3.5" />
         {addLabel}
-      </button>
+      </ControlButton>
     </div>
   )
 }
@@ -332,7 +348,7 @@ export function CustomModelCapabilitiesForm({
             '用于上下文计算和自动压缩；Catalog 与运行时共用此值。'
           )}
         >
-          <input
+          <ControlInput
             data-testid="local-model-context-window-input"
             value={contextWindow}
             onChange={event => onContextWindowChange(event.target.value)}
@@ -341,7 +357,7 @@ export function CustomModelCapabilitiesForm({
             step={1}
             inputMode="numeric"
             placeholder="272000"
-            className={FIELD_CLASS}
+            className="w-full"
           />
         </Field>
         {onMaxOutputTokensChange && (
@@ -349,7 +365,7 @@ export function CustomModelCapabilitiesForm({
             label={t('workbench.local_model_max_output_tokens_label')}
             hint={t('workbench.local_model_max_output_tokens_hint')}
           >
-            <input
+            <ControlInput
               data-testid="local-model-max-output-tokens-input"
               value={maxOutputTokens ?? ''}
               onChange={event => onMaxOutputTokensChange(event.target.value)}
@@ -357,16 +373,16 @@ export function CustomModelCapabilitiesForm({
               min={1}
               step={1}
               inputMode="numeric"
-              className={FIELD_CLASS}
+              className="w-full"
             />
           </Field>
         )}
         <Field label={t('workbench.local_model_description_label', '模型说明')}>
-          <input
+          <ControlInput
             data-testid="local-model-catalog-description-input"
             value={stringValue(entry.description)}
             onChange={event => update({ description: event.target.value })}
-            className={FIELD_CLASS}
+            className="w-full"
           />
         </Field>
         <Field label={t('workbench.local_model_reasoning_levels_label', '支持的推理等级')}>
@@ -382,14 +398,14 @@ export function CustomModelCapabilitiesForm({
                   key={option.effort}
                   className="inline-flex h-8 items-center gap-2 text-sm font-normal text-text-secondary"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     data-testid={`local-model-reasoning-level-${option.effort}`}
                     checked={checked}
-                    onChange={event => {
-                      const next = event.target.checked
-                        ? [...current, { effort: option.effort, description: option.description }]
-                        : current.filter(item => item.effort !== option.effort)
+                    onCheckedChange={checked => {
+                      const next =
+                        checked === true
+                          ? [...current, { effort: option.effort, description: option.description }]
+                          : current.filter(item => item.effort !== option.effort)
                       const knownEfforts = new Set<string>(
                         REASONING_LEVEL_OPTIONS.map(candidate => candidate.effort)
                       )
@@ -400,7 +416,7 @@ export function CustomModelCapabilitiesForm({
                           ),
                           ...next.filter(item => !knownEfforts.has(stringValue(item.effort))),
                         ],
-                        ...(!event.target.checked && entry.default_reasoning_level === option.effort
+                        ...(!(checked === true) && entry.default_reasoning_level === option.effort
                           ? { default_reasoning_level: null }
                           : {}),
                       })
@@ -414,27 +430,35 @@ export function CustomModelCapabilitiesForm({
           </div>
         </Field>
         <Field label={t('workbench.local_model_default_reasoning_label', '默认推理等级')}>
-          <select
-            data-testid="local-model-default-reasoning-input"
-            value={stringValue(entry.default_reasoning_level)}
-            onChange={event =>
-              update({ default_reasoning_level: nullableString(event.target.value) })
-            }
-            className={FIELD_CLASS}
+          <SelectRoot
+            value={normalizeSelectValue(stringValue(entry.default_reasoning_level))}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null)
+                return update({ default_reasoning_level: nullableString(selectedValue) })
+            }}
           >
-            <option value="">{t('workbench.local_model_automatic_option', '自动')}</option>
-            {structuredItems(entry.supported_reasoning_levels).map(item => {
-              const effort = stringValue(item.effort)
-              const knownOption = REASONING_LEVEL_OPTIONS.find(option => option.effort === effort)
-              return effort ? (
-                <option key={effort} value={effort}>
-                  {knownOption
-                    ? t(`workbench.local_model_reasoning_${knownOption.labelKey}`)
-                    : effort}
-                </option>
-              ) : null
-            })}
-          </select>
+            <SelectTrigger
+              aria-label={t('workbench.local_model_default_reasoning_label', '默认推理等级')}
+              data-testid="local-model-default-reasoning-input"
+              className="w-full"
+            />
+            <SelectContent>
+              <SelectItem value="">
+                {t('workbench.local_model_automatic_option', '自动')}
+              </SelectItem>
+              {structuredItems(entry.supported_reasoning_levels).map(item => {
+                const effort = stringValue(item.effort)
+                const knownOption = REASONING_LEVEL_OPTIONS.find(option => option.effort === effort)
+                return effort ? (
+                  <SelectItem key={effort} value={String(effort)}>
+                    {knownOption
+                      ? t(`workbench.local_model_reasoning_${knownOption.labelKey}`)
+                      : effort}
+                  </SelectItem>
+                ) : null
+              })}
+            </SelectContent>
+          </SelectRoot>
         </Field>
         <Field label={t('workbench.local_model_parallel_tools_label', '并行工具调用')}>
           <BooleanSelect
@@ -459,15 +483,15 @@ export function CustomModelCapabilitiesForm({
                   key={modality}
                   className="inline-flex items-center gap-2 text-sm font-normal text-text-secondary"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     data-testid={`local-model-input-modality-${modality}`}
                     checked={modalities.includes(modality)}
-                    onChange={event =>
+                    onCheckedChange={checked =>
                       update({
-                        input_modalities: event.target.checked
-                          ? [...modalities, modality]
-                          : modalities.filter(value => value !== modality),
+                        input_modalities:
+                          checked === true
+                            ? [...modalities, modality]
+                            : modalities.filter(value => value !== modality),
                       })
                     }
                     className="h-4 w-4 rounded border-border text-primary"
@@ -480,33 +504,37 @@ export function CustomModelCapabilitiesForm({
         </Field>
       </div>
 
-      <details className="rounded-md border border-border bg-surface px-3 py-2">
-        <summary
+      <CollapsibleRoot className="rounded-md border border-border bg-surface px-3 py-2">
+        <CollapsibleTrigger
           data-testid="local-model-base-instructions-toggle"
           className="cursor-pointer text-sm font-medium text-text-secondary"
         >
           {t('workbench.local_model_base_instructions_label', '基础提示词')}
-        </summary>
-        <div className="mt-3">
-          <Field
-            label={t('workbench.local_model_base_instructions_label', '基础提示词')}
-            hint={t(
-              'workbench.local_model_base_instructions_hint',
-              '完整的模型基础行为提示词。默认参考当前 GPT/Codex profile，可直接编辑。'
-            )}
-          >
-            <textarea
-              data-testid="local-model-base-instructions-input"
-              value={stringValue(entry.base_instructions)}
-              onChange={event => update({ base_instructions: event.target.value })}
-              spellCheck={false}
-              className={`${TEXTAREA_CLASS} min-h-64 font-mono text-xs`}
-            />
-          </Field>
-        </div>
-      </details>
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="mt-3">
+            <Field
+              label={t('workbench.local_model_base_instructions_label', '基础提示词')}
+              hint={t(
+                'workbench.local_model_base_instructions_hint',
+                '完整的模型基础行为提示词。默认参考当前 GPT/Codex profile，可直接编辑。'
+              )}
+            >
+              <ControlTextarea
+                data-testid="local-model-base-instructions-input"
+                value={stringValue(entry.base_instructions)}
+                onChange={event => update({ base_instructions: event.target.value })}
+                spellCheck={false}
+                className="w-full resize-y min-h-64"
+              />
+            </Field>
+          </div>
+        </CollapsiblePanel>
+      </CollapsibleRoot>
 
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         onClick={() => setAdvancedOpen(true)}
         className="flex h-9 items-center rounded-md border border-border bg-surface px-3 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -514,16 +542,19 @@ export function CustomModelCapabilitiesForm({
         <span data-testid="local-model-advanced-capabilities-toggle">
           {t('workbench.local_model_advanced_capabilities_title', '高级模型能力')}
         </span>
-      </button>
+      </ControlButton>
       {advancedOpen &&
         createPortal(
           <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-6">
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="local-model-advanced-dialog-title"
-              data-testid="local-model-advanced-capabilities-dialog"
-              className="flex max-h-[min(760px,calc(100vh-3rem))] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+            <DialogSurface
+              onClose={() => setAdvancedOpen(false)}
+              render={
+                <div
+                  aria-labelledby="local-model-advanced-dialog-title"
+                  data-testid="local-model-advanced-capabilities-dialog"
+                  className="flex max-h-[min(760px,calc(100vh-3rem))] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+                />
+              }
             >
               <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4">
                 <div>
@@ -540,7 +571,8 @@ export function CustomModelCapabilitiesForm({
                     )}
                   </p>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="local-model-advanced-capabilities-close"
                   aria-label={t('common.close', '关闭')}
@@ -548,7 +580,7 @@ export function CustomModelCapabilitiesForm({
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </header>
               <div className="grid min-h-0 flex-1 grid-cols-[11rem_minmax(0,1fr)]">
                 <nav className="grid content-start gap-1 border-r border-border bg-surface p-3">
@@ -568,7 +600,8 @@ export function CustomModelCapabilitiesForm({
                       ],
                     ] as const
                   ).map(([section, label]) => (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={section}
                       type="button"
                       data-testid={`local-model-advanced-section-${section}`}
@@ -580,7 +613,7 @@ export function CustomModelCapabilitiesForm({
                       }`}
                     >
                       {label}
-                    </button>
+                    </ControlButton>
                   ))}
                 </nav>
                 <div className="min-h-0 overflow-y-auto p-5">
@@ -600,29 +633,38 @@ export function CustomModelCapabilitiesForm({
                                 '完整兼容 Codex 工具协议时直接透传；仅支持标准 Responses function calling 时由 Wework 转换。'
                               )}
                             >
-                              <select
-                                data-testid="local-model-codex-tool-compatibility-select"
-                                value={codexToolCompatibility}
-                                onChange={event =>
-                                  onCodexToolCompatibilityChange(
-                                    event.target.value as LocalModelCodexToolCompatibility
-                                  )
-                                }
-                                className={FIELD_CLASS}
+                              <SelectRoot
+                                value={normalizeSelectValue(codexToolCompatibility)}
+                                onValueChange={selectedValue => {
+                                  if (selectedValue !== null)
+                                    return onCodexToolCompatibilityChange(
+                                      selectedValue as LocalModelCodexToolCompatibility
+                                    )
+                                }}
                               >
-                                <option value="native">
-                                  {t(
-                                    'workbench.local_model_codex_tool_compatibility_native',
-                                    '原生兼容'
+                                <SelectTrigger
+                                  aria-label={t(
+                                    'workbench.local_model_codex_tool_compatibility_label',
+                                    'Codex 工具协议兼容性'
                                   )}
-                                </option>
-                                <option value="standard">
-                                  {t(
-                                    'workbench.local_model_codex_tool_compatibility_standard',
-                                    '仅兼容标准 Responses（推荐）'
-                                  )}
-                                </option>
-                              </select>
+                                  data-testid="local-model-codex-tool-compatibility-select"
+                                  className="w-full"
+                                />
+                                <SelectContent>
+                                  <SelectItem value="native">
+                                    {t(
+                                      'workbench.local_model_codex_tool_compatibility_native',
+                                      '原生兼容'
+                                    )}
+                                  </SelectItem>
+                                  <SelectItem value="standard">
+                                    {t(
+                                      'workbench.local_model_codex_tool_compatibility_standard',
+                                      '仅兼容标准 Responses（推荐）'
+                                    )}
+                                  </SelectItem>
+                                </SelectContent>
+                              </SelectRoot>
                             </Field>
                           )}
                         <Field
@@ -642,20 +684,31 @@ export function CustomModelCapabilitiesForm({
                             '默认推理摘要'
                           )}
                         >
-                          <select
-                            data-testid="local-model-default-reasoning-summary-select"
-                            value={stringValue(entry.default_reasoning_summary) || 'auto'}
-                            onChange={event =>
-                              update({ default_reasoning_summary: event.target.value })
-                            }
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(
+                              stringValue(entry.default_reasoning_summary) || 'auto'
+                            )}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({ default_reasoning_summary: selectedValue })
+                            }}
                           >
-                            {['auto', 'concise', 'detailed', 'none'].map(value => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger
+                              aria-label={t(
+                                'workbench.local_model_field_default_reasoning_summary',
+                                '默认推理摘要'
+                              )}
+                              data-testid="local-model-default-reasoning-summary-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              {['auto', 'concise', 'detailed', 'none'].map(value => (
+                                <SelectItem key={value} value={String(value)}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field label={t('workbench.local_model_field_verbosity', '详细程度参数')}>
                           <BooleanSelect
@@ -667,21 +720,30 @@ export function CustomModelCapabilitiesForm({
                         <Field
                           label={t('workbench.local_model_field_default_verbosity', '默认详细程度')}
                         >
-                          <select
-                            data-testid="local-model-default-verbosity-select"
-                            value={stringValue(entry.default_verbosity)}
-                            onChange={event =>
-                              update({ default_verbosity: nullableString(event.target.value) })
-                            }
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(stringValue(entry.default_verbosity))}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({ default_verbosity: nullableString(selectedValue) })
+                            }}
                           >
-                            <option value="">Auto</option>
-                            {['low', 'medium', 'high'].map(value => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger
+                              aria-label={t(
+                                'workbench.local_model_field_default_verbosity',
+                                '默认详细程度'
+                              )}
+                              data-testid="local-model-default-verbosity-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              <SelectItem value="">Auto</SelectItem>
+                              {['low', 'medium', 'high'].map(value => (
+                                <SelectItem key={value} value={String(value)}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field
                           label={t('workbench.local_model_field_original_image', '原始图片精度')}
@@ -707,33 +769,56 @@ export function CustomModelCapabilitiesForm({
                         <Field
                           label={t('workbench.local_model_field_shell_type', 'Shell 工具类型')}
                         >
-                          <select
-                            data-testid="local-model-shell-type-select"
-                            value={stringValue(entry.shell_type)}
-                            onChange={event => update({ shell_type: event.target.value })}
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(stringValue(entry.shell_type))}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({ shell_type: selectedValue })
+                            }}
                           >
-                            {['default', 'local', 'unified_exec', 'disabled', 'shell_command'].map(
-                              value => (
-                                <option key={value} value={value}>
+                            <SelectTrigger
+                              aria-label={t(
+                                'workbench.local_model_field_shell_type',
+                                'Shell 工具类型'
+                              )}
+                              data-testid="local-model-shell-type-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              {[
+                                'default',
+                                'local',
+                                'unified_exec',
+                                'disabled',
+                                'shell_command',
+                              ].map(value => (
+                                <SelectItem key={value} value={String(value)}>
                                   {value}
-                                </option>
-                              )
-                            )}
-                          </select>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field label={t('workbench.local_model_field_apply_patch', '补丁工具')}>
-                          <select
-                            data-testid="local-model-apply-patch-type-select"
-                            value={stringValue(entry.apply_patch_tool_type)}
-                            onChange={event =>
-                              update({ apply_patch_tool_type: nullableString(event.target.value) })
-                            }
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(stringValue(entry.apply_patch_tool_type))}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({
+                                  apply_patch_tool_type: nullableString(selectedValue),
+                                })
+                            }}
                           >
-                            <option value="">Disabled</option>
-                            <option value="freeform">freeform</option>
-                          </select>
+                            <SelectTrigger
+                              aria-label={t('workbench.local_model_field_apply_patch', '补丁工具')}
+                              data-testid="local-model-apply-patch-type-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              <SelectItem value="">Disabled</SelectItem>
+                              <SelectItem value="freeform">freeform</SelectItem>
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field
                           label={t(
@@ -741,15 +826,28 @@ export function CustomModelCapabilitiesForm({
                             '网页搜索工具类型'
                           )}
                         >
-                          <select
-                            data-testid="local-model-web-search-tool-type-select"
-                            value={stringValue(entry.web_search_tool_type) || 'text'}
-                            onChange={event => update({ web_search_tool_type: event.target.value })}
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(
+                              stringValue(entry.web_search_tool_type) || 'text'
+                            )}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({ web_search_tool_type: selectedValue })
+                            }}
                           >
-                            <option value="text">text</option>
-                            <option value="text_and_image">text_and_image</option>
-                          </select>
+                            <SelectTrigger
+                              aria-label={t(
+                                'workbench.local_model_field_web_search_type',
+                                '网页搜索工具类型'
+                              )}
+                              data-testid="local-model-web-search-tool-type-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              <SelectItem value="text">text</SelectItem>
+                              <SelectItem value="text_and_image">text_and_image</SelectItem>
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field
                           label={t('workbench.local_model_field_search_tool', '按需工具搜索')}
@@ -774,38 +872,55 @@ export function CustomModelCapabilitiesForm({
                           />
                         </Field>
                         <Field label={t('workbench.local_model_field_tool_mode', '工具模式')}>
-                          <select
-                            data-testid="local-model-tool-mode-select"
-                            value={stringValue(entry.tool_mode)}
-                            onChange={event =>
-                              update({ tool_mode: nullableString(event.target.value) })
-                            }
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(stringValue(entry.tool_mode))}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({ tool_mode: nullableString(selectedValue) })
+                            }}
                           >
-                            <option value="">Default</option>
-                            {['direct', 'code_mode', 'code_mode_only'].map(value => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger
+                              aria-label={t('workbench.local_model_field_tool_mode', '工具模式')}
+                              data-testid="local-model-tool-mode-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              <SelectItem value="">Default</SelectItem>
+                              {['direct', 'code_mode', 'code_mode_only'].map(value => (
+                                <SelectItem key={value} value={String(value)}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field label={t('workbench.local_model_field_multi_agent', '多智能体版本')}>
-                          <select
-                            data-testid="local-model-multi-agent-version-select"
-                            value={stringValue(entry.multi_agent_version)}
-                            onChange={event =>
-                              update({ multi_agent_version: nullableString(event.target.value) })
-                            }
-                            className={FIELD_CLASS}
+                          <SelectRoot
+                            value={normalizeSelectValue(stringValue(entry.multi_agent_version))}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return update({
+                                  multi_agent_version: nullableString(selectedValue),
+                                })
+                            }}
                           >
-                            <option value="">Default</option>
-                            {['disabled', 'v1', 'v2'].map(value => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger
+                              aria-label={t(
+                                'workbench.local_model_field_multi_agent',
+                                '多智能体版本'
+                              )}
+                              data-testid="local-model-multi-agent-version-select"
+                              className="w-full"
+                            />
+                            <SelectContent>
+                              <SelectItem value="">Default</SelectItem>
+                              {['disabled', 'v1', 'v2'].map(value => (
+                                <SelectItem key={value} value={String(value)}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </SelectRoot>
                         </Field>
                         <Field
                           label={t('workbench.local_model_field_experimental_tools', '实验性工具')}
@@ -827,18 +942,26 @@ export function CustomModelCapabilitiesForm({
                       <div className="grid gap-4">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <Field label={t('workbench.local_model_field_visibility', '可见性')}>
-                            <select
-                              data-testid="local-model-visibility-select"
-                              value={stringValue(entry.visibility)}
-                              onChange={event => update({ visibility: event.target.value })}
-                              className={FIELD_CLASS}
+                            <SelectRoot
+                              value={normalizeSelectValue(stringValue(entry.visibility))}
+                              onValueChange={selectedValue => {
+                                if (selectedValue !== null)
+                                  return update({ visibility: selectedValue })
+                              }}
                             >
-                              {['list', 'hide', 'none'].map(value => (
-                                <option key={value} value={value}>
-                                  {value}
-                                </option>
-                              ))}
-                            </select>
+                              <SelectTrigger
+                                aria-label={t('workbench.local_model_field_visibility', '可见性')}
+                                data-testid="local-model-visibility-select"
+                                className="w-full"
+                              />
+                              <SelectContent>
+                                {['list', 'hide', 'none'].map(value => (
+                                  <SelectItem key={value} value={String(value)}>
+                                    {value}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </SelectRoot>
                           </Field>
                           <Field label={t('workbench.local_model_field_supported_api', 'API 可用')}>
                             <BooleanSelect
@@ -848,14 +971,14 @@ export function CustomModelCapabilitiesForm({
                             />
                           </Field>
                           <Field label={t('workbench.local_model_field_priority', '优先级')}>
-                            <input
+                            <ControlInput
                               data-testid="local-model-priority-input"
                               type="number"
                               value={numberValue(entry.priority, '10000')}
                               onChange={event =>
                                 update({ priority: nullableNumber(event.target.value) })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field
@@ -864,7 +987,7 @@ export function CustomModelCapabilitiesForm({
                               '有效上下文比例'
                             )}
                           >
-                            <input
+                            <ControlInput
                               data-testid="local-model-effective-context-input"
                               type="number"
                               min={1}
@@ -877,13 +1000,13 @@ export function CustomModelCapabilitiesForm({
                                   ),
                                 })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field
                             label={t('workbench.local_model_field_auto_compact', '自动压缩阈值')}
                           >
-                            <input
+                            <ControlInput
                               data-testid="local-model-auto-compact-input"
                               type="number"
                               value={numberValue(entry.auto_compact_token_limit)}
@@ -892,45 +1015,54 @@ export function CustomModelCapabilitiesForm({
                                   auto_compact_token_limit: nullableNumber(event.target.value),
                                 })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field label={t('workbench.local_model_field_comp_hash', '压缩兼容标识')}>
-                            <input
+                            <ControlInput
                               data-testid="local-model-comp-hash-input"
                               value={stringValue(entry.comp_hash)}
                               onChange={event =>
                                 update({ comp_hash: nullableString(event.target.value) })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field
                             label={t('workbench.local_model_field_truncation_mode', '截断模式')}
                           >
-                            <select
-                              data-testid="local-model-truncation-mode-select"
-                              value={
+                            <SelectRoot
+                              value={normalizeSelectValue(
                                 stringValue(nestedObject(entry.truncation_policy).mode) || 'tokens'
-                              }
-                              onChange={event =>
-                                update({
-                                  truncation_policy: {
-                                    ...nestedObject(entry.truncation_policy),
-                                    mode: event.target.value,
-                                  },
-                                })
-                              }
-                              className={FIELD_CLASS}
+                              )}
+                              onValueChange={selectedValue => {
+                                if (selectedValue !== null)
+                                  return update({
+                                    truncation_policy: {
+                                      ...nestedObject(entry.truncation_policy),
+                                      mode: selectedValue,
+                                    },
+                                  })
+                              }}
                             >
-                              <option value="tokens">tokens</option>
-                              <option value="bytes">bytes</option>
-                            </select>
+                              <SelectTrigger
+                                aria-label={t(
+                                  'workbench.local_model_field_truncation_mode',
+                                  '截断模式'
+                                )}
+                                data-testid="local-model-truncation-mode-select"
+                                className="w-full"
+                              />
+                              <SelectContent>
+                                <SelectItem value="tokens">tokens</SelectItem>
+                                <SelectItem value="bytes">bytes</SelectItem>
+                              </SelectContent>
+                            </SelectRoot>
                           </Field>
                           <Field
                             label={t('workbench.local_model_field_truncation_limit', '截断保留量')}
                           >
-                            <input
+                            <ControlInput
                               data-testid="local-model-truncation-limit-input"
                               type="number"
                               min={1}
@@ -946,7 +1078,7 @@ export function CustomModelCapabilitiesForm({
                                   },
                                 })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field
@@ -968,26 +1100,37 @@ export function CustomModelCapabilitiesForm({
                               '默认服务档位'
                             )}
                           >
-                            <select
-                              data-testid="local-model-default-service-tier-input"
-                              value={stringValue(entry.default_service_tier)}
-                              onChange={event =>
-                                update({ default_service_tier: nullableString(event.target.value) })
-                              }
-                              className={FIELD_CLASS}
+                            <SelectRoot
+                              value={normalizeSelectValue(stringValue(entry.default_service_tier))}
+                              onValueChange={selectedValue => {
+                                if (selectedValue !== null)
+                                  return update({
+                                    default_service_tier: nullableString(selectedValue),
+                                  })
+                              }}
                             >
-                              <option value="">
-                                {t('workbench.local_model_automatic_option', '自动')}
-                              </option>
-                              {structuredItems(entry.service_tiers).map(item => {
-                                const id = stringValue(item.id)
-                                return id ? (
-                                  <option key={id} value={id}>
-                                    {stringValue(item.name) || id}
-                                  </option>
-                                ) : null
-                              })}
-                            </select>
+                              <SelectTrigger
+                                aria-label={t(
+                                  'workbench.local_model_field_default_service_tier',
+                                  '默认服务档位'
+                                )}
+                                data-testid="local-model-default-service-tier-input"
+                                className="w-full"
+                              />
+                              <SelectContent>
+                                <SelectItem value="">
+                                  {t('workbench.local_model_automatic_option', '自动')}
+                                </SelectItem>
+                                {structuredItems(entry.service_tiers).map(item => {
+                                  const id = stringValue(item.id)
+                                  return id ? (
+                                    <SelectItem key={id} value={String(id)}>
+                                      {stringValue(item.name) || id}
+                                    </SelectItem>
+                                  ) : null
+                                })}
+                              </SelectContent>
+                            </SelectRoot>
                           </Field>
                         </div>
 
@@ -1015,7 +1158,7 @@ export function CustomModelCapabilitiesForm({
                               '可用性提示'
                             )}
                           >
-                            <input
+                            <ControlInput
                               data-testid="local-model-availability-message-input"
                               value={stringValue(nestedObject(entry.availability_nux).message)}
                               onChange={event =>
@@ -1025,13 +1168,13 @@ export function CustomModelCapabilitiesForm({
                                     : null,
                                 })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field
                             label={t('workbench.local_model_field_upgrade_model', '升级目标模型')}
                           >
-                            <input
+                            <ControlInput
                               data-testid="local-model-upgrade-model-input"
                               value={stringValue(nestedObject(entry.upgrade).model)}
                               onChange={event =>
@@ -1044,7 +1187,7 @@ export function CustomModelCapabilitiesForm({
                                     : null,
                                 })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                           <Field
@@ -1053,7 +1196,7 @@ export function CustomModelCapabilitiesForm({
                               '升级迁移说明'
                             )}
                           >
-                            <textarea
+                            <ControlTextarea
                               data-testid="local-model-upgrade-markdown-input"
                               value={stringValue(nestedObject(entry.upgrade).migration_markdown)}
                               onChange={event =>
@@ -1064,7 +1207,7 @@ export function CustomModelCapabilitiesForm({
                                   },
                                 })
                               }
-                              className={`${TEXTAREA_CLASS} min-h-24`}
+                              className="w-full resize-y min-h-24"
                             />
                           </Field>
                           <Field
@@ -1073,7 +1216,7 @@ export function CustomModelCapabilitiesForm({
                               '自动审查模型覆盖'
                             )}
                           >
-                            <input
+                            <ControlInput
                               data-testid="local-model-auto-review-override-input"
                               value={stringValue(entry.auto_review_model_override)}
                               onChange={event =>
@@ -1081,7 +1224,7 @@ export function CustomModelCapabilitiesForm({
                                   auto_review_model_override: nullableString(event.target.value),
                                 })
                               }
-                              className={FIELD_CLASS}
+                              className="w-full"
                             />
                           </Field>
                         </div>
@@ -1093,7 +1236,7 @@ export function CustomModelCapabilitiesForm({
                         <Field
                           label={t('workbench.local_model_field_instructions_template', '指令模板')}
                         >
-                          <textarea
+                          <ControlTextarea
                             data-testid="local-model-instructions-template-input"
                             value={stringValue(modelMessages.instructions_template)}
                             onChange={event =>
@@ -1101,7 +1244,7 @@ export function CustomModelCapabilitiesForm({
                                 instructions_template: nullableString(event.target.value),
                               })
                             }
-                            className={`${TEXTAREA_CLASS} min-h-32 font-mono text-xs`}
+                            className="w-full resize-y min-h-32"
                           />
                         </Field>
                         <div className="grid gap-3 sm:grid-cols-2">
@@ -1122,7 +1265,7 @@ export function CustomModelCapabilitiesForm({
                             ] as const
                           ).map(([key, label]) => (
                             <Field key={key} label={label}>
-                              <textarea
+                              <ControlTextarea
                                 data-testid={`local-model-${key}-input`}
                                 value={stringValue(instructionVariables[key])}
                                 onChange={event =>
@@ -1134,7 +1277,7 @@ export function CustomModelCapabilitiesForm({
                                     }
                                   )
                                 }
-                                className={`${TEXTAREA_CLASS} min-h-24`}
+                                className="w-full resize-y min-h-24"
                               />
                             </Field>
                           ))}
@@ -1192,7 +1335,7 @@ export function CustomModelCapabilitiesForm({
                             ],
                           ].map(([key, label, group, groupKey]) => (
                             <Field key={`${groupKey}-${key}`} label={label as string}>
-                              <textarea
+                              <ControlTextarea
                                 data-testid={`local-model-${groupKey}-${key}-input`}
                                 value={stringValue((group as CatalogObject)[key as string])}
                                 onChange={event =>
@@ -1200,7 +1343,7 @@ export function CustomModelCapabilitiesForm({
                                     [key as string]: nullableString(event.target.value),
                                   })
                                 }
-                                className={`${TEXTAREA_CLASS} min-h-24`}
+                                className="w-full resize-y min-h-24"
                               />
                             </Field>
                           ))}
@@ -1210,7 +1353,7 @@ export function CustomModelCapabilitiesForm({
                   </div>
                 </div>
               </div>
-            </div>
+            </DialogSurface>
           </div>,
           document.body
         )}

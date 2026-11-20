@@ -1,7 +1,17 @@
 import { DialogForm } from '@/components/common/DialogForm'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useRef, useState } from 'react'
 import type { HookDraft, HookEventName, ResolvedHookPlugin } from './hooksTypes'
 
 export function HookEditorDialog({
@@ -27,83 +37,91 @@ export function HookEditorDialog({
   const [asynchronous, setAsynchronous] = useState(first?.config.async ?? false)
   const [statusMessage, setStatusMessage] = useState(first?.config.statusMessage ?? '')
   const [saving, setSaving] = useState(false)
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!saving) onClose()
-  })
+  const dialogRef = useRef<HTMLFormElement>(null)
   const valid =
     /^[a-z0-9-]+$/.test(id) && name.trim() && command.trim() && timeout >= 1 && timeout <= 300
   return (
-    <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/30 p-4"
-      role="dialog"
-      aria-modal="true"
+    <DialogSurface
+      onClose={onClose}
+      render={
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/30 p-4" />
+      }
     >
-      <DialogForm
-        ref={dialogRef}
-        className="max-h-[90vh] w-full max-w-xl space-y-4 overflow-auto rounded-2xl bg-background p-6 shadow-xl"
-        onSubmit={async event => {
-          event.preventDefault()
-          if (!valid || saving) return
-          setSaving(true)
-          try {
-            const edited = {
-              eventName,
-              matcher,
-              config: {
-                ...first?.config,
-                type: 'command' as const,
-                command,
-                ...(commandWindows ? { commandWindows } : {}),
-                timeout,
-                async: eventName !== 'PostToolUse' || asynchronous,
-                ...(statusMessage ? { statusMessage } : {}),
-              },
-            }
-            if (!commandWindows) delete edited.config.commandWindows
-            if (!statusMessage) delete edited.config.statusMessage
-            const hooks: HookDraft['hooks'] = {}
-            for (const handler of [edited, ...(plugin?.handlers.slice(1) ?? [])]) {
-              const groups = (hooks[handler.eventName] ??= [])
-              groups.push({ matcher: handler.matcher, hooks: [handler.config] })
-            }
-            await onSave({
-              manifest: {
-                ...plugin?.manifest,
-                schemaVersion: 1,
-                id,
-                name: name.trim(),
-                description: description.trim(),
-                version,
-              },
-              hooks,
-            })
-            onClose()
-          } finally {
-            setSaving(false)
-          }
+      <DialogSurface
+        onClose={() => {
+          if (!saving) onClose()
         }}
+        render={
+          <DialogForm
+            ref={dialogRef}
+            className="max-h-[90vh] w-full max-w-xl space-y-4 overflow-auto rounded-2xl bg-background p-6 shadow-xl"
+            onSubmit={async event => {
+              event.preventDefault()
+              if (!valid || saving) return
+              setSaving(true)
+              try {
+                const edited = {
+                  eventName,
+                  matcher,
+                  config: {
+                    ...first?.config,
+                    type: 'command' as const,
+                    command,
+                    ...(commandWindows ? { commandWindows } : {}),
+                    timeout,
+                    async: eventName !== 'PostToolUse' || asynchronous,
+                    ...(statusMessage ? { statusMessage } : {}),
+                  },
+                }
+                if (!commandWindows) delete edited.config.commandWindows
+                if (!statusMessage) delete edited.config.statusMessage
+                const hooks: HookDraft['hooks'] = {}
+                for (const handler of [edited, ...(plugin?.handlers.slice(1) ?? [])]) {
+                  const groups = (hooks[handler.eventName] ??= [])
+                  groups.push({ matcher: handler.matcher, hooks: [handler.config] })
+                }
+                await onSave({
+                  manifest: {
+                    ...plugin?.manifest,
+                    schemaVersion: 1,
+                    id,
+                    name: name.trim(),
+                    description: description.trim(),
+                    version,
+                  },
+                  hooks,
+                })
+                onClose()
+              } finally {
+                setSaving(false)
+              }
+            }}
+          />
+        }
       >
         <h2 className="heading-small">{plugin ? t('edit_title') : t('create_title')}</h2>
         <label className="block text-sm">
           <span className="mb-1 block text-text-secondary">{t('event')}</span>
-          <select
-            data-testid="hook-editor-event"
-            className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
-            value={eventName}
-            onChange={event => {
-              const next = event.target.value as HookEventName
+          <SelectRoot
+            value={normalizeSelectValue(eventName)}
+            onValueChange={selectedValue => {
+              if (selectedValue === null) return
+              const next = selectedValue as HookEventName
               setEventName(next)
               setMatcher(next === 'PostToolUse' ? '^(apply_patch|Write|Edit)$' : '.*')
             }}
           >
-            {(['PostToolUse', 'TurnStarted', 'TurnCompleted', 'ExecutionCompleted'] as const).map(
-              name => (
-                <option key={name} value={name}>
-                  {t('event_' + name)}
-                </option>
-              )
-            )}
-          </select>
+            <SelectTrigger data-testid="hook-editor-event" className="h-9 w-full" />
+            <SelectContent>
+              {(['PostToolUse', 'TurnStarted', 'TurnCompleted', 'ExecutionCompleted'] as const).map(
+                name => (
+                  <SelectItem key={name} value={String(name)}>
+                    {t('event_' + name)}
+                  </SelectItem>
+                )
+              )}
+            </SelectContent>
+          </SelectRoot>
         </label>
         {eventName !== 'PostToolUse' && (
           <p className="text-sm text-text-secondary">{t('lifecycle_help')}</p>
@@ -122,9 +140,9 @@ export function HookEditorDialog({
             <span className="mb-1 block text-text-secondary">
               {t(key === 'matcher' && eventName !== 'PostToolUse' ? 'status_matcher' : String(key))}
             </span>
-            <input
+            <ControlInput
               data-testid={`hook-editor-${String(key)}`}
-              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+              className="h-9 w-full"
               value={String(value)}
               disabled={Boolean(disabled)}
               onChange={event => (setter as (value: string) => void)(event.target.value)}
@@ -133,39 +151,46 @@ export function HookEditorDialog({
         ))}
         <label className="block text-sm">
           <span className="mb-1 block text-text-secondary">{t('timeout')}</span>
-          <input
+          <ControlInput
             data-testid="hook-editor-timeout"
             type="number"
             min={1}
             max={300}
-            className="h-9 w-full rounded-lg border border-border bg-background px-3"
+            className="h-9 w-full"
             value={timeout}
             onChange={event => setTimeoutValue(Number(event.target.value))}
           />
         </label>
         <label className="flex items-center gap-2 text-sm">
-          <input
+          <Checkbox
             data-testid="hook-editor-async"
-            type="checkbox"
             checked={eventName !== 'PostToolUse' || asynchronous}
             disabled={eventName !== 'PostToolUse'}
-            onChange={event => setAsynchronous(event.target.checked)}
+            onCheckedChange={checked => setAsynchronous(checked === true)}
           />
           {t('async')}
         </label>
         <div className="flex justify-end gap-2">
-          <button type="button" className="h-8 rounded-full px-3 hover:bg-muted" onClick={onClose}>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            className="h-8 rounded-full px-3 hover:bg-muted"
+            onClick={onClose}
+          >
             {t('cancel')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
+            type="submit"
             data-testid="hook-editor-save"
             disabled={!valid || saving}
             className="h-8 rounded-full bg-text-primary px-4 text-background disabled:opacity-40"
           >
             {t('save')}
-          </button>
+          </ControlButton>
         </div>
-      </DialogForm>
-    </div>
+      </DialogSurface>
+    </DialogSurface>
   )
 }

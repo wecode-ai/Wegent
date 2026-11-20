@@ -1,3 +1,6 @@
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -31,21 +34,30 @@ export function FlatProjectViewSwitcher<View extends CollaborationProjectView>({
     return (
       <span
         ref={containerRef}
-        className="electron-titlebar-interactive-region relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
+        className="electron-titlebar-interactive-region relative z-10 ml-2 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary md:min-h-8"
       >
-        <select
-          data-testid="collaboration-project-view-select"
-          aria-label={ariaLabel ?? '视图切换'}
-          value={value}
-          onChange={(event) => onChange(event.target.value as View)}
-          className="h-8 cursor-pointer bg-transparent text-xs outline-none"
+        <SelectRoot
+          value={normalizeSelectValue(value)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null) return onChange(selectedValue as View)
+          }}
         >
-          {options.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            data-testid="collaboration-project-view-select"
+            data-available-views={options.map(option => option.id).join(' ')}
+            density="compact"
+            appearance="plain"
+            aria-label={ariaLabel ?? '视图切换'}
+            className="min-w-0 flex-1 cursor-pointer"
+          />
+          <SelectContent>
+            {options.map(option => (
+              <SelectItem key={option.id} value={String(option.id)}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
         {compactIcon}
       </span>
     )
@@ -57,8 +69,9 @@ export function FlatProjectViewSwitcher<View extends CollaborationProjectView>({
       aria-label={ariaLabel}
       className="electron-titlebar-interactive-region relative z-10 ml-8 flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
     >
-      {options.map((option) => (
-        <button
+      {options.map(option => (
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={option.testId}
           key={option.id}
@@ -71,7 +84,7 @@ export function FlatProjectViewSwitcher<View extends CollaborationProjectView>({
           }
         >
           {option.label}
-        </button>
+        </ControlButton>
       ))}
     </nav>
   )

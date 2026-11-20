@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { ComponentType } from 'react'
 
 export function DeviceActionButton({
@@ -16,7 +17,9 @@ export function DeviceActionButton({
   title?: string
 }) {
   return (
-    <button
+    <ControlButton
+      variant="outline"
+      size="sm"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -26,6 +29,6 @@ export function DeviceActionButton({
     >
       <Icon className="h-3.5 w-3.5" />
       <span>{label}</span>
-    </button>
+    </ControlButton>
   )
 }

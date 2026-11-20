@@ -43,6 +43,17 @@ export async function verifyCollaborationExpTeamManagement({
   assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
 }
 
+async function closeCollaborationExpTeamManagement(control, click) {
+  const profile = '[data-testid="stand-in-profile-panel"]'
+  await click(control, `${profile} [data-testid="stand-in-close"]`)
+  await control.command('waitFor', profile, { visible: false })
+  const settings = '[data-testid="stand-in-page"]'
+  if (Number(await control.command('getElementCount', `${settings}[data-open]`))) {
+    await click(control, `${settings} [data-testid="stand-in-close"]`)
+    await control.command('waitFor', settings, { visible: false })
+  }
+}
+
 /** Reuse one held native execution across every actual responsive presentation. */
 export async function verifyCollaborationExpViewports({
   control,
@@ -205,6 +216,7 @@ export async function verifyCollaborationExpViewports({
           nativeTaskIdentities,
           localIssueIdentities,
         })
+        await closeCollaborationExpTeamManagement(control, click)
         await control.command('navigate', 'body', { value: route() })
         await control.command('waitFor', `${runningRole}[data-state="running"]`, {
           visible: true,
