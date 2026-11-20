@@ -95,6 +95,8 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
+- Avoid repeated JSON serialization and deserialization, especially in hot paths. Reuse parsed data and convert to or from JSON only where required.
+- Prefer algorithms with `O(log n)` or better time complexity per operation whenever feasible.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
 - Delete dead code. Do not add compatibility shims or fallback paths without agreement; correct the primary path.
 - Fix defects discovered while working when they are in scope or block correctness.
