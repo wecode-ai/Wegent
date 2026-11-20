@@ -239,9 +239,12 @@ export function RuntimeTaskRow({
   const eventSubscriptions = eventTask.runtimeHandle?.connectionEventSubscriptions
   const eventRunning = isRuntimeTaskExecutionRunning(eventTask)
   const eventSubscription = useMemo(() => {
-    if (eventRunning) return undefined
     const subscriptions = connectionEventSubscriptions(eventSubscriptions)
-    return preferredEventSubscription(subscriptions)
+    return preferredEventSubscription(
+      eventRunning
+        ? subscriptions.filter(item => item.status === 'pending' || item.status === 'resuming_goal')
+        : subscriptions
+    )
   }, [eventRunning, eventSubscriptions])
   const rateLimitWaiting = useRuntimeTaskRateLimitWait(taskAddress)
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
