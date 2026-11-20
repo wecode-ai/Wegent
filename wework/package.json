@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.6.10",
+  "version": "0.6.12-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,7 +19,7 @@
     "build:mac": "pnpm run build:desktop",
     "build:windows": "pnpm run build:desktop",
     "build:mac:devtools": "WEWORK_RELEASE_DEVTOOLS=1 pnpm run build:desktop",
-    "lint": "eslint . && pnpm run lint:typography && pnpm run lint:task-lifecycle && pnpm run lint:telemetry-boundary",
+    "lint": "pnpm run lint:effect-boundary && eslint . && pnpm run lint:typography && pnpm run lint:task-lifecycle && pnpm run lint:telemetry-boundary",
     "lint:typography": "node scripts/check-typography.mjs",
     "lint:task-lifecycle": "node scripts/check-runtime-task-lifecycle.mjs",
     "lint:telemetry-boundary": "node scripts/check-telemetry-boundary.mjs",
@@ -45,7 +45,8 @@
     "ai:verify": "node scripts/ai-verify.mjs",
     "ai:verify:electron:prepare": "node scripts/prepare-ai-verify-electron.mjs",
     "ai:verify:electron:build": "node scripts/build-ai-verify-electron.mjs",
-    "e2e:ui": "playwright test --ui"
+    "e2e:ui": "playwright test --ui",
+    "lint:effect-boundary": "node scripts/check-effect-boundary.mjs"
   },
   "dependencies": {
     "@blocknote/core": "0.52.1",

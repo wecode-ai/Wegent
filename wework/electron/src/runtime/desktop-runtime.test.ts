@@ -10,7 +10,6 @@ import {
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { migrateCodexProviderState } from './codex-provider-upgrade.js'
-import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
 import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
 
@@ -273,14 +272,13 @@ describe('DesktopRuntime lifecycle generation', () => {
       {
         createExecutor: () => executor,
         modelConfiguration: configuration as unknown as ModelConfigurationStore,
-        createCoreDsh: options => {
-          expect(executor.requests).toContain('runtime.runner.local_models.replace')
-          return createCoreDsh(options)
-        },
       }
     )
     try {
       await runtime.start()
+      await vi.waitFor(() =>
+        expect(executor.requests).toContain('runtime.runner.local_models.replace')
+      )
       expect(request).toHaveBeenCalledWith('runtime.runner.local_models.replace', {
         models: [
           expect.objectContaining({
@@ -347,21 +345,43 @@ describe('DesktopRuntime lifecycle generation', () => {
     }
   })
 
-  test('rejects an incompatible executor before constructing its managed Home writer', async () => {
-    vi.mocked(resolveDesktopDeviceId).mockClear()
-    const createExecutor = vi.fn()
-    const runtime = createRuntime(
-      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
-      { createExecutor }
-    )
-    vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValue(
-      new Error('incompatible schema')
-    )
-    await expect(runtime.start()).rejects.toThrow('incompatible schema')
-    expect(createExecutor).not.toHaveBeenCalled()
-    expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
-    await runtime.stop()
-  })
+  test.each([false, true])(
+    'isolates incompatible executor writes (release activation: %s)',
+    async requireExecutor => {
+      const createExecutor = vi.fn(() => new FakeExecutor())
+      const runtime = createRuntime(
+        {
+          ...EXTERNAL_DSH,
+          WEWORK_EXECUTOR_PATH: '/executor',
+          WEGENT_APP_IPC_DEVICE_ID: 'test-device',
+        },
+        { createExecutor, requireExecutor }
+      )
+      vi.mocked(assertExecutorWorkbenchCompatibility).mockRejectedValueOnce(
+        new Error('incompatible schema')
+      )
+      try {
+        if (requireExecutor) {
+          await expect(runtime.start()).rejects.toThrow('incompatible schema')
+          expect(runtime.state().ready).toBe(false)
+        } else {
+          await runtime.start()
+          expect(runtime.state()).toMatchObject({ ready: true, executorUnavailable: true })
+          expect(createdOptions[0].env?.WEWORK_MANAGED_EXECUTOR_UNAVAILABLE).toBe('1')
+          expect(createdOptions[0].probeUrls).not.toContain('http://127.0.0.1:1/wework/executor/v1')
+          await expect(runtime.requestExecutor('runtime.tasks.list')).rejects.toThrow('unavailable')
+        }
+        expect(createExecutor).not.toHaveBeenCalled()
+        if (!requireExecutor) {
+          await runtime.restartCoreDsh()
+          expect(runtime.state().executorConfigured).toBe(true)
+          expect(runtime.state().executorUnavailable).toBeUndefined()
+        }
+      } finally {
+        await runtime.stop()
+      }
+    }
+  )
 
   test('starts and restarts without an offline Home migration gate', async () => {
     const createExecutor = vi.fn(() => new FakeExecutor())

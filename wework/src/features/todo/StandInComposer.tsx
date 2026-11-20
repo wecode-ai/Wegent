@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
+import { type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
-import { useStandInModels } from './useStandInModels'
+import { useStandInComposerDraft } from './useStandInComposerDraft'
 import { type WorkspaceStandInSettings } from '@wegent/collaboration'
 import { useProjectWorktreeAvailabilityProbe } from '@/components/layout/useProjectWorktreeAvailabilityProbe'
 import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
@@ -16,31 +16,40 @@ import { runtimeProjectKey, runtimeProjectToProject } from '@/lib/runtime-projec
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { StandInSettingsError } from './StandInSettingsLayout'
 
+type StandInComposerProps = {
+  draft: WorkspaceStandInSettings
+  onChange: Dispatch<SetStateAction<WorkspaceStandInSettings>>
+  onSave(prompt: string, draft: WorkspaceStandInSettings): Promise<void | boolean>
+  disabled: boolean
+  submitDisabled: boolean
+  deviceControl?: ReactNode
+  runtimeWork?: RuntimeWorkListResponse | null
+  devices: DeviceInfo[]
+  services?: WorkbenchServices
+  showPrompt?: boolean
+}
+
 /** Configuration uses the ordinary composer without starting a conversation. */
-export function StandInComposer({
+export function StandInComposer(props: StandInComposerProps) {
+  const configuration = useStandInComposerDraft(props.draft, props.services, props.showPrompt)
+  return <StandInComposerFields {...props} {...configuration} />
+}
+
+/** Allows a draft owner to share the same resolved model with its external save action. */
+export function StandInComposerFields({
   draft,
   onChange,
   onSave,
   disabled,
   submitDisabled,
   deviceControl,
-  onValidityChange,
   runtimeWork,
   devices,
   services,
   showPrompt = true,
-}: {
-  draft: WorkspaceStandInSettings
-  onChange: Dispatch<SetStateAction<WorkspaceStandInSettings>>
-  onSave(prompt: string): Promise<void | boolean>
-  disabled: boolean
-  submitDisabled: boolean
-  onValidityChange?(valid: boolean): void
-  deviceControl?: ReactNode
-  runtimeWork?: RuntimeWorkListResponse | null
-  devices: DeviceInfo[]
-  services?: WorkbenchServices
-  showPrompt?: boolean
+  models,
+}: StandInComposerProps & {
+  models: ReturnType<typeof useStandInComposerDraft>['models']
 }) {
   const { t } = useTranslation('common')
   const composerCatalog = useStandInComposerCatalog(
@@ -54,12 +63,6 @@ export function StandInComposer({
     services,
     t
   )
-  const models = useStandInModels(services, draft)
-  useEffect(() => {
-    if (!showPrompt || draft.model || !models.defaultIdentity) return
-    const model = models.defaultIdentity
-    onChange(current => (current.model ? current : { ...current, model }))
-  }, [draft.model, models.defaultIdentity, onChange, showPrompt])
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
     const workspace = row.deviceWorkspaces.find(
       workspace =>
@@ -156,10 +159,6 @@ export function StandInComposer({
   const environment = draft.workspace
     ? `${project?.name ?? draft.workspace.projectKey} · ${t(draft.workspace.executionMode === 'git_worktree' ? 'standIn.new_worktree' : 'standIn.current_workspace')}`
     : t('standIn.inherit_environment')
-  const valid = !submitDisabled
-  useEffect(() => {
-    onValidityChange?.(valid)
-  }, [valid, onValidityChange])
   return (
     <div className="space-y-3">
       <div
@@ -245,9 +244,9 @@ export function StandInComposer({
             value={draft.prompt}
             onChange={prompt => onChange(current => ({ ...current, prompt }))}
             onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
-            onSubmit={prompt => onSave(prompt ?? draft.prompt)}
+            onSubmit={prompt => onSave(prompt ?? draft.prompt, draft)}
             disabled={disabled}
-            submitDisabled={!valid}
+            submitDisabled={submitDisabled}
             clearOnSubmit={false}
             allowEmptySubmit
             placeholder={t(

@@ -373,7 +373,7 @@ export function createLocalFirstPluginApi(
       _deviceId?: string,
       reportProgress?: ReportProgress
     ) {
-      if (!(await supportsLocalSync())) return legacy.uninstallInstalledPlugin(id)
+      if (!(await supportsLocalSync())) return legacy.uninstallInstalledPlugin(id, _deviceId)
       await apply({ action: 'uninstall', targetId: Number(id) }, reportProgress)
     },
     async syncInstalledPluginsToDevice(deviceId: string, reconcile = false) {

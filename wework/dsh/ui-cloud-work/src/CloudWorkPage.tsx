@@ -1,5 +1,5 @@
 import { Cloud, FolderGit2, Menu, Plus, Settings } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
@@ -15,19 +15,8 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { DeviceInfo as WorkbenchDeviceInfo, RuntimeProjectWork } from '@/types/api'
-import type { DeviceInfo as ManagedDeviceInfo } from '@/types/devices'
-
-function toManagedDeviceInfo(device: WorkbenchDeviceInfo): ManagedDeviceInfo | null {
-  const deviceType = device.device_type
-  if (deviceType !== 'cloud' && deviceType !== 'remote') return null
-
-  return {
-    ...device,
-    device_type: deviceType,
-    bind_shell: device.bind_shell === 'openclaw' ? 'openclaw' : 'claudecode',
-  }
-}
+import type { RuntimeProjectWork } from '@/types/api'
+import { createCloudWorkSource } from './cloudWorkSource'
 
 function getCloudProjectWorkspace(
   projectWork: RuntimeProjectWork,
@@ -53,6 +42,7 @@ export function CloudWorkPage() {
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
+    services,
     cloudWorkStatus,
     selectProject,
     startNewChat,
@@ -83,32 +73,33 @@ export function CloudWorkPage() {
     cloneGitRepository,
   } = useWorkbench()
 
-  useEffect(() => {
-    void refreshDevices()
-  }, [refreshDevices])
-
-  const cloudDevices = useMemo(
-    () =>
-      state.devices.flatMap(device => {
-        const managedDevice = toManagedDeviceInfo(device)
-        return managedDevice ? [managedDevice] : []
+  const inventoryInput = {
+    devices: state.devices,
+    projects: state.runtimeWork?.projects,
+    refresh: refreshDevices,
+  }
+  const [reader, setReader] = useState(() => ({
+    userId: state.user?.id,
+    api: services?.deviceApi,
+    inventory: createCloudWorkSource(inventoryInput),
+  }))
+  let inventory = reader.inventory
+  if (reader.userId !== state.user?.id || reader.api !== services?.deviceApi) {
+    inventory = createCloudWorkSource(inventoryInput)
+    setReader({ userId: state.user?.id, api: services?.deviceApi, inventory })
+  }
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      inventory.subscribe(listener, {
+        devices: state.devices,
+        projects: state.runtimeWork?.projects,
+        refresh: refreshDevices,
       }),
-    [state.devices]
+    [inventory, state.devices, state.runtimeWork?.projects, refreshDevices]
   )
-  const cloudDeviceIds = useMemo(
-    () => new Set(cloudDevices.map(device => device.device_id)),
-    [cloudDevices]
-  )
-  const cloudProjects = useMemo(
-    () =>
-      (state.runtimeWork?.projects ?? []).filter(projectWork => {
-        const stateDeviceId = projectWork.project.stateDeviceId
-        return (
-          (stateDeviceId ? cloudDeviceIds.has(stateDeviceId) : false) ||
-          projectWork.deviceWorkspaces.some(workspace => cloudDeviceIds.has(workspace.deviceId))
-        )
-      }),
-    [cloudDeviceIds, state.runtimeWork?.projects]
+  const { cloudDevices, cloudDeviceIds, cloudProjects } = useSyncExternalStore(
+    subscribe,
+    inventory.getSnapshot
   )
 
   const handleSelectProject = (projectId: number) => {

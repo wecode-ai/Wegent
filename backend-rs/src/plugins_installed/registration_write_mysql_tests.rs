@@ -23,11 +23,15 @@ pub(super) async fn verify(
     context: &Context<'_>,
     state: &crate::state::AppState,
 ) -> anyhow::Result<()> {
+    eprintln!("[plugin-local-sync] Validating registration under pool contention");
     verify_pool_wait_budget(context, state).await?;
+    eprintln!("[plugin-local-sync] Validating batch receipt isolation");
     verify_batch_receipt_isolation(context, state).await?;
+    eprintln!("[plugin-local-sync] Validating blocked-row receipt isolation");
     receipt_row_lock_tests::verify(context, state).await?;
     // A separate connection must hold the row, not exhaust the fixture's
     // one-connection writer pool before registration can acquire its lease.
+    eprintln!("[plugin-local-sync] Validating registration under row contention");
     let blocker_mysql = context.independent_mysql().await?;
     let failure = tokio::time::timeout(
         Duration::from_secs(10),

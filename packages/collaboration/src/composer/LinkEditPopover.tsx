@@ -1,31 +1,26 @@
-import { ArrowUpRight, Check, Link2, Pencil, Trash2 } from "lucide-react";
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
-import { createPortal } from "react-dom";
-import { useConversationTranslation } from "../conversation/ConversationTranslation";
-import { useMarkdownServices } from "../markdown/MarkdownServices";
-import { useCollaborationPortalTheme } from "../theme/CollaborationTheme";
-import { isHttpUrl } from "@wegent/chat-core/http-url";
+import { useDocumentEvent } from '../dom-events'
+import { ArrowUpRight, Check, Link2, Pencil, Trash2 } from 'lucide-react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
+import { useConversationTranslation } from '../conversation/ConversationTranslation'
+import { useMarkdownServices } from '../markdown/MarkdownServices'
+import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
+import { isHttpUrl } from '@wegent/chat-core/http-url'
 
 interface LinkPayload {
-  url: string;
-  label: string;
+  url: string
+  label: string
 }
 
 export interface LinkEditPopoverProps {
-  payload: LinkPayload;
-  anchor: HTMLElement | null;
-  onClose: () => void;
-  onChange: (payload: LinkPayload) => void;
-  onRemove: () => void;
+  payload: LinkPayload
+  anchor: HTMLElement | null
+  onClose: () => void
+  onChange: (payload: LinkPayload) => void
+  onRemove: () => void
 }
 
-const POPOVER_HEIGHT_ESTIMATE = 48;
+const POPOVER_HEIGHT_ESTIMATE = 48
 
 export function LinkEditPopover({
   payload,
@@ -34,95 +29,82 @@ export function LinkEditPopover({
   onChange,
   onRemove,
 }: LinkEditPopoverProps) {
-  const { t } = useConversationTranslation();
-  const { openExternalUrl } = useMarkdownServices();
-  const portalTheme = useCollaborationPortalTheme();
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const [mode, setMode] = useState<"none" | "text" | "url">("none");
-  const [draftText, setDraftText] = useState(payload.label || payload.url);
-  const [draftUrl, setDraftUrl] = useState(payload.url || "");
-  const [urlError, setUrlError] = useState(false);
+  const { t } = useConversationTranslation()
+  const { openExternalUrl } = useMarkdownServices()
+  const portalTheme = useCollaborationPortalTheme()
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [mode, setMode] = useState<'none' | 'text' | 'url'>('none')
+  const [draftText, setDraftText] = useState(payload.label || payload.url)
+  const [draftUrl, setDraftUrl] = useState(payload.url || '')
+  const [urlError, setUrlError] = useState(false)
 
   const [position, setPosition] = useState<{
-    left: number;
-    bottom?: number;
-    top?: number;
-  } | null>(null);
+    left: number
+    bottom?: number
+    top?: number
+  } | null>(null)
 
   useLayoutEffect(() => {
-    if (!anchor) return;
+    if (!anchor) return
     const update = () => {
-      const rect = anchor.getBoundingClientRect();
-      const spaceAbove = rect.top;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const placeAbove =
-        spaceAbove >= POPOVER_HEIGHT_ESTIMATE || spaceAbove >= spaceBelow;
+      const rect = anchor.getBoundingClientRect()
+      const spaceAbove = rect.top
+      const spaceBelow = window.innerHeight - rect.bottom
+      const placeAbove = spaceAbove >= POPOVER_HEIGHT_ESTIMATE || spaceAbove >= spaceBelow
       setPosition({
         left: rect.left + rect.width / 2,
         bottom: placeAbove ? window.innerHeight - rect.top + 8 : undefined,
         top: !placeAbove ? rect.bottom + 8 : undefined,
-      });
-    };
-    update();
-    window.addEventListener("resize", update);
-    document.addEventListener("scroll", update, true);
+      })
+    }
+    update()
+    window.addEventListener('resize', update)
+    document.addEventListener('scroll', update, true)
     return () => {
-      window.removeEventListener("resize", update);
-      document.removeEventListener("scroll", update, true);
-    };
-  }, [anchor]);
+      window.removeEventListener('resize', update)
+      document.removeEventListener('scroll', update, true)
+    }
+  }, [anchor])
 
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) {
-        onClose();
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (mode !== "none") return;
-      onClose();
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [anchor, mode, onClose]);
+  useDocumentEvent('pointerdown', event => {
+    const target = event.target as Node
+    if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) onClose()
+  })
+  useDocumentEvent('keydown', event => {
+    if (event.key === 'Escape' && mode === 'none') onClose()
+  })
 
-  if (!anchor || !position) return null;
+  if (!anchor || !position) return null
 
   const commitText = () => {
-    const trimmed = draftText.trim();
-    if (!trimmed) return;
-    setMode("none");
-    onChange({ url: payload.url, label: trimmed });
-  };
+    const trimmed = draftText.trim()
+    if (!trimmed) return
+    setMode('none')
+    onChange({ url: payload.url, label: trimmed })
+  }
 
   const commitUrl = () => {
-    const trimmed = draftUrl.trim();
+    const trimmed = draftUrl.trim()
     if (!trimmed || !isHttpUrl(trimmed)) {
-      setUrlError(true);
-      return;
+      setUrlError(true)
+      return
     }
-    setUrlError(false);
-    setMode("none");
-    onChange({ url: trimmed, label: payload.label });
-  };
+    setUrlError(false)
+    setMode('none')
+    onChange({ url: trimmed, label: payload.label })
+  }
 
   const cancelEdit = () => {
-    setMode("none");
-    setDraftText(payload.label || payload.url);
-    setDraftUrl(payload.url || "");
-    setUrlError(false);
-  };
+    setMode('none')
+    setDraftText(payload.label || payload.url)
+    setDraftUrl(payload.url || '')
+    setUrlError(false)
+  }
 
-  const confirmLabel = t("common.confirm");
-  const urlErrorLabel = t("workbench.browser_invalid_url");
+  const confirmLabel = t('common.confirm')
+  const urlErrorLabel = t('workbench.browser_invalid_url')
 
-  if (mode === "text") {
+  if (mode === 'text') {
     return createPortal(
       <LinkEditInput
         popoverRef={popoverRef}
@@ -135,19 +117,19 @@ export function LinkEditPopover({
         confirmTestId="link-edit-confirm-text"
         confirmLabel={confirmLabel}
       />,
-      document.body,
-    );
+      document.body
+    )
   }
 
-  if (mode === "url") {
+  if (mode === 'url') {
     return createPortal(
       <LinkEditInput
         popoverRef={popoverRef}
         position={position}
         value={draftUrl}
-        onChange={(value) => {
-          setDraftUrl(value);
-          setUrlError(false);
+        onChange={value => {
+          setDraftUrl(value)
+          setUrlError(false)
         }}
         onCommit={commitUrl}
         onCancel={cancelEdit}
@@ -157,8 +139,8 @@ export function LinkEditPopover({
         error={urlError ? urlErrorLabel : undefined}
         inputSize="xs"
       />,
-      document.body,
-    );
+      document.body
+    )
   }
 
   return createPortal(
@@ -181,25 +163,25 @@ export function LinkEditPopover({
         className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-text-primary hover:bg-muted"
       >
         <ArrowUpRight className="h-4 w-4" />
-        {t("workbench.open_link")}
+        {t('workbench.open_link')}
       </button>
       <button
         type="button"
         data-testid="link-edit-edit-text"
-        onClick={() => setMode("text")}
+        onClick={() => setMode('text')}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
-        aria-label={t("workbench.edit_link_text")}
-        title={t("workbench.edit_link_text")}
+        aria-label={t('workbench.edit_link_text')}
+        title={t('workbench.edit_link_text')}
       >
         <Pencil className="h-4 w-4" />
       </button>
       <button
         type="button"
         data-testid="link-edit-edit-url"
-        onClick={() => setMode("url")}
+        onClick={() => setMode('url')}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
-        aria-label={t("workbench.edit_link_url")}
-        title={t("workbench.edit_link_url")}
+        aria-label={t('workbench.edit_link_url')}
+        title={t('workbench.edit_link_url')}
       >
         <Link2 className="h-4 w-4" />
       </button>
@@ -208,28 +190,28 @@ export function LinkEditPopover({
         data-testid="link-edit-remove"
         onClick={onRemove}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-red-600"
-        aria-label={t("workbench.remove_link_preview")}
-        title={t("workbench.remove_link_preview")}
+        aria-label={t('workbench.remove_link_preview')}
+        title={t('workbench.remove_link_preview')}
       >
         <Trash2 className="h-4 w-4" />
       </button>
     </div>,
-    document.body,
-  );
+    document.body
+  )
 }
 
 interface LinkEditInputProps {
-  popoverRef: RefObject<HTMLDivElement | null>;
-  position: { left: number; bottom?: number; top?: number };
-  value: string;
-  onChange: (value: string) => void;
-  onCommit: () => void;
-  onCancel: () => void;
-  inputTestId: string;
-  confirmTestId: string;
-  confirmLabel: string;
-  error?: string;
-  inputSize?: "sm" | "xs";
+  popoverRef: RefObject<HTMLDivElement | null>
+  position: { left: number; bottom?: number; top?: number }
+  value: string
+  onChange: (value: string) => void
+  onCommit: () => void
+  onCancel: () => void
+  inputTestId: string
+  confirmTestId: string
+  confirmLabel: string
+  error?: string
+  inputSize?: 'sm' | 'xs'
 }
 
 function LinkEditInput({
@@ -243,9 +225,9 @@ function LinkEditInput({
   confirmTestId,
   confirmLabel,
   error,
-  inputSize = "sm",
+  inputSize = 'sm',
 }: LinkEditInputProps) {
-  const portalTheme = useCollaborationPortalTheme();
+  const portalTheme = useCollaborationPortalTheme()
   return createPortal(
     <div
       {...portalTheme}
@@ -263,20 +245,18 @@ function LinkEditInput({
         <input
           type="text"
           value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              onCommit();
+          onChange={event => onChange(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              onCommit()
             }
-            if (event.key === "Escape") onCancel();
+            if (event.key === 'Escape') onCancel()
           }}
           autoFocus
           data-testid={inputTestId}
           className={`w-64 bg-transparent outline-none ${
-            inputSize === "xs"
-              ? "text-xs text-text-secondary"
-              : "text-sm text-text-primary"
+            inputSize === 'xs' ? 'text-xs text-text-secondary' : 'text-sm text-text-primary'
           }`}
         />
         <button
@@ -292,6 +272,6 @@ function LinkEditInput({
       </div>
       {error && <span className="px-2 text-xs text-red-500">{error}</span>}
     </div>,
-    document.body,
-  );
+    document.body
+  )
 }

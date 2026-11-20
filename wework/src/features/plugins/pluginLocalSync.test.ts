@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, renderHook } from '@testing-library/react'
-import { useState } from 'react'
-import { usePluginRecoveryNotice } from '@/components/plugins/hooks/usePluginRecoveryNotice'
+import { act } from '@testing-library/react'
+import { createPluginRecoveryNotice } from '@/components/plugins/workspace/pluginRecoveryNotice'
 import type { PluginOperationNoticeState } from '@/components/plugins/PluginOperationNotice'
 import { pluginMarketplaceCacheKey } from './pluginMarketplaceCache'
 import {
@@ -98,16 +97,22 @@ describe('local plugin operation progress', () => {
       recoveryOutcomes: [outcome],
     }
     const scopeKey = pluginMarketplaceCacheKey('http://localhost:8000', 'fixture-token')
-    const reopened = renderHook(() => {
-      const [notice, setNotice] = useState<PluginOperationNoticeState | null>(null)
-      usePluginRecoveryNotice(scopeKey, notice, setNotice)
-      return notice
+    let notice: PluginOperationNoticeState | null = null
+    const reopened = createPluginRecoveryNotice({
+      scopeKey: () => scopeKey,
+      readNotice: () => notice,
+      showNotice: next => {
+        notice = next
+        reopened.reconcile()
+      },
+      t: key => key,
     })
+    const stop = reopened.subscribe()
     request.mockResolvedValueOnce(reply)
     await act(async () => {
       await localApi('other-account-token').supportsLocalSync()
     })
-    expect(reopened.result.current).toBeNull()
+    expect(notice).toBeNull()
     expect(deferredPluginRecoveryIds()).toEqual([progressId])
     const observed = vi.fn()
     window.addEventListener(PLUGIN_LOCAL_RECOVERY_OUTCOMES, observed, { once: true })
@@ -118,12 +123,13 @@ describe('local plugin operation progress', () => {
     expect(observed).toHaveBeenCalledWith(
       expect.objectContaining({ detail: { scopeKey, outcomes: [outcome] } })
     )
-    expect(reopened.result.current).toMatchObject({
+    expect(notice).toMatchObject({
       id: `plugin-recovery-error-${progressId}`,
       kind: 'error',
       message: 'workbench.plugins_local_recovery_denied',
     })
     expect(deferredPluginRecoveryIds()).toEqual([])
+    stop()
   })
 
   it('does not send a progress query to an executor without that capability', async () => {

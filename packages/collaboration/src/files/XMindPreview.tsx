@@ -1,5 +1,6 @@
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import JSZip from 'jszip'
-import { useEffect, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 
 interface XMindTopic {
   children: XMindTopic[]
@@ -117,28 +118,31 @@ export function XMindPreview({
   onError,
   onReady,
 }: XMindPreviewProps) {
-  const [sheets, setSheets] = useState<XMindSheet[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void parseXMind(file)
-      .then(parsed => {
-        if (cancelled) return
-        if (parsed.length === 0) throw new Error(errorLabel)
-        setSheets(parsed)
-        onReady?.()
-      })
-      .catch(reason => {
-        if (cancelled) return
-        const message = reason instanceof Error ? reason.message : String(reason)
-        setError(message)
-        onError?.(message)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [file, errorLabel, onError, onReady])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        file.name,
+        async signal => {
+          const parsed = await parseXMind(file)
+          signal.throwIfAborted()
+          if (parsed.length === 0) throw new Error(errorLabel)
+          onReady?.()
+          return parsed
+        },
+        { failure: reason => onError?.(reason instanceof Error ? reason.message : String(reason)) }
+      ),
+    [file, errorLabel, onError, onReady]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const sheets = snapshot.data ?? null
+  const error =
+    snapshot.status === 'error'
+      ? String(snapshot.error instanceof Error ? snapshot.error.message : snapshot.error)
+      : null
 
   if (error) {
     return <p className="p-6 text-sm text-destructive wework:text-red-500">{error}</p>

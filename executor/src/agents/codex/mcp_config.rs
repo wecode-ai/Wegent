@@ -13,15 +13,15 @@ pub(super) fn configure_task_mcp(
     }
     launch
         .config_overrides
-        .extend(computer_use_mcp_config_overrides());
-    for (overrides, environment) in [
-        cdp_browser_mcp_config_overrides(request)?,
-        managed_wework_mcp_config_overrides(request)?,
-        runtime_capabilities::request_mcp_config_overrides(request, &mut launch.thread_config)?,
-    ] {
-        launch.config_overrides.extend(overrides);
-        launch.env.extend(environment);
-    }
+        .extend(computer_use_mcp_config_overrides(&request.task_id));
+    let (overrides, environment) = cdp_browser_mcp_config_overrides(request)?;
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(environment);
+    configure_managed_wework_mcp(request, launch)?;
+    let (overrides, environment) =
+        runtime_capabilities::request_mcp_config_overrides(request, &mut launch.thread_config)?;
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(environment);
     if crate::runtime_work::stand_in_requires_confirmation(request)
         && !external_work::applies(request)
     {

@@ -1,52 +1,79 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { GitBranch, Plus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import { GithubCliAuthDialog } from '@/components/plugins/GithubCliAuthDialog'
-import { GITHUB_CLI_TARGET, isGithubCliTarget } from '@/api/local/githubCli'
-import { isGitlabCliTarget } from '@/api/local/gitlabCli'
 import type {
   LocalConnectorAuthResult,
-  LocalConnectorAuthTarget,
   LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
-export const GIT_CONNECTION_PREFIX = '@wegent/dsh-connection-git/'
+import { createGitConnectionsModel, GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
+export { GIT_CONNECTION_PREFIX } from './standInGitConnectionsModel'
 const fieldClassName =
   'block h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-secondary focus-visible:border-focus focus-visible:ring-2 focus-visible:ring-focus/20 disabled:opacity-50 md:h-9'
 
-type Resource = Pick<StandInSourceConnection, 'id' | 'name' | 'profile' | 'kind' | 'providerId'>
-export function StandInGitConnections({
-  role,
-  provider,
-  api,
-  deviceId,
-  disabled,
-  onChange,
-}: {
+interface StandInGitConnectionsProps {
   role: StandInRole
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
   deviceId: string
   disabled: boolean
   onChange(role: StandInRole): void
-}) {
+
+  userId?: number
+}
+export function StandInGitConnections(props: StandInGitConnectionsProps) {
+  const scope = JSON.stringify([
+    props.userId,
+    props.role.id,
+    props.role.executionDeviceId,
+    props.deviceId,
+    props.provider.id,
+  ])
+  const [owner, setOwner] = useState({ api: props.api, scope, revision: 0 })
+  if (owner.api !== props.api || owner.scope !== scope)
+    setOwner({ api: props.api, scope, revision: owner.revision + 1 })
+  return <StandInGitConnectionsContent key={owner.revision} {...props} />
+}
+function StandInGitConnectionsContent({
+  role,
+  provider,
+  api,
+  deviceId,
+  disabled,
+  onChange,
+}: StandInGitConnectionsProps) {
   const { t } = useTranslation('common')
   const platform = provider.id.slice(GIT_CONNECTION_PREFIX.length)
-  const [instance, setInstance] = useState(`https://${platform}.com`)
-  const [kind, setKind] = useState('personal')
-  const [query, setQuery] = useState('')
-  const [items, setItems] = useState<Resource[]>([])
-  const [selection, setSelection] = useState<Resource[]>([])
-  const [cursor, setCursor] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const [searchState, setSearchState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [error, setError] = useState<string>()
-  const [auth, setAuth] = useState<LocalConnectorAuthTarget>()
+  const input = useMemo(() => ({ role, onChange, disabled }), [role, onChange, disabled])
+  const [model] = useState(() => createGitConnectionsModel(api, deviceId, provider.id, input))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const state = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const { instance, kind, query, items, selection, cursor, busy, searchState, auth } = state
+  const error =
+    state.error?.kind === 'instance'
+      ? t('standIn.git.invalid_instance')
+      : state.error
+        ? t(`standIn.git.errors.${state.error.code}`, {
+            defaultValue: t('standIn.git.request_failed'),
+          })
+        : undefined
+  const setInstance = (value: string) => model.set('instance', value)
+  const setKind = (value: string) => model.set('kind', value)
+  const setQuery = (value: string) => model.set('query', value)
+  const setSelection = (value: Parameters<typeof model.set<'selection'>>[1]) =>
+    model.set('selection', value)
+  const resetSearch = model.resetSearch
+  const search = model.search
+  const add = model.add
   const authTransport = useMemo<LocalConnectorAuthTransport>(
     () => ({
       start: target =>
@@ -72,139 +99,7 @@ export function StandInGitConnections({
     }),
     [api, deviceId]
   )
-  const current = useRef({ role, onChange })
-  const sequence = useRef(0)
-  useEffect(() => {
-    current.current = { role, onChange }
-  }, [role, onChange])
-  useEffect(
-    () => () => {
-      sequence.current += 1
-    },
-    []
-  )
   const rows = (role.connections ?? []).filter(row => row.providerId === provider.id)
-  const resetSearch = () => {
-    setError(undefined)
-    setItems([])
-    setSelection([])
-    setCursor(undefined)
-    setSearchState('idle')
-  }
-  const report = (cause: unknown) => {
-    const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined
-    setError(
-      t(`standIn.git.errors.${String(code)}`, { defaultValue: t('standIn.git.request_failed') })
-    )
-  }
-  const search = async (page?: string) => {
-    const address = instanceOrigin(instance)
-    if (!address) {
-      setSearchState('error')
-      setError(t('standIn.git.invalid_instance'))
-      return
-    }
-    const request = ++sequence.current
-    setBusy(true)
-    setSearchState('loading')
-    setError(undefined)
-    try {
-      const result = await api.searchConnectionResources(
-        deviceId,
-        provider.id,
-        kind,
-        JSON.stringify({ instance: address, search: query }),
-        page
-      )
-      if (request !== sequence.current) return
-      const availability = result.availability
-      if (availability && availability.status !== 'ready') {
-        setSearchState('error')
-        setItems([])
-        setSelection([])
-        setCursor(undefined)
-        if (availability.status !== 'auth_required') {
-          report(availability)
-          return
-        }
-        setError(t('standIn.git.errors.connector_auth_required'))
-        const target = availability.authTarget
-        if (target && platform === 'github' && isGithubCliTarget(target)) {
-          setAuth(GITHUB_CLI_TARGET)
-        } else if (
-          target &&
-          platform === 'gitlab' &&
-          isGitlabCliTarget(target) &&
-          instanceOrigin(target.instance!) === address
-        ) {
-          const native = (await api.gitConnection(deviceId, {
-            channel: 'authTarget',
-            instance: address,
-          })) as unknown as LocalConnectorAuthTarget
-          if (request !== sequence.current) return
-          if (
-            !isGitlabCliTarget(native) ||
-            native.pluginKey !== target.pluginKey ||
-            native.connectorSlug !== target.connectorSlug ||
-            instanceOrigin(native.instance!) !== address
-          )
-            throw new Error('Invalid authorization target')
-          setAuth(native)
-        }
-        return
-      }
-      setItems(previous => (page ? [...previous, ...result.items] : result.items))
-      setCursor(result.hasMore ? result.nextCursor : undefined)
-      setSearchState('ready')
-    } catch (cause) {
-      if (request === sequence.current) {
-        setSearchState('error')
-        report(cause)
-      }
-    } finally {
-      if (request === sequence.current) setBusy(false)
-    }
-  }
-  const add = async () => {
-    ++sequence.current
-    setBusy(true)
-    setError(undefined)
-    try {
-      for (const item of selection) {
-        if (
-          (current.current.role.connections ?? []).some(
-            row =>
-              row.providerId === item.providerId &&
-              row.profile === item.profile &&
-              row.kind === item.kind &&
-              row.id === item.id
-          )
-        )
-          continue
-        const connection: StandInSourceConnection = {
-          ...item,
-          transport: 'cli',
-          policy: {
-            automatic: true,
-            askBeforeAct: true,
-            immediate: role.id !== '@primary',
-          },
-        }
-        const latest = current.current
-        const updated = {
-          ...latest.role,
-          connections: [...(latest.role.connections ?? []), connection],
-        }
-        current.current = { ...latest, role: updated }
-        latest.onChange(updated)
-      }
-      setSelection([])
-    } catch (cause) {
-      report(cause)
-    } finally {
-      setBusy(false)
-    }
-  }
   const remove = (row: StandInSourceConnection) => {
     onChange({ ...role, connections: (role.connections ?? []).filter(value => value !== row) })
   }
@@ -248,23 +143,7 @@ export function StandInGitConnections({
             className="h-11 shrink-0 md:h-9"
             disabled={disabled || busy}
             data-testid="stand-in-git-login"
-            onClick={() => {
-              if (platform === 'github') {
-                setAuth(GITHUB_CLI_TARGET)
-                return
-              }
-              const address = instanceOrigin(instance)
-              if (!address) {
-                setError(t('standIn.git.invalid_instance'))
-                return
-              }
-              setBusy(true)
-              void api
-                .gitConnection(deviceId, { channel: 'authTarget', instance: address })
-                .then(target => setAuth(target as unknown as LocalConnectorAuthTarget))
-                .catch(report)
-                .finally(() => setBusy(false))
-            }}
+            onClick={() => void model.login()}
           >
             {t('standIn.git.login')}
           </Button>
@@ -430,12 +309,8 @@ export function StandInGitConnections({
           title={t('standIn.workspace.connect_source', { name: provider.displayName })}
           target={auth}
           transport={authTransport}
-          onCancel={() => setAuth(undefined)}
-          onSuccess={() => {
-            setAuth(undefined)
-            setError(undefined)
-            setSearchState('idle')
-          }}
+          onCancel={() => model.set('auth', undefined)}
+          onSuccess={model.clearAuth}
         />
       )}
     </section>
@@ -448,21 +323,5 @@ function profileInstance(profile: string): string {
     return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : ''
   } catch {
     return ''
-  }
-}
-
-function instanceOrigin(address: string): string | null {
-  try {
-    const url = new URL(address)
-    return url.protocol === 'https:' &&
-      !url.username &&
-      !url.password &&
-      url.pathname === '/' &&
-      !address.includes('?') &&
-      !address.includes('#')
-      ? url.origin
-      : null
-  } catch {
-    return null
   }
 }

@@ -1,5 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect, type ReactNode } from 'react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderView,
+  screen,
+  waitFor,
+} from '@testing-library/react'
+import type { ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import {
@@ -65,10 +72,6 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     onHistorySourceAvailabilityChange?(value: boolean): void
   }) => {
     mocks.panel(props)
-    const { onHistorySourceAvailabilityChange } = props
-    useEffect(() => {
-      onHistorySourceAvailabilityChange?.(mocks.historyAvailable)
-    }, [onHistorySourceAvailabilityChange])
     return (
       <div data-testid="native-private-panel">
         {!props.readOnly && props.active !== false && (
@@ -91,6 +94,28 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     )
   },
 }))
+
+function reportNativeHistory(previousCalls: number) {
+  if (mocks.panel.mock.calls.length === previousCalls) return
+  const props = mocks.panel.mock.lastCall?.[0] as
+    | { onHistorySourceAvailabilityChange?(available: boolean): void }
+    | undefined
+  act(() => props?.onHistorySourceAvailabilityChange?.(mocks.historyAvailable))
+}
+
+function render(element: ReactElement) {
+  const previousCalls = mocks.panel.mock.calls.length
+  const view = renderView(element)
+  reportNativeHistory(previousCalls)
+  return {
+    ...view,
+    rerender(next: ReactElement) {
+      const previousCalls = mocks.panel.mock.calls.length
+      view.rerender(next)
+      reportNativeHistory(previousCalls)
+    },
+  }
+}
 
 function fixture(overrides: Partial<PrivateDiscussionPaneProps> = {}) {
   const createAssistantPublication = vi.fn(async () => ({ id: 'comment-1' }))

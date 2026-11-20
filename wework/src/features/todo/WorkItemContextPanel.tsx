@@ -1,6 +1,7 @@
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
 import { ArrowUpRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
@@ -51,32 +52,21 @@ export function WorkItemContextPanel({
   const detailServices =
     services.projectSpaceDetailServices?.[projectStoreLocation(project.project_store)]
   const [currentItem, setCurrentItem] = useState(item)
-  const [allItems, setAllItems] = useState<CloudLoopItem[]>([item])
-  const [listError, setListError] = useState(false)
-  const [revision, setRevision] = useState(0)
-
-  useEffect(() => {
-    let current = true
-    void api
-      .listLoopItems(project.id)
-      .then(response => {
-        if (!current) return
-        setListError(false)
-        setAllItems(
-          response.items.some(candidate => candidate.id === currentItem.id)
-            ? response.items.map(candidate =>
-                candidate.id === currentItem.id ? currentItem : candidate
-              )
-            : [...response.items, currentItem]
-        )
-      })
-      .catch(() => {
-        if (current) setListError(true)
-      })
-    return () => {
-      current = false
-    }
-  }, [api, currentItem, project.id, revision])
+  const projectId = project.id
+  const resource = useMemo(
+    () => createAsyncResource(projectId, async () => (await api.listLoopItems(projectId)).items),
+    [api, projectId]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const listError = snapshot.status === 'error'
+  const items = snapshot.data ?? []
+  const allItems = items.some(candidate => candidate.id === currentItem.id)
+    ? items.map(candidate => (candidate.id === currentItem.id ? currentItem : candidate))
+    : [...items, currentItem]
 
   return (
     <section
@@ -93,7 +83,7 @@ export function WorkItemContextPanel({
             type="button"
             data-testid="work-item-related-retry"
             className="min-h-11 underline md:min-h-8"
-            onClick={() => setRevision(value => value + 1)}
+            onClick={() => void resource.reload()}
           >
             {t('standIn.reload')}
           </button>
@@ -145,19 +135,21 @@ export function WorkItemContextPanel({
           onClose={() => undefined}
           onRead={updated => {
             setCurrentItem(current => mergeIssueReadConfirmation(current, updated))
-            setAllItems(items =>
-              items.map(candidate =>
+            resource.update(items =>
+              (items ?? []).map(candidate =>
                 candidate.id === updated.id
                   ? mergeIssueReadConfirmation(candidate, updated)
                   : candidate
               )
             )
+            void resource.reload()
           }}
           onUpdated={updated => {
             setCurrentItem(updated)
-            setAllItems(items =>
-              items.map(candidate => (candidate.id === updated.id ? updated : candidate))
+            resource.update(items =>
+              (items ?? []).map(candidate => (candidate.id === updated.id ? updated : candidate))
             )
+            void resource.reload()
           }}
           onOpenTaskConversation={task =>
             onOpenTask({ deviceId: task.device_id, taskId: task.task_id })

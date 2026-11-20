@@ -30,6 +30,8 @@ In the collaboration workspace, click **Magnifying glass beside Collaboration at
 
 Open **top + → Collaboration**. The sidebar title is **Collaboration**. One **Projects** area retains both local and cloud projects without separate storage-location sections. Projects appear under their group, with the personal group first. Local and cloud projects outside business groups appear together under Personal group; each project appears once.
 
+Open **… → Pin project** on a project row to move it to **Pinned** near the top of the sidebar. Choose **Unpin project** in the same menu to return it to its original group. You can pin local and cloud projects. Pins are saved for the current account on this device.
+
 Personal group is the current account’s personal group. Choose **Personal group → … → New project** to create a local project when disconnected or a cloud project when connected. **Personal group → … → Group settings** opens the actual personal group owned by the account: the cloud personal group when connected, or the local personal group when disconnected. The Projects heading and individual project rows have no plus buttons. Project storage and execution devices are separate.
 
 Groups collapse and expand independently. Only the project region scrolls; personal Issue entries above it and Collaboration management pinned below remain visible. **Collaboration management** starts collapsed; expand it to access devices, templates, Agents and Teams. The home project picker fits the available window height and scrolls internally. Membership inheritance, project roles and administration permissions continue to apply. Seeing a parent group name does not grant group access.
@@ -174,7 +176,7 @@ An outside participant manages only the invited Issue: reading, commenting, edit
 
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
+| Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                        | Clicking adds immediately; no extra Save button; requires management permission                                    |
 | Responsibilities, role and removal | Edit responsibilities/capabilities on the row and blur to save; change role/remove where allowed                            | Inherited membership, effective role and permissions constrain actions; not every member can be removed            |
 | Discuss, assign or move            | Issue details → discussion composer → Assign to or Move to → select target → Send and update                                | Selection only stages changes; without text, select Update issue; use × to cancel a selection                      |
 | Close and reopen                   | Issue details → arrow beside Send inside the composer, bottom right → Close issue or Reopen issue                           | With a draft, the action is Comment and close; details stay open and closure uses the existing Completed state     |
@@ -201,7 +203,7 @@ Hover **left sidebar → Projects → project** and select …, or right-click t
 | Change project appearance | Use the appearance action to cycle project styling      | Not the global theme setting                                                                           |
 | Reveal in file manager    | Choose Finder/system file manager                       | Requires an accessible local path                                                                      |
 | Create permanent worktree | Select the action and complete its dialog               | Requires a supported Git source; differs from a temporary task worktree eligible for automatic cleanup |
-| Archive all chats         | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
+| Archive all chats         | Confirm the scope to archive in the background        | Archives project conversations and preserves the repository                                          |
 | Remove project            | Select Remove and review confirmation                   | Handle uncommitted work and linked worktrees first; removing a record is not a backup                  |
 
 For project-space Issues, open **top + → Collaboration → project**, then use the board view menu, Issue details or project settings. Role and visibility rules govern available actions. The following sections explain individual fields and workflows.
@@ -326,7 +328,7 @@ In a global, space or project agent create/settings form, check resource ownersh
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Follow runtime device (recommended) | Uses that running device's current user's plugins, Skills, MCP and local capabilities; today's device preview is not a guarantee for a different device               |
 | Fix capabilities to Agent           | Search/add/remove plugins and Skills to store them with the agent; plugin capability selection is Codex-only and configured capabilities synchronize before execution |
-| Advanced MCP                        | In fixed mode, edit MCP JSON in Tools and skills and check format/source trust; do not put credentials in prose or chat                                              |
+| Advanced MCP                        | In fixed mode, edit MCP JSON in Tools and skills and check format/source trust; do not put credentials in prose or chat                                               |
 | Prompt references                   | Plugin/Skill references require fixed capabilities and lock required selections; review/remove the reference before changing its required item                        |
 | Save                                | Explicitly save after reviewing capabilities, execution environment and model; choosing an option alone does not save                                                 |
 | Disable                             | Disabling in project agent configuration submits immediately, without another confirmation dialog; not deletion of the source agent or termination of an existing run |
@@ -341,6 +343,8 @@ and the first available cloud model. Enter the name and responsibilities first,
 then independently expand **Tools and skills** and **How it runs** as needed.
 Both sections preserve your draft. The collapsed runtime section labels the
 environment and model separately; the footer contains only Cancel and Save.
+
+When editing responsibilities, type `$` to search available plugins and Skills. Catalog changes update the candidates while preserving your draft. If one catalog fails to load, retry from the candidate menu; other successfully loaded catalogs remain available.
 
 Open **How it runs** to change these defaults. The environment menu lists
 automatic selection, selection at run time, and specific devices, with project
@@ -562,6 +566,10 @@ Comments in the issue activity have two different execution semantics:
 
 The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
 
+In the web interface, execution-activity replies retain unsent queued content. If the runtime connection or status read fails, inspect the error and retry from the reply area. The reply continues the original task after the connection recovers and its current execution state is read. Events from the old connection cannot release queued replies during reconnection, and reconnection does not create a replacement task.
+
+The web comment composer tracks execution catalog and model discovery separately. Retry refreshes the execution catalog and models for the currently selected device. A failed refresh retains information from the same source, while failed or pending model discovery remains unready. Changing runtime connections clears the previous workspace selection and model results. Replies bound to an existing execution session do not depend on successful model discovery for a new task.
+
 For ordinary tasks linked to local issues, the Executor writes the issue status from the runtime lifecycle. The board and the issue summary above the task composer use lifecycle transitions to refresh the issue. An ordinary private task linked to a cloud issue marks it **In progress** after task creation is accepted. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status; member task creation callbacks do not overwrite the manager's decision.
 
 Use the UI's archive action for an unneeded Issue from its board card, table row or details' top-right Actions menu. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
@@ -706,4 +714,3 @@ In Issue details, the action row beneath each top-level comment places **Create 
 Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
 
 Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.
-

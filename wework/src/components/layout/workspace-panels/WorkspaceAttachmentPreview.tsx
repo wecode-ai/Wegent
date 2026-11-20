@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { Download } from 'lucide-react'
 import type {
   WorkspaceAttachmentPreviewSource,
@@ -15,64 +16,26 @@ export function WorkspaceAttachmentPreview({
   source: WorkspaceAttachmentPreviewSource
 }) {
   const { t } = useTranslation('common')
-  const [result, setResult] = useState<{
-    source: WorkspaceAttachmentPreviewSource
-    revision: number
-    file: File | null
-    text: WorkspaceTextFileResponse | null
-    error: string | null
-  } | null>(null)
   const [revision, setRevision] = useState(0)
-  const current = result?.source === source && result.revision === revision ? result : null
-  const file = current?.file ?? null
-  const text = current?.text ?? null
-  const error = current?.error ?? null
-  useEffect(() => {
-    let active = true
-    void source
-      .loadFile()
-      .then(async blob => {
-        const file = new File([blob], source.filename, { type: source.contentType || blob.type })
-        // Attachments use a read-only table viewer; workspace CSV/TSV files remain editable text.
-        const content =
-          !/\.(csv|tsv)$/i.test(file.name) &&
-          workspaceFilePreviewKind(file.name, file.type) === 'text'
-            ? await file.text()
-            : null
-        if (!active) return
-        setResult({
-          source,
-          revision,
-          file,
-          error: null,
-          text:
-            content !== null
-              ? {
-                  path: file.name,
-                  name: file.name,
-                  content,
-                  editable: false,
-                  revision: '',
-                  truncated: false,
-                  size: file.size,
-                }
-              : null,
-        })
-      })
-      .catch(cause => {
-        if (active)
-          setResult({
-            source,
-            revision,
-            file: null,
-            text: null,
-            error: cause instanceof Error ? cause.message : String(cause),
-          })
-      })
-    return () => {
-      active = false
-    }
-  }, [source, revision])
+  const resource = useMemo(
+    () =>
+      createAsyncResource('attachment-preview:' + revision, () => loadAttachmentPreview(source)),
+    [source, revision]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const file = snapshot.data?.file ?? null
+  const text = snapshot.data?.text ?? null
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : String(snapshot.error)
+      : (snapshot.data?.downloadError ?? null)
+
   return (
     <section
       data-testid="composer-attachment-preview-panel"
@@ -91,10 +54,8 @@ export function WorkspaceAttachmentPreview({
           onClick={() => {
             if (file)
               void saveBlobToDownloads(file, file.name).catch(cause => {
-                setResult(previous =>
-                  previous?.source === source && previous.revision === revision
-                    ? { ...previous, error: String(cause) }
-                    : previous
+                resource.update(previous =>
+                  previous ? { ...previous, downloadError: String(cause) } : previous
                 )
               })
           }}
@@ -113,4 +74,33 @@ export function WorkspaceAttachmentPreview({
       />
     </section>
   )
+}
+
+async function loadAttachmentPreview(source: WorkspaceAttachmentPreviewSource): Promise<{
+  file: File
+  text: WorkspaceTextFileResponse | null
+  downloadError?: string
+}> {
+  const blob = await source.loadFile()
+  const file = new File([blob], source.filename, { type: source.contentType || blob.type })
+  // Attachments use a read-only table viewer; workspace CSV/TSV files remain editable text.
+  const content =
+    !/\.(csv|tsv)$/i.test(file.name) && workspaceFilePreviewKind(file.name, file.type) === 'text'
+      ? await file.text()
+      : null
+  return {
+    file,
+    text:
+      content !== null
+        ? {
+            path: file.name,
+            name: file.name,
+            content,
+            editable: false,
+            revision: '',
+            truncated: false,
+            size: file.size,
+          }
+        : null,
+  }
 }

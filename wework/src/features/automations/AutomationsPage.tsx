@@ -1,13 +1,15 @@
 import {
   useCallback,
-  useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
+  useSyncExternalStore,
   type Ref,
 } from 'react'
 import { Menu } from 'lucide-react'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { createAutomationPageSource } from './automationPageSource'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -49,6 +51,9 @@ import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbe
 
 import { AutomationListPane, AutomationEmptyState, type StatusFilter } from './AutomationListPane'
 import { useAutomationRunNavigation } from './useAutomationRunNavigation'
+
+const EMPTY_AUTOMATIONS: Automation[] = []
+const EMPTY_AUTOMATION_RUNS: AutomationRun[] = []
 
 export interface AutomationNavigationHandle {
   requestLeave(action: () => void): void
@@ -115,42 +120,117 @@ export function AutomationsPage({
     cloneGitRepository,
     refreshWorkLists,
   } = useWorkbench()
-  const [automations, setAutomations] = useState<Automation[]>([])
-  const [runs, setRuns] = useState<AutomationRun[]>([])
-  const [selectedAutomationId, setSelectedAutomationId] = useState<string | null>(null)
-  const [editing, setEditing] = useState<Automation | null>(null)
-  const [draft, setDraft] = useState<AutomationDraft | null>(null)
+  const ownerUserId = standInOwner?.userId
+  const ownerRoleId = standInOwner?.roleId
+  const automationApi = services.automationApi
+  const ownerKey = JSON.stringify([
+    state.user?.id,
+    ownerUserId,
+    ownerRoleId,
+    standInDeviceId,
+    initialAutomationId,
+  ])
+  const [owner, setOwner] = useState(() => ({
+    api: automationApi,
+    key: ownerKey,
+    source: createAutomationPageSource({
+      api: automationApi,
+      userId: ownerUserId,
+      roleId: ownerRoleId,
+      initialAutomationId,
+    }),
+  }))
+  if (owner.api !== automationApi || owner.key !== ownerKey) {
+    setOwner({
+      api: automationApi,
+      key: ownerKey,
+      source: createAutomationPageSource({
+        api: automationApi,
+        userId: ownerUserId,
+        roleId: ownerRoleId,
+        initialAutomationId,
+      }),
+    })
+  }
+  const source = owner.source
+  const subscribeDraft = useCallback(
+    (notify: () => void) => source.subscribe(notify, onDirtyChange),
+    [source, onDirtyChange]
+  )
+  const {
+    selectedAutomationId,
+    editing,
+    draft,
+    saving,
+    dirty,
+    pendingNavigation,
+    runningId,
+    error: operationError,
+    draftError,
+    dismissedReadErrors,
+  } = useSyncExternalStore(subscribeDraft, source.getSnapshot, source.getSnapshot)
+  const {
+    setSelectedAutomationId,
+    setEditing,
+    setDraft,
+    setSaving,
+    setDirty,
+    setPendingNavigation,
+    setRunningId,
+    setError,
+    setDraftError,
+    requestLeave,
+    loadAutomations,
+    loadRuns,
+  } = source
+  useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
+  const subscribeCatalog = useCallback(
+    (notify: () => void) => source.subscribeCatalog(notify, state.runtimeWork),
+    [source, state.runtimeWork]
+  )
+  const catalog = useSyncExternalStore(
+    subscribeCatalog,
+    source.catalog.getSnapshot,
+    source.catalog.getSnapshot
+  )
+  const automations = catalog.data ?? EMPTY_AUTOMATIONS
+  const loading =
+    (catalog.status === 'idle' || catalog.status === 'loading') && catalog.data === undefined
+  const runRead = source.runsFor(selectedAutomationId)
+  const subscribeRuns = useCallback(
+    (notify: () => void) =>
+      runRead ? runRead.subscribe(notify, refreshWorkLists) : subscribeIdleResource(),
+    [runRead, refreshWorkLists]
+  )
+  const runSnapshot = useSyncExternalStore(
+    subscribeRuns,
+    runRead?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const runs = runSnapshot.data ?? EMPTY_AUTOMATION_RUNS
+  const listError = !automationApi
+    ? t('todo.automations_unavailable', '当前运行环境不支持自动化')
+    : catalog.status === 'error' && !dismissedReadErrors.includes(catalog.error)
+      ? catalog.error instanceof Error
+        ? catalog.error.message
+        : t('todo.automations_load_failed', '自动化加载失败')
+      : null
+  const runsError =
+    runSnapshot.status === 'error' && !dismissedReadErrors.includes(runSnapshot.error)
+      ? runSnapshot.error instanceof Error
+        ? runSnapshot.error.message
+        : t('todo.automation_runs_load_failed', '运行记录加载失败')
+      : null
+  const error = operationError ?? listError ?? runsError
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [dirty, setDirty] = useState(false)
-  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
-  const requestLeave = (action: () => void) => {
-    if (saving) return
-    if (dirty) setPendingNavigation(() => action)
-    else action()
-  }
-  useImperativeHandle(ref, () => ({ requestLeave }))
-  useEffect(() => {
-    onDirtyChange?.(dirty)
-  }, [dirty, onDirtyChange])
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
-  const [runningId, setRunningId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [draftError, setDraftError] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const initialSelectionResolvedRef = useRef(false)
-  const runListSignatureRef = useRef('')
-  const refreshWorkListsRef = useRef(refreshWorkLists)
   const locale = i18n.language
-  const automationApi = services.automationApi
-
-  useEffect(() => {
-    refreshWorkListsRef.current = refreshWorkLists
-  }, [refreshWorkLists])
+  useDOMEvent('window', WORKBENCH_AUTOMATIONS_CHANGED_EVENT, () => {
+    void loadAutomations()
+  })
 
   const localDevices = useMemo(
     () => state.devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device)),
@@ -160,97 +240,6 @@ export function AutomationsPage({
     () => state.devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [state.devices]
   )
-  const ownerUserId = standInOwner?.userId
-  const ownerRoleId = standInOwner?.roleId
-  const loadAutomations = useCallback(async () => {
-    if (!automationApi) {
-      setError(t('todo.automations_unavailable', '当前运行环境不支持自动化'))
-      setLoading(false)
-      return
-    }
-    try {
-      const response = await automationApi.listAutomations()
-      const items = response.items.filter(item => {
-        const calendar = Boolean(item.taskRequest?.standInCalendar)
-        if (ownerUserId === undefined) return !calendar
-        if (!calendar) return false
-        const owner = item.taskRequest?.standInOwner
-        if (owner) return owner.userId === ownerUserId && owner.roleId === ownerRoleId
-        return false
-      })
-      setAutomations(items)
-      const shouldSelectInitialAutomation = !initialSelectionResolvedRef.current
-      initialSelectionResolvedRef.current = true
-      const initial = initialAutomationId
-        ? items.find(item => item.id === initialAutomationId)
-        : ownerUserId === undefined
-          ? items[0]
-          : undefined
-      if (shouldSelectInitialAutomation && initial) {
-        setSelectedAutomationId(initial.id)
-        setEditing(initial)
-        setDraft(automationDraftFromAutomation(initial, state.runtimeWork))
-        setDirty(false)
-      }
-      setError(null)
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : t('todo.automations_load_failed', '自动化加载失败')
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [automationApi, state.runtimeWork, t, ownerUserId, ownerRoleId, initialAutomationId])
-
-  const loadRuns = useCallback(
-    async (automationId: string) => {
-      if (!automationApi) return
-      try {
-        const response = await automationApi.listAutomationRuns(automationId)
-        const signature = response.items
-          .map(run => `${run.id}:${run.status}:${run.updatedAt}`)
-          .join('|')
-        if (signature !== runListSignatureRef.current) {
-          runListSignatureRef.current = signature
-          setRuns(response.items)
-          await refreshWorkListsRef.current()
-        }
-      } catch (loadError) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : t('todo.automation_runs_load_failed', '运行记录加载失败')
-        )
-      }
-    },
-    [automationApi, t]
-  )
-
-  useEffect(() => {
-    const initialLoad = window.setTimeout(() => void loadAutomations(), 0)
-    const timer = window.setInterval(() => void loadAutomations(), 30_000)
-    const handleAutomationsChanged = () => void loadAutomations()
-    window.addEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
-    return () => {
-      window.clearTimeout(initialLoad)
-      window.clearInterval(timer)
-      window.removeEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
-    }
-  }, [loadAutomations])
-
-  useEffect(() => {
-    if (!selectedAutomationId) return
-    runListSignatureRef.current = ''
-    const load = window.setTimeout(() => void loadRuns(selectedAutomationId), 0)
-    const timer = window.setInterval(() => void loadRuns(selectedAutomationId), 2_000)
-    return () => {
-      window.clearTimeout(load)
-      window.clearInterval(timer)
-    }
-  }, [loadRuns, selectedAutomationId])
-
   const filteredAutomations = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return automations.filter(automation => {
@@ -309,7 +298,7 @@ export function AutomationsPage({
         projectChat.selectedModelOptions
       )
       if (template) Object.assign(nextDraft, template)
-      initialSelectionResolvedRef.current = true
+      source.resolveInitialSelection()
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(nextDraft)
@@ -325,12 +314,14 @@ export function AutomationsPage({
       selectAutomation(existing)
       return
     }
+    const isCurrent = source.capture(true)
     try {
       const { reviewTemplate } = await services.standInApi.onboarding(
         standInOwner.userId,
         standInDeviceId,
         locale
       )
+      if (!isCurrent()) return
       const template = automationDraftFromAutomation({ ...reviewTemplate, source: 'local' })
       openCreate({
         name: template.name,
@@ -343,13 +334,14 @@ export function AutomationsPage({
         calendarTemplate: template.calendarTemplate,
       })
     } catch (cause) {
+      if (!isCurrent()) return
       setError(getStandInErrorMessage(cause))
     }
   }
 
   const selectAutomation = (automation: Automation) =>
     requestLeave(() => {
-      initialSelectionResolvedRef.current = true
+      source.resolveInitialSelection()
       setSelectedAutomationId(automation.id)
       setEditing(automation)
       setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
@@ -488,6 +480,8 @@ export function AutomationsPage({
       setDraftError(t('todo.automation_name_prompt_required', '请填写名称和任务说明'))
       return
     }
+    const isCurrent = source.capture()
+    if (!isCurrent()) return
     setDraftError(null)
     setSaving(true)
     try {
@@ -495,21 +489,23 @@ export function AutomationsPage({
       const response = editing
         ? await automationApi.updateAutomation(editing.id, mutation)
         : await automationApi.createAutomation(mutation)
+      if (!isCurrent()) return
       setSelectedAutomationId(response.automation.id)
       setEditing(response.automation)
       setDraft(automationDraftFromAutomation(response.automation))
       setDirty(false)
       await loadAutomations()
+      if (!isCurrent()) return
       if (detailOnly) {
         onClose?.()
       } else if (standInOwner) {
         setSelectedAutomationId(null)
         setEditing(null)
         setDraft(null)
-        setRuns([])
       }
       track('automation_action_completed', { action: editing ? 'update' : 'create' })
     } catch (saveError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_save' })
       setDraftError(
         saveError instanceof Error
@@ -523,14 +519,18 @@ export function AutomationsPage({
 
   const toggleAutomation = async (automation: Automation) => {
     if (!automationApi) return
+    const isCurrent = source.capture(true)
+    if (!isCurrent()) return
     try {
       const response = await automationApi.toggleAutomation(automation.id, !automation.enabled)
+      if (!isCurrent()) return
       setEditing(response.automation)
       await loadAutomations()
       track('automation_action_completed', {
         action: response.automation.enabled ? 'enable' : 'disable',
       })
     } catch (toggleError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_toggle' })
       setError(toggleError instanceof Error ? toggleError.message : String(toggleError))
     }
@@ -538,13 +538,18 @@ export function AutomationsPage({
 
   const runNow = async (automation: Automation) => {
     if (!automationApi) return
+    const isCurrent = source.capture(true)
+    if (!isCurrent()) return
     setRunningId(automation.id)
     try {
       await automationApi.runAutomationNow(automation.id)
-      await Promise.all([loadAutomations(), loadRuns(automation.id), refreshWorkLists()])
+      if (!isCurrent()) return
+      await Promise.all([loadAutomations(), loadRuns(automation.id, refreshWorkLists)])
+      if (!isCurrent()) return
       setSelectedAutomationId(automation.id)
       track('automation_action_completed', { action: 'run' })
     } catch (runError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_run' })
       setError(runError instanceof Error ? runError.message : String(runError))
     } finally {
@@ -555,16 +560,22 @@ export function AutomationsPage({
   const deleteAutomation = async (automation: Automation) => {
     if (!automationApi) return
     if (!window.confirm(t('todo.automation_delete_confirm', '删除这个自动化？'))) return
+    const isCurrent = source.capture(true)
+    if (!isCurrent()) return
     try {
       await automationApi.deleteAutomation(automation.id)
-      if (detailOnly) onClose?.()
+      if (!isCurrent()) return
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
       setDirty(false)
+      const finishCurrent = source.capture(true)
       await loadAutomations()
+      if (!finishCurrent()) return
+      if (detailOnly) onClose?.()
       track('automation_action_completed', { action: 'delete' })
     } catch (deleteError) {
+      if (!isCurrent()) return
       track('operation_failed', { operation: 'automation_delete' })
       setError(deleteError instanceof Error ? deleteError.message : String(deleteError))
     }
@@ -576,15 +587,17 @@ export function AutomationsPage({
         onClose?.()
         return
       }
-      initialSelectionResolvedRef.current = true
+      source.resolveInitialSelection()
       setSelectedAutomationId(null)
       setEditing(null)
       setDraft(null)
       setDirty(false)
     })
   const handleOpenRuntimeTask = async (address: RuntimeTaskAddress) => {
+    const isCurrent = source.capture()
+    if (!isCurrent()) return
     await openRuntimeTask(address)
-    navigateTo(buildRuntimeTaskRoute(address))
+    if (isCurrent()) navigateTo(buildRuntimeTaskRoute(address))
   }
   const openRun = useAutomationRunNavigation({
     openRuntimeTask,
@@ -612,10 +625,11 @@ export function AutomationsPage({
     return <ConnectionsSettingsPage onBack={() => setSettingsOpen(false)} />
   }
 
-  const hasWorkspace = automations.length > 0 || Boolean(draft)
+  const hasWorkspace = automations.length > 0 || Boolean(draft) || catalog.status === 'error'
 
   return (
     <div
+      aria-busy={openRun.pending}
       className={`relative flex min-h-0 overflow-hidden bg-background text-text-primary ${standInOwner && !draft ? 'shrink-0' : 'h-full flex-1'}`}
     >
       <ConfirmDialog
@@ -760,6 +774,7 @@ export function AutomationsPage({
                 selectedAutomationId={selectedAutomationId}
                 locale={locale}
                 loading={loading}
+                loadFailed={catalog.status === 'error'}
                 error={error}
                 detailOpen={Boolean(draft)}
                 mobileDetailOpen={isMobile && Boolean(draft)}

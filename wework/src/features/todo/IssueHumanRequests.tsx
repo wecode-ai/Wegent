@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { RequestUserInputCard } from '@wegent/collaboration/conversation'
 import {
   issueHumanAssignees,
@@ -39,10 +44,51 @@ export function IssueHumanRequests({
   const handlingUserId = store === 'local' ? localAuthor.id : userId
   const api =
     store === 'local' ? services.localIssueHumanRequestsApi : services.issueHumanRequestsApi
-  const [requests, setRequests] = useState<IssueHumanRequest[]>([])
-  const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState<string>()
-  const sequence = useRef(0)
+  const [busyState, setBusyState] = useState<{ owner: object; value: string | undefined } | null>(
+    null
+  )
+  const [failure, setFailure] = useState<{
+    owner: object
+    receipt: { requests: IssueHumanRequest[] } | undefined
+    message: string
+  } | null>(null)
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([store, projectId, issueId, handlingUserId]),
+        async signal => {
+          await Promise.resolve()
+          signal.throwIfAborted()
+          if (!api) throw new Error('A human request API is required')
+          return { requests: (await api.list(projectId, issueId)).items }
+        },
+        { refreshIntervalMs: 5000 }
+      ),
+    [api, projectId, issueId, store, handlingUserId]
+  )
+  const snapshot = useSyncExternalStore(
+    api ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const requests = snapshot.data?.requests ?? []
+  const busy = busyState?.owner === resource ? busyState.value : undefined
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : String(snapshot.error)
+      : failure?.owner === resource && failure.receipt === snapshot.data
+        ? failure.message
+        : undefined
+  const setBusy = (value: string | undefined) => {
+    if (resource.hasSubscribers()) setBusyState({ owner: resource, value })
+  }
+  const setError = (message: string) => {
+    if (resource.hasSubscribers())
+      setFailure({ owner: resource, receipt: resource.getSnapshot().data, message })
+  }
+  const refresh = resource.reload
   const candidates =
     store === 'local'
       ? [
@@ -53,30 +99,6 @@ export function IssueHumanRequests({
           ),
         ]
       : members
-  const refresh = useCallback(async () => {
-    if (!api) return
-    const current = ++sequence.current
-    try {
-      const response = await api.list(projectId, issueId)
-      if (sequence.current !== current) return
-      setRequests(response.items)
-      setError(undefined)
-    } catch (cause) {
-      if (sequence.current !== current) return
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }, [api, projectId, issueId])
-  const invalidateRequests = useCallback(() => {
-    sequence.current++
-  }, [])
-  useEffect(() => {
-    void Promise.resolve().then(refresh)
-    const timer = window.setInterval(() => void refresh(), 5000)
-    return () => {
-      invalidateRequests()
-      window.clearInterval(timer)
-    }
-  }, [refresh, invalidateRequests])
   if (!api || (!requests.some(item => ['pending', 'answering'].includes(item.status)) && !error))
     return null
   return (

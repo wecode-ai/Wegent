@@ -1,4 +1,5 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import type { RuntimeWorkListResponse } from '@/types/api'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
 import { RuntimeTaskMachine } from './runtimeTaskLifecycle/RuntimeTaskMachine'
@@ -94,38 +95,42 @@ test('notifies once when an unread completion survives a device alias migration'
   const store = new RuntimeTaskLifecycleStore('alias-notification-test')
   const alias = notificationItem('alias-device')
   const canonical = notificationItem('canonical-device')
-  const useReminders = (item: RuntimeTaskReminderItem) =>
-    useRuntimeTaskReminders({
-      runtimeWork: {
-        projects: [
+  const runtimeWorkFor = (item: RuntimeTaskReminderItem): RuntimeWorkListResponse => ({
+    projects: [
+      {
+        project: { key: 'project-1', id: 1, name: 'Project' },
+        deviceWorkspaces: [
           {
-            project: { key: 'project-1', id: 1, name: 'Project' },
-            deviceWorkspaces: [
-              {
-                deviceId: item.address.deviceId,
-                available: true,
-                workspacePath: '/workspace/repo',
-                tasks: [item.task],
-              },
-            ],
+            deviceId: item.address.deviceId,
+            remoteHostId: alias.address.deviceId,
+            available: true,
+            workspacePath: '/workspace/repo',
+            tasks: [item.task],
           },
         ],
-        chats: [],
-        totalTasks: 1,
       },
+    ],
+    chats: [],
+    totalTasks: 1,
+  })
+  store.syncRuntimeWork(runtimeWorkFor(alias))
+  store.executorStarted(alias.address)
+  store.turnStarted(alias.address, 'turn-1')
+  store.turnSettled(alias.address, 'turn-1', 'succeeded')
+  store.executorSettled(alias.address)
+  const useReminders = (item: RuntimeTaskReminderItem) =>
+    useRuntimeTaskReminders({
+      runtimeWork: runtimeWorkFor(item),
       lifecycleStore: store,
-      lifecycleSnapshot: {
-        version: 1,
-        tasks: new Map(),
-        runningTaskKeys: new Set(),
-        queuedTaskKeys: new Set(),
-        unreadTaskKeys: new Set([item.key]),
-      },
+      lifecycleSnapshot: store.getSnapshot(),
     })
 
   const { rerender } = renderHook(useReminders, { initialProps: alias })
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
-  rerender(canonical)
+  act(() => {
+    store.syncRuntimeWork(runtimeWorkFor(canonical))
+    rerender(canonical)
+  })
   await new Promise(resolve => setTimeout(resolve, 200))
   expect(send).toHaveBeenCalledTimes(1)
 })

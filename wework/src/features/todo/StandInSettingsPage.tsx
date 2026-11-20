@@ -1,18 +1,20 @@
+import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
   useCallback,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type Ref,
   type ReactNode,
 } from 'react'
 import { Folder, Plus, Trash2 } from 'lucide-react'
 import { dequal } from 'dequal'
+import { createTagDraft } from '@wegent/collaboration'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import type {
   CollaborationProject,
   SharedWorkspaceApi,
@@ -20,7 +22,6 @@ import type {
 } from '@wegent/collaboration'
 import {
   connectionChangeEnablesIdentity,
-  newStandInRole,
   standInRoleName,
   roleIncludesProject,
   roleSelectsProject,
@@ -51,6 +52,7 @@ import { StandInComposer } from './StandInComposer'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { saveStandInRoleDevice } from './saveStandInRoleDevice'
+import { createStandInRoleDraft } from './standInRoleDraft'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -106,13 +108,42 @@ function StandInSettingsEditor({
   onCalendarViewChange,
   ref,
 }: StandInSettingsPageProps) {
-  useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
+  const [recordOpened] = useState(createStandInOpenedReceipt)
+  const openedIdentity = initialProfileId === '@primary' ? 'primary' : 'role'
   const { t } = useTranslation('common')
-  const state = usePersonalStandIn(services, userId, initialDeviceId)
-  const { draft, saved, setDraft, updateRole, loading, saving: profileSaving, setError } = state
+  const roleDraftRequest = useMemo(
+    () => ({
+      defaultRoleName: t('standIn.personal.default_role'),
+      project: initialProject
+        ? {
+            id: initialProject.id,
+            store:
+              initialProject.project_store === 'local' ? ('local' as const) : ('cloud' as const),
+          }
+        : undefined,
+      projectRoleName: initialProject
+        ? t('standIn.personal.project_role_name', { project: initialProject.name })
+        : undefined,
+    }),
+    [initialProject, t]
+  )
+  const state = usePersonalStandIn(services, userId, initialDeviceId, undefined, {
+    onSavingChange,
+    initialRole: initialCreate ? roleDraftRequest : undefined,
+  })
+  const {
+    draft,
+    saved,
+    setDraft,
+    updateRole,
+    loading,
+    saving,
+    moving,
+    setMoving,
+    setError,
+    initialRoleCreation,
+  } = state
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [moving, setMoving] = useState(false)
-  const saving = profileSaving || moving
   const [selectedId, setSelectedId] = useState(initialProfileId ?? '')
   const [view, setView] = useState<View>(
     initialCalendar ? 'connections' : initialProject ? 'project' : 'main'
@@ -122,10 +153,17 @@ function StandInSettingsEditor({
   )
   const [notice, setNotice] = useState(false)
   const [roleNameError, setRoleNameError] = useState(false)
+  const [seenInitialRoleId, setSeenInitialRoleId] = useState<string>()
+  if (initialRoleCreation && seenInitialRoleId !== initialRoleCreation.roleId) {
+    setSeenInitialRoleId(initialRoleCreation.roleId)
+    setHistory(current => [...current, { view, draft: initialRoleCreation.baseline }])
+    setSelectedId(initialRoleCreation.roleId)
+    setView('create')
+    setRoleNameError(false)
+    setNotice(false)
+  }
   const roleNameInput = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (roleNameError) roleNameInput.current?.focus()
-  }, [roleNameError, view])
+  useFocusRequest(roleNameInput, view, { enabled: roleNameError })
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const projectRef = useMemo(
     () =>
@@ -145,7 +183,30 @@ function StandInSettingsEditor({
     draft?.roles[0]
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
+  const tagScope = JSON.stringify([userId, executionDeviceId, role?.id])
+  const tagApi = services.standInApi
+  const [tagOwner, setTagOwner] = useState(() => ({
+    api: tagApi,
+    scope: tagScope,
+    store: createTagDraft(),
+  }))
+  if (tagOwner.api !== tagApi || tagOwner.scope !== tagScope) {
+    setTagOwner({ api: tagApi, scope: tagScope, store: createTagDraft() })
+  }
+  const tagDraft = tagOwner.store
+  const subscribeTagDraft = useCallback(
+    (listener: () => void) => {
+      const release = tagDraft.subscribe(listener)
+      recordOpened('settings', openedIdentity)
+      return release
+    },
+    [tagDraft, recordOpened, openedIdentity]
+  )
+  const connectionDraftDirty = useSyncExternalStore(
+    subscribeTagDraft,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
@@ -160,9 +221,6 @@ function StandInSettingsEditor({
   )
   const dirty =
     Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty || connectionDraftDirty
-  useEffect(() => {
-    onSavingChange?.(saving)
-  }, [saving, onSavingChange])
   const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
     services.runtimeWorkApi,
     executionDeviceId,
@@ -314,39 +372,14 @@ function StandInSettingsEditor({
   }
   const createRole = useCallback(() => {
     if (!draft) return
-    const added = newStandInRole(draft.executionDeviceId)
-    added.enabled = true
-    if (projectRef && initialProject) {
-      added.name = t('standIn.personal.project_role_name', { project: initialProject.name })
-      added.collaboration = {
-        ...added.collaboration,
-        enabled: true,
-        allProjects: false,
-        projects: [projectRef],
-      }
-    }
+    const created = createStandInRoleDraft(draft, roleDraftRequest)
     setRoleNameError(false)
-    const roles = draft.roles.map((row, index) =>
-      row.name
-        ? row
-        : {
-            ...row,
-            name: standInRoleName(row, index, t('standIn.personal.default_role')),
-          }
-    )
     setHistory(current => [...current, { view, draft }])
-    setDraft({ ...draft, roles: [...roles, added] })
-    setSelectedId(added.id)
+    setDraft(created.draft)
+    setSelectedId(created.role.id)
     setView('create')
     setNotice(false)
-  }, [draft, initialProject, projectRef, setDraft, t, view])
-  const createdInitialRole = useRef(false)
-  useEffect(() => {
-    if (initialCreate && draft && !loading && !createdInitialRole.current) {
-      createdInitialRole.current = true
-      createRole()
-    }
-  }, [initialCreate, loading, draft, createRole])
+  }, [draft, roleDraftRequest, setDraft, view])
   const availableProjects = projects.filter(
     project =>
       project.project_store !== 'local' || draft?.executionDeviceId === state.currentDeviceId
@@ -634,7 +667,7 @@ function StandInSettingsEditor({
                   savedConfiguration={saved?.roles.find(item => item.id === role.id)}
                   scheduling={{ userId, roleId: role.id }}
                   onScheduleDirtyChange={setScheduleDirty}
-                  onDraftDirtyChange={setConnectionDraftDirty}
+                  tagDraft={tagDraft}
                   projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}

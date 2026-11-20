@@ -1,3 +1,7 @@
+import {
+  handleRiskyCommandApproval,
+  RISKY_COMMAND_APPROVAL_SCENARIOS,
+} from './risky-command-approval-flow.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import { completeCommandOnProcessExit } from './process-exit-command.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
@@ -907,6 +911,7 @@ class DesktopE2EServer {
         'request_user_input',
         'request_user_input_async',
         'mcp_elicitation',
+        ...RISKY_COMMAND_APPROVAL_SCENARIOS,
         'window_lifecycle',
         'background_completion_restore',
         'background_follow_up_restore',
@@ -3999,6 +4004,8 @@ class DesktopE2EServer {
       await respondToConcurrentMcpInput(this, body, response, responseId, modelRequest)
       return
     }
+
+    if (handleRiskyCommandApproval(this, body, response, responseId, modelRequest)) return
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)

@@ -1,14 +1,12 @@
 import { execFile } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
+import { performance } from 'node:perf_hooks'
 
-const execute = promisify(execFile)
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
-// Shared Homes plus source, target, and state for each of the three default migrations.
-const REQUIRED_WORKBENCH_LOCK_RESOURCES = 11
+let nextSchemaProbeId = 0
 // macOS can validate a newly installed native binary before its first execution.
 export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 30_000
 
@@ -24,13 +22,10 @@ export function assertWorkbenchSchema(response: unknown): void {
   if (
     schema.protocol_version !== PROTOCOL_VERSION ||
     !supports(schema.workbench_layout_versions, LAYOUT_VERSION) ||
-    !supports(schema.capability_manifest_versions, MANIFEST_VERSION) ||
-    typeof schema.workbench_lock_resources !== 'number' ||
-    !Number.isSafeInteger(schema.workbench_lock_resources) ||
-    schema.workbench_lock_resources < REQUIRED_WORKBENCH_LOCK_RESOURCES
+    !supports(schema.capability_manifest_versions, MANIFEST_VERSION)
   ) {
     throw new Error(
-      'Executor cannot read and write Workbench layout v1 with capability manifest v2 and the required migration lock protocol'
+      'Executor cannot read and write Workbench layout v1 with capability manifest v2'
     )
   }
 }
@@ -57,6 +52,59 @@ function executorSchemaQueryFailure(error: unknown, elapsedMs: number): Error {
   })
 }
 
+function queryExecutorSchema(command: string, environment: NodeJS.ProcessEnv): Promise<string> {
+  const startedAt = performance.now()
+  return new Promise((resolve, reject) => {
+    const traceEnabled = environment.WEWORK_PROCESS_TRACE === '1'
+    const probeId = traceEnabled ? ++nextSchemaProbeId : null
+    // A process can exit before its inherited pipes close. Log those boundaries
+    // independently and record only timing and process metadata.
+    const trace = (
+      stage: string,
+      pid?: number,
+      details?: { code: number | null; signal: string | null }
+    ) =>
+      console.info('[executor-schema] trace', {
+        probeId,
+        stage,
+        pid: pid ?? null,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        ...details,
+      })
+    if (traceEnabled) trace('requested')
+    // Never pass runtime flags or credentials into this read-only capability query.
+    const child = execFile(
+      command,
+      ['--workbench-schema', '--version'],
+      {
+        env: {
+          PATH: environment.PATH,
+          SystemRoot: environment.SystemRoot,
+          WINDIR: environment.WINDIR,
+        },
+        timeout: EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: 16 * 1024,
+        windowsHide: true,
+        encoding: 'utf8',
+      },
+      (error, stdout) => {
+        if (error) reject(error)
+        else resolve(stdout)
+      }
+    )
+    if (!traceEnabled) return
+    const pid = child.pid
+
+    child.once('spawn', () => trace('spawned', pid))
+    child.stdout?.once('data', () => trace('stdout', pid))
+    child.stderr?.once('data', () => trace('stderr', pid))
+    child.once('error', () => trace('error', pid))
+    child.once('exit', (code, signal) => trace('exit', pid, { code, signal }))
+    child.once('close', (code, signal) => trace('close', pid, { code, signal }))
+  })
+}
+
 export async function assertExecutorWorkbenchCompatibility(
   environment: NodeJS.ProcessEnv
 ): Promise<void> {
@@ -77,20 +125,7 @@ export async function assertExecutorWorkbenchCompatibility(
   const startedAt = Date.now()
   try {
     // Old executors ignore unknown flags. --version makes them exit without loading Homes.
-    // Never pass runtime flags or credentials into this read-only capability query.
-    const { stdout } = await execute(command, ['--workbench-schema', '--version'], {
-      env: {
-        PATH: environment.PATH,
-        SystemRoot: environment.SystemRoot,
-        WINDIR: environment.WINDIR,
-      },
-      timeout: EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
-      killSignal: 'SIGKILL',
-      maxBuffer: 16 * 1024,
-      windowsHide: true,
-      encoding: 'utf8',
-    })
-    response = JSON.parse(stdout)
+    response = JSON.parse(await queryExecutorSchema(command, environment))
   } catch (error) {
     throw executorSchemaQueryFailure(error, Date.now() - startedAt)
   }

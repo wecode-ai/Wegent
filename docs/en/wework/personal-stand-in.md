@@ -70,6 +70,8 @@ If **My stand-in** encounters incompatible versions, it first shows an error wit
 
 The primary stand-in retains one local or cloud instance binding. Scenario roles choose their execution device independently. Select **Execution device** in a role profile and save: new tasks use the selected device, while existing tasks, queued work and existing conversations for the same Issue remain on their original device. Changing a role does not rebind the primary identity. The role list follows saved device locations, and historical work opens at its original task address.
 
+Stand-in binding ownership uses the user ID. Changing the backend address or username preserves the binding without rewriting older bindings or advancing their versions. Matching user IDs from different deployments are treated as the same binding owner; cross-deployment account isolation is not provided. The current connection still checks ownership and availability of the bound cloud device. If the device is unreachable, the stand-in page shows the device error and retains the binding.
+
 Reselect the model and working directory after changing a role's device, and check source accounts and projects on the target. Credentials, existing tasks and conversations are not moved. Offline devices cannot be newly selected. A failed target save preserves the draft. When target activation cannot be confirmed, refresh the target role; the original device is not simultaneously restored as a receiver for new tasks. Role device changes do not require the primary instance's stop-and-rebind flow below.
 
 To rebind the primary identity, select it and open **Stand-in details → Manage stand-in**, then select **Stop stand-in** at the bottom left of settings and confirm. This stops intake and cancels primary and role conversations, running work and queued delegated tasks on the currently bound device. Roles on other devices, other accounts' stand-ins and ordinary tasks are unaffected. Local and cloud binding choices appear only after stopping completes. Configuration, memories and history remain; rebinding the original profile restores its previous intake switches.
@@ -163,6 +165,8 @@ Stand-in chats currently require the Codex runtime for operation approvals; the 
 
 ## DingTalk and collaboration sources
 
+The shared DSH EventBus schedules connection collection for the assistant, the GitHub and GitLab sidebar, and task subscriptions. The host combines duplicate collection requests, provider plugins read their resources, and the Executor stores each subscriber’s cursor and delivery receipts. A source collection is cancelled after 15 seconds. The conversation manages any model turn it has already accepted.
+
 Connections groups sources under **Configured** and **Available**. Each source appears once with its receive scope, status, and next action; other sources remain visible. A configured scope does not mean intake is active: projects retain their scope summary when **Receiving is off**. Calendar has a separate **Scheduled work** section.
 
 Search by app name or configured scope name at the top, or select the configured count to show existing sources only. Select **All sources** to restore the full catalog. The count is per source, and filtering does not change the stand-in's configuration.
@@ -199,6 +203,8 @@ All four combinations are supported, including immediate separate conversations 
 Direct handling does not require responsibilities or preferences to be filled in. When exactly one role is eligible, an earlier background-coordinator failure or pending question does not block direct dispatch. Existing questions and failures remain visible; this does not automatically answer approvals or replay commands with uncertain outcomes. Coordinator retries recover from actual native sessions and execution receipts, not merely the existence of a task record.
 
 Collaboration sources retain project membership permissions. Project-scoped agents cannot broaden intake to other projects or DingTalk sources. When roles overlap, AI selects one handler to avoid duplicate execution.
+
+Background processing handles failures per event. If a cloud Issue cannot be read, its event is canceled or left pending for retry as appropriate. Other authorized source events continue to dispatch.
 
 Connected collaboration projects display their names, including accessible projects whose parent workspace you have not joined. Names remain visible and existing connections can be removed when switching the stand-in execution device. New local project connections can only be added when executing on the current device.
 

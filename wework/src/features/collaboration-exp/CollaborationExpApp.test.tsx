@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps, type ReactNode } from 'react'
+import { useSyncExternalStore, type ComponentProps, type ReactNode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SharedWorkspaceApi, WorkspaceTaskBinding } from '@wegent/collaboration'
@@ -266,12 +266,13 @@ function createApi() {
 }
 
 function Harness({ active = true }: { active?: boolean }) {
-  const [search, setSearch] = useState(window.location.search)
-  useEffect(() => {
-    const receive = () => setSearch(window.location.search)
-    window.addEventListener('popstate', receive)
-    return () => window.removeEventListener('popstate', receive)
-  }, [])
+  const search = useSyncExternalStore(
+    notify => {
+      window.addEventListener('popstate', notify)
+      return () => window.removeEventListener('popstate', notify)
+    },
+    () => window.location.search
+  )
   return <CollaborationExpApp active={active} search={search} />
 }
 

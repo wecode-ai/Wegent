@@ -1,5 +1,6 @@
 //! One durable collector per exact provider/account/resource, with independent consumers.
 use super::*;
+use futures_util::{stream, StreamExt};
 use wegent_protocol::connection_events::{canonical_json, event_identity, observation_identity};
 
 pub(super) fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
@@ -129,18 +130,68 @@ impl RuntimeWorkRpcHandler {
         Ok((id, 0, checkpoint.clone()))
     }
 
-    pub(super) async fn read_event_observation(
+    pub(in crate::runtime_work::handler) async fn poll_connection_observation_sources(
         &self,
-        record: &Value,
-        tick: &str,
-        force: bool,
-    ) -> Result<Value, AppIpcError> {
-        let id = record["observation_id"]
-            .as_str()
-            .ok_or_else(|| invalid("Missing observation identity"))?;
-        let gate = self.task_send_gate(&format!("connection-observation:{id}"));
-        let _guard = gate.lock().await;
-        let mut observation = event_store::read(
+    ) -> Result<(), AppIpcError> {
+        let sources = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Active,
+            |state| {
+                let now = now_ms();
+                let sidebar = state["observers"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|rows| rows.values())
+                    .filter(|row| {
+                        row["status"] == "observing"
+                            && row["cloud_registration"].is_null()
+                            && row["expires_at"].as_i64().unwrap_or_default() > now
+                    });
+                let conversations = state["operations"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|rows| rows.values())
+                    .filter(|row| {
+                        matches!(row["status"].as_str(), Some("armed" | "pending"))
+                            && row["operation_id"].is_null()
+                            && row["cloud_subscription"].is_null()
+                            && row["cloud_registration"].is_null()
+                    });
+                Ok(sidebar
+                    .chain(conversations)
+                    .filter_map(|row| row["observation_id"].as_str().map(str::to_owned))
+                    .filter(|id| {
+                        state["observations"][id]["next_poll_at"]
+                            .as_i64()
+                            .unwrap_or_default()
+                            <= now
+                    })
+                    .collect::<std::collections::BTreeSet<_>>())
+            },
+        )?;
+        let cycle = uuid::Uuid::new_v4().to_string();
+        let mut collection = stream::iter(sources)
+            .map(|source| {
+                let cycle = cycle.clone();
+                async move {
+                    self.read_event_observation(&json!({"observation_id":source}), &cycle, false)
+                        .await
+                }
+            })
+            .buffer_unordered(4);
+        while let Some(result) = collection.next().await {
+            if let Err(error) = result {
+                log_executor_event(
+                    "Connection observation source deferred",
+                    &[("code", error.code)],
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn stored_event_observation(&self, id: &str) -> Result<Value, AppIpcError> {
+        let observation = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::Row("observations", id),
             |state| Ok(state["observations"][id].clone()),
@@ -156,10 +207,26 @@ impl RuntimeWorkRpcHandler {
                 "Invalid observation source journal",
             ));
         }
+        Ok(observation)
+    }
+
+    pub(super) async fn read_event_observation(
+        &self,
+        record: &Value,
+        tick: &str,
+        force: bool,
+    ) -> Result<Value, AppIpcError> {
+        let id = record["observation_id"]
+            .as_str()
+            .ok_or_else(|| invalid("Missing observation identity"))?;
+        let gate = self.task_send_gate(&format!("connection-observation:{id}"));
+        let _guard = gate.lock().await;
+        let mut observation = self.stored_event_observation(id)?;
         if observation["collection_cycle"] != tick
             && (force || observation["next_poll_at"].as_i64().unwrap_or_default() <= now_ms())
         {
             let source = observation["source"].clone();
+            let previous_error = observation["error_code"].as_str().map(str::to_owned);
             let result = self
                 .connection_call(
                     "collectObservation",
@@ -227,6 +294,21 @@ impl RuntimeWorkRpcHandler {
                     Ok(wakeup)
                 },
             )?;
+            let error = observation["error_code"].as_str();
+            if error != previous_error.as_deref() {
+                log_executor_event(
+                    "Connection observation health changed",
+                    &[
+                        ("observation_id", id.to_owned()),
+                        (
+                            "provider",
+                            source["providerId"].as_str().unwrap_or_default().to_owned(),
+                        ),
+                        ("previous_code", previous_error.unwrap_or_default()),
+                        ("code", error.unwrap_or_default().to_owned()),
+                    ],
+                );
+            }
             if wakeup {
                 self.connection_observation_wakeup.notify_one();
             }

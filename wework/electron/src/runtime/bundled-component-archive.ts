@@ -26,24 +26,25 @@ export async function materializeBundledComponentArchive(
 ): Promise<string> {
   const stagePrefix = options.stagePrefix ?? 'component-archive'
   const source = resolve(resources, archive.path)
+  const child = relative(resolve(resources), source)
+  if (
+    isAbsolute(archive.path) ||
+    !child ||
+    child === '..' ||
+    child.startsWith('../') ||
+    child.startsWith('..\\') ||
+    isAbsolute(child) ||
+    !/^[a-f0-9]{64}$/.test(archive.sha256) ||
+    !/^[a-f0-9]{64}$/.test(contentSha256) ||
+    !Number.isSafeInteger(archive.bytes) ||
+    archive.bytes <= 0
+  )
+    throw new Error('Bundled component archive metadata is invalid')
+
   const sourceVerified = runStartupStage(
     options.onStage,
     `${stagePrefix}-source-verify`,
     async () => {
-      const child = relative(resolve(resources), source)
-      if (
-        isAbsolute(archive.path) ||
-        !child ||
-        child === '..' ||
-        child.startsWith('../') ||
-        child.startsWith('..\\') ||
-        isAbsolute(child) ||
-        !/^[a-f0-9]{64}$/.test(archive.sha256) ||
-        !/^[a-f0-9]{64}$/.test(contentSha256) ||
-        !Number.isSafeInteger(archive.bytes) ||
-        archive.bytes <= 0
-      )
-        throw new Error('Bundled component archive metadata is invalid')
       const physicalChild = relative(await realpath(resources), await realpath(source))
       if (
         physicalChild === '..' ||

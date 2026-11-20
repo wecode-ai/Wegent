@@ -1,6 +1,7 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Check, ChevronDown, Folder, ListFilter, Loader2, Search, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -34,6 +35,7 @@ interface ArchivedConversationsFiltersProps {
 }
 
 interface ArchivedConversationGroupsProps {
+  allowProjectDelete?: boolean
   groups: ArchivedProjectGroup[]
   showHeaders: boolean
   busyKey: string | null
@@ -64,23 +66,20 @@ function ArchiveDropdown({
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: open }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') setOpen(false)
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+    },
+    { enabled: open }
+  )
 
   return (
     <div ref={containerRef} className="relative min-w-0">
@@ -280,6 +279,7 @@ export function ArchivedConversationsFilters({
 }
 
 export function ArchivedConversationGroups({
+  allowProjectDelete = true,
   groups,
   showHeaders,
   busyKey,
@@ -315,7 +315,7 @@ export function ArchivedConversationGroups({
                       label: t('workbench.archived_delete_project', '删除此项目中的全部任务'),
                       icon: Trash2,
                       danger: true,
-                      disabled: busyKey !== null,
+                      disabled: busyKey !== null || !allowProjectDelete,
                       testId: `archived-delete-project-${sanitizeTestId(group.key)}`,
                       onSelect: () => onDeleteProject(group),
                     },

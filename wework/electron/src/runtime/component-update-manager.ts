@@ -124,6 +124,7 @@ export interface ComponentUpdateManagerOptions {
   log?: (event: Record<string, unknown>) => void
   onStage?: StartupStageReporter
   validateExecutor?: (path: string) => Promise<void>
+  deferBundledExecutorValidation?: boolean
 }
 
 export type ComponentPreparationStage = StartupStageEvent
@@ -149,10 +150,12 @@ export class ComponentUpdateManager {
   } | null = null
   private packaged: PackagedComponentManifest | null = null
   private readonly validateExecutor: (path: string) => Promise<void>
+  private readonly deferBundledExecutorValidation: boolean
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
     this.validateExecutor = options.validateExecutor ?? (async () => undefined)
+    this.deferBundledExecutorValidation = options.deferBundledExecutorValidation ?? false
     this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
@@ -173,8 +176,13 @@ export class ComponentUpdateManager {
 
   async prepareStartup(): Promise<ComponentPaths> {
     this.usingPackagedFallback = false
-    const packaged = await this.packagedManifest()
-    const saved = await this.readState()
+    const { packaged, saved } = await this.stage(
+      'desktop-components-read-manifest-and-state',
+      async () => ({
+        packaged: await this.packagedManifest(),
+        saved: await this.readState(),
+      })
+    )
     let state = saved
     if (state.activationInProgress) {
       const crossedHostVersion =
@@ -206,13 +214,18 @@ export class ComponentUpdateManager {
     const current = state.current?.appVersion === this.currentAppVersion ? state.current : undefined
     let paths: ComponentPaths
     try {
-      paths = await this.checkedPaths(packaged, current)
+      paths =
+        current || !this.deferBundledExecutorValidation
+          ? await this.checkedPaths(packaged, current)
+          : await this.resolvePaths(packaged)
     } catch (error) {
       if (!current) throw error
       console.error('[components] active component set is invalid; using packaged resources', error)
       // A local build may reject components that another installed build still needs.
       this.usingPackagedFallback = true
-      return this.checkedPaths(packaged)
+      return this.deferBundledExecutorValidation
+        ? this.resolvePaths(packaged)
+        : this.checkedPaths(packaged)
     }
     if (state !== saved) await this.writeState(state)
     return paths

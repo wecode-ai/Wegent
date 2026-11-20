@@ -13,6 +13,28 @@ Computer use is only for desktop applications outside the Wework built-in
 browser. Web tasks continue to use `wework_browser`; do not emulate browser
 actions through desktop control.
 
+## Model workflow
+
+When the task names an application, the model can pass its name or bundle ID to
+`run_steps` or to `cua.getApp` inside `run_script`. The driver can read current
+accessibility state and locate controls by role and name within the batch.
+Use `run_steps` to combine known actions, waits, and verification in one call.
+Use the driver's `run_script` sandbox when intermediate observations determine
+which action to take.
+
+`observe: {}` returns one accessibility diff after the batch. For standalone
+window reads, start with the accessibility tree, use `since: "latest"` on
+subsequent reads, and request screenshots when visual detail matters. The
+Executor provides concise descriptions for these three entry points while
+preserving the driver's schemas and read-only annotations.
+
+For multi-call scripts, set `state_mode: "reuse"` in `run_script` and store app
+references or intermediate values in the script's `state` object. Use
+`state_mode: "reset"` to start with an empty object. State is limited to 4 KiB
+of JSON in the conversation's MCP connection, is updated by successful scripts,
+and is cleared when the connection closes or the driver is replaced. Rebind apps
+from their saved references and observe fresh accessibility targets before acting.
+
 ## Architecture
 
 The call path is:
@@ -105,6 +127,15 @@ stages before sampling that operation's `nativePid`. An aggregate call's display
 name does not identify the blocked operation. Cancelling a Rust Future cannot
 forcibly stop already running `spawn_blocking` native work.
 Successful SDK cancellation alone therefore does not prove native-thread exit.
+
+Set `WEWORK_PROCESS_TRACE=1` in an isolated test launch to diagnose process stalls.
+Electron records the schema probe request, child spawn, first stdout and stderr data,
+process exit, and pipe closure under a single probe ID. The Executor log also receives
+Codex process startup and output-collection trace events for correlation with the
+transcript by call and process ID. The schema probe records timing and process metadata only.
+
+When a desktop tool returns the same JSON as text and structured content, the Executor
+keeps the structured copy.
 
 ## Permissions and settings
 

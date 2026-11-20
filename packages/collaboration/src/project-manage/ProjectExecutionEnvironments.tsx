@@ -3,15 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ChevronRight } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import { parseGitAccessFailure } from '@wegent/chat-core/git-access'
 
 import type { CollaborationTranslate } from '../i18n'
-import type {
-  SharedWorkspaceApi,
-  WorkspaceGitBranch,
-  WorkspaceGitRepository,
-} from '../ports/SharedWorkspaceApi'
+import type { SharedWorkspaceApi, WorkspaceGitRepository } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationExecutionEnvironment,
   CollaborationExecutionEnvironmentDeviceState,
@@ -20,6 +24,11 @@ import type {
   CollaborationProject,
   CollaborationWorkspace,
 } from '../types'
+import {
+  createEnvironmentRepositoryBranches,
+  type RepositoryDraft,
+  type RepositoryDefaults,
+} from './environmentRepositoryBranches'
 import { ProjectEnvironmentConfiguration } from './ProjectEnvironmentConfiguration'
 import { ProjectEnvironmentDevices } from './ProjectEnvironmentDevices'
 import {
@@ -41,9 +50,6 @@ import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensu
 import { GitAccountConfigurationButton } from '../controls/GitAccountConfiguration'
 import { requestFailureMessage } from '../controls/requestFailure'
 
-type RepositoryDraft = CollaborationExecutionEnvironmentRepository & {
-  id: string
-}
 type SetupStepDraft = CollaborationExecutionEnvironmentSetupStep & {
   id: string
 }
@@ -55,15 +61,10 @@ function draftId(prefix: string) {
   return `${prefix}-${nextDraftId}`
 }
 
-type BranchState = {
-  status: 'loading' | 'ready' | 'error'
-  branches: WorkspaceGitBranch[]
-}
-
-// Stable empty map so the prop-sync effect does not re-run on every render
-// when the environment has never been prepared on any device.
+// Unprepared environments share the same empty device snapshot.
 type DeviceStateMap = Record<string, CollaborationExecutionEnvironmentDeviceState>
 const NO_DEVICE_STATES: DeviceStateMap = {}
+const NO_ENVIRONMENTS: CollaborationExecutionEnvironment[] = []
 
 type ExecutionEnvironmentScope =
   | {
@@ -90,7 +91,53 @@ function canManageEnvironment(role: string | undefined, workspaceScope: boolean)
   return role === 'Owner' || role === 'Maintainer' || (workspaceScope && role === 'Developer')
 }
 
-export function ProjectExecutionEnvironments({
+type ExecutionEnvironmentProps = {
+  api: SharedWorkspaceApi
+  presentation?: 'page' | 'devices'
+  onEnvironmentsChange?(): void
+  onManageDevices?(): void
+  onProjectChange?(project: CollaborationProject): void
+  translate: CollaborationTranslate
+} & ExecutionEnvironmentScope
+
+type EditorViewProps = {
+  pickerOpen: boolean
+  setPickerOpen: Dispatch<SetStateAction<boolean>>
+  preparationOpen: boolean
+  setPreparationOpen: Dispatch<SetStateAction<boolean>>
+  statusFilter: 'all' | CollaborationExecutionEnvironment['status']
+  setStatusFilter: Dispatch<SetStateAction<'all' | CollaborationExecutionEnvironment['status']>>
+}
+
+export function ProjectExecutionEnvironments(props: ExecutionEnvironmentProps) {
+  const [pickerOpen, setPickerOpen] = useState(props.presentation === 'devices')
+  const [preparationOpen, setPreparationOpen] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<EditorViewProps['statusFilter']>('all')
+  const scope = JSON.stringify([
+    props.workspace ? 'workspace' : 'project',
+    props.workspace?.id ?? props.project!.id,
+  ])
+  const [binding, setBinding] = useState({ api: props.api, scope, key: 0 })
+  if (binding.api !== props.api || binding.scope !== scope) {
+    setBinding({ api: props.api, scope, key: binding.key + 1 })
+  }
+  return (
+    <ExecutionEnvironmentEditor
+      key={binding.key}
+      {...props}
+      {...{
+        pickerOpen,
+        setPickerOpen,
+        preparationOpen,
+        setPreparationOpen,
+        statusFilter,
+        setStatusFilter,
+      }}
+    />
+  )
+}
+
+function ExecutionEnvironmentEditor({
   api,
   onManageDevices,
   onProjectChange,
@@ -99,14 +146,13 @@ export function ProjectExecutionEnvironments({
   workspace,
   presentation = 'page',
   onEnvironmentsChange,
-}: {
-  api: SharedWorkspaceApi
-  presentation?: 'page' | 'devices'
-  onEnvironmentsChange?(): void
-  onManageDevices?(): void
-  onProjectChange?(project: CollaborationProject): void
-  translate: CollaborationTranslate
-} & ExecutionEnvironmentScope) {
+  pickerOpen,
+  setPickerOpen,
+  preparationOpen,
+  setPreparationOpen,
+  statusFilter,
+  setStatusFilter,
+}: ExecutionEnvironmentProps & EditorViewProps) {
   const isWorkspaceScope = workspace != null
   const scopeId = workspace?.id ?? project!.id
   const testIdPrefix = isWorkspaceScope
@@ -114,7 +160,6 @@ export function ProjectExecutionEnvironments({
     : 'collaboration-project-execution-environment'
   const accessRole = workspace?.access_role ?? project?.access_role
   const canManage = canManageEnvironment(accessRole, isWorkspaceScope)
-  const [pickerOpen, setPickerOpen] = useState(presentation === 'devices')
   const assigned = useExecutionEnvironmentList(
     api,
     isWorkspaceScope ? 'workspace' : 'project',
@@ -136,9 +181,9 @@ export function ProjectExecutionEnvironments({
     '',
     pickerOpen && canManage
   )
-  const assignedItems = assigned.items ?? []
-  const workspaceItems = shared.items ?? []
-  const personalItems = personal.items ?? []
+  const assignedItems = assigned.items ?? NO_ENVIRONMENTS
+  const workspaceItems = shared.items ?? NO_ENVIRONMENTS
+  const personalItems = personal.items ?? NO_ENVIRONMENTS
   const loading = assigned.loading
   const pickerLoading = personal.loading || shared.loading
   const pickerError = personal.error || shared.error
@@ -168,20 +213,16 @@ export function ProjectExecutionEnvironments({
   const [deviceStates, setDeviceStates] = useState<DeviceStateMap>(
     initialConfig?.devices ?? NO_DEVICE_STATES
   )
-  // The bottom error line follows the device the user last tried to create
-  // on. A ref, so tracking it never re-triggers the prop-sync effect below.
-  const environmentErrorDeviceKey = useRef('')
+  // The error line follows the last device the user tried to initialize.
+  const [environmentErrorDeviceKey, setEnvironmentErrorDeviceKey] = useState('')
   const [environmentError, setEnvironmentError] = useState('')
-  const [statusFilter, setStatusFilter] = useState<
-    'all' | CollaborationExecutionEnvironment['status']
-  >('all')
   const [saving, setSaving] = useState(false)
   const [initializingDeviceId, setInitializingDeviceId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const configuredRepositories = useMemo(
     () =>
-      repositories.map(({ id: _id, ...repository }) => ({
-        ...repository,
+      repositories.map(repository => ({
+        primary: repository.primary,
         name: repository.name.trim(),
         url: repository.url.trim(),
         ref: repository.ref.trim(),
@@ -192,7 +233,7 @@ export function ProjectExecutionEnvironments({
   const configuredSetupSteps = useMemo(
     () =>
       setupSteps
-        .map(({ id: _id, ...step }) => ({
+        .map(step => ({
           command: step.command.trim(),
           workingDirectory: step.working_directory.trim(),
         }))
@@ -205,11 +246,9 @@ export function ProjectExecutionEnvironments({
   const gitRepositoriesApi = workspace?.location === 'local' ? undefined : api.gitRepositories
   const [repositoryOptions, setRepositoryOptions] = useState<WorkspaceGitRepository[] | null>(null)
   const [repositoriesLoadFailed, setRepositoriesLoadFailed] = useState(false)
-  const [branchesByRepository, setBranchesByRepository] = useState<Record<string, BranchState>>({})
   // Last auto-derived values per draft, so a repository switch only replaces
   // fields the user has not customized.
-  const derivedDefaults = useRef(new Map<string, { name: string; path: string; ref: string }>())
-  const branchesInFlight = useRef(new Set<string>())
+  const [derivedDefaults] = useState<RepositoryDefaults>(() => new Map())
   const repositoriesInFlight = useRef(false)
   // `saving` is async React state, so two initialize clicks in the same tick
   // would both pass a state-based guard; the ref flips synchronously and also
@@ -220,14 +259,38 @@ export function ProjectExecutionEnvironments({
   const incomingVersion = workspace?.version ?? project!.version
   const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES
   const incomingConfiguration = environmentConfigurationSnapshot(initialConfig)
-  const observedConfiguration = useRef(incomingConfiguration)
-  const observedDevices = useRef(incomingDevices)
+  const [observedConfiguration, setObservedConfiguration] = useState(incomingConfiguration)
+  const [observedDevices, setObservedDevices] = useState(incomingDevices)
+  const [incomingObservation, setIncomingObservation] = useState({
+    version: incomingVersion,
+    configuration: incomingConfiguration,
+    devices: incomingDevices,
+    baseline: incomingConfiguration,
+    dirty: configurationDirty,
+    translate,
+  })
 
   // Refresh clean fields, preserve edits, and require an explicit decision when
   // the saved configuration changes underneath a draft. Device status is server-owned.
-  useEffect(() => {
-    if (initializationInFlight.current || saving || incomingVersion < configVersion) return
-    const configurationChanged = incomingConfiguration !== observedConfiguration.current
+  if (
+    !saving &&
+    incomingVersion >= configVersion &&
+    (incomingObservation.version !== incomingVersion ||
+      incomingObservation.configuration !== incomingConfiguration ||
+      incomingObservation.devices !== incomingDevices ||
+      incomingObservation.baseline !== observedConfiguration ||
+      incomingObservation.dirty !== configurationDirty ||
+      incomingObservation.translate !== translate)
+  ) {
+    setIncomingObservation({
+      version: incomingVersion,
+      configuration: incomingConfiguration,
+      devices: incomingDevices,
+      baseline: observedConfiguration,
+      dirty: configurationDirty,
+      translate,
+    })
+    const configurationChanged = incomingConfiguration !== observedConfiguration
     if (configurationDirty && configurationChanged) {
       setConfigurationConflict(true)
       setConfigurationError(environmentConfigurationConflictMessage(translate))
@@ -241,31 +304,20 @@ export function ProjectExecutionEnvironments({
           }))
         )
         setSetupSteps(
-          (initialConfig?.setup_steps ?? []).map(step => ({
-            ...step,
-            id: draftId('setup'),
-          }))
+          (initialConfig?.setup_steps ?? []).map(step => ({ ...step, id: draftId('setup') }))
         )
-        observedConfiguration.current = incomingConfiguration
+        setObservedConfiguration(incomingConfiguration)
       }
     }
     setConfigVersion(incomingVersion)
-    if (incomingDevices !== observedDevices.current) {
-      observedDevices.current = incomingDevices
+    if (incomingDevices !== observedDevices) {
+      setObservedDevices(incomingDevices)
       setDeviceStates(incomingDevices)
-      const errorKey = environmentErrorDeviceKey.current
-      setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? '') : '')
+      setEnvironmentError(
+        environmentErrorDeviceKey ? (incomingDevices[environmentErrorDeviceKey]?.error ?? '') : ''
+      )
     }
-  }, [
-    incomingVersion,
-    incomingDevices,
-    incomingConfiguration,
-    initialConfig,
-    configurationDirty,
-    configVersion,
-    saving,
-    translate,
-  ])
+  }
 
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi || repositoriesInFlight.current) return
@@ -288,60 +340,27 @@ export function ProjectExecutionEnvironments({
     return byUrl
   }, [repositoryOptions])
 
-  const loadBranches = useCallback(
-    async (option: WorkspaceGitRepository) => {
-      const key = repositoryKey(option)
-      if (!gitRepositoriesApi || branchesInFlight.current.has(key)) return
-      branchesInFlight.current.add(key)
-      setBranchesByRepository(current => ({
-        ...current,
-        [key]: { status: 'loading', branches: current[key]?.branches ?? [] },
-      }))
-      try {
-        const branches = await gitRepositoriesApi.listBranches(option)
-        setBranchesByRepository(current => ({
-          ...current,
-          [key]: { status: 'ready', branches },
-        }))
-        const defaultBranch = branches.find(branch => branch.default) ?? branches[0]
-        if (defaultBranch) {
-          setRepositories(current =>
-            current.map(draft => {
-              if (draft.url !== option.cloneUrl) return draft
-              const derived = derivedDefaults.current.get(draft.id)
-              if (draft.ref && draft.ref !== derived?.ref) return draft
-              derivedDefaults.current.set(draft.id, {
-                name: derived?.name ?? '',
-                path: derived?.path ?? '',
-                ref: defaultBranch.name,
-              })
-              return { ...draft, ref: defaultBranch.name }
-            })
-          )
-        }
-      } catch {
-        setBranchesByRepository(current => ({
-          ...current,
-          [key]: { status: 'error', branches: [] },
-        }))
-      } finally {
-        branchesInFlight.current.delete(key)
-      }
-    },
-    [gitRepositoriesApi]
+  const branchPool = useMemo(
+    () => createEnvironmentRepositoryBranches(gitRepositoriesApi, setRepositories, derivedDefaults),
+    [gitRepositoriesApi, derivedDefaults]
   )
-
-  // Resolve branches for drafts that already point at a known repository,
-  // including drafts restored from a saved configuration.
-  useEffect(() => {
-    if (!repositoryOptions) return
-    for (const draft of repositories) {
-      const match = repositoriesByUrl.get(draft.url)
-      if (match && !branchesByRepository[repositoryKey(match)]) {
-        void loadBranches(match)
-      }
-    }
-  }, [repositoryOptions, repositories, repositoriesByUrl, branchesByRepository, loadBranches])
+  const branchIdentity = JSON.stringify([...new Set(repositories.map(draft => draft.url))].sort())
+  const branchObservation = useMemo(
+    () =>
+      branchPool.observe(
+        (JSON.parse(branchIdentity) as string[]).flatMap(url => {
+          const match = repositoriesByUrl.get(url)
+          return match ? [match] : []
+        })
+      ),
+    [branchPool, branchIdentity, repositoriesByUrl]
+  )
+  const branchesByRepository = useSyncExternalStore(
+    branchObservation.subscribe,
+    branchObservation.getSnapshot,
+    branchObservation.getSnapshot
+  )
+  const loadBranches = branchPool.retry
 
   function selectRepository(id: string, key: string) {
     const option = (repositoryOptions ?? []).find(candidate => repositoryKey(candidate) === key)
@@ -351,13 +370,13 @@ export function ProjectExecutionEnvironments({
     setRepositories(current =>
       current.map(draft => {
         if (draft.id !== id) return draft
-        const derived = derivedDefaults.current.get(id)
+        const derived = derivedDefaults.get(id)
         const name = !draft.name || draft.name === derived?.name ? derivedName : draft.name
         const path = !draft.path || draft.path === derived?.path ? shortName : draft.path
         // A previously auto-filled branch is unlikely to exist on the new
         // repository; the fetched default branch replaces it.
         const ref = !draft.ref || draft.ref === derived?.ref ? '' : draft.ref
-        derivedDefaults.current.set(id, { name, path, ref })
+        derivedDefaults.set(id, { name, path, ref })
         return { ...draft, url: option.cloneUrl, name, path, ref }
       })
     )
@@ -427,12 +446,12 @@ export function ProjectExecutionEnvironments({
     setRepositories(current =>
       current.map(repository => {
         if (repository.id !== id) return repository
-        const derived = derivedDefaults.current.get(id)
+        const derived = derivedDefaults.get(id)
         const name =
           !repository.name || repository.name === derived?.name ? shortName : repository.name
         const path =
           !repository.path || repository.path === derived?.path ? shortName : repository.path
-        derivedDefaults.current.set(id, {
+        derivedDefaults.set(id, {
           name,
           path,
           ref: derived?.ref ?? '',
@@ -543,14 +562,12 @@ export function ProjectExecutionEnvironments({
               return updatedProject
             })
       setConfigVersion(updated.version)
-      observedConfiguration.current = environmentConfigurationSnapshot(
-        updated.execution_environment
-      )
+      setObservedConfiguration(environmentConfigurationSnapshot(updated.execution_environment))
       setDeviceStates(updated.execution_environment?.devices ?? NO_DEVICE_STATES)
       setConfigurationDirty(false)
       setConfigurationSaved(true)
       setEnvironmentError('')
-      environmentErrorDeviceKey.current = ''
+      setEnvironmentErrorDeviceKey('')
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : String(saveError)
       const conflict = /^(Cloud project|Workspace) changed$/.test(message)
@@ -577,7 +594,7 @@ export function ProjectExecutionEnvironments({
         ? await api.workspaces!.get(scopeId)
         : await api.projects.get(scopeId)
       const configuration = latest.execution_environment
-      observedConfiguration.current = environmentConfigurationSnapshot(configuration)
+      setObservedConfiguration(environmentConfigurationSnapshot(configuration))
       if (!keepDraft) {
         setWorkspacePolicy(configuration?.workspace_policy ?? 'git_worktree')
         setRepositories(
@@ -744,7 +761,7 @@ export function ProjectExecutionEnvironments({
       const deviceState = nextDeviceStates[deviceKey]
       setConfigVersion(initialized.version)
       setDeviceStates(nextDeviceStates)
-      environmentErrorDeviceKey.current = deviceKey
+      setEnvironmentErrorDeviceKey(deviceKey)
       setEnvironmentError(deviceState?.error ?? '')
       if (deviceState?.status !== 'ready') {
         throw new Error(
@@ -753,7 +770,7 @@ export function ProjectExecutionEnvironments({
         )
       }
     } catch (saveError) {
-      environmentErrorDeviceKey.current = deviceKey
+      setEnvironmentErrorDeviceKey(deviceKey)
       setEnvironmentError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       initializationInFlight.current = false
@@ -856,12 +873,11 @@ export function ProjectExecutionEnvironments({
                   failure={parseGitAccessFailure(environmentError)}
                   translate={translate}
                   testId={`${testIdPrefix}-configure-git`}
-                  deviceId={environmentErrorDeviceKey.current}
+                  deviceId={environmentErrorDeviceKey}
                   enabled={
                     !assignedItems.some(
                       item =>
-                        item.device_key === environmentErrorDeviceKey.current &&
-                        item.is_current_device
+                        item.device_key === environmentErrorDeviceKey && item.is_current_device
                     )
                   }
                 />
@@ -870,9 +886,11 @@ export function ProjectExecutionEnvironments({
           ) : null}
           {presentation === 'page' && (
             <details
+              open={preparationOpen}
               className="group mt-6 border-t border-border"
               data-testid={`${testIdPrefix}-preparation`}
               onToggle={event => {
+                setPreparationOpen(event.currentTarget.open)
                 if (
                   event.currentTarget.open &&
                   repositoryOptions === null &&

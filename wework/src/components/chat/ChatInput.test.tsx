@@ -21,7 +21,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useComposerAttachments } from '@wegent/collaboration/composer'
-import { createRef, useEffect, useState } from 'react'
+import { createRef, useCallback, useImperativeHandle, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -2578,9 +2578,10 @@ describe('ChatInput', () => {
       let controls: ConversationModelControls | undefined
       function RecoveryComposer() {
         const model = useStandInConversationModel(services, profile)
-        useEffect(() => {
-          controls = model
-        }, [model])
+        const expose = useCallback((current: ConversationModelControls | null) => {
+          if (current) controls = current
+        }, [])
+        useImperativeHandle(expose, () => model, [model])
         const [value, setValue] = useState('Keep the cloud draft')
         return (
           <ChatInput

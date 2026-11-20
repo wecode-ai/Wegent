@@ -11,7 +11,7 @@ import {
   createPresetProviderModel,
   detectProviderPreset,
 } from '@/features/model-settings/providerPresets'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { Loader2, Plus, X, Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
@@ -63,12 +63,6 @@ export function ProviderEditor({
   const [error, setError] = useState<string | null>(null)
   const [discard, setDiscard] = useState(false)
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial)
-  useEffect(
-    () => () => {
-      discoverySequence.current += 1
-    },
-    []
-  )
   /** Update draft fields and invalidate discovery results when connection settings change. */
   const patch = (value: Partial<ProviderDraft>) => {
     if (

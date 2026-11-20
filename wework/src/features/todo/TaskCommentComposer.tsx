@@ -8,7 +8,9 @@ import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { PermissionModeSelector } from '@/components/chat/composer/PermissionModeSelector'
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 import type { CollaborationTranslate } from '@wegent/collaboration'
@@ -111,10 +113,16 @@ export function TaskCommentComposer({
               />
               <PermissionModeSelector
                 value={runtimePermissionMode(controls.selectedModelOptions)}
-                disabled={disabled || sending}
-                onChange={mode =>
-                  controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                commandApproval={runtimeCommandApprovalMode(controls.selectedModelOptions)}
+                onCommandApprovalChange={mode =>
+                  controls.setSelectedModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
                 }
+                disabled={disabled || sending}
+                onChange={(mode, approval) => {
+                  if (approval)
+                    controls.setSelectedModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+                  controls.setSelectedModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                }}
               />
             </>
           )

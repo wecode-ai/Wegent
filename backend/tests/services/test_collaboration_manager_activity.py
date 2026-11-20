@@ -1,11 +1,15 @@
 """A resumed manager owns a visible Issue session before asking for input."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
+from app.api.endpoints.loop_item_executions import (
+    report_collaboration_assignment_status,
+)
+from app.core.security import create_access_token
 from app.models.delivery import Delivery, LoopItemTaskBinding
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.project_chat import LoopItemExecutionManagerStatus
@@ -14,8 +18,13 @@ from app.services.collaboration_manager_activity import (
     project_collaboration_manager_activity,
 )
 from app.services.collaboration_round_assignment import assign_round_owner
+from app.services.loop_item_executions.service import (
+    WeworkRuntimeConfigurationError,
+    loop_item_execution_service,
+)
 from app.services.project_chat.runtime_binding import resumed_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
+from app.services.runner_recovery import runner_recovery_available
 from tests.services.test_project_comment_execution import scenario  # noqa: F401
 from tests.services.test_project_group_comment_execution import (  # noqa: F401
     group_scenario,
@@ -47,9 +56,138 @@ def resumed_manager(member_scenario):
 
 
 def report(s, values):
-    return project_collaboration_manager_activity(
+    message, changed, _ = project_collaboration_manager_activity(
         s.db, project_id=s.project.id, user_id=s.owner.id, values=values
     )
+    return message, changed
+
+
+def test_replayed_resume_refreshes_profiles_only_while_authorized(
+    resumed_manager, monkeypatch
+):
+    s, values = resumed_manager
+    s.execution.status = "running"
+    s.execution.assigner_user_id = s.member.id
+    s.execution.execution_device_id = "admin-cloud"
+    s.db.commit()
+    values.refresh_runtime_profiles = True
+    credentials = iter(("first", "renewed"))
+    authorized = True
+    available = False
+
+    def compile_payload(db, *, execution, execution_target_id, executor_device_id):
+        assert execution.id == s.execution.id
+        assert execution.assigner_user_id == s.member.id
+        assert execution_target_id == "admin-cloud"
+        assert executor_device_id == s.execution.runtime_device_id
+        if not available:
+            raise WeworkRuntimeConfigurationError("Model unavailable")
+        return {
+            "managerRuntimeRequest": {
+                "executionRequest": {"model_config": {"api_key": next(credentials)}}
+            },
+            "memberRuntimeProfiles": [],
+        }
+
+    monkeypatch.setattr(
+        "app.services.collaboration_revocation.execution_authorized",
+        lambda db, execution: authorized,
+    )
+    monkeypatch.setattr(
+        loop_item_execution_service, "build_executor_runtime_payload", compile_payload
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.loop_item_executions.push_project_chat_message",
+        lambda _: None,
+    )
+    http_response = Response()
+
+    def request(token):
+        return report_collaboration_assignment_status(
+            s.project.id, values, http_response, s.db, s.owner, token
+        )
+
+    with pytest.raises(HTTPException) as missing_session:
+        request(None)
+    assert missing_session.value.status_code == 403
+
+    with pytest.raises(HTTPException) as wrong_session:
+        request(create_access_token({"sub": s.member.user_name}))
+    assert wrong_session.value.status_code == 403
+
+    session = create_access_token({"sub": s.owner.user_name})
+    with pytest.raises(HTTPException) as unavailable:
+        request(session)
+    assert unavailable.value.status_code == 503
+
+    available = True
+    first = request(session)
+    replay = request(session)
+    assert http_response.headers["Cache-Control"] == "no-store"
+    assert first["changed"] is True
+    assert replay["changed"] is False
+    assert first["message"] == replay["message"]
+    assert first["runtime_profiles"]["manager_model_config"]["api_key"] == "first"
+    assert replay["runtime_profiles"]["manager_model_config"]["api_key"] == "renewed"
+    assert "renewed" not in str(replay["message"])
+
+    authorized = False
+    with pytest.raises(HTTPException) as revoked:
+        request(session)
+    assert revoked.value.status_code == 403
+
+    s.execution.status = "failed"
+    s.db.commit()
+    with pytest.raises(HTTPException) as terminal:
+        request(session)
+    assert terminal.value.status_code == 409
+
+
+@pytest.mark.parametrize("dispatched_next_round", [False, True])
+def test_expired_dispatch_reconciles_only_current_manager_failure(
+    resumed_manager, dispatched_next_round
+):
+    s, values = resumed_manager
+    activity, _ = report(s, values)
+    activity.status = "failed"
+    activity.content = "401 Unauthorized"
+    s.execution.status = "claimed"
+    s.execution.sync_state = "stale"
+    s.execution.start_requested_at = datetime(2026, 11, 19, 7)
+    s.execution.lease_expires_at = s.execution.start_requested_at + timedelta(minutes=5)
+    if dispatched_next_round:
+        plan = s.db.query(ProjectChatMessage).filter_by(message_id="member-plan").one()
+        s.db.add(
+            ProjectChatMessage(
+                message_id="next-plan",
+                project_id=str(s.project.id),
+                task_id=s.issue.id,
+                sender_type="agent",
+                sender_id=s.agent.id,
+                sender_name=s.agent.name,
+                agent_id=s.agent.id,
+                message_type="text",
+                content="",
+                metadata_json={
+                    **plan.metadata_json,
+                    "coordination_round_id": "round-2",
+                    "manager_runtime_task_id": activity.runtime_task_id,
+                },
+                status="completed",
+            )
+        )
+    s.db.commit()
+
+    assert loop_item_execution_service.recovery_scan(
+        s.db, now=datetime(2026, 11, 19, 8)
+    ) == (0, 0)
+    s.db.refresh(s.execution)
+    assert s.execution.status == ("claimed" if dispatched_next_round else "failed")
+    assert runner_recovery_available(s.db, s.issue.id) is not dispatched_next_round
+    if not dispatched_next_round:
+        assert s.execution.sync_state == "in_sync"
+        assert s.execution.error_message == "401 Unauthorized"
+        assert s.issue.status == "in_progress"
 
 
 @pytest.mark.parametrize(
@@ -126,14 +264,23 @@ def test_long_rounds_keep_exact_manager_transcripts_readable(resumed_manager):
     assert s.db.query(LoopItemTaskBinding).count() == 6
 
 
-def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(resumed_manager):
+@pytest.mark.parametrize("reuse_session", [True, False])
+def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(
+    resumed_manager, reuse_session
+):
     s, values = resumed_manager
+    if reuse_session:
+        values.runtime_task_id = f"{s.execution.runtime_task_id}-manager-initial"
     assert s.issue.assignee_agent_id == s.member_agent.id
 
     message, created = report(s, values)
 
     assert created
     assert s.issue.assignee_agent_id == s.agent.id
+    handoff = s.issue.metadata_json["assignment_history"][-1]
+    assert handoff["by_agent_id"] == s.agent.id
+    assert handoff["by_agent_name"] == (s.agent.title or s.agent.name)
+    assert handoff["by_user_id"] == s.execution.assigner_user_id
     assert s.issue.status == "in_progress"
     assert message.agent_id == s.agent.id
     assert message.runtime_task_id == values.runtime_task_id

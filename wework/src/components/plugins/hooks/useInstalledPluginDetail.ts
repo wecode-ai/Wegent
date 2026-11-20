@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 
@@ -10,39 +16,35 @@ export function useInstalledPluginDetail(
   revision = 0,
   onSuccess?: (pluginId: string | number) => void
 ): InstalledPluginItem | null {
-  const [detail, setDetail] = useState<{
-    key: string
-    components: InstalledPlugin['spec']['components']
-  } | null>(null)
-  const refs = useRef({ summary, onError, onSuccess })
-  useEffect(() => {
-    refs.current = { summary, onError, onSuccess }
-  }, [summary, onError, onSuccess])
   const local = summary && (summary.origin === 'created' || !summary.raw.spec.pluginId)
   const key = local ? JSON.stringify([summary.id, summary.version, revision]) : null
-  useEffect(() => {
-    const plugin = refs.current.summary
-    if (!key || !plugin) return
-    let disposed = false
-    void read(plugin.raw)
-      .then(result => {
-        if (!disposed) {
-          setDetail({ key, components: result.spec.components })
-          refs.current.onSuccess?.(plugin.id)
-        }
-      })
-      .catch(error => {
-        if (!disposed) refs.current.onError(plugin.id, error)
-      })
-    return () => {
-      disposed = true
-    }
-  }, [key, read])
+  const currentSummary = useStableEvent(() => summary!)
+  const pluginId = summary?.id
+  const success = useStableEvent((id: string | number) => onSuccess?.(id))
+  const failure = useStableEvent((id: string | number, error: unknown) => onError(id, error))
+  const resource = useMemo(
+    () =>
+      key
+        ? createAsyncResource(key, () => read(currentSummary().raw), {
+            success: () => success(pluginId!),
+            failure: error => failure(pluginId!, error),
+          })
+        : null,
+    [key, pluginId, read, currentSummary, success, failure]
+  )
+  const result = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
   return useMemo(() => {
-    if (!summary || !detail || detail.key !== key) return summary
+    if (!summary || !result.data) return summary
     return {
       ...summary,
-      raw: { ...summary.raw, spec: { ...summary.raw.spec, components: detail.components } },
+      raw: {
+        ...summary.raw,
+        spec: { ...summary.raw.spec, components: result.data.spec.components },
+      },
     }
-  }, [summary, detail, key])
+  }, [summary, result.data])
 }

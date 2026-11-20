@@ -1,18 +1,15 @@
-import { useEffect, useRef } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { ExecutorRuntimeClient } from '@/api/executorAccess'
 import type { RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
+import type { RuntimeConversationTurn } from '@/types/workbench'
 import {
   getRuntimeConversationTurns,
-  reconcileRuntimeConversationSnapshot,
-  replaceRuntimeConversationSnapshot,
-  runtimeConversationKey,
+  subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
-import {
-  isRuntimePaneTranscriptConfirmedIdle,
-  projectRuntimePaneTranscript,
-} from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import { BoardRuntimeConversations, type BoardTranscriptRead } from './boardRuntimeConversations'
+import { boardRuntimeReadKey } from './boardRuntimeReadKey'
 
 export interface BoardRuntimeConversation {
   address: RuntimeTaskAddress
@@ -24,91 +21,68 @@ export interface UseBoardRuntimeConversationsOptions {
   conversations: BoardRuntimeConversation[]
   enabled: boolean
   getRuntimeTranscript?: ExecutorRuntimeClient['getRuntimeTranscript']
+  session?: BoardRuntimeConversations
+  observedAddress?: RuntimeTaskAddress | null
+  onTurns?: (turns: RuntimeConversationTurn[]) => void
 }
 
-function conversationSignature(
-  item: CloudLoopItem,
-  { address, task }: BoardRuntimeConversation
-): string {
-  return JSON.stringify([
-    item.status,
-    item.execution_id ?? null,
-    item.execution_state ?? null,
-    item.execution_last_event_seq ?? null,
-    task?.runtime ?? null,
-    task?.threadId ?? null,
-    task?.workspacePath ?? null,
-    task?.updatedAt ?? null,
-    task?.completedAt ?? null,
-    task?.status ?? null,
-    task?.turnStatus ?? null,
-    address,
-  ])
-}
+const EMPTY_TURNS: RuntimeConversationTurn[] = []
 
 export function useBoardRuntimeConversations({
   item,
   conversations,
   enabled,
   getRuntimeTranscript,
-}: UseBoardRuntimeConversationsOptions): void {
-  const mounted = useRef(false)
-  const attemptedSignatures = useRef(new Map<string, string>())
-  const requestSequences = useRef(new Map<string, number>())
-  const appliedSequences = useRef(new Map<string, number>())
-
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (
-      !enabled ||
-      !getRuntimeTranscript ||
-      (item.status !== 'in_review' && !isLoopItemExecutionActive(item))
-    ) {
-      return
-    }
-    const requestedConversations = new Set<string>()
-    for (const conversation of conversations) {
-      const { address, task } = conversation
-      const key = runtimeConversationKey(address)
-      if (requestedConversations.has(key)) continue
-      requestedConversations.add(key)
-      const signature = conversationSignature(item, conversation)
-      if (attemptedSignatures.current.get(key) === signature) continue
-      attemptedSignatures.current.set(key, signature)
-      const sequence = (requestSequences.current.get(key) ?? 0) + 1
-      requestSequences.current.set(key, sequence)
-      const turnsBeforeRead = getRuntimeConversationTurns(address)
-      void getRuntimeTranscript({
-        ...address,
-        limit: 20,
-        includeFullContent: item.status === 'in_review' || task?.running === false,
-      })
-        .then(response => {
-          if (!mounted.current) return
-          if (sequence < (appliedSequences.current.get(key) ?? 0)) return
-          appliedSequences.current.set(key, sequence)
-          const transcript = projectRuntimePaneTranscript(response)
-          if (transcript.fullContent === true && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
-            // A board read must not retract progress published while it was pending.
-            if (getRuntimeConversationTurns(address) !== turnsBeforeRead) return
-            replaceRuntimeConversationSnapshot(address, transcript.turns)
-          } else {
-            reconcileRuntimeConversationSnapshot(address, transcript.turns)
-          }
-        })
-        .catch(error => {
-          if (!mounted.current) return
-          console.warn('[Wework project board] failed to preload task conversation', {
+  session,
+  observedAddress = conversations[0]?.address ?? null,
+  onTurns,
+}: UseBoardRuntimeConversationsOptions): RuntimeConversationTurn[] {
+  const [localSession] = useState(() => session ?? new BoardRuntimeConversations())
+  const owner = session ?? localSession
+  const planKey = boardRuntimeReadKey(
+    enabled && (item.status === 'in_review' || isLoopItemExecutionActive(item))
+      ? conversations.map(({ address, task }) => ({
+          address,
+          includeFullContent: item.status === 'in_review' || task?.running === false,
+          signature: boardRuntimeReadKey([
+            item.status,
+            item.execution_id,
+            item.execution_state,
+            item.execution_last_event_seq,
+            task?.runtime,
+            task?.threadId,
+            task?.workspacePath,
+            task?.updatedAt,
+            task?.completedAt,
+            task?.status,
+            task?.turnStatus,
+            task?.running,
             address,
-            error,
-          })
-        })
+          ]),
+        }))
+      : []
+  )
+  const addressKey = boardRuntimeReadKey(observedAddress)
+  const source = useMemo(() => {
+    const reads = JSON.parse(planKey) as BoardTranscriptRead[]
+    const address = JSON.parse(addressKey) as RuntimeTaskAddress | null
+    return {
+      getSnapshot: () => (address ? getRuntimeConversationTurns(address) : EMPTY_TURNS),
+      subscribe(listener: () => void) {
+        if (!address) return () => undefined
+        const notify = () => {
+          onTurns?.(getRuntimeConversationTurns(address))
+          listener()
+        }
+        const stop = subscribeRuntimeConversation(address, notify, { retainWhileSubscribed: false })
+        onTurns?.(getRuntimeConversationTurns(address))
+        const release = owner.observe(reads, getRuntimeTranscript)
+        return () => {
+          release()
+          stop()
+        }
+      },
     }
-  }, [conversations, enabled, getRuntimeTranscript, item])
+  }, [addressKey, getRuntimeTranscript, onTurns, owner, planKey])
+  return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
 }

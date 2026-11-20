@@ -274,8 +274,21 @@ impl RuntimeWorkRpcHandler {
             ));
         }
 
-        let cancellation_token = string_field(&payload, "cancellationToken")
-            .or_else(|| string_field(&payload, "cancellation_token"));
+        self.search_workspace_at_root(&root, &payload).await
+    }
+
+    pub(super) async fn search_workspace_at_root(
+        &self,
+        root: &Path,
+        payload: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let query = string_field(payload, "query").unwrap_or_default();
+        if query.trim().is_empty() {
+            return Ok(json!({ "files": [] }));
+        }
+
+        let cancellation_token = string_field(payload, "cancellationToken")
+            .or_else(|| string_field(payload, "cancellation_token"));
         let response = self
             .codex_app_server
             .request(
@@ -308,7 +321,7 @@ impl RuntimeWorkRpcHandler {
             })
             .unwrap_or_default();
         if files.is_empty() {
-            let fallback_root = root.clone();
+            let fallback_root = root.to_path_buf();
             let fallback_query = query.clone();
             files = tokio::task::spawn_blocking(move || {
                 search_workspace_without_parent_ignores(&fallback_root, &fallback_query)

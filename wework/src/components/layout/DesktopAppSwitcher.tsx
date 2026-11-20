@@ -1,14 +1,6 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { ChevronDown, CloudOff, Settings } from 'lucide-react'
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -169,11 +161,14 @@ export function DesktopAppSwitcher({
     animationFrameRef.current = null
   }, [])
 
-  useEffect(
-    () => () => {
-      clearAnimationFrame()
-      clearTimer()
-      clearBlurTimer()
+  const attachNavigation = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node) return
+      return () => {
+        clearAnimationFrame()
+        clearTimer()
+        clearBlurTimer()
+      }
     },
     [clearAnimationFrame, clearBlurTimer, clearTimer]
   )
@@ -232,25 +227,22 @@ export function DesktopAppSwitcher({
     return () => window.removeEventListener('resize', updatePosition)
   }, [menuMounted, options.length])
 
-  useEffect(() => {
-    if (!menuMounted) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target
       if (!(target instanceof Node)) return
       if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: menuMounted }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') closeMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [closeMenu, menuMounted])
+    },
+    { enabled: menuMounted }
+  )
 
   const selectApp = (option: AppOption) => {
     if (option.disabled) return
@@ -279,6 +271,7 @@ export function DesktopAppSwitcher({
   if (variant === 'tabs') {
     return (
       <nav
+        ref={attachNavigation}
         data-testid="desktop-app-switcher"
         aria-label={t('workbench.app_navigation', '应用导航')}
         className={cn('flex shrink-0 items-center gap-1', className)}
@@ -316,6 +309,7 @@ export function DesktopAppSwitcher({
 
   return (
     <nav
+      ref={attachNavigation}
       data-testid="desktop-app-switcher"
       aria-label={t('workbench.app_navigation', '应用导航')}
       className={cn('relative flex shrink-0 items-center', className)}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { standInState } from '@/features/notifications/standInNotifications'
 import { mergeStandInWorkItems, standInWorkRole } from '@/features/todo/standInWork'
@@ -19,18 +19,23 @@ export function useExperienceTeamState(
   const { runtimeTaskReminders, state, refreshWorkLists } = useWorkbench()
   const { t } = useTranslation('collaborationExp')
   const source = useAssistantSources(active)
-  const [refreshFailure, setRefreshFailure] = useState<{
-    scope: string
-    api: typeof source.api
-    error: unknown
-  }>()
+  const scope = source.scope
+  const api = source.api
+  const owner = useMemo(() => ({ active, scope, api }), [active, scope, api])
   const refreshGeneration = useRef(0)
-  useEffect(() => {
-    refreshGeneration.current += 1
-    return () => {
-      refreshGeneration.current += 1
-    }
-  }, [active, source.scope, source.api])
+  const [refreshState, setRefreshState] = useState<{
+    owner: typeof owner
+    failure?: { scope: string; api: typeof api; error: unknown }
+  }>({ owner })
+  if (refreshState.owner !== owner)
+    setRefreshState({
+      owner,
+      failure:
+        refreshState.failure?.scope === scope && refreshState.failure.api === api
+          ? refreshState.failure
+          : undefined,
+    })
+  const refreshFailure = refreshState.failure
   const ownerId = source.ownerId ?? source.userId
   const work = mergeStandInWorkItems(
     runtimeTaskReminders.items.filter(item => {
@@ -74,10 +79,13 @@ export function useExperienceTeamState(
     const generation = ++refreshGeneration.current
     source.refresh()
     source.inbox.refresh()
-    setRefreshFailure(undefined)
+    setRefreshState(current => (current.owner === owner ? { owner } : current))
     void refreshWorkLists().catch(cause => {
-      if (generation === refreshGeneration.current)
-        setRefreshFailure({ scope: source.scope, api: source.api, error: cause })
+      setRefreshState(current =>
+        current.owner === owner && generation === refreshGeneration.current
+          ? { owner, failure: { scope, api, error: cause } }
+          : current
+      )
     })
   }
   return { source, ownerId, work, summary, snapshot, ready, error, refresh }

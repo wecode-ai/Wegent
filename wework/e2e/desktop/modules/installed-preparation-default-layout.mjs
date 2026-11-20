@@ -13,7 +13,7 @@ import { stopProcess } from '../process-lifecycle.mjs'
 const INSTALL_PREPARATION_TIMEOUT_MS = 600_000
 const STARTUP_TIMEOUT_MS = 180_000
 
-/** Exercise the installer entry, default data migration, and first normal launch with a real package. */
+/** Exercise the installer entry and first launch with the package's default data layout. */
 export async function verifyDefaultLayoutInstalledPreparation({
   appBinary,
   appEnvironment,
@@ -22,8 +22,7 @@ export async function verifyDefaultLayoutInstalledPreparation({
   const root = join(resultDir, 'default-layout-install-preparation')
   // Windows resolves nested Chromium and runtime paths below HOME. Keep the
   // synthetic profile short so this exercises default-layout behavior rather
-  // than the length of the CI evidence directory. Keep it beside the evidence
-  // directory so the installer's initial rename stays on one filesystem.
+  // than the length of the CI evidence directory.
   const home = await mkdtemp(join(dirname(resultDir), 'wework-default-layout-'))
   const appData =
     process.platform === 'darwin'
@@ -36,7 +35,10 @@ export async function verifyDefaultLayoutInstalledPreparation({
   const namespace = (await readPackagedNamespace(appBinary, appEnvironment)) || 'default'
   const userData = join(home, '.wegent', 'workbench', 'wework', namespace, 'user-data')
   const source = join(appData, applicationId)
-  await mkdir(appData, { recursive: true })
+  const legacyPreferences = join(source, 'preferences.json')
+  const legacyContent = '{"legacyInstallation":true}'
+  await mkdir(source, { recursive: true })
+  await writeFile(legacyPreferences, legacyContent)
   if (process.platform === 'win32') await mkdir(localAppData, { recursive: true })
   await assert.rejects(lstat(userData), { code: 'ENOENT' })
   const environment = {
@@ -72,7 +74,8 @@ export async function verifyDefaultLayoutInstalledPreparation({
     0,
     `Default-layout installation preparation failed:\n${preparation.stdout}\n${preparation.stderr}`
   )
-  assert.equal((await lstat(source)).isSymbolicLink(), true)
+  assert.equal((await lstat(source)).isDirectory(), true)
+  assert.equal(await readFile(legacyPreferences, 'utf8'), legacyContent)
   const status = JSON.parse(
     await readFile(join(userData, 'logs', 'install-preparation.json'), 'utf8')
   )
@@ -131,7 +134,6 @@ export async function verifyDefaultLayoutInstalledPreparation({
       if (ready) break
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
-    assert.doesNotMatch(`${stdout}\n${stderr}`, /Application data migration target conflict/)
   } finally {
     await stopProcess(child)
   }
@@ -142,9 +144,11 @@ export async function verifyDefaultLayoutInstalledPreparation({
   await assert.rejects(lstat(join(status.preparationDirectory, 'prepared.json')), {
     code: 'ENOENT',
   })
+  assert.equal((await lstat(source)).isDirectory(), true)
+  assert.equal(await readFile(legacyPreferences, 'utf8'), legacyContent)
   const evidence = {
     defaultUserData: true,
-    migratedBeforePreparation: true,
+    legacyLocationPreserved: true,
     isolatedPreparation: true,
     preparedProfileApplied: true,
     firstLaunchReady: true,

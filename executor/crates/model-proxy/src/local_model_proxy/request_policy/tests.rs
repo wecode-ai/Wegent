@@ -208,6 +208,47 @@ async fn passthrough_without_model_mapping_preserves_request_bytes() {
 }
 
 #[tokio::test]
+async fn responses_adapts_agent_messages_in_auto_and_standard_modes() {
+    let original = json!({"input": [
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "User input"}]},
+        {"type": "agent_message", "author": "/root", "recipient": "/root/worker",
+         "id": "amsg_one", "content": [{"type": "input_text", "text": "Continue the task"}]}
+    ]});
+    let mut compatible = original.clone();
+    compatible["input"][1] = json!({
+        "type": "message", "role": "developer",
+        "content": original["input"][1]["content"]
+    });
+
+    for (mode, model, forked, expected) in [
+        ("auto", "moonshot-kimi-k3", false, &compatible),
+        ("standard", "another-provider", true, &compatible),
+        ("passthrough", "another-provider", true, &original),
+    ] {
+        let mut config = upstream(mode);
+        config.model_id = Some(model.to_owned());
+        let mut input = original.clone();
+        if mode == "standard" {
+            input["input"][1]["encrypted_content"] = json!("stale-fork-state");
+        }
+        let prepared = prepare(
+            &config,
+            &serde_json::to_vec(&input).unwrap(),
+            None,
+            &Default::default(),
+            false,
+            forked,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let request: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(request["input"], expected["input"], "mode {mode}");
+    }
+}
+
+#[tokio::test]
 async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
     let prepared = prepare(
         &upstream("standard"),

@@ -1,7 +1,7 @@
+import { createStandInWorkSelectionSource } from './standInWorkSelectionSource'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { standInState } from '@/features/notifications/standInNotifications'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -40,7 +40,17 @@ export function StandInWorkList({
   const { t } = useTranslation('common')
   const interactions = useRuntimeInteractions()
   const [filter, setFilter] = useState<WorkFilter>('all')
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [selection] = useState(createStandInWorkSelectionSource)
+  const subscribeSelection = useCallback(
+    (listener: () => void) => selection.subscribe({ items, inbox, active }, listener),
+    [selection, items, inbox, active]
+  )
+  const selectedKey = useSyncExternalStore(
+    subscribeSelection,
+    selection.getSnapshot,
+    selection.getSnapshot
+  )
+  const setSelectedKey = selection.select
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [expandedWorkId, setExpandedWorkId] = useState<string | null>(null)
@@ -56,12 +66,6 @@ export function StandInWorkList({
   const selected = items.find(item => item.key === selectedKey)
   const selectedState = selected && standInState(selected)
   const selectedWork = inbox.find(work => work.taskId === selected?.task.taskId)
-  const selectedOrigin = selected?.task.runtimeHandle?.origin as
-    | { standInId?: string | null }
-    | undefined
-  const identity =
-    (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
-  useStandInOpened('work', identity, active && !!selected, selected?.key)
   const needsRestore = selected?.task.status === 'archived'
   const needsStart =
     !needsRestore &&

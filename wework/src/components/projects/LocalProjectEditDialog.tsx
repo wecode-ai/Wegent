@@ -7,14 +7,18 @@ import {
   MessageSquareText,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { ProjectPluginsUnsupportedError } from '@/api/projectDevicePlugins'
 import {
   projectEditingCapabilities,
   projectEditingDeviceRevision,
-  type ProjectPluginSupport,
 } from '@/lib/project-editing-capabilities'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
@@ -23,7 +27,6 @@ import {
   projectSpaceKey,
   projectSpaceRef,
   type ProjectSpaceApi,
-  type ProjectSpaceOption,
 } from '@/features/todo/projectSpaceSelection'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
@@ -55,6 +58,8 @@ import {
 } from '../plugins/marketplacePluginLock'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { ProjectPluginSettingsPanel } from './ProjectPluginSettingsPanel'
+
+const EMPTY_PLUGIN_ITEMS: PluginMarketplaceItem[] = []
 
 interface LocalProjectEditDialogProps {
   open: boolean
@@ -150,14 +155,31 @@ function LocalProjectEditDialogContent({
   const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState<'basic' | 'ai' | 'quick-phrases' | 'plugins'>('basic')
   const [showFolderPicker, setShowFolderPicker] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [projectSpaceOptions, setProjectSpaceOptions] = useState<ProjectSpaceOption[]>([])
+  const [actionError, setError] = useState<string | null>(null)
+  const spaces = useMemo(
+    () =>
+      projectSpaceApis.length
+        ? createAsyncResource('project-spaces', async signal => {
+            await Promise.resolve()
+            signal.throwIfAborted()
+            return loadProjectSpaceOptions(projectSpaceApis)
+          })
+        : null,
+    [projectSpaceApis]
+  )
+  const spaceSnapshot = useSyncExternalStore(
+    spaces?.subscribe ?? subscribeIdleResource,
+    spaces?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const projectSpaceOptions = spaceSnapshot.data ?? []
+  const projectSpacesLoading =
+    Boolean(spaces) && (spaceSnapshot.status === 'idle' || spaceSnapshot.status === 'loading')
   const savedDefaultProjectSpace = projectWork.project.defaultProjectSpace
   const [autoJoinProjectSpaceKey, setAutoJoinProjectSpaceKey] = useState<string | null>(() => {
     const ref = projectWork.project.defaultProjectSpace
     return ref ? projectSpaceKey(ref) : null
   })
-  const [projectSpacesLoading, setProjectSpacesLoading] = useState(projectSpaceApis.length > 0)
   const initialAiSettings = projectWork.project.aiSettings
   const [instructions, setInstructions] = useState(initialAiSettings?.instructions ?? '')
   const [modelSelection, setModelSelection] = useState(initialAiSettings?.modelSelection ?? null)
@@ -167,22 +189,68 @@ function LocalProjectEditDialogContent({
   const [quickPhrases, setQuickPhrases] = useState<RuntimeProjectQuickPhrase[]>(
     initialAiSettings?.quickPhrases ?? []
   )
-  const [pluginItems, setPluginItems] = useState<PluginMarketplaceItem[]>([])
   const [pluginSearch, setPluginSearch] = useState('')
-  const [pluginsLoading, setPluginsLoading] = useState(false)
-  const [pluginAttemptRevision, setPluginAttemptRevision] = useState<string | null>(null)
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null)
   const cloudDevice = !!device && isCloudDevice(device)
   const capabilities = projectEditingCapabilities(device)
   const deviceRevision = projectEditingDeviceRevision(device)
-  const [discoveredPluginSupport, setDiscoveredPluginSupport] = useState<{
-    revision: string
-    support: ProjectPluginSupport
-  } | null>(null)
-  const pluginSupport =
-    discoveredPluginSupport?.revision === deviceRevision
-      ? discoveredPluginSupport.support
-      : capabilities.plugins
+  const offline = device
+    ? Boolean(device.status && device.status !== 'online' && device.status !== 'busy')
+    : projectWork.project.source === 'remote_project' ||
+      projectWork.deviceWorkspaces.some(workspace => !workspace.available)
+  const inventory = useMemo(
+    () =>
+      pluginApi
+        ? createAsyncResource<{
+            items: PluginMarketplaceItem[]
+            support: 'supported' | 'unsupported'
+          }>(
+            deviceRevision,
+            async signal => {
+              await Promise.resolve()
+              signal.throwIfAborted()
+              try {
+                const state = await pluginApi.readState({
+                  mergeAllMarketplaces: true,
+                  refresh: true,
+                })
+                return { items: state.marketplaceItems, support: 'supported' as const }
+              } catch (error) {
+                if (error instanceof ProjectPluginsUnsupportedError)
+                  return { items: [], support: 'unsupported' as const }
+                throw error
+              }
+            },
+            { refreshOnSubscribe: true }
+          )
+        : null,
+    [pluginApi, deviceRevision]
+  )
+  const pluginReadEnabled =
+    activeTab === 'plugins' && !offline && capabilities.plugins !== 'unsupported'
+  const pluginSnapshot = useSyncExternalStore(
+    pluginReadEnabled && inventory ? inventory.subscribe : subscribeIdleResource,
+    inventory?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const pluginItems =
+    pluginSnapshot.status === 'ready'
+      ? (pluginSnapshot.data?.items ?? EMPTY_PLUGIN_ITEMS)
+      : EMPTY_PLUGIN_ITEMS
+  const pluginSupport = pluginSnapshot.data?.support ?? capabilities.plugins
+  const pluginsLoading =
+    pluginReadEnabled &&
+    Boolean(inventory) &&
+    (pluginSnapshot.status === 'idle' || pluginSnapshot.status === 'loading')
+  const readError =
+    spaceSnapshot.status === 'error'
+      ? spaceSnapshot.error
+      : pluginSnapshot.status === 'error'
+        ? pluginSnapshot.error
+        : null
+  const error =
+    actionError ??
+    (readError == null ? null : readError instanceof Error ? readError.message : String(readError))
   const selectableModels = useMemo(
     () => models.filter(model => !model.compatibilityDisabled),
     [models]
@@ -208,10 +276,6 @@ function LocalProjectEditDialogContent({
     [selectedModel]
   )
   const { deviceId, projectKey } = getRuntimeProjectOwner(projectWork)
-  const offline = device
-    ? Boolean(device.status && device.status !== 'online' && device.status !== 'busy')
-    : projectWork.project.source === 'remote_project' ||
-      projectWork.deviceWorkspaces.some(workspace => !workspace.available)
   const mutationDisabled = submitting || offline
   const rootsDisabled = mutationDisabled || !capabilities.multiRoots
   const aiDisabled = mutationDisabled || !capabilities.aiSettings
@@ -221,73 +285,10 @@ function LocalProjectEditDialogContent({
     Boolean(pluginApi) &&
     capabilities.plugins !== 'unsupported' &&
     pluginSupport !== 'unsupported' &&
-    (pluginsLoading || pluginAttemptRevision !== deviceRevision)
+    (pluginsLoading || !pluginSnapshot.settled)
   const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
     if (!submitting) onClose()
   })
-
-  useEffect(() => {
-    if (projectSpaceApis.length === 0) return
-    let active = true
-    void loadProjectSpaceOptions(projectSpaceApis)
-      .then(options => {
-        if (!active) return
-        setProjectSpaceOptions(options)
-      })
-      .catch(loadError => {
-        if (!active) return
-        setError(loadError instanceof Error ? loadError.message : String(loadError))
-      })
-      .finally(() => {
-        if (active) setProjectSpacesLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [projectSpaceApis])
-
-  useEffect(() => {
-    if (
-      activeTab !== 'plugins' ||
-      !pluginApi ||
-      offline ||
-      capabilities.plugins === 'unsupported'
-    ) {
-      return
-    }
-    let active = true
-    void Promise.resolve()
-      .then(() => {
-        if (!active) return null
-        setPluginsLoading(true)
-        setError(null)
-        setPluginItems([])
-        return pluginApi.readState({ mergeAllMarketplaces: true, refresh: true })
-      })
-      .then(state => {
-        if (active && state) {
-          setPluginItems(state.marketplaceItems)
-          setDiscoveredPluginSupport({ revision: deviceRevision, support: 'supported' })
-        }
-      })
-      .catch(loadError => {
-        if (!active) return
-        if (loadError instanceof ProjectPluginsUnsupportedError) {
-          setDiscoveredPluginSupport({ revision: deviceRevision, support: 'unsupported' })
-        } else {
-          setError(loadError instanceof Error ? loadError.message : String(loadError))
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setPluginsLoading(false)
-          setPluginAttemptRevision(deviceRevision)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [activeTab, offline, pluginApi, deviceRevision, capabilities.plugins])
 
   const filteredPluginItems = useMemo(() => {
     const query = pluginSearch.trim().toLowerCase()
@@ -329,8 +330,15 @@ function LocalProjectEditDialogContent({
           ? current
           : [...current, projectPlugin]
       )
-      setPluginItems(current =>
-        current.map(plugin => (plugin.id === item.id ? { ...plugin, installed: true } : plugin))
+      inventory?.update(current =>
+        current
+          ? {
+              ...current,
+              items: current.items.map(plugin =>
+                plugin.id === item.id ? { ...plugin, installed: true } : plugin
+              ),
+            }
+          : current
       )
     } catch (installError) {
       setError(installError instanceof Error ? installError.message : String(installError))
@@ -486,7 +494,13 @@ function LocalProjectEditDialogContent({
             aria-selected={activeTab === 'plugins'}
             data-testid="local-project-settings-plugins-tab"
             onClick={() => {
-              if (activeTab !== 'plugins') setPluginsLoading(Boolean(pluginApi) && !offline)
+              if (
+                activeTab !== 'plugins' &&
+                pluginApi &&
+                !offline &&
+                capabilities.plugins !== 'unsupported'
+              )
+                setError(null)
               setActiveTab('plugins')
             }}
             className={`border-b-2 px-3 py-2 text-sm font-medium ${

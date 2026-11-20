@@ -1,8 +1,11 @@
-import { useEffect, useRef } from 'react'
-import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useRef } from 'react'
+import { useDialogKeyboard } from '@wegent/collaboration/controls/useDialogKeyboard'
+import type { FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isMarketplaceSourceValid, type AddMarketFormData } from './marketplaceWorkspaceHelpers'
+
+const MARKETPLACE_FOCUS_RETURN = { fallbackSelector: '[data-testid="plugins-create-button"]' }
 
 export function AddMarketDialog({
   isOpen,
@@ -20,59 +23,20 @@ export function AddMarketDialog({
   onSubmit: (event: FormEvent) => void
 }) {
   const { t } = useTranslation('common')
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(
+    () => {
+      if (!isSubmitting) onClose()
+    },
+    isOpen,
+    '[data-testid="plugins-marketplace-path-input"]',
+    true,
+    MARKETPLACE_FOCUS_RETURN
+  )
   const sourceInputRef = useRef<HTMLInputElement>(null)
   const sourceIsValid = isMarketplaceSourceValid(formData.source)
   const sourceError = Boolean(formData.source.trim()) && !sourceIsValid
 
-  useEffect(() => {
-    if (!isOpen) return
-
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frameId = window.requestAnimationFrame(() => sourceInputRef.current?.focus())
-
-    return () => {
-      window.cancelAnimationFrame(frameId)
-      if (previouslyFocused?.isConnected) {
-        previouslyFocused.focus()
-      } else {
-        document.querySelector<HTMLElement>('[data-testid="plugins-create-button"]')?.focus()
-      }
-    }
-  }, [isOpen])
-
   if (!isOpen) return null
-
-  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      if (!isSubmitting) onClose()
-      return
-    }
-    if (event.key !== 'Tab') return
-
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ) ?? []
-    )
-    if (focusable.length === 0) {
-      event.preventDefault()
-      dialogRef.current?.focus()
-      return
-    }
-
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     if (!sourceIsValid) {
@@ -99,7 +63,6 @@ export function AddMarketDialog({
         data-testid="plugins-marketplace-dialog"
         className="plugin-dialog-surface max-h-[88vh] w-full max-w-[600px] overflow-y-auto"
         onClick={event => event.stopPropagation()}
-        onKeyDown={handleDialogKeyDown}
       >
         <div className="plugin-dialog-divider flex items-start justify-between gap-6 border-b px-6 py-5">
           <div className="min-w-0">

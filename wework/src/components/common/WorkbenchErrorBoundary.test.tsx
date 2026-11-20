@@ -1,6 +1,7 @@
 import i18n from '@/i18n'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchErrorBoundary } from './WorkbenchErrorBoundary'
 
@@ -9,9 +10,14 @@ function BrokenRender(): never {
 }
 
 function BrokenEffect() {
-  useEffect(() => {
-    throw new Error('Effect failed')
-  }, [])
+  const [target] = useState(() => {
+    const target = new EventTarget()
+    vi.spyOn(target, 'addEventListener').mockImplementation(() => {
+      throw new Error('Effect failed')
+    })
+    return target
+  })
+  useDOMEvent(target, 'fixture-native-event', () => undefined)
   return <p>Loading</p>
 }
 

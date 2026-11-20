@@ -6,6 +6,7 @@ import { isEffectivePackagedApplication } from './host/application-packaging-mod
 import {
   resolveWorkbenchCodexHome,
   resolveWorkbenchPaths,
+  resolveWorkbenchUserData,
 } from './runtime/workbench-environment.js'
 import { optionalText, ReleaseStore, sameReleasePath } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
@@ -21,7 +22,12 @@ import {
   type AfterStopMetadata,
 } from './runtime/release-after-stop.js'
 
-type ReleaseMetadata = AfterStopMetadata & { version?: string; weworkExecutorNamespace?: string }
+type ReleaseMetadata = AfterStopMetadata & {
+  version?: string
+  weworkExecutorNamespace?: string
+}
+
+export let releaseActivationPending = false
 
 export async function routeRelease(
   metadata: ReleaseMetadata,
@@ -29,16 +35,11 @@ export async function routeRelease(
   failStartup: (error: unknown) => void
 ): Promise<boolean> {
   if (!isEffectivePackagedApplication(app.isPackaged, process.env)) return true
-  const dataDirectory =
-    process.env.WEWORK_USER_DATA_DIR?.trim() ||
-    join(
-      resolveWorkbenchPaths({
-        environment: process.env,
-        metadata,
-        homeDirectory: app.getPath('home'),
-      }).desktop,
-      'user-data'
-    )
+  const dataDirectory = resolveWorkbenchUserData({
+    environment: process.env,
+    metadata,
+    homeDirectory: app.getPath('home'),
+  })
   const root = join(dataDirectory, 'releases')
   const release = await acquireReleaseStartup(
     root,
@@ -209,6 +210,7 @@ async function routeSelectedRelease(
     process.env.WEWORK_COMPONENT_DATA_DIRECTORY =
       active.componentDataDirectory ?? store.slot(active.id)
     const activation = await store.activation()
+    releaseActivationPending = Boolean(activation)
     const live = currentCoreProfile(dataDirectory)
     const { lstat } = await import('node:fs/promises')
     const usesOriginalProfile =

@@ -136,7 +136,15 @@ pub(super) fn build_upstream_request(
             .header("x-api-key", &upstream.api_key)
             .header("anthropic-version", "2023-06-01");
     }
-    if native_chatgpt_auth {
+    with_upstream_headers(request, upstream, incoming_headers)
+}
+
+pub(super) fn with_upstream_headers(
+    mut request: reqwest::RequestBuilder,
+    upstream: &LocalModelProxyUpstream,
+    incoming_headers: &HeaderMap,
+) -> reqwest::RequestBuilder {
+    if upstream.uses_native_chatgpt_auth() {
         for name in FORWARDED_OFFICIAL_AUTH_HEADERS {
             if let Some(value) = incoming_headers.get(name) {
                 request = request.header(name, value);

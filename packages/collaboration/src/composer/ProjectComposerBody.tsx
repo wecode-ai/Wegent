@@ -1,7 +1,6 @@
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -148,9 +147,11 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       insertReference: reference => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))
-    useEffect(() => {
+    const [renderedValue, setRenderedValue] = useState(value)
+    if (renderedValue !== value) {
+      setRenderedValue(value)
       setHasText(Boolean(value.trim()))
-    }, [value])
+    }
     const handleChange = useCallback(
       (nextValue: string) => {
         setHasText(Boolean(nextValue.trim()))

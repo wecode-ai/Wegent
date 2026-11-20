@@ -1,5 +1,6 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Check, Loader2, MessageSquare, Minus, Undo2 } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import type { GitPatchAction } from '@/api/environment'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -62,19 +63,15 @@ export function DiffCommentComposer({
   // An empty composer dismisses like a popover; a draft stays until cancelled.
   useEscapeKey(onCancel, !hasDraft, composerRef)
 
-  useEffect(() => {
-    if (hasDraft) return
-    const handlePointerDown = (event: PointerEvent) => {
-      // The diff prevents default when a line-number press starts a new
-      // selection, which moves the composer instead of closing it.
+  useDocumentEvent(
+    'pointerdown',
+    event => {
+      // A diff line-number press moves the composer instead of closing it.
       if (event.defaultPrevented) return
       if (!composerRef.current?.contains(event.target as Node)) onCancel()
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [hasDraft, onCancel])
+    },
+    { enabled: !hasDraft }
+  )
 
   return (
     <div

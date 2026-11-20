@@ -1,11 +1,5 @@
 import { Network } from 'lucide-react'
-import { useEffect, useState } from 'react'
-
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-
-import { createModelApi } from '@/api/models'
-import { createUserApi } from '@/api/users'
+import { useSettingsCloudModels } from './useSettingsCloudModels'
 
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -15,22 +9,6 @@ interface CloudRuntimeSettingsConnection {
   isConnected: boolean
   apiBaseUrl?: string
   token: string | null
-}
-
-function createRuntimeSettingsApis(connection: CloudRuntimeSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  const client = createHttpClient({
-    baseUrl: connection.apiBaseUrl,
-    getToken: () => connection.token,
-    redirectOnUnauthorized: false,
-  })
-  return {
-    deviceApi: createDeviceApi(client),
-    modelApi: createModelApi(client),
-    userApi: createUserApi(client),
-  }
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -48,40 +26,16 @@ export function CloudModelsSection({
   cloudConnection: CloudRuntimeSettingsConnection
 }) {
   const { t } = useTranslation('common')
-  const [models, setModels] = useState<UnifiedModel[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { isConnected } = cloudConnection
+  const { snapshot } = useSettingsCloudModels(cloudConnection)
+  const models = snapshot.data ?? []
+  const loading = !snapshot.settled
+  const error =
+    snapshot.status === 'error'
+      ? getErrorMessage(snapshot.error, t('workbench.cloud_models_error', '云端模型加载失败'))
+      : null
 
-  useEffect(() => {
-    if (!cloudConnection.isConnected) return undefined
-
-    let cancelled = false
-    Promise.resolve()
-      .then(() => {
-        if (cancelled) return null
-        setLoading(true)
-        setError(null)
-        return createRuntimeSettingsApis(cloudConnection).modelApi.listModels()
-      })
-      .then(response => {
-        if (!cancelled && response) setModels(response.data)
-      })
-      .catch(loadError => {
-        if (!cancelled) {
-          setError(
-            getErrorMessage(loadError, t('workbench.cloud_models_error', '云端模型加载失败'))
-          )
-          setModels([])
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cloudConnection, t])
+  if (!isConnected) return <DisconnectedCloudModelsSection />
 
   const cloudSummaryRow = (
     <div className="flex min-h-11 items-start gap-3 rounded-lg border border-border bg-background px-3 py-3">
@@ -90,7 +44,7 @@ export function CloudModelsSection({
           <h3 className="text-sm font-semibold text-text-primary">
             {t('workbench.cloud_models_title', '云端模型')}
           </h3>
-          {!loading && (
+          {snapshot.data !== undefined && (
             <span className="rounded-full bg-background px-2 py-0.5 text-xs text-text-secondary">
               {models.length}
             </span>
@@ -106,15 +60,16 @@ export function CloudModelsSection({
   return (
     <div data-testid="cloud-models-section" className="grid gap-2">
       {cloudSummaryRow}
+      {error ? (
+        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500">
+          {error}
+        </div>
+      ) : null}
       {loading ? (
         <div className="rounded-lg border border-border bg-background px-3 py-3 text-sm text-text-secondary">
           {t('workbench.cloud_models_loading', '正在加载云端模型...')}
         </div>
-      ) : error ? (
-        <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500">
-          {error}
-        </div>
-      ) : models.length === 0 ? (
+      ) : snapshot.data === undefined ? null : models.length === 0 ? (
         <div className="rounded-lg border border-border bg-background px-3 py-3 text-sm text-text-secondary">
           {t('workbench.cloud_models_empty', '暂无云端模型')}
         </div>

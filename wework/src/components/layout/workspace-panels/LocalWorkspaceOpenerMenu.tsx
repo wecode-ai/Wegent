@@ -1,14 +1,8 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import type { TFunction } from 'i18next'
 import { ChevronDown, Code2, Folder, Monitor, Plus, SquareTerminal } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-} from 'react'
+import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   prioritizeWorkspaceOpener,
   visibleOpenersForPlatform,
@@ -105,31 +99,26 @@ export function LocalWorkspaceOpenerPicker({
     }
   }, [align, open, preferredPlacement])
 
-  useEffect(() => {
-    if (!open) return
-
-    const handlePointerDown = (event: globalThis.PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target as Node
-      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) {
-        return
-      }
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return
       setOpen(false)
       setPosition(null)
-    }
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+    },
+    { enabled: open, capture: true }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') {
         setOpen(false)
         setPosition(null)
       }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown, true)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [open])
+    },
+    { enabled: open }
+  )
 
   const toggleOpen = async (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()

@@ -64,6 +64,8 @@ export function ProjectMembersSection<
 }) {
   const { LockKeyhole, Trash2 } = host.icons
   const {
+    memberPanelRef,
+    memberSearchError,
     members,
     loading,
     loadError,
@@ -97,7 +99,7 @@ export function ProjectMembersSection<
         )
 
   return (
-    <section className={className} data-testid="cloud-project-members-panel">
+    <section ref={memberPanelRef} className={className} data-testid="cloud-project-members-panel">
       <div className={projectSettingsContentClassName}>
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -142,6 +144,7 @@ export function ProjectMembersSection<
                   className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-border bg-background p-3 shadow-lg"
                 >
                   <MemberSearchPicker
+                    error={memberSearchError}
                     query={memberQuery}
                     onQueryChange={setMemberQuery}
                     users={memberResults}

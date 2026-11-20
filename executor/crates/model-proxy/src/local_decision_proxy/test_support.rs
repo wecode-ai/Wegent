@@ -106,6 +106,7 @@ pub(super) fn connection(backend: &FakeBackend) -> Arc<Mutex<Option<ConnectionCo
         backend_url: backend.url.clone(),
         socket_url: String::new(),
         auth_token: LOGIN_TOKEN.to_owned(),
+        authenticated_user_id: None,
         runtime_auth_token: String::new(),
     })))
 }

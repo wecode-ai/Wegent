@@ -18,6 +18,7 @@ export interface LocalExecutorCloudConnection {
   socketBaseUrl?: string
   isConnected: boolean
   token: string | null
+  user?: { id: number } | null
 }
 
 export interface LocalExecutorCloudConnectionResult {
@@ -79,7 +80,7 @@ async function issueRuntimeAuthToken(
 }
 
 export async function applyLocalExecutorCloudConnection(
-  { apiBaseUrl, backendUrl, socketBaseUrl, isConnected, token }: LocalExecutorCloudConnection,
+  { apiBaseUrl, backendUrl, socketBaseUrl, isConnected, token, user }: LocalExecutorCloudConnection,
   options: LocalExecutorCloudConnectionOptions = {}
 ): Promise<LocalExecutorCloudConnectionResult> {
   if (!isCloudConnectionUiAvailable()) return { connected: false }
@@ -98,6 +99,7 @@ export async function applyLocalExecutorCloudConnection(
           backendUrl,
           socketBaseUrl,
           authToken: token,
+          ...(user ? { authenticatedUserId: user.id } : {}),
           runtimeAuthToken: runtimeToken.authToken,
           deviceType: 'app',
         }),

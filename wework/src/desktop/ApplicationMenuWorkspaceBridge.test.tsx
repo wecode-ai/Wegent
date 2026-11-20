@@ -1,7 +1,5 @@
-import { render } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { ApplicationMenuWorkspaceBridge } from './ApplicationMenuWorkspaceBridge'
-import { WorkspaceTabsContext } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createWorkspaceMenuService, type WorkspaceMenuInput } from './workspaceMenuService'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { DesktopHostEvent } from '@/api/dsh/desktopHost'
@@ -13,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
 }))
 let eventSequence = 0
+const services: ReturnType<typeof createWorkspaceMenuService>[] = []
+afterEach(() => {
+  services.splice(0).forEach(service => service.disconnect())
+})
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => mocks.experimental,
 }))
@@ -62,11 +64,13 @@ function setup({
     }
     return unlisten
   })
-  const view = render(
-    <WorkspaceTabsContext.Provider value={context}>
-      <ApplicationMenuWorkspaceBridge pathname={pathname} />
-    </WorkspaceTabsContext.Provider>
-  )
+  const service = createWorkspaceMenuService()
+  services.push(service)
+  service.observe({ tabs: context, pathname })
+  const view = {
+    unmount: service.disconnect,
+    rerender: (input: WorkspaceMenuInput) => service.observe(input),
+  }
   const handle = mocks.subscribe.mock.calls.at(-1)![0] as (event: DesktopHostEvent) => void
   const send = (action: string, windowLabel = 'workspace-one') =>
     handle({
@@ -147,11 +151,7 @@ describe('application menu workspace actions', () => {
         kind,
         tabs: [tab({ id: 'active', kind })],
       })
-      view.rerender(
-        <WorkspaceTabsContext.Provider value={context}>
-          <ApplicationMenuWorkspaceBridge pathname="/settings/general" />
-        </WorkspaceTabsContext.Provider>
-      )
+      view.rerender({ tabs: context, pathname: '/settings/general' })
       send(kind === 'task' ? 'open-tasks' : 'open-project-spaces')
       expect(context.selectTab).toHaveBeenCalledExactlyOnceWith('active')
       expect(context.openTab).not.toHaveBeenCalled()
@@ -194,23 +194,18 @@ describe('application menu workspace actions', () => {
     // added handler, which repeated the action until the renderer hung.
     const { view } = setup()
     const initialSubscriptions = mocks.subscribe.mock.calls.length
-    view.rerender(
-      <WorkspaceTabsContext.Provider
-        value={
-          {
-            activeTab: tab({ id: 'active', kind: 'task' }),
-            activeTabId: 'active',
-            tabs: [tab({ id: 'active', kind: 'task' }), tab({ id: 'extra', kind: 'task' })],
-            openTab: vi.fn(),
-            selectTab: vi.fn(),
-            closeTab: vi.fn(),
-            restoreClosedTab: vi.fn(),
-          } as unknown as WorkspaceTabsContextValue
-        }
-      >
-        <ApplicationMenuWorkspaceBridge pathname="/" />
-      </WorkspaceTabsContext.Provider>
-    )
+    view.rerender({
+      tabs: {
+        activeTab: tab({ id: 'active', kind: 'task' }),
+        activeTabId: 'active',
+        tabs: [tab({ id: 'active', kind: 'task' }), tab({ id: 'extra', kind: 'task' })],
+        openTab: vi.fn(),
+        selectTab: vi.fn(),
+        closeTab: vi.fn(),
+        restoreClosedTab: vi.fn(),
+      } as unknown as WorkspaceTabsContextValue,
+      pathname: '/',
+    })
     expect(mocks.subscribe.mock.calls.length).toBe(initialSubscriptions)
   })
 

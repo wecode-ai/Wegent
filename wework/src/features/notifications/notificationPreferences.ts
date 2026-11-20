@@ -81,3 +81,28 @@ export function readActiveNotificationPreferences(): WeworkNotificationPreferenc
     return defaultNotificationPreferences
   }
 }
+
+/** Publish the active notification preferences used by reminder surfaces. */
+export function createActiveNotificationPreferencesStore() {
+  let snapshot = readActiveNotificationPreferences()
+  const listeners = new Set<() => void>()
+  const refresh = () => {
+    snapshot = readActiveNotificationPreferences()
+    for (const listener of listeners) listener()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      if (listeners.size === 1) {
+        window.addEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, refresh)
+        refresh()
+      }
+      return () => {
+        listeners.delete(listener)
+        if (!listeners.size)
+          window.removeEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, refresh)
+      }
+    },
+  }
+}

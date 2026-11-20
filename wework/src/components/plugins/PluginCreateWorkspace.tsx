@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ComposerSkillIcon } from '@/components/chat/composer/ComposerSkillIcon'
 import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
@@ -157,10 +157,12 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
     navigateTo('/')
   }
 
-  useEffect(() => {
-    focusComposerAtEnd(
-      workspaceRef.current?.querySelector<HTMLElement>('[data-testid="plugin-create-prompt-input"]')
-    )
+  const attachWorkspace = useCallback((node: HTMLElement | null) => {
+    workspaceRef.current = node
+    if (node)
+      focusComposerAtEnd(
+        node.querySelector<HTMLElement>('[data-testid="plugin-create-prompt-input"]')
+      )
   }, [])
 
   const submit = async (valueOverride?: string) => {
@@ -262,7 +264,7 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
 
   return (
     <main
-      ref={workspaceRef}
+      ref={attachWorkspace}
       data-testid="plugin-create-workspace"
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-text-primary"
     >

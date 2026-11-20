@@ -1,6 +1,13 @@
 classify_path() {
   local path="$1"
 
+  # The account wrapper and extracted provider retain the same feature gates.
+  case "$path" in
+    wework/src/features/workbench/OwnedWorkbenchProvider.*)
+      path="${path/OwnedWorkbenchProvider/WorkbenchProvider}"
+      ;;
+  esac
+
   # Feature-local dependencies add coverage without replacing existing routes.
   select_path_targets "$path" "${additional_catalog_path_targets[@]}" || true
 
@@ -516,7 +523,6 @@ classify_path() {
       .github/actions/setup-node-workspace/* | \
       .github/actions/setup-python-uv-cache/* | \
       .github/actions/setup-wework-native-test-dependencies/* | \
-      .github/ci/wework-native-test-ubuntu.sources | \
       .github/actions/build-wework-windows-e2e/* | \
       .github/actions/build-wework-macos-e2e/* | \
       .github/workflows/wework-e2e.yml | \

@@ -18,3 +18,8 @@ export * from './ComposerErrorBanner'
 export * from './ComposerPredictionContext'
 
 export { composerMarkdownText } from './composerMarkdownParser'
+
+export {
+  createComposerAutocompleteState,
+  type ComposerAutocompleteState,
+} from './composerAutocompleteState'

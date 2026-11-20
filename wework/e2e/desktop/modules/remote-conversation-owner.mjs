@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { withCloudRuntimeRequest } from './cloud-runtime-request.mjs'
 import { CLOUD_COMPLETION_TEXT } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 async function createOwnerFixture({ backendUrl, authToken }, ownerId) {
   const post = async (path, body) => {
@@ -61,10 +62,14 @@ export async function verifyRemoteConversationOwnerRejection(
     assert.equal(denied.ok, false)
     assert.equal(denied.error?.code, 'permission_denied')
     assert.equal(denied.error?.message, 'The requested owner must match the connected account')
-    assert.match(
-      (await readFile(apiLogPath, 'utf8')).slice(logOffset),
-      /\[API\] GET \/api\/devices\/runtime-owner 200 /,
-      'The real Executor did not resolve the API key owner while rejecting this message'
+    await waitForValue(
+      async () =>
+        /\[API\] GET \/api\/devices\/runtime-owner 200 /.test(
+          (await readFile(apiLogPath, 'utf8')).slice(logOffset)
+        ),
+      observed => observed,
+      'Timed out waiting for the API key owner lookup after the denied remote message',
+      5_000
     )
     const [afterTasks, afterMessages] = await Promise.all([taskIds(), messages()])
     assert.deepEqual(afterTasks, beforeTasks, 'The denied request changed the remote task list')

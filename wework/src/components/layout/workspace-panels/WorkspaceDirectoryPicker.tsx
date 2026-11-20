@@ -1,5 +1,6 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { createWorkspaceDirectoryResource } from './workspaceDirectoryResource'
 import type { MenuPosition } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
@@ -19,47 +20,16 @@ interface PickerProps {
 export function WorkspaceDirectoryPicker(props: PickerProps) {
   const { api, target, directoryPath } = props
   const { t } = useTranslation('common')
-  const [entries, setEntries] = useState<Record<string, WorkspaceFileEntry[]>>({})
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(0)
-  const requested = useRef(new Set<string>())
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  const load = useCallback(
-    async (path: string, retry = false) => {
-      if (requested.current.has(path) && !retry) return
-      requested.current.add(path)
-      setLoading(count => count + 1)
-      setErrors(current => {
-        const next = { ...current }
-        delete next[path]
-        return next
-      })
-      try {
-        const result = await api.listWorkspaceEntries(target.deviceId, path, target.path)
-        if (mounted.current) setEntries(current => ({ ...current, [path]: result.entries }))
-      } catch (error) {
-        if (mounted.current)
-          setErrors(current => ({
-            ...current,
-            [path]: error instanceof Error ? error.message : String(error),
-          }))
-      } finally {
-        if (mounted.current) setLoading(count => count - 1)
-      }
-    },
-    [api, target.deviceId, target.path]
+  const resource = useMemo(
+    () => createWorkspaceDirectoryResource(api, target.deviceId, target.path, directoryPath),
+    [api, target.deviceId, target.path, directoryPath]
   )
-
-  useEffect(() => {
-    void load(directoryPath)
-  }, [directoryPath, load])
+  const { entries, errors, loading } = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const load = resource.load
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -161,61 +131,68 @@ function DirectoryTree({
     syncing.current = false
   }, [model, tree, load, onSelect])
 
-  useEffect(() => {
-    const loadExpanded = () => {
-      if (syncing.current) return
-      const state = current.current
-      for (const path of state.tree.paths) {
-        const item = model.getItem(path)
-        if (!item || !('isExpanded' in item) || !item.isExpanded()) continue
-        const entry = getEntryByTreePath(
-          state.tree.entryByTreePath,
-          path,
-          state.tree.caseInsensitivePaths
-        )
-        if (entry) void state.load(entry.path)
+  const bindTree = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return
+      let active = true
+      const loadExpanded = () => {
+        if (!active || syncing.current) return
+        for (const path of tree.paths) {
+          const item = model.getItem(path)
+          if (!item || !('isExpanded' in item) || !item.isExpanded()) continue
+          const entry = getEntryByTreePath(tree.entryByTreePath, path, tree.caseInsensitivePaths)
+          if (entry) void load(entry.path)
+        }
       }
-    }
-    loadExpanded()
-    return model.subscribe(loadExpanded)
-  }, [model, tree])
+      const unsubscribe = model.subscribe(loadExpanded)
+      // Initial expansion is applied in the tree's layout phase.
+      queueMicrotask(loadExpanded)
+      return () => {
+        active = false
+        unsubscribe()
+      }
+    },
+    [model, tree, load]
+  )
 
   return (
-    <FileTree
-      model={model}
-      data-testid="workspace-file-picker-tree"
-      className="block min-h-0 w-full flex-1"
-      onContextMenu={event => {
-        event.preventDefault()
-        event.stopPropagation()
-        const row = event.nativeEvent
-          .composedPath()
-          .find(node => node instanceof HTMLElement && node.hasAttribute('data-item-path')) as
-          | HTMLElement
-          | undefined
-        if (!row?.dataset.itemPath) return
-        const entry = getEntryByTreePath(
-          tree.entryByTreePath,
-          row.dataset.itemPath,
-          tree.caseInsensitivePaths
-        )
-        if (entry)
-          onPathContextMenu(entry.path, entry.isDirectory, {
-            left: event.clientX,
-            top: event.clientY,
-          })
-      }}
-      onKeyDown={event => {
-        if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
-        event.preventDefault()
-        event.stopPropagation()
-        const focused = model.getFocusedPath()
-        const entry =
-          focused && getEntryByTreePath(tree.entryByTreePath, focused, tree.caseInsensitivePaths)
-        if (!entry) return
-        const rect = event.currentTarget.getBoundingClientRect()
-        onPathContextMenu(entry.path, entry.isDirectory, { left: rect.left, top: rect.top })
-      }}
-    />
+    <div ref={bindTree} className="flex min-h-0 w-full flex-1 flex-col">
+      <FileTree
+        model={model}
+        data-testid="workspace-file-picker-tree"
+        className="block min-h-0 w-full flex-1"
+        onContextMenu={event => {
+          event.preventDefault()
+          event.stopPropagation()
+          const row = event.nativeEvent
+            .composedPath()
+            .find(node => node instanceof HTMLElement && node.hasAttribute('data-item-path')) as
+            | HTMLElement
+            | undefined
+          if (!row?.dataset.itemPath) return
+          const entry = getEntryByTreePath(
+            tree.entryByTreePath,
+            row.dataset.itemPath,
+            tree.caseInsensitivePaths
+          )
+          if (entry)
+            onPathContextMenu(entry.path, entry.isDirectory, {
+              left: event.clientX,
+              top: event.clientY,
+            })
+        }}
+        onKeyDown={event => {
+          if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
+          event.preventDefault()
+          event.stopPropagation()
+          const focused = model.getFocusedPath()
+          const entry =
+            focused && getEntryByTreePath(tree.entryByTreePath, focused, tree.caseInsensitivePaths)
+          if (!entry) return
+          const rect = event.currentTarget.getBoundingClientRect()
+          onPathContextMenu(entry.path, entry.isDirectory, { left: rect.left, top: rect.top })
+        }}
+      />
+    </div>
   )
 }

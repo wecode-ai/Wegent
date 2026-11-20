@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useFocusRequest, useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { createPortal } from 'react-dom'
 
 const POPOVER_WIDTH = 280
@@ -85,53 +86,45 @@ export function AnchorPopover({
     }
   }, [anchor, wide, profile])
 
-  useEffect(() => {
-    if (!anchor) return
-    const frame = window.requestAnimationFrame(() => popoverRef.current?.focus())
-    return () => window.cancelAnimationFrame(frame)
-  }, [anchor])
-
-  useEffect(() => {
-    if (!anchor) return
+  useFocusRequest(popoverRef, anchor ?? undefined, {
+    enabled: Boolean(anchor),
+    animationFrame: true,
+  })
+  const attachPopover = useCallback((node: HTMLDivElement | null) => {
+    popoverRef.current = node
+    if (!node) return
     openPopoverCount += 1
     document.body.setAttribute(OPEN_POPOVER_BODY_ATTRIBUTE, '')
     return () => {
+      popoverRef.current = null
       openPopoverCount = Math.max(0, openPopoverCount - 1)
-      if (openPopoverCount === 0) {
-        document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
-      }
+      if (openPopoverCount === 0) document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
     }
-  }, [anchor])
-
-  useEffect(() => {
-    if (suspended) return
-    const handlePointerDown = (event: PointerEvent) => {
+  }, [])
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target as Node
-      if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) {
-        onClose()
-      }
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) onClose()
+    },
+    { enabled: !suspended }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') {
         event.stopPropagation()
         onClose()
       }
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    // Capture-phase so Escape closes the popover before an enclosing editor's
-    // own Escape handler can close the whole detail panel.
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown, true)
-    }
-  }, [anchor, onClose, suspended])
+    },
+    { enabled: !suspended, capture: true }
+  )
 
   if (!anchor || !position) return null
 
   return createPortal(
     <div
-      ref={popoverRef}
+      ref={attachPopover}
       data-testid={testId}
       role="dialog"
       tabIndex={-1}

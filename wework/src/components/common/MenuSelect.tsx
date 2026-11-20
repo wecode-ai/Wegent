@@ -1,5 +1,6 @@
+import { useOutsideClick } from '@wegent/collaboration/composer/useOutsideClick'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -247,35 +248,29 @@ export function PopupMenu({
   const close = useCallback(() => setOpen(false), [])
   useEscapeKey(close, open, menuRef)
 
-  useLayoutEffect(() => {
-    if (!open) return
-    const triggerRect = rootRef.current?.getBoundingClientRect()
-    if (!triggerRect) return
-    const width = Math.max(menuWidth ?? 180, triggerRect.width)
-    const belowTop = triggerRect.bottom + 6
-    const estimatedHeight = Math.min(360, menuRef.current?.scrollHeight ?? 320)
-    const top =
-      belowTop + estimatedHeight <= window.innerHeight - 8
-        ? belowTop
-        : Math.max(8, triggerRect.top - estimatedHeight - 6)
-    setPosition({
-      top,
-      right: Math.max(8, window.innerWidth - triggerRect.right),
-      width,
-    })
-  }, [menuWidth, open])
+  const bindMenu = useCallback(
+    (menu: HTMLDivElement | null) => {
+      menuRef.current = menu
+      if (!menu) return
+      const triggerRect = rootRef.current?.getBoundingClientRect()
+      if (!triggerRect) return
+      const width = Math.max(menuWidth ?? 180, triggerRect.width)
+      const belowTop = triggerRect.bottom + 6
+      const estimatedHeight = Math.min(360, menu.scrollHeight)
+      const top =
+        belowTop + estimatedHeight <= window.innerHeight - 8
+          ? belowTop
+          : Math.max(8, triggerRect.top - estimatedHeight - 6)
+      setPosition({
+        top,
+        right: Math.max(8, window.innerWidth - triggerRect.right),
+        width,
+      })
+    },
+    [menuWidth]
+  )
 
-  useEffect(() => {
-    if (!open) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close()
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [close, open])
+  useOutsideClick(rootRef, open, close, [menuRef])
 
   return (
     <span ref={rootRef} className={cn('inline-flex', fullWidth && 'w-full')}>
@@ -302,7 +297,7 @@ export function PopupMenu({
       {open
         ? createPortal(
             <div
-              ref={menuRef}
+              ref={bindMenu}
               data-testid={`${testId}-menu`}
               data-embedded-browser-occlusion
               style={{

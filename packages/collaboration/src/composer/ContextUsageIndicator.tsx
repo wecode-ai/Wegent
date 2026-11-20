@@ -1,5 +1,6 @@
+import { useDocumentEvent } from '../dom-events'
 import { FileArchive, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
@@ -40,30 +41,27 @@ export function ContextUsageIndicator({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmPosition, setConfirmPosition] = useState<ConfirmPosition | null>(null)
 
-  useEffect(() => {
-    if (!confirmOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target as Node
       if (!containerRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
         setConfirmOpen(false)
         setConfirmPosition(null)
       }
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: confirmOpen }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') {
         setConfirmOpen(false)
         setConfirmPosition(null)
       }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [confirmOpen])
+    },
+    { enabled: confirmOpen }
+  )
 
   useLayoutEffect(() => {
     if (!confirmOpen) return

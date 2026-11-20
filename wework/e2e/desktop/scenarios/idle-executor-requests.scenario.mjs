@@ -8,6 +8,7 @@ import {
 } from '../../../scripts/ai-verify-devtools.mjs'
 import { waitForWindowState } from '../modules/native-window-state.mjs'
 import { verifyRuntimeWorkRefreshBurst } from '../modules/runtime-work-refresh-burst.mjs'
+import { verifyPendingInventoryProjection } from '../modules/idle-executor-pending-inventory.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   assertIdleExecutorTraffic,
@@ -16,7 +17,7 @@ import {
 
 const OBSERVATION_MS = 6_500
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
   return {
     appEnvironment: {
       WEWORK_E2E_CLOUD_BACKEND_URL: '',
@@ -101,6 +102,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         await waitForWorkbenchDebugState(control, empty, 'Idle observation changed task membership')
         assertIdleExecutorTraffic(rows, windows)
         await verifyRuntimeWorkRefreshBurst(control, read)
+        await verifyPendingInventoryProjection(control, { executorHome, resultDir })
         return { idleExecutorRequests: true, observationMs: OBSERVATION_MS, windows }
       } finally {
         await client({ action: 'detach', target })

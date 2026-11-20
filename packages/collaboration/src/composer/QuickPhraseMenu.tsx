@@ -1,5 +1,5 @@
 import { File, FileText, MessageSquareText, Search, Settings, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
 import { useCollaborationPortalTheme } from '../theme'
@@ -99,7 +99,9 @@ function StashCard({
               <span
                 key={`${path}-${index}`}
                 className="absolute"
-                style={{ transform: `translateX(${(index - (thumbnails.length - 1) / 2) * 12}px)` }}
+                style={{
+                  transform: `translateX(${(index - (thumbnails.length - 1) / 2) * 12}px)`,
+                }}
               >
                 <StashThumbnail path={path} attachmentUrl={attachmentUrl} />
               </span>
@@ -221,13 +223,18 @@ export function QuickPhraseMenu({
   const globalRegular = filteredGlobalPhrases.filter(item => !item.id.startsWith('stash-'))
   const visiblePhrases = [...stashed, ...filteredProjectPhrases, ...globalRegular]
 
-  useEffect(() => {
-    if (!open) return
-    inputRef.current?.focus()
-    menuRef.current
-      ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [open, selectedIndex])
+  const attachMenu = useCallback(
+    (node: HTMLDivElement | null) => {
+      menuRef.current = node
+      if (!node || !open) return
+      inputRef.current?.focus()
+      node
+        .querySelectorAll<HTMLElement>('[role="option"]')
+        .item(selectedIndex)
+        ?.scrollIntoView?.({ block: 'nearest' })
+    },
+    [open, selectedIndex]
+  )
 
   const choose = (phrase: QuickPhrase) => {
     onSelect(phrase)
@@ -263,11 +270,7 @@ export function QuickPhraseMenu({
           data-testid="quick-phrase-button"
           disabled={disabled}
           onClick={() => setOpen(value => !value)}
-          className={
-            compact
-              ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40'
-              : 'flex h-8 w-8 max-md:h-11 max-md:w-11 items-center justify-center rounded-lg text-text-primary hover:bg-muted disabled:opacity-40'
-          }
+          className={`flex h-8 w-8 max-md:h-11 max-md:w-11 items-center justify-center text-text-primary hover:bg-muted disabled:opacity-40 ${compact ? 'rounded-full' : 'rounded-lg'}`}
           aria-label={t('workbench.quick_phrases', '快捷短语')}
           aria-expanded={open}
         >
@@ -279,7 +282,7 @@ export function QuickPhraseMenu({
         createPortal(
           <div
             {...portalTheme}
-            ref={menuRef}
+            ref={attachMenu}
             data-testid="quick-phrase-menu"
             style={{
               ...portalTheme.style,

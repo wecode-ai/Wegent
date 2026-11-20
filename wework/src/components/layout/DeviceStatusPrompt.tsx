@@ -1,5 +1,6 @@
 import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle, RotateCcw } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useSidebarDeviceObservation } from './sidebarDeviceObservation'
 import { createPortal } from 'react-dom'
 import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import {
@@ -39,52 +40,8 @@ interface DeviceStatusPromptProps {
   className?: string
 }
 
-const SIDEBAR_EMPTY_DEVICE_FALLBACK_MS = 30_000
 const SIDEBAR_TOOLTIP_MAX_WIDTH = 288
 const SIDEBAR_TOOLTIP_MARGIN = 8
-const SIDEBAR_DEVICE_CACHE_KEY = 'wework.sidebar.lastNonEmptyDevices'
-
-let sidebarDeviceMemoryCache: {
-  devices: DeviceInfo[]
-  updatedAt: number
-} | null = null
-
-function readSidebarDeviceCache() {
-  if (sidebarDeviceMemoryCache) return sidebarDeviceMemoryCache
-
-  try {
-    const value = window.sessionStorage.getItem(SIDEBAR_DEVICE_CACHE_KEY)
-    if (!value) return null
-    const parsed = JSON.parse(value)
-    if (!parsed || !Array.isArray(parsed.devices) || typeof parsed.updatedAt !== 'number') {
-      return null
-    }
-    sidebarDeviceMemoryCache = parsed
-    return parsed as { devices: DeviceInfo[]; updatedAt: number }
-  } catch {
-    return null
-  }
-}
-
-function readFreshSidebarDeviceCache(maxAgeMs: number) {
-  const cached = readSidebarDeviceCache()
-  if (!cached) return null
-
-  return Date.now() - cached.updatedAt < maxAgeMs ? cached : null
-}
-
-function writeSidebarDeviceCache(devices: DeviceInfo[], updatedAt: number) {
-  sidebarDeviceMemoryCache = { devices, updatedAt }
-  try {
-    window.sessionStorage.setItem(
-      SIDEBAR_DEVICE_CACHE_KEY,
-      JSON.stringify(sidebarDeviceMemoryCache)
-    )
-  } catch {
-    // Keep the in-memory cache when browser storage is unavailable.
-  }
-}
-
 function getDeviceName(device: DeviceInfo, t: ReturnType<typeof useTranslation>['t']): string {
   return device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
 }
@@ -163,21 +120,7 @@ function DeviceStatusPromptContent({
   const sidebarActionRef = useRef<HTMLDivElement>(null)
   const sidebarTooltipRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (presentation === 'sidebar-action' && devices.length > 0) {
-      writeSidebarDeviceCache(devices, Date.now())
-    }
-  }, [devices, presentation])
-
-  const sidebarDeviceCache =
-    presentation === 'sidebar-action'
-      ? readFreshSidebarDeviceCache(SIDEBAR_EMPTY_DEVICE_FALLBACK_MS)
-      : null
-  const canUseSidebarDeviceFallback =
-    presentation === 'sidebar-action' && devices.length === 0 && sidebarDeviceCache !== null
-  const effectiveDevices = canUseSidebarDeviceFallback
-    ? (sidebarDeviceCache?.devices ?? devices)
-    : devices
+  const effectiveDevices = useSidebarDeviceObservation(devices, presentation === 'sidebar-action')
   const claudeCodeDevices = useMemo(
     () => effectiveDevices.filter(isClaudeCodeDevice),
     [effectiveDevices]

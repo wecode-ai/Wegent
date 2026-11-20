@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useClock } from '@wegent/collaboration/clock'
+import { useMediaQuery } from '@wegent/collaboration/media-query'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import styles from './WorktreeCreationStatus.module.css'
@@ -9,7 +11,9 @@ interface WorktreeCreationStatusProps {
 
 export function WorktreeCreationStatus({ className }: WorktreeCreationStatusProps) {
   const { t } = useTranslation('common')
-  const [phaseIndex, setPhaseIndex] = useState(0)
+  const [startedAt] = useState(() => Date.now())
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const now = useClock(!reducedMotion, { resolutionMs: 1200 })
   const phases = [
     t('workbench.worktree_creation_phase_locating', '定位当前提交…'),
     t('workbench.worktree_creation_phase_branching', '把新分支拎出来…'),
@@ -17,15 +21,9 @@ export function WorktreeCreationStatus({ className }: WorktreeCreationStatusProp
     t('workbench.worktree_creation_phase_finishing', '最后整理一下文件…'),
   ]
 
-  useEffect(() => {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
-
-    const interval = window.setInterval(() => {
-      setPhaseIndex(current => (current + 1) % phases.length)
-    }, 1200)
-
-    return () => window.clearInterval(interval)
-  }, [phases.length])
+  const phaseIndex = reducedMotion
+    ? 0
+    : Math.max(0, Math.floor((now - startedAt) / 1200)) % phases.length
 
   return (
     <section

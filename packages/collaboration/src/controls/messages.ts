@@ -7,20 +7,20 @@ export const composerMessages: Record<
     "workbench.permission_mode_read_only": "只读",
     "workbench.permission_mode_workspace": "工作区",
     "workbench.permission_mode_full_access": "完整访问",
+    "workbench.command_approval_manual": "人工确认高危命令",
+    "workbench.command_approval_manual_help": "每次由你决定是否执行",
+    "workbench.command_approval_ai": "AI 审核高危命令",
+    "workbench.command_approval_ai_help": "由 Codex 审核并决定是否执行",
+    "workbench.command_approval_automatic": "自动执行高危命令",
+    "workbench.command_approval_automatic_help": "无需逐次确认",
+    "workbench.command_approval_title": "高危命令处理方式",
+    "workbench.command_approval_confirm_description":
+      "Codex 识别出的高危命令（例如强制删除文件）可以直接运行，可能造成不可恢复的数据丢失。",
     "workbench.permission_full_access_confirm_title": "启用完整访问？",
     "workbench.permission_full_access_confirm_description":
-      "Codex 将无需询问即可运行命令、访问网络，并读取、创建、修改或删除这台电脑任意位置的文件。",
-    "workbench.permission_full_access_files": "文件和文件夹",
-    "workbench.permission_full_access_files_description":
-      "访问工作区之外的文件，并可创建、修改或删除它们",
-    "workbench.permission_full_access_terminal": "终端命令",
-    "workbench.permission_full_access_terminal_description":
-      "运行命令、安装软件和更改系统设置",
-    "workbench.permission_full_access_network": "互联网和连接的应用",
-    "workbench.permission_full_access_network_description":
-      "访问网站、发送数据并使用已启用的连接器",
+      "Codex 可以运行命令、访问网络，并读写或删除工作区外的文件。",
     "workbench.permission_full_access_risk":
-      "这会显著增加数据丢失、敏感信息泄露、提示词注入和意外操作的风险。",
+      "完整访问可能造成数据丢失或敏感信息泄露。",
     "workbench.permission_full_access_confirm": "确认启用",
   },
   en: {
@@ -28,20 +28,20 @@ export const composerMessages: Record<
     "workbench.permission_mode_read_only": "Read only",
     "workbench.permission_mode_workspace": "Workspace",
     "workbench.permission_mode_full_access": "Full access",
+    "workbench.command_approval_manual": "Confirm risky commands manually",
+    "workbench.command_approval_manual_help": "You decide each time",
+    "workbench.command_approval_ai": "Review risky commands with AI",
+    "workbench.command_approval_ai_help": "Codex reviews and decides",
+    "workbench.command_approval_automatic": "Run risky commands automatically",
+    "workbench.command_approval_automatic_help": "No per-command confirmation",
+    "workbench.command_approval_title": "Risky command handling",
+    "workbench.command_approval_confirm_description":
+      "Commands Codex identifies as risky, such as forcibly deleting files, can run immediately and may cause permanent data loss.",
     "workbench.permission_full_access_confirm_title": "Turn on Full access?",
     "workbench.permission_full_access_confirm_description":
-      "Codex will be able to run commands, use the internet, and read, create, edit, or delete files anywhere on this computer without asking.",
-    "workbench.permission_full_access_files": "Files and folders",
-    "workbench.permission_full_access_files_description":
-      "Access files outside the workspace and create, edit, or delete them",
-    "workbench.permission_full_access_terminal": "Terminal commands",
-    "workbench.permission_full_access_terminal_description":
-      "Run commands, install software, and change system settings",
-    "workbench.permission_full_access_network": "Internet and connected apps",
-    "workbench.permission_full_access_network_description":
-      "Access websites, send data, and use enabled connectors",
+      "Codex can run commands, use the internet, and read, write, or delete files outside the workspace.",
     "workbench.permission_full_access_risk":
-      "This significantly increases the risk of data loss, sensitive information exposure, prompt injection, and unexpected actions.",
+      "Full access can cause data loss or expose sensitive information.",
     "workbench.permission_full_access_confirm": "Confirm",
   },
 };

@@ -1,5 +1,6 @@
 import { AlertCircle, Check, Loader2, MessageSquareText, Play, ShieldCheck, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useClock } from '@wegent/collaboration/clock'
 import { createPortal } from 'react-dom'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { Button } from '@/components/ui/button'
@@ -111,13 +112,7 @@ export function TaskSupervisorStatusButton({
   const nextCheckAt = supervisor.lastEvaluatedAt
     ? supervisor.lastEvaluatedAt + (supervisor.intervalSeconds ?? 30) * 1_000
     : null
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!nextCheckAt) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [nextCheckAt])
+  const now = useClock(Boolean(nextCheckAt), { until: nextCheckAt ?? undefined })
 
   const nextCheckLabel = nextCheckAt
     ? t('workbench.supervisor_next_check', {

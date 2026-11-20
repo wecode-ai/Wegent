@@ -7,7 +7,7 @@ import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { runJsonResultProcess } from './json-result-process.mjs'
 
 // The workbench-mode checkpoint runs this against the delivered runtime in CI.
-export async function verifyMissingDesktopUserData({ resources, executor, environment, root }) {
+export async function verifyMissingDesktopUserData({ resources, environment, root }) {
   await mkdir(root, { recursive: true })
   const script = join(root, 'missing-user-data.mjs')
   const resultFile = join(root, 'result.json')
@@ -26,33 +26,23 @@ export async function verifyMissingDesktopUserData({ resources, executor, enviro
       const runtime = path.join(appRoot, path.dirname(metadata.main), 'runtime');
       const load = name => import(pathToFileURL(path.join(runtime, name + '.js')).href);
       const { initializeWorkbenchDesktopData } = await load('workbench-desktop-startup');
-      const { executorMigrationLock } = await load('workbench-migration-lock');
-      const source = path.join(input.root, 'legacy-user-data');
       const desktop = path.join(input.root, 'desktop');
-      fs.mkdirSync(source, { recursive: true });
-      fs.writeFileSync(path.join(source, 'preferences.json'), 'original-preferences');
+      const userData = path.join(desktop, 'user-data');
+      const retained = userData + '.retained';
+      const legacy = path.join(input.root, 'legacy-user-data');
+      fs.mkdirSync(retained, { recursive: true });
+      fs.writeFileSync(path.join(retained, 'preferences.json'), 'original-preferences');
+      fs.symlinkSync(userData, legacy, process.platform === 'win32' ? 'junction' : 'dir');
       app.setPath('home', input.root);
-      const options = { app, source, desktop, additionalData: {},
-        acquireLock: executorMigrationLock(input.executor, { wait: true }) };
-      const initial = await initializeWorkbenchDesktopData(options);
-      assert.ok(initial);
-      app.releaseSingleInstanceLock();
-      const migrations = path.join(desktop, 'migrations');
-      const journalPath = path.join(migrations, 'desktop-user-data-v1.json');
-      const retained = initial.userData + '.retained';
-      fs.renameSync(initial.userData, retained);
-      const recovered = await initializeWorkbenchDesktopData(options);
-      assert.deepEqual(recovered, initial);
+      assert.equal(initializeWorkbenchDesktopData(app, userData, {}), true);
       assert.equal(app.isReady(), false);
-      assert.equal(fs.realpathSync(source), fs.realpathSync(recovered.userData));
+      assert.equal(app.getPath('userData'), userData);
+      assert.equal(fs.statSync(userData).isDirectory(), true);
       assert.equal(fs.readFileSync(path.join(retained, 'preferences.json'), 'utf8'), 'original-preferences');
-      assert.equal(fs.existsSync(path.join(recovered.userData, 'preferences.json')), false);
-      const journal = fs.readFileSync(journalPath, 'utf8');
-      assert.deepEqual(fs.readdirSync(migrations), ['desktop-user-data-v1.json']);
+      assert.equal(fs.existsSync(path.join(userData, 'preferences.json')), false);
+      assert.equal(fs.readlinkSync(legacy), userData);
       app.releaseSingleInstanceLock();
-      assert.deepEqual(await initializeWorkbenchDesktopData(options), recovered);
-      assert.equal(fs.readFileSync(journalPath, 'utf8'), journal);
-      app.releaseSingleInstanceLock();
+      assert.equal(initializeWorkbenchDesktopData(app, userData, {}), true);
       fs.writeFileSync(input.resultFile, JSON.stringify({ recoveredBeforeReady: true,
         retainedData: true, createdMissingDirectory: true, restarted: true }));
       app.exit(0);
@@ -65,7 +55,7 @@ export async function verifyMissingDesktopUserData({ resources, executor, enviro
   const evidence = await runJsonResultProcess({
     executable: require('electron'),
     scriptPath: script,
-    input: { resources, executor, root },
+    input: { resources, root },
     launchArguments: resolveElectronLaunchArguments(),
     environment: childEnvironment,
     timeout: 30_000,

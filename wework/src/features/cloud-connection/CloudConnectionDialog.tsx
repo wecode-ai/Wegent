@@ -9,12 +9,12 @@ import {
   Settings,
   X,
 } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
+import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { normalizeCloudBackendUrl } from './cloudConnectionStorage'
@@ -50,7 +50,11 @@ export function CloudConnectionDialog({
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
-  useEmbeddedBrowserOcclusion('cloud-connection-dialog', open)
+  const bindOverlay = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return
+    setEmbeddedBrowserOcclusion('cloud-connection-dialog', true)
+    return () => setEmbeddedBrowserOcclusion('cloud-connection-dialog', false)
+  }, [])
   const [backendUrl, setBackendUrl] = useState(
     () => cloud.backendUrl || getRuntimeConfig().wegentBackendUrl
   )
@@ -98,6 +102,7 @@ export function CloudConnectionDialog({
 
   return createPortal(
     <div
+      ref={bindOverlay}
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
       onClick={event => {
         if (!submitting && event.target === event.currentTarget) onClose()

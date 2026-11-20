@@ -1,7 +1,6 @@
 import { supportsConnectionEvents } from '@/lib/device-capabilities'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import {
-  loadTaskChangeRequests,
   observedChangeRequest,
   type TaskChangeRequestSnapshot,
   type TaskChangeRequestTarget,
@@ -24,7 +23,7 @@ import {
 } from './resourceObservation'
 import type { ChangeRequest } from '@/types/environment'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
-import { ChangeRequestUiObserver } from './changeRequestUiObserver'
+import { changeRequestObserverKey, ChangeRequestUiObserver } from './changeRequestUiObserver'
 import {
   findNativeLocalWorkbenchDevice,
   getUnambiguousWorkbenchDeviceAliases,
@@ -32,7 +31,7 @@ import {
 } from '@/lib/workbench-device'
 
 const CACHE_KEY = 'wework:change-request-snapshots:v3'
-const REFRESH_INTERVAL_MS = 30_000
+const OBSERVER_LEASE_RENEWAL_MS = 30_000
 const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
 interface CachedSnapshots {
@@ -116,7 +115,7 @@ export class ChangeRequestMonitor {
   private readonly listeners = new Set<() => void>()
   private revision = 0
   private refreshPromise: Promise<void> | null = null
-  private refreshTimer: number | null = null
+  private leaseRenewalTimer: number | null = null
   private refreshScheduled = false
   private targetRevision = 0
   private refreshTargetRevision = 0
@@ -139,7 +138,7 @@ export class ChangeRequestMonitor {
       references: (current?.references ?? 0) + 1,
     })
     this.synchronizeUiObservers()
-    this.startTimer()
+    this.startLeaseRenewal()
     if (!current) {
       this.targetRevision++
       this.scheduleRefresh()
@@ -153,7 +152,7 @@ export class ChangeRequestMonitor {
         this.targets.delete(key)
       }
       this.synchronizeUiObservers()
-      if (this.targets.size === 0) this.stopTimer()
+      if (this.targets.size === 0) this.stopLeaseRenewal()
     }
   }
 
@@ -406,11 +405,9 @@ export class ChangeRequestMonitor {
   }
 
   private observerTarget(target: TaskChangeRequestTarget): TaskChangeRequestTarget {
-    const url = target.changeRequestUrl ?? this.getSnapshot(target)?.changeRequest?.url
     return {
       ...target,
       deviceId: this.deviceAliases.get(target.deviceId) ?? target.deviceId,
-      ...(url ? { changeRequestUrl: url } : {}),
     }
   }
 
@@ -441,15 +438,11 @@ export class ChangeRequestMonitor {
     targets: TaskChangeRequestTarget[],
     force: boolean
   ): Promise<TaskChangeRequestSnapshot[]> {
-    const observed = targets.filter(
-      target =>
-        this.supportsEventProtocol(target.deviceId) && this.observerTarget(target).changeRequestUrl
-    )
-    const unobserved = targets.filter(target => !observed.includes(target))
     const grouped = new Map<string, TaskChangeRequestTarget[]>()
-    for (const target of observed) {
+    for (const target of targets) {
+      if (!this.supportsEventProtocol(target.deviceId)) continue
       const resolved = this.observerTarget(target)
-      const key = JSON.stringify([resolved.deviceId, resolved.changeRequestUrl])
+      const key = changeRequestObserverKey(resolved)
       grouped.set(key, [...(grouped.get(key) ?? []), target])
     }
     const groups = [...grouped.values()]
@@ -463,7 +456,7 @@ export class ChangeRequestMonitor {
       )
       results.push(...batch.flat())
     }
-    return [...results, ...(await loadTaskChangeRequests(this.api, unobserved))]
+    return results
   }
 
   async refresh(options: { shareInflight?: boolean; changed?: Set<string> } = {}): Promise<void> {
@@ -573,7 +566,7 @@ export class ChangeRequestMonitor {
                   result.lookupState === 'unauthenticated'
                     ? 'auth_required'
                     : observationFailureState(result.error),
-                transport: result.observation?.transport ?? 'poll',
+                transport: result.observation?.transport ?? 'connection',
                 lastSuccessAt: previous.observation?.lastSuccessAt ?? previous.fetchedAt,
                 stale: true,
                 error: result.error,
@@ -587,7 +580,7 @@ export class ChangeRequestMonitor {
             resourceEvents: this.resourceEventsFor(result.target, result.changeRequest?.url),
             observation: result.observation ?? {
               state: result.error ? observationFailureState(result.error) : 'observing',
-              transport: 'poll',
+              transport: 'connection',
               lastSuccessAt: result.error ? null : result.fetchedAt,
               stale: Boolean(result.error),
               error: result.error,
@@ -633,11 +626,11 @@ export class ChangeRequestMonitor {
     })
   }
 
-  private startTimer(): void {
-    if (this.refreshTimer !== null || typeof window === 'undefined') return
-    this.refreshTimer = window.setInterval(() => {
+  private startLeaseRenewal(): void {
+    if (this.leaseRenewalTimer !== null || typeof window === 'undefined') return
+    this.leaseRenewalTimer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void this.refresh()
-    }, REFRESH_INTERVAL_MS)
+    }, OBSERVER_LEASE_RENEWAL_MS)
     this.visibilityListener = () => {
       this.synchronizeUiObservers()
       if (document.visibilityState === 'visible') void this.refresh()
@@ -645,10 +638,10 @@ export class ChangeRequestMonitor {
     document.addEventListener('visibilitychange', this.visibilityListener)
   }
 
-  private stopTimer(): void {
-    if (this.refreshTimer === null || typeof window === 'undefined') return
-    window.clearInterval(this.refreshTimer)
-    this.refreshTimer = null
+  private stopLeaseRenewal(): void {
+    if (this.leaseRenewalTimer === null || typeof window === 'undefined') return
+    window.clearInterval(this.leaseRenewalTimer)
+    this.leaseRenewalTimer = null
     if (this.visibilityListener) {
       document.removeEventListener('visibilitychange', this.visibilityListener)
       this.visibilityListener = null
@@ -678,27 +671,31 @@ export function useTaskChangeRequest(
   const branch = target?.branch ?? null
   const changeRequestUrl = target?.changeRequestUrl
 
-  useEffect(() => {
-    if (
-      !monitor ||
-      !deviceId ||
-      !taskId ||
-      !remoteUrl ||
-      (!changeRequestUrl && (!workspacePath || !branch))
-    )
-      return
-    return monitor.register({
-      deviceId,
-      taskId,
-      workspacePath: workspacePath ?? '',
-      remoteUrl,
-      branch: branch ?? '',
-      ...(changeRequestUrl ? { changeRequestUrl } : {}),
-    })
-  }, [branch, changeRequestUrl, deviceId, monitor, remoteUrl, taskId, workspacePath])
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!monitor) return () => undefined
+      const unsubscribe = monitor.subscribe(listener)
+      const unregister =
+        deviceId && taskId && remoteUrl && (changeRequestUrl || (workspacePath && branch))
+          ? monitor.register({
+              deviceId,
+              taskId,
+              workspacePath: workspacePath ?? '',
+              remoteUrl,
+              branch: branch ?? '',
+              ...(changeRequestUrl ? { changeRequestUrl } : {}),
+            })
+          : undefined
+      return () => {
+        unsubscribe()
+        unregister?.()
+      }
+    },
+    [branch, changeRequestUrl, deviceId, monitor, remoteUrl, taskId, workspacePath]
+  )
 
   return useSyncExternalStore(
-    listener => monitor?.subscribe(listener) ?? (() => undefined),
+    subscribe,
     () => (monitor && target ? monitor.getSnapshot(target) : null),
     () => null
   )

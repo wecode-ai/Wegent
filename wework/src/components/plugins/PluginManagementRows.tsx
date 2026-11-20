@@ -1,5 +1,6 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, Upload, UserCog } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { useOptionalAppearance } from '@/features/appearance'
@@ -84,16 +85,13 @@ export function InstalledPluginRow({
   const recoveryError = plugin.raw.spec.sourcePayload?.runtimeRecoveryError
   const needsRecovery = typeof recoveryError === 'string' && Boolean(recoveryError.trim())
 
-  useEffect(() => {
-    if (!isMenuOpen) return
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!actionsRef.current?.contains(event.target as Node)) {
-        setIsMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handlePointerDown)
-    return () => document.removeEventListener('mousedown', handlePointerDown)
-  }, [isMenuOpen])
+  useDocumentEvent(
+    'mousedown',
+    event => {
+      if (!actionsRef.current?.contains(event.target as Node)) setIsMenuOpen(false)
+    },
+    { enabled: isMenuOpen }
+  )
 
   const mainContent = (
     <>

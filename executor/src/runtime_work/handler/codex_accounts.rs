@@ -173,6 +173,7 @@ struct ParsedAuthAccount {
     email: Option<String>,
     plan_type: Option<String>,
     token_account_id: Option<String>,
+    token_user_id: Option<String>,
 }
 
 fn parse_auth_account(auth: &[u8]) -> Option<ParsedAuthAccount> {
@@ -193,6 +194,13 @@ fn parse_auth_account(auth: &[u8]) -> Option<ParsedAuthAccount> {
     let plan_type = claims.as_ref().and_then(|claims| {
         normalized_string(claims.pointer("/https:~1~1api.openai.com~1auth/chatgpt_plan_type"))
     });
+    let token_user_id = claims.as_ref().and_then(|claims| {
+        normalized_string(claims.pointer("/https:~1~1api.openai.com~1auth/chatgpt_user_id"))
+            .or_else(|| {
+                normalized_string(claims.pointer("/https:~1~1api.openai.com~1auth/user_id"))
+            })
+            .or_else(|| normalized_string(claims.get("sub")))
+    });
     if account_type == "unknown" && token_account_id.is_none() && email.is_none() {
         return None;
     }
@@ -201,7 +209,60 @@ fn parse_auth_account(auth: &[u8]) -> Option<ParsedAuthAccount> {
         email,
         plan_type,
         token_account_id,
+        token_user_id,
     })
+}
+
+pub(crate) fn read_codex_auth_status() -> Value {
+    let target = current_auth_path();
+    let mut status = json!({
+        "runtime": "codex",
+        "target_path": target.display().to_string(),
+        "exists": false,
+        "updated_at": null,
+        "sha256": null,
+        "catalog_scope": null,
+        "size_bytes": null,
+        "error": null,
+    });
+    match fs::metadata(&target) {
+        Ok(metadata) if metadata.is_file() => {
+            status["exists"] = Value::Bool(true);
+            match fs::read(&target) {
+                Ok(auth) => {
+                    let sha256 = format!("{:x}", Sha256::digest(&auth));
+                    let scope = catalog_auth_identity(&auth).unwrap_or_else(|| sha256.clone());
+                    status["sha256"] = Value::String(sha256);
+                    status["catalog_scope"] = Value::String(scope);
+                    status["size_bytes"] = json!(auth.len());
+                    status["updated_at"] = json!(metadata.modified().ok().map(|modified| {
+                        chrono::DateTime::<chrono::Utc>::from(modified).to_rfc3339()
+                    }));
+                }
+                Err(error) => status["error"] = Value::String(error.to_string()),
+            }
+        }
+        Ok(_) => status["error"] = json!("Codex authentication path is not a file"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => status["error"] = Value::String(error.to_string()),
+    }
+    status
+}
+
+fn catalog_auth_identity(auth: &[u8]) -> Option<String> {
+    let account = parse_auth_account(auth)?;
+    if !matches!(
+        account.account_type.as_str(),
+        "chatgpt" | "chatgptAuthTokens"
+    ) {
+        return None;
+    }
+    let identity = json!([
+        account.account_type,
+        account.token_account_id?,
+        account.token_user_id?
+    ]);
+    Some(format!("{:x}", Sha256::digest(identity.to_string())))
 }
 
 fn auth_account_type<'a>(auth: &'a Value, token_account_id: Option<&str>) -> &'a str {

@@ -102,7 +102,7 @@ async fn local_sync(
     }
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
-    super::auto_update::complete_auto_update(async move {
+    super::write_coordination::complete_plugin_write(async move {
         super::plugin_sync_protocol::ensure_sync_state(&mysql, redis.as_ref(), i64::from(user.id))
             .await?;
         super::plugin_sync_protocol::retry_sync_write(|| {

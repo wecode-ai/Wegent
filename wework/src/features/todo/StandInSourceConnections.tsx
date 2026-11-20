@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createSourceConnectionsModel } from './sourceConnectionsModel'
 import { MessageSquare, Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
@@ -9,28 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
-type Connection = Pick<
-  StandInSourceConnection,
-  | 'id'
-  | 'name'
-  | 'kind'
-  | 'profile'
-  | 'providerId'
-  | 'scope'
-  | 'collectionKey'
-  | 'configurationSummary'
->
-
-export function StandInSourceConnections({
-  role,
-  provider,
-  api,
-  deviceId,
-  localDeviceId,
-  disabled,
-  onChange,
-  onReady,
-}: {
+type SourceConnectionsProps = {
   role: StandInRole
   provider: ConnectionProviderDescriptor
   api: StandInExecutorApi
@@ -39,33 +18,93 @@ export function StandInSourceConnections({
   disabled: boolean
   onChange(role: StandInRole): void
   onReady?(): void
-}) {
+}
+
+export function StandInSourceConnections(props: SourceConnectionsProps) {
+  const scope = JSON.stringify([
+    props.deviceId,
+    props.localDeviceId,
+    props.role.id,
+    props.role.executionDeviceId,
+    props.provider.id,
+    props.provider.authTarget?.pluginKey,
+    props.provider.authTarget?.connectorSlug,
+  ])
+  const [owner, setOwner] = useState({ api: props.api, scope, revision: 0 })
+  if (owner.api !== props.api || owner.scope !== scope)
+    setOwner({ api: props.api, scope, revision: owner.revision + 1 })
+  return <StandInSourceConnectionsContent key={owner.revision} {...props} />
+}
+
+function StandInSourceConnectionsContent({
+  role,
+  provider,
+  api,
+  deviceId,
+  localDeviceId,
+  disabled,
+  onChange,
+  onReady,
+}: SourceConnectionsProps) {
   const { t, i18n } = useTranslation('common')
-  const [adding, setAdding] = useState(false)
-  const [excluding, setExcluding] = useState<Connection | null>(null)
-  const [newPolicy, setNewPolicy] = useState({
-    automatic: true,
-    askBeforeAct: true,
-    immediate: role.id !== '@primary',
-  })
-  const [kind, setKind] = useState(provider.resourceKinds[0] ?? '')
-  const [scope, setScope] = useState<'selected' | 'all'>(
-    provider.allResourceKinds?.length ? 'all' : 'selected'
+  const input = useMemo(
+    () => ({
+      role,
+      provider,
+      api,
+      deviceId,
+      disabled,
+      onChange,
+      onReady,
+      allResourcesLabel: t('standIn.workspace.all_resources'),
+      cliUnavailableLabel: t('standIn.workspace.connection_cli_request_unavailable', {
+        provider: provider.displayName,
+      }),
+    }),
+    [role, provider, api, deviceId, disabled, onChange, onReady, t]
   )
-  const [selection, setSelection] = useState<Connection[]>([])
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Connection[]>([])
-  const [nextCursor, setNextCursor] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<{ message: string; code?: unknown } | null>(null)
-  const [searched, setSearched] = useState(false)
-  const [authOpen, setAuthOpen] = useState(false)
+  const [model] = useState(() => createSourceConnectionsModel(input))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const {
+    adding,
+    excluding,
+    newPolicy,
+    kind,
+    scope,
+    selection,
+    query,
+    results,
+    nextCursor,
+    busy,
+    error,
+    searched,
+    authOpen,
+  } = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const setAdding = (value: Parameters<typeof model.set<'adding'>>[1]) => model.set('adding', value)
+  const setExcluding = (value: Parameters<typeof model.set<'excluding'>>[1]) =>
+    model.set('excluding', value)
+  const setNewPolicy = (value: Parameters<typeof model.set<'newPolicy'>>[1]) =>
+    model.set('newPolicy', value)
+  const setKind = (value: Parameters<typeof model.set<'kind'>>[1]) => model.set('kind', value)
+  const setScope = (value: Parameters<typeof model.set<'scope'>>[1]) => model.set('scope', value)
+  const setSelection = (value: Parameters<typeof model.set<'selection'>>[1]) =>
+    model.set('selection', value)
+  const setQuery = (value: Parameters<typeof model.set<'query'>>[1]) => model.set('query', value)
+  const setResults = (value: Parameters<typeof model.set<'results'>>[1]) =>
+    model.set('results', value)
+  const setNextCursor = (value: Parameters<typeof model.set<'nextCursor'>>[1]) =>
+    model.set('nextCursor', value)
+  const setError = (value: Parameters<typeof model.set<'error'>>[1]) => model.set('error', value)
+  const setSearched = (value: Parameters<typeof model.set<'searched'>>[1]) =>
+    model.set('searched', value)
+  const setAuthOpen = (value: Parameters<typeof model.set<'authOpen'>>[1]) =>
+    model.set('authOpen', value)
+  const { search, add, addAll, closeExclusionEditor, isConnected, identity } = model
   const authorizationRequired =
     provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
-  const latest = useRef({ role, onChange })
-  useEffect(() => {
-    latest.current = { role, onChange }
-  }, [role, onChange])
   const allRows = role.connections ?? []
   const rows = allRows.filter(row => row.providerId === provider.id)
   const prefix =
@@ -77,194 +116,13 @@ export function StandInSourceConnections({
       ...role,
       connections: [...allRows.filter(row => row.providerId !== provider.id), ...next],
     })
-  const searchSequence = useRef(0)
-  const failSearch = (sequence: number, cause: unknown) => {
-    if (sequence === searchSequence.current) {
-      const code =
-        cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : undefined
-      setError({
-        message:
-          code === 'connection_cli_request_unavailable'
-            ? t('standIn.workspace.connection_cli_request_unavailable', {
-                provider: provider.displayName,
-              })
-            : getStandInErrorMessage(cause),
-        code,
-      })
-    }
-  }
-  const search = async (cursor?: string) => {
-    if (busy || !query.trim()) return
-    const sequence = ++searchSequence.current
-    setBusy(true)
-    setError(null)
-    setSearched(false)
-    try {
-      const result = await api.searchConnectionResources(
-        deviceId,
-        provider.id,
-        kind,
-        query.trim(),
-        cursor
-      )
-      if (sequence !== searchSequence.current) return
-      const items = result.items.filter(
-        row => !excluding || (row.profile === excluding.profile && row.kind === excluding.kind)
-      )
-      setResults(previous =>
-        cursor
-          ? [
-              ...previous,
-              ...items.filter(
-                row =>
-                  !previous.some(
-                    value =>
-                      value.id === row.id &&
-                      value.kind === row.kind &&
-                      value.profile === row.profile
-                  )
-              ),
-            ]
-          : items
-      )
-      setNextCursor(result.hasMore ? result.nextCursor : undefined)
-      setSearched(true)
-    } catch (cause) {
-      failSearch(sequence, cause)
-    } finally {
-      setBusy(false)
-    }
-  }
-  const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
-  const closeExclusionEditor = () => {
-    searchSequence.current += 1
-    setExcluding(null)
-    setSelection([])
-    setResults([])
-    setNextCursor(undefined)
-    setSearched(false)
-    setError(null)
-  }
-  const isConnected = (row: Connection) =>
-    excluding
-      ? rows
-          .find(value => identity(value) === identity(excluding))
-          ?.excludedResources?.some(value => value.id === row.id) === true
-      : rows.some(
-          value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
-        )
-  const add = (items: Connection[]) => {
-    const current = latest.current
-    if (excluding) {
-      if (
-        !current.role.connections?.some(
-          row =>
-            row.providerId === provider.id &&
-            row.scope === 'all' &&
-            identity(row) === identity(excluding)
-        )
-      ) {
-        closeExclusionEditor()
-        return
-      }
-      current.onChange({
-        ...current.role,
-        connections: current.role.connections?.map(row => {
-          if (row.providerId !== provider.id || identity(row) !== identity(excluding)) return row
-          const excludedResources = [...(row.excludedResources ?? [])]
-          for (const item of items) {
-            if (
-              item.profile === row.profile &&
-              item.kind === row.kind &&
-              !excludedResources.some(value => value.id === item.id)
-            )
-              excludedResources.push({ id: item.id, name: item.name })
-          }
-          return { ...row, excludedResources }
-        }),
-      })
-      closeExclusionEditor()
-      return
-    }
-    let connections = [...(current.role.connections ?? [])]
-    if (items.length && items.every(item => item.scope !== 'all')) {
-      const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
-      connections = connections.filter(
-        row =>
-          row.providerId !== provider.id ||
-          row.scope !== 'all' ||
-          !covered.has(JSON.stringify([row.profile, row.kind]))
-      )
-    }
-    for (const item of items) {
-      const same = (row: StandInSourceConnection) =>
-        row.providerId === provider.id && row.profile === item.profile && row.kind === item.kind
-      if (item.scope === 'all') connections = connections.filter(row => !same(row))
-      if (connections.some(row => same(row) && (row.id === item.id || row.scope === 'all')))
-        continue
-      connections.push({
-        ...item,
-        providerId: provider.id,
-        policy: { ...newPolicy },
-      })
-    }
-    current.onChange({ ...current.role, connections })
-    setSelection([])
-    setAdding(false)
-  }
-  const addAll = async () => {
-    if (busy || disabled) return
-    const sequence = ++searchSequence.current
-    setBusy(true)
-    setError(null)
-    try {
-      const kinds = provider.allResourceKinds ?? []
-      const pages = await Promise.all(
-        kinds.map(resourceKind =>
-          api.searchConnectionResources(deviceId, provider.id, resourceKind, '', undefined, 'all')
-        )
-      )
-      if (sequence !== searchSequence.current) return
-      const items = pages.map((page, index) => {
-        const item = page.items[0]
-        if (
-          page.items.length !== 1 ||
-          item?.scope !== 'all' ||
-          item.id !== '*' ||
-          item.kind !== kinds[index] ||
-          !item.profile ||
-          item.providerId !== provider.id
-        )
-          throw Object.assign(new Error('Invalid all-resource selection'), {
-            code: 'connection_response_invalid',
-          })
-        return {
-          ...item,
-          name: provider.allResourceLabels?.[item.kind] ?? t('standIn.workspace.all_resources'),
-        }
-      })
-      if (!items.length || new Set(items.map(item => item.profile)).size !== 1)
-        throw Object.assign(new Error('Connection account changed'), {
-          code: 'connection_response_invalid',
-        })
-      add(items)
-    } catch (cause) {
-      failSearch(sequence, cause)
-    } finally {
-      setBusy(false)
-    }
-  }
   const authorization = authOpen && provider.authTarget && (
     <LocalConnectorAuthDialog
       open
       target={provider.authTarget}
       title={t('standIn.workspace.connect_source', { name: provider.displayName })}
       onCancel={() => setAuthOpen(false)}
-      onSuccess={() => {
-        setAuthOpen(false)
-        setError(null)
-        onReady?.()
-      }}
+      onSuccess={model.authorized}
     />
   )
   const connectedScope = (
@@ -365,7 +223,7 @@ export function StandInSourceConnections({
                 data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
                 disabled={disabled || busy || authorizationRequired}
                 onClick={() => {
-                  searchSequence.current += 1
+                  model.invalidateSearch()
                   setAdding(false)
                   setExcluding(row)
                   setKind(row.kind)
@@ -479,7 +337,7 @@ export function StandInSourceConnections({
                 value={kind}
                 disabled={busy}
                 onChange={event => {
-                  searchSequence.current += 1
+                  model.invalidateSearch()
                   setKind(event.target.value)
                   setScope('selected')
                   setResults([])
@@ -502,7 +360,7 @@ export function StandInSourceConnections({
                   data-testid={`${prefix}-query`}
                   value={query}
                   onChange={event => {
-                    searchSequence.current += 1
+                    model.invalidateSearch()
                     setQuery(event.target.value)
                     setResults([])
                     setNextCursor(undefined)
@@ -536,7 +394,7 @@ export function StandInSourceConnections({
                     data-testid={`${prefix}-scope-${value}`}
                     checked={scope === value}
                     onChange={() => {
-                      searchSequence.current += 1
+                      model.invalidateSearch()
                       setScope(value)
                       setError(null)
                     }}

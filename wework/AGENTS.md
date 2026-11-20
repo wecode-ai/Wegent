@@ -58,6 +58,10 @@ or migrations do not justify refusing to open the entire application.
   can recover after the cause is repaired. Follow the repository's test execution
   policy; a visible recovery window is not proof that the normal runtime is ready.
 
+## React effect boundary
+
+Wework and shared packages prohibit product-level React useEffect. Only the exact files in EFFECT_CORE_FILES in scripts/check-effect-boundary.mjs may own it: appearance synchronization, the DSH client runtime lifecycle, and typed native DOM event bindings (including Escape layer arbitration, visibility and element geometry observations, focus and scroll requests, modal focus trapping, background isolation and composer height measurement). Use @wegent/collaboration/dom-events for native listeners, observers and focus requests; this core API accepts event handlers, not arbitrary effect setup/cleanup callbacks. The standalone lint gate also covers shared packages and cannot be disabled with ESLint comments. Existing violations are migration work and remain errors; do not baseline them or expand the core list merely to obtain a pass. Remove derived-state effects, handle user actions in event handlers, use useSyncExternalStore for external subscriptions, and centralize external synchronization in reviewed domain services. Do not alias useEffect or replace it with useLayoutEffect to evade this boundary.
+
 ## UI and component rules
 
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.

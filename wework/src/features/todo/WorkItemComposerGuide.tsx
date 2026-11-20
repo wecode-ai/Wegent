@@ -1,12 +1,12 @@
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { Button } from '@/components/ui/button'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
-import { useWorkItemPickerOpen } from './workItemPickerOpenState'
+import { createWorkItemGuideSource } from './workItemGuideSource'
+import { Button } from '@/components/ui/button'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
@@ -14,8 +14,8 @@ interface WorkItemComposerGuideProps {
   project?: CloudProject | null
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
-  currentTask?: RuntimeTaskAddress | null
   taskOwnerKey?: string | null
+  currentTask?: RuntimeTaskAddress | null
   goalPresent?: boolean
   integrated?: boolean
   toolbar?: boolean
@@ -62,137 +62,43 @@ function WorkItemComposerGuideContent({
   const pickerStoreKey =
     taskOwnerKey ??
     (currentTask ? `task:${currentTask.deviceId}:${currentTask.taskId}` : (item?.id ?? null))
-  // Open state outlives this component: a pane remount during restore must
-  // re-render an open picker instead of silently closing it (issue #4637).
-  // Persisted only for identity-stable guides; project-only guides keep
-  // local state so a project storage change still resets their picker.
-  const [persistedOpen, setPersistedOpen] = useWorkItemPickerOpen(
-    canChangeProject ? pickerStoreKey : null
-  )
-  const [localOpen, setLocalOpen] = useState(false)
-  const open = pickerStoreKey !== null ? persistedOpen : localOpen
-  const setOpen = useCallback(
-    (update: boolean | ((current: boolean) => boolean)) => {
-      const next = typeof update === 'function' ? update(open) : update
-      if (pickerStoreKey !== null) {
-        setPersistedOpen(next)
-      } else {
-        setLocalOpen(next)
-      }
-    },
-    [open, pickerStoreKey, setPersistedOpen]
-  )
-  const traceId = useId()
-  const [bindingRetry, setBindingRetry] = useState(0)
-  const [bindingResult, setBindingResult] = useState<{
-    api: ProjectSpaceApi
-    itemId: string
-    bindings: TaskBinding[] | null
-    failed: boolean
-    refreshKey: unknown
-    retry: number
-  } | null>(null)
+  const scope = project ? projectKey(project) : ''
   const itemId = item?.id
-  const menuOpen = open && canChangeProject
-  const closeMenu = useCallback(() => {
-    if (import.meta.env.VITE_WEWORK_E2E === 'true')
-      console.debug(
-        '[Wework] Project picker lifecycle',
-        JSON.stringify({ event: 'close-requested', traceId })
-      )
-    setOpen(false)
-  }, [setOpen, traceId])
-
-  useEffect(() => {
-    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.debug(
-      '[Wework] Project picker lifecycle',
-      JSON.stringify({ event: 'mounted', traceId })
-    )
-    return () => {
-      console.debug(
-        '[Wework] Project picker lifecycle',
-        JSON.stringify({ event: 'unmounted', traceId })
-      )
-    }
-  }, [traceId])
-
-  useEffect(() => {
-    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.debug(
-      '[Wework] Project picker lifecycle',
-      JSON.stringify({
-        event: 'state',
-        traceId,
-        open,
-        projectId: project?.id ?? null,
-        projectStore: project?.project_store ?? null,
-        itemId: item?.id ?? null,
-        taskId: currentTask?.taskId ?? null,
-        deviceId: currentTask?.deviceId ?? null,
-        pickerStoreKey,
+  const source = useMemo(
+    () => createWorkItemGuideSource(api, itemId, canChangeProject ? pickerStoreKey : null, scope),
+    [api, itemId, canChangeProject, pickerStoreKey, scope]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      source.subscribe(listener, {
+        refreshKey,
+        projectId: project?.id,
+        projectStore: project?.project_store,
+        taskId: currentTask?.taskId,
+        deviceId: currentTask?.deviceId,
         canChangeProject,
-        menuOpen,
-      })
-    )
-  }, [
-    traceId,
+      }),
+    [
+      source,
+      refreshKey,
+      project?.id,
+      project?.project_store,
+      currentTask?.taskId,
+      currentTask?.deviceId,
+      canChangeProject,
+    ]
+  )
+  const {
     open,
-    project?.id,
-    project?.project_store,
-    item?.id,
-    currentTask?.taskId,
-    currentTask?.deviceId,
-    pickerStoreKey,
-    canChangeProject,
-    menuOpen,
-  ])
-
-  useEffect(() => {
-    if (!api || !itemId) return
-    let active = true
-    void api.listTaskBindings(itemId).then(
-      bindings => {
-        if (active)
-          setBindingResult({
-            api,
-            itemId,
-            bindings,
-            failed: false,
-            refreshKey,
-            retry: bindingRetry,
-          })
-      },
-      () => {
-        if (active)
-          setBindingResult(previous => ({
-            api,
-            itemId,
-            bindings:
-              previous && previous.api === api && previous.itemId === itemId
-                ? previous.bindings
-                : null,
-            failed: true,
-            refreshKey,
-            retry: bindingRetry,
-          }))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, itemId, refreshKey, bindingRetry])
-
+    bindings: taskBindings,
+    failed: readFailed,
+    loading: bindingsPending,
+  } = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const setOpen = source.setOpen
+  const menuOpen = open && canChangeProject
+  const closeMenu = useCallback(() => source.setOpen(false), [source])
   const resolvedItem = item ?? null
-  const ownedBindings =
-    bindingResult && bindingResult.api === api && bindingResult.itemId === itemId
-      ? bindingResult
-      : null
-  const taskBindings = !item ? [] : (ownedBindings?.bindings ?? null)
-  const bindingsPending =
-    !ownedBindings ||
-    ownedBindings.refreshKey !== refreshKey ||
-    ownedBindings.retry !== bindingRetry
+
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
     taskBindings == null
@@ -203,8 +109,9 @@ function WorkItemComposerGuideContent({
             (taskBindings.some(binding => isCurrentBinding(binding, currentTask)) ? 1 : 0)
         )
 
+  const readFailedText = t('workbench.runtime_work_load_failed')
   const taskSummary =
-    taskCount == null && api && !ownedBindings?.failed
+    taskCount == null && api && !readFailed
       ? t('workbench.loading_task_count', '任务同步中')
       : taskCount != null && taskCount > 1
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
@@ -277,13 +184,14 @@ function WorkItemComposerGuideContent({
               </span>
             ) : null}
           </button>
-          {ownedBindings?.failed ? (
+          {readFailed ? (
             <Button
               variant="ghost"
               type="button"
               data-testid="work-item-guide-retry-task-count"
               disabled={bindingsPending}
-              onClick={() => setBindingRetry(current => current + 1)}
+              onClick={() => void source.reload()}
+              title={readFailedText}
               className="h-6 shrink-0 px-1 py-0 text-xs text-text-muted"
             >
               {t('workbench.task_count_load_failed_retry', '任务数加载失败，重试')}

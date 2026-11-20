@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDialogKeyboard } from './useDialogKeyboard'
@@ -110,4 +111,118 @@ it('restores the trigger even when a field takes autofocus during mount', async 
   await act(async () => root.render(null))
   expect(document.activeElement).toBe(trigger)
   trigger.remove()
+})
+
+it('captures a fresh opener each time the same dialog hook is reopened', async () => {
+  const first = document.createElement('button')
+  const second = document.createElement('button')
+  document.body.append(first, second)
+  function Toggle({ open }: { open: boolean }) {
+    const ref = useDialogKeyboard<HTMLDivElement>(() => {}, open)
+    return open ? (
+      <div ref={ref} role="dialog" aria-modal="true" tabIndex={-1}>
+        <button>Inside</button>
+      </div>
+    ) : null
+  }
+  try {
+    await act(async () => root.render(<Toggle open={false} />))
+    first.focus()
+    await act(async () => root.render(<Toggle open />))
+    expect(container.contains(document.activeElement)).toBe(true)
+    await act(async () => root.render(<Toggle open={false} />))
+    expect(document.activeElement).toBe(first)
+    second.focus()
+    await act(async () => root.render(<Toggle open />))
+    await act(async () => root.render(<Toggle open={false} />))
+    expect(document.activeElement).toBe(second)
+  } finally {
+    first.remove()
+    second.remove()
+  }
+})
+
+it('restores a remounted inline trigger after closing a portaled dialog', async () => {
+  function Toggle({ open }: { open: boolean }) {
+    const trigger = useRef<HTMLButtonElement>(null)
+    const restoreTrigger = useCallback(() => trigger.current, [])
+    const dialog = useDialogKeyboard<HTMLDivElement>(
+      () => {},
+      open,
+      '[data-testid="exit"]',
+      true,
+      restoreTrigger
+    )
+    return open ? (
+      createPortal(
+        <div ref={dialog} role="dialog" aria-modal="true" tabIndex={-1}>
+          <button data-testid="exit">Exit</button>
+        </div>,
+        document.body
+      )
+    ) : (
+      <button ref={trigger} data-testid="inline">
+        Open
+      </button>
+    )
+  }
+  await act(async () => root.render(<Toggle open={false} />))
+  const original = container.querySelector<HTMLButtonElement>('[data-testid="inline"]')!
+  original.focus()
+  await act(async () => root.render(<Toggle open />))
+  expect(document.activeElement).toBe(document.querySelector('[data-testid="exit"]'))
+  expect(original.isConnected).toBe(false)
+  await act(async () => root.render(<Toggle open={false} />))
+  const remounted = container.querySelector('[data-testid="inline"]')
+  expect(remounted).not.toBe(original)
+  expect(document.activeElement).toBe(remounted)
+  const outside = document.createElement('button')
+  document.body.append(outside)
+  try {
+    outside.focus()
+    await act(async () => root.render(<Toggle open />))
+    await act(async () => root.render(<Toggle open={false} />))
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="inline"]'))
+    await act(async () => root.render(<Toggle open />))
+    outside.focus()
+    await act(async () => root.render(<Toggle open={false} />))
+    expect(document.activeElement).toBe(outside)
+  } finally {
+    outside.remove()
+  }
+})
+
+it('uses an explicit fallback selector only when the original opener is gone', async () => {
+  const fallback = document.createElement('button')
+  fallback.dataset.testid = 'fallback-opener'
+  document.body.append(fallback)
+  const restore = { fallbackSelector: '[data-testid="fallback-opener"]' }
+  function Toggle({ open, removeOpener = false }: { open: boolean; removeOpener?: boolean }) {
+    const dialog = useDialogKeyboard<HTMLDivElement>(() => {}, open, undefined, true, restore)
+    return (
+      <>
+        {!(open && removeOpener) && <button data-testid="opener">Open</button>}
+        {open && (
+          <div ref={dialog} role="dialog" tabIndex={-1}>
+            <input />
+          </div>
+        )}
+      </>
+    )
+  }
+  try {
+    await act(async () => root.render(<Toggle open={false} />))
+    const original = container.querySelector<HTMLButtonElement>('[data-testid="opener"]')!
+    original.focus()
+    await act(async () => root.render(<Toggle open />))
+    await act(async () => root.render(<Toggle open={false} />))
+    expect(document.activeElement).toBe(original)
+    original.focus()
+    await act(async () => root.render(<Toggle open removeOpener />))
+    expect(original.isConnected).toBe(false)
+    await act(async () => root.render(<Toggle open={false} />))
+    expect(document.activeElement).toBe(fallback)
+  } finally {
+    fallback.remove()
+  }
 })

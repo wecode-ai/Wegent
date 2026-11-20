@@ -2,16 +2,22 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Header, create } from 'tar'
-import { afterEach, expect, test } from 'vitest'
+import { afterAll, afterEach, expect, test } from 'vitest'
+import {
+  disableAmbientAsarInterception,
+  restoreAmbientAsarInterception,
+} from './ambient-asar-fixtures.js'
 import { extractPhysicalRelease } from './physical-release-files.js'
 
 // Electron's patched fs must not treat the fixture's physical app.asar as an archive.
 process.noAsar = true
 
 const roots: string[] = []
+disableAmbientAsarInterception()
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
+afterAll(restoreAmbientAsarInterception)
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'wework-physical-extraction-'))

@@ -1133,7 +1133,8 @@
   },
   "appPreview": {
     "button": "预览",
-    "title": "应用预览"
+    "title": "应用预览",
+    "unavailable": "应用预览地址不可用。"
   },
   "userSearch": {
     "searchFailed": "搜索失败，请重试。",

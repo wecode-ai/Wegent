@@ -1,7 +1,8 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Download, Loader2, UserRound } from 'lucide-react'
-import { useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useContext, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -204,20 +205,20 @@ export function DesktopSidebarAccount({
   const internalContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = containerRefProp ?? internalContainerRef
 
-  useEffect(() => {
-    if (!menuOpen) return
-
-    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       if (!containerRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    }
-
-    document.addEventListener('pointerdown', handleOutsidePointer)
-    document.addEventListener('mousedown', handleOutsidePointer)
-    return () => {
-      document.removeEventListener('pointerdown', handleOutsidePointer)
-      document.removeEventListener('mousedown', handleOutsidePointer)
-    }
-  }, [containerRef, menuOpen])
+    },
+    { enabled: menuOpen }
+  )
+  useDocumentEvent(
+    'mousedown',
+    event => {
+      if (!containerRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    },
+    { enabled: menuOpen }
+  )
 
   return (
     <>

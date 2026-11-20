@@ -54,6 +54,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
+OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "message"`、`role: "developer"` 形式的 Codex 子代理消息。出站条目只发送标准消息字段，发送者和接收者保留在 Codex 的消息正文中。
+
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
 官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和助理共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
@@ -160,7 +162,13 @@ executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历�
 毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
 executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
 
+### Codex 外部上下文转换
+
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+
 ### Anthropic 空输出恢复
+
+对所有 Anthropic Messages 上游，executor 先把 Codex 子代理的 `agent_message` 规范为带 `developer` 角色的消息，再由 Anthropic 适配器将内容写入上游请求的 `system` 字段。`model-sse-parsing` 检查点使用真实 Codex 父子代理和模拟上游，验证子代理任务及完成结果都通过该字段送达。
 
 部分 Anthropic Messages 兼容服务可能在 `message_delta` 中返回结束原因和大于零的 `output_tokens`，却没有发送任何文本、思考内容或工具调用。executor 的 Codex compat proxy 会把这种不完整响应转换为失败事件，而不是错误地发出成功完成事件。Codex 随后按流错误恢复机制重试当前模型请求，避免 Wework 在没有 assistant 回复时提前结束任务。
 

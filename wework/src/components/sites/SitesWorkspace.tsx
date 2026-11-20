@@ -1,10 +1,10 @@
 import { SiteAnalyticsDialog } from './SiteAnalyticsDialog'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createApplicationCollection } from './applicationCollection'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { AlertCircle, Boxes, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { ApiError } from '@/api/http'
-import { isSitesUnavailableError } from '@/api/sites'
-import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
+import type { Site, SiteAppType, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -42,15 +42,6 @@ interface SitesWorkspaceProps {
 
 type ApplicationWorkspaceType = SiteAppType | 'smart_app'
 
-interface ApplicationCollectionOptions {
-  api: SitesApi
-  appType: SiteAppType
-  enabled: boolean
-  query: string
-  pageSize: number
-  loadFailedMessage: string
-}
-
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
@@ -71,103 +62,6 @@ function getAppType(search: string, smartAppsEnabled: boolean): ApplicationWorks
   const requestedType = new URLSearchParams(search).get('app_type')
   if (smartAppsEnabled && (!requestedType || requestedType === 'smart_app')) return 'smart_app'
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
-}
-
-function useApplicationCollection({
-  api,
-  appType,
-  enabled,
-  query,
-  pageSize,
-  loadFailedMessage,
-}: ApplicationCollectionOptions) {
-  const [items, setItems] = useState<SiteListItem[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [unavailable, setUnavailable] = useState(false)
-  const requestId = useRef(0)
-
-  const loadFirstPage = useCallback(async () => {
-    const currentRequest = ++requestId.current
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const response = await api.listSites({
-        appType,
-        q: query,
-        offset: 0,
-        limit: pageSize,
-      })
-      if (currentRequest !== requestId.current) return
-      setItems(response.items.filter(item => item.app_type === appType))
-      setTotal(response.total)
-      setUnavailable(false)
-    } catch (error) {
-      if (currentRequest !== requestId.current) return
-      setItems([])
-      setTotal(0)
-      if (isSitesUnavailableError(error)) {
-        setUnavailable(true)
-        setLoadError(null)
-      } else {
-        setUnavailable(false)
-        setLoadError(errorMessage(error, loadFailedMessage))
-      }
-    } finally {
-      if (currentRequest === requestId.current) setLoading(false)
-    }
-  }, [api, appType, loadFailedMessage, pageSize, query])
-
-  useEffect(() => {
-    if (!enabled) {
-      requestId.current += 1
-      const timeout = window.setTimeout(() => setLoading(false), 0)
-      return () => window.clearTimeout(timeout)
-    }
-    const timeout = window.setTimeout(() => void loadFirstPage(), 0)
-    return () => window.clearTimeout(timeout)
-  }, [enabled, loadFirstPage])
-
-  const loadMore = async () => {
-    setLoadingMore(true)
-    setLoadError(null)
-    try {
-      const response = await api.listSites({
-        appType,
-        q: query,
-        offset: items.length,
-        limit: pageSize,
-      })
-      setItems(current => [...current, ...response.items.filter(item => item.app_type === appType)])
-      setTotal(response.total)
-    } catch (error) {
-      if (isSitesUnavailableError(error)) {
-        setUnavailable(true)
-        setItems([])
-        setTotal(0)
-        setLoadError(null)
-      } else {
-        setLoadError(errorMessage(error, loadFailedMessage))
-      }
-    } finally {
-      setLoadingMore(false)
-    }
-  }
-
-  return {
-    items,
-    setItems,
-    total,
-    setTotal,
-    loading,
-    loadingMore,
-    loadError,
-    unavailable,
-    loadFirstPage,
-    loadMore,
-  }
 }
 
 function SitesCreateError({
@@ -235,9 +129,12 @@ export function SitesWorkspace({
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
   const applicationTypes = useApplicationTypeDefinitions(api)
-  const activeAppType = getAppType(search, smartAppsEnabled)
-  const [query, setQuery] = useState('')
-  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const requestedAppType = getAppType(search, smartAppsEnabled)
+  const activeAppType =
+    requestedAppType === 'smart_app'
+      ? requestedAppType
+      : (applicationTypes.find(item => item.definition.appType === requestedAppType)?.definition
+          .appType ?? applicationTypes[0].definition.appType)
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
   const [pendingDeleteSite, setPendingDeleteSite] = useState<Site | null>(null)
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
@@ -250,11 +147,6 @@ export function SitesWorkspace({
   const [pendingAnalyticsSite, setPendingAnalyticsSite] = useState<Site | null>(null)
   const [pendingAccessSite, setPendingAccessSite] = useState<Site | null>(null)
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
-    return () => window.clearTimeout(timeout)
-  }, [query])
-
   const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
   const pageTitle = t('title', '应用')
   const pageDescription = t('subtitle', '创建、管理并发布你的应用')
@@ -265,47 +157,52 @@ export function SitesWorkspace({
   const activeDefinition = activeApplicationType.definition
   const ActiveApplicationIcon = activeDefinition.icon
   const loadFailedMessage = t(activeDefinition.loadFailed.key, activeDefinition.loadFailed.fallback)
-  const collection = useApplicationCollection({
-    api,
-    appType: activeSiteAppType,
-    enabled: !smartAppsActive,
-    query: debouncedQuery,
-    pageSize,
-    loadFailedMessage,
-  })
+  const resource = useMemo(
+    () => createApplicationCollection(api, activeSiteAppType, pageSize, !smartAppsActive),
+    [api, activeSiteAppType, pageSize, smartAppsActive]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const collection = {
+    ...snapshot,
+    ...resource,
+    loadError: snapshot.failure ? errorMessage(snapshot.failure.cause, loadFailedMessage) : null,
+  }
   const items = collection.items.filter(activeDefinition.isItem)
+  const routeParams = new URLSearchParams(search)
+  const environmentProjectId =
+    routeParams.get('view') === 'environment-variables' ? routeParams.get('project_id') : null
+  const routeEnvironmentSite = items.find(
+    item =>
+      Boolean(environmentProjectId) &&
+      item.app_type === 'web' &&
+      (item.project_id === environmentProjectId || item.siteid === environmentProjectId)
+  )
+  const environmentSite =
+    pendingEnvironmentSite ??
+    (routeEnvironmentSite?.app_type === 'web' ? routeEnvironmentSite : null)
+  const closeEnvironment = () => {
+    setPendingEnvironmentSite(null)
+    if (!environmentProjectId) return
+    routeParams.delete('view')
+    routeParams.delete('project_id')
+    replaceTo(`/sites?${routeParams.toString()}`)
+  }
 
-  useEffect(() => {
-    const params = new URLSearchParams(search)
-    if (params.get('view') !== 'environment-variables') return
-    const projectId = params.get('project_id')
-    if (!projectId || collection.loading) return
-    const site = items.find(
-      item =>
-        item.app_type === 'web' && (item.project_id === projectId || item.siteid === projectId)
-    )
-    if (site?.app_type !== 'web') return
-    setPendingEnvironmentSite(site)
-    params.delete('view')
-    params.delete('project_id')
-    replaceTo(`/sites?${params.toString()}`)
-  }, [collection.loading, items, search])
-
-  const selectAppType = useCallback((appType: ApplicationWorkspaceType) => {
-    setQuery('')
-    setDebouncedQuery('')
-    const params = new URLSearchParams(window.location.search)
-    params.set('app_type', appType)
-    params.delete('view')
-    params.delete('action')
-    replaceTo(`/sites?${params.toString()}`)
-  }, [])
-
-  useEffect(() => {
-    if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
-      selectAppType(activeDefinition.appType)
-    }
-  }, [activeAppType, activeDefinition.appType, selectAppType])
+  const selectAppType = useCallback(
+    (appType: ApplicationWorkspaceType) => {
+      if (appType === activeAppType) resource.resetSearch()
+      const params = new URLSearchParams(window.location.search)
+      params.set('app_type', appType)
+      params.delete('view')
+      params.delete('action')
+      replaceTo(`/sites?${params.toString()}`)
+    },
+    [activeAppType, resource]
+  )
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [
@@ -379,10 +276,7 @@ export function SitesWorkspace({
     setDeleteError(null)
     try {
       await api.deleteSite(pendingDeleteSite.siteid)
-      collection.setItems(current =>
-        current.filter(item => item.siteid !== pendingDeleteSite.siteid)
-      )
-      collection.setTotal(current => Math.max(0, current - 1))
+      collection.removeSite(pendingDeleteSite.siteid)
       setPendingDeleteSite(null)
       track('feature_action_completed', { action: 'delete', domain: 'site' })
     } catch (error) {
@@ -575,8 +469,8 @@ export function SitesWorkspace({
               searchLabel={t(activeDefinition.search.key, activeDefinition.search.fallback)}
               searchPlaceholder={t(activeDefinition.search.key, activeDefinition.search.fallback)}
               searchTestId="sites-search-input"
-              value={query}
-              onValueChange={setQuery}
+              value={collection.searchInput}
+              onValueChange={collection.changeSearch}
             />
 
             {createError && (
@@ -739,12 +633,8 @@ export function SitesWorkspace({
           onConfirm={input => void editSite(input)}
         />
       )}
-      {pendingEnvironmentSite && (
-        <EnvironmentVariablesDialog
-          api={api}
-          site={pendingEnvironmentSite}
-          onClose={() => setPendingEnvironmentSite(null)}
-        />
+      {environmentSite && (
+        <EnvironmentVariablesDialog api={api} site={environmentSite} onClose={closeEnvironment} />
       )}
       {pendingCollaboratorsSite && (
         <SiteCollaboratorsDialog

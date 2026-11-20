@@ -53,7 +53,7 @@ export function PersonalIssueList({
   selectedIssue?: Pick<WorkspaceMyWorkItem, 'id' | 'cloud_project_id'>
 }) {
   const { t, i18n } = useTranslation('common')
-  useSidebarRelativeTimeRefresh(active)
+  const nowMs = useSidebarRelativeTimeRefresh(active)
   const recentCard = useRef<HTMLElement>(null)
   const revealedIssue = useRef<string | null>(null)
   useLayoutEffect(() => {
@@ -249,7 +249,11 @@ export function PersonalIssueList({
                         className="shrink-0 text-xs font-normal text-text-secondary"
                       >
                         {t('personalHome.assignedFor', {
-                          duration: personalHomeAssignmentDuration(assignedAt, i18n.language),
+                          duration: personalHomeAssignmentDuration(
+                            assignedAt,
+                            i18n.language,
+                            nowMs
+                          ),
                         })}
                       </span>
                     )}

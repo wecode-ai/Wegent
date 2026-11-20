@@ -1,4 +1,9 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
 import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
 import type { StandInExecutorApi, StandInOnboardingResult } from '@/api/standIn'
@@ -22,19 +27,7 @@ const examples = [
 ] as const
 
 /** Loads account-scoped setup and keeps optional usage examples separate from activation. */
-export function StandInOnboarding({
-  api,
-  userId,
-  deviceId,
-  active = true,
-  bypass = false,
-  guideOpen = false,
-  onGuideClose,
-  onExampleSelect,
-  onClose,
-  children,
-  configuration,
-}: {
+type StandInOnboardingProps = {
   api: StandInExecutorApi
   userId: number
   deviceId: string
@@ -46,12 +39,65 @@ export function StandInOnboarding({
   onClose?(): void
   configuration: StandInOnboardingConfiguration
   children: ReactNode
-}) {
+}
+
+export function StandInOnboarding(props: StandInOnboardingProps) {
+  const [owner, setOwner] = useState({ api: props.api, revision: 0 })
+  if (owner.api !== props.api) setOwner({ api: props.api, revision: owner.revision + 1 })
+  return (
+    <StandInOnboardingContent
+      key={JSON.stringify([owner.revision, props.userId, props.deviceId])}
+      {...props}
+    />
+  )
+}
+
+function StandInOnboardingContent({
+  api,
+  userId,
+  deviceId,
+  active = true,
+  bypass = false,
+  guideOpen = false,
+  onGuideClose,
+  onExampleSelect,
+  onClose,
+  children,
+  configuration,
+}: StandInOnboardingProps) {
   const { t, i18n } = useTranslation('common')
   const scopeId = useId()
-  const [result, setResult] = useState<StandInOnboardingResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
+  const createQuery = (language: string, initialData?: StandInOnboardingResult) => ({
+    language,
+    resource: createAsyncResource(
+      JSON.stringify([userId, deviceId, language]),
+      () => api.onboarding(userId, deviceId, language),
+      { refreshOnSubscribe: true, initialData }
+    ),
+  })
+  const [query, setQuery] = useState(() => createQuery(i18n.language))
+  if (query.language !== i18n.language) {
+    setQuery(createQuery(i18n.language, query.resource.getSnapshot().data))
+  }
+  const resource = query.resource
+  const observationKey = JSON.stringify([bypass, guideOpen])
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, observationKey),
+    [resource, observationKey]
+  )
+  const snapshot = useSyncExternalStore(
+    deviceId && active && (!bypass || guideOpen) ? subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const result = snapshot.data
+  const [completionError, setCompletionError] = useState<{ receipt: unknown; cause: unknown }>()
+  const error =
+    completionError && completionError.receipt === snapshot.data
+      ? getStandInErrorMessage(completionError.cause)
+      : snapshot.status === 'error' || snapshot.error !== undefined
+        ? getStandInErrorMessage(snapshot.error)
+        : null
   const [saving, setSaving] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const [previousActive, setPreviousActive] = useState(active)
@@ -79,28 +125,10 @@ export function StandInOnboarding({
     else dismiss()
   }
   const dialogRef = useDialogKeyboard<HTMLElement>(close, open)
-  useEffect(() => {
-    if (!deviceId || !active || (bypass && !guideOpen)) return
-    let current = true
-    void api.onboarding(userId, deviceId, i18n.language).then(
-      value => {
-        if (current) {
-          setResult(value)
-          setError(null)
-        }
-      },
-      cause => {
-        if (current) setError(getStandInErrorMessage(cause))
-      }
-    )
-    return () => {
-      current = false
-    }
-  }, [api, userId, deviceId, i18n.language, attempt, active, bypass, guideOpen])
   const complete = async () => {
     if (saving) return false
     setSaving(true)
-    setError(null)
+    setCompletionError(undefined)
     try {
       const completed = await api.completeOnboarding(
         userId,
@@ -109,11 +137,12 @@ export function StandInOnboarding({
         '09:00',
         i18n.language
       )
-      setResult(completed)
+      if (!resource.hasSubscribers()) return false
+      resource.update(() => completed)
       onGuideClose?.()
       return true
     } catch (cause) {
-      setError(getStandInErrorMessage(cause))
+      setCompletionError({ receipt: resource.getSnapshot().data, cause })
       return false
     } finally {
       setSaving(false)
@@ -232,7 +261,7 @@ export function StandInOnboarding({
                 {!result && error ? (
                   <Button
                     data-testid="stand-in-onboarding-retry"
-                    onClick={() => setAttempt(value => value + 1)}
+                    onClick={() => void resource.reload()}
                   >
                     {t('standIn.reload')}
                   </Button>

@@ -1,4 +1,4 @@
-ARG DEPS_IMAGE=dependencies
+ARG DEPS_IMAGE=dependency-sources
 FROM ubuntu:24.04 AS toolchain
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY .github/ci/rust-toolchain /tmp/rust-toolchain
@@ -11,18 +11,25 @@ RUN sed -i 's#http://archive\.ubuntu\.com/ubuntu#http://security.ubuntu.com/ubun
       | sh -s -- -y --profile minimal --default-toolchain "$(cat /tmp/rust-toolchain)" \
     && rm -rf /var/lib/apt/lists/*
 ENV PATH=/root/.cargo/bin:${PATH}
+# This runtime is for functional E2E. Keep release checks and use less optimization.
+ENV CARGO_PROFILE_RELEASE_OPT_LEVEL=1
 ENV CARGO_PROFILE_RELEASE_STRIP=false
 ENV CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
 WORKDIR /workspace/backend-rs
 
-FROM toolchain AS dependencies
+FROM toolchain AS dependency-sources
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
 COPY shared/rust /workspace/shared/rust
 COPY shared/assets/calendars /workspace/shared/assets/calendars
 COPY backend-rs/crates ./crates
-RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
+
+FROM dependency-sources AS dependencies
+RUN mkdir -p src examples && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
-    && cargo build --release --locked --bin wegent-backend-rs
+    && printf 'fn main() {}\n' > examples/attachment_s3_e2e.rs \
+    && printf 'fn main() {}\n' > examples/attachment_hosting_e2e.rs \
+    && cargo build --release --locked --bin wegent-backend-rs \
+      --example attachment_s3_e2e --example attachment_hosting_e2e
 
 FROM ${DEPS_IMAGE} AS build
 COPY shared/assets/codex-models /workspace/shared/assets/codex-models

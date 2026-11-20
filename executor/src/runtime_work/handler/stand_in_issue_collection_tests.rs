@@ -30,6 +30,7 @@ async fn assigned_issue_event_is_durable_before_cursor_advances() {
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: backend.clone(),
         auth_token: "test".into(),
+        authenticated_user_id: Some(52),
         ..Default::default()
     })));
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();

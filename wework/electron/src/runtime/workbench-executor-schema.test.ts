@@ -13,22 +13,28 @@ import {
 
 vi.mock('node:child_process', async importOriginal => {
   const original = await importOriginal<typeof import('node:child_process')>()
-  const { promisify } = await import('node:util')
   const { testNodeEnvironment } = await import('./test-helpers.js')
-  const execFile = Object.assign(vi.fn(), {
-    [promisify.custom]: (
-      command: string,
-      args: string[],
-      options: import('node:child_process').ExecFileOptions
-    ) =>
-      promisify(original.execFile)(process.execPath, [command, ...args], {
-        ...options,
-        env: testNodeEnvironment(options.env),
-      }),
-  })
   return {
     ...original,
-    execFile,
+    execFile: (
+      command: string,
+      args: string[],
+      options: import('node:child_process').ExecFileOptionsWithStringEncoding,
+      callback: (
+        error: import('node:child_process').ExecFileException | null,
+        stdout: string,
+        stderr: string
+      ) => void
+    ) =>
+      original.execFile(
+        process.execPath,
+        [command, ...args],
+        {
+          ...options,
+          env: testNodeEnvironment(options.env),
+        },
+        callback
+      ),
     spawnSync: (
       command: string,
       args: string[],
@@ -45,7 +51,6 @@ const compatible = {
   protocol_version: 1,
   workbench_layout_versions: [1],
   capability_manifest_versions: [2],
-  workbench_lock_resources: 32,
 }
 const directories: string[] = []
 afterEach(async () => {
@@ -61,9 +66,6 @@ test.each([
   { ...compatible, workbench_layout_versions: [2] },
   { ...compatible, capability_manifest_versions: [1] },
   { ...compatible, capability_manifest_versions: ['2'] },
-  { ...compatible, workbench_lock_resources: undefined },
-  { ...compatible, workbench_lock_resources: 10 },
-  { ...compatible, workbench_lock_resources: '32' },
 ])('rejects missing or incompatible schema %j', schema => {
   expect(() => assertWorkbenchSchema(schema)).toThrow()
 })
@@ -198,5 +200,32 @@ test('failed schema probes record exit metadata without child output or environm
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(script)
   } finally {
     diagnostic.mockRestore()
+  }
+})
+
+test('process trace records schema probe stages without copying child output', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema trace '))
+  directories.push(directory)
+  const script = join(directory, 'trace.cjs')
+  await writeFile(
+    script,
+    `process.stderr.write('private-diagnostic'); process.stdout.write(${JSON.stringify(JSON.stringify(compatible))});`
+  )
+  const trace = vi.spyOn(console, 'info').mockImplementation(() => {})
+  try {
+    await assertExecutorWorkbenchCompatibility({
+      WEWORK_EXECUTOR_PATH: script,
+      WEWORK_PROCESS_TRACE: '1',
+    })
+    const entries = trace.mock.calls.filter(([label]) => label === '[executor-schema] trace')
+    const stages = entries.map(([, event]) => event.stage)
+    expect(stages.slice(0, 2)).toEqual(['requested', 'spawned'])
+    expect(stages.slice(2, 4).sort()).toEqual(['stderr', 'stdout'])
+    expect(stages.slice(4)).toEqual(['exit', 'close'])
+    expect(entries.at(-1)?.[1]).toMatchObject({ code: 0, signal: null })
+    expect(JSON.stringify(entries)).not.toContain('private-diagnostic')
+    expect(JSON.stringify(entries)).not.toContain(script)
+  } finally {
+    trace.mockRestore()
   }
 })

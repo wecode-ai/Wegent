@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginUninstallScope } from '../pluginUninstall'
 
@@ -18,19 +18,10 @@ export function UninstallPluginDialog({
   confirmTestId = 'plugin-uninstall-confirm-button',
 }: UninstallPluginDialogProps) {
   const { t } = useTranslation('common')
-  const cancelRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    cancelRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onCancel])
+  useDocumentEvent('keydown', event => {
+    if (event.key === 'Escape' && true) onCancel()
+  })
 
   return (
     <div
@@ -60,7 +51,7 @@ export function UninstallPluginDialog({
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <button
-            ref={cancelRef}
+            autoFocus
             type="button"
             data-testid="plugin-uninstall-cancel-button"
             className="h-9 rounded-lg px-4 text-sm font-medium text-text-secondary hover:bg-surface"

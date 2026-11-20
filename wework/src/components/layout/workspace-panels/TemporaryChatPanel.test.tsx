@@ -470,84 +470,91 @@ vi.mock('@/components/layout/BufferedChatInput', async importOriginal => {
   }
 })
 
-vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
-  useWorkbenchPaneContext: () => ({
-    services: {
-      standInApi: { readTask: mocks.readTask },
-      deviceApi: { readWorkspaceFileChunk: vi.fn() },
-      composerCatalogApi: { readCatalog: mocks.readCatalog },
-    },
-    state: {
-      devices: mocks.devices,
-      isBootstrapping: mocks.isBootstrapping,
-      runtimeWork: mocks.runtimeWork,
-    },
-    projectChat: {
-      inputByScope: mocks.inputByScope,
-      setInputForScope: mocks.setInputForScope,
-      listLocalApps: mocks.mainListApps,
-      trialPluginName: 'Main plugin',
-      trialTemplates: [{ name: 'Main task', path: 'main' }],
-      contextUsage: { last: { totalTokens: 999 } },
-      models: [],
-      skills: [],
-      selectedSkills: [],
-      isOptionsLocked: false,
-      toggleSkill: vi.fn(),
-      selectedModel: null,
-      continueInNewConversation: mocks.continueInNewConversation,
-      setSelectedModel: mocks.setGlobalModel,
-      setSelectedModelAndOptions: mocks.setGlobalModel,
-      setSelectedModelOption: mocks.setGlobalModel,
-      isModelSelectionReady: mocks.globalModelReady,
-      selectedModelOptions: {},
-      resolveRuntimeTaskModelSelection: (taskAddress: RuntimeTaskAddress) => {
-        const selection =
-          mocks.activeModelSelection ?? modelSelectionFromRuntimeHandle(taskAddress.runtimeHandle)
-        const model = selection
-          ? (mocks.runtimeModels.find(model => model.name === selection.modelName) ?? {
-              name: selection.modelName,
-              displayName: selection.modelName,
-              type: selection.modelType,
-            })
-          : null
-        return {
-          selectionResolved:
-            mocks.taskSelectionResolved ??
-            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
-          selectionReady:
-            mocks.taskSelectionResolved ??
-            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
-          taskSelection: selection,
-          selectedModel: model,
-          activeModel: model,
-          supportsModelProviderSwitch: taskAddress.runtimeHandle?.modelProviderRouting === 'thread',
-          selectedModelOptions: selection?.options ?? {},
-        }
+vi.mock('@/features/workbench/useWorkbench', async importOriginal => {
+  const services = {
+    standInApi: { readTask: mocks.readTask },
+    deviceApi: { readWorkspaceFileChunk: vi.fn() },
+    composerCatalogApi: { readCatalog: mocks.readCatalog },
+  }
+  const subscribeRuntimeTaskStream = (
+    _address: RuntimeTaskAddress,
+    handlers: { onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }
+  ) => {
+    mocks.usageHandlers.push(handlers)
+    return () => {
+      mocks.usageHandlers = mocks.usageHandlers.filter(candidate => candidate !== handlers)
+    }
+  }
+  return {
+    ...(await importOriginal<typeof import('@/features/workbench/useWorkbench')>()),
+    useWorkbenchPaneContext: () => ({
+      services,
+      state: {
+        devices: mocks.devices,
+        isBootstrapping: mocks.isBootstrapping,
+        runtimeWork: mocks.runtimeWork,
       },
-      setRuntimeTaskSelectedModel: vi.fn(),
-      setRuntimeTaskSelectedModelAndOptions: vi.fn(),
-      setRuntimeTaskSelectedModelOption: vi.fn(),
-    },
-    createTemporaryRuntimeTask: vi.fn(),
-    createProjectRuntimeTask: mocks.createTask,
-    sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
-    interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
-    sendRuntimePaneGuidance: mocks.sendRuntimePaneGuidance,
-    cancelRuntimePaneTask: mocks.cancelRuntimePaneTask,
-    subscribeRuntimeTaskStream: (
-      _address: RuntimeTaskAddress,
-      handlers: { onContextUsageUpdated?: (usage: RuntimeContextUsage) => void }
-    ) => {
-      mocks.usageHandlers.push(handlers)
-      return () => undefined
-    },
-    loadRuntimeTranscriptForPane: mocks.loadRuntimeTranscriptForPane,
-    loadTurnFileChangesDiff: mocks.loadTurnFileChangesDiff,
-    revertTurnFileChanges: mocks.revertTurnFileChanges,
-  }),
-}))
+      projectChat: {
+        inputByScope: mocks.inputByScope,
+        setInputForScope: mocks.setInputForScope,
+        listLocalApps: mocks.mainListApps,
+        trialPluginName: 'Main plugin',
+        trialTemplates: [{ name: 'Main task', path: 'main' }],
+        contextUsage: { last: { totalTokens: 999 } },
+        models: [],
+        skills: [],
+        selectedSkills: [],
+        isOptionsLocked: false,
+        toggleSkill: vi.fn(),
+        selectedModel: null,
+        continueInNewConversation: mocks.continueInNewConversation,
+        setSelectedModel: mocks.setGlobalModel,
+        setSelectedModelAndOptions: mocks.setGlobalModel,
+        setSelectedModelOption: mocks.setGlobalModel,
+        isModelSelectionReady: mocks.globalModelReady,
+        selectedModelOptions: {},
+        resolveRuntimeTaskModelSelection: (taskAddress: RuntimeTaskAddress) => {
+          const selection =
+            mocks.activeModelSelection ?? modelSelectionFromRuntimeHandle(taskAddress.runtimeHandle)
+          const model = selection
+            ? (mocks.runtimeModels.find(model => model.name === selection.modelName) ?? {
+                name: selection.modelName,
+                displayName: selection.modelName,
+                type: selection.modelType,
+              })
+            : null
+          return {
+            selectionResolved:
+              mocks.taskSelectionResolved ??
+              Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
+            selectionReady:
+              mocks.taskSelectionResolved ??
+              Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
+            taskSelection: selection,
+            selectedModel: model,
+            activeModel: model,
+            supportsModelProviderSwitch:
+              taskAddress.runtimeHandle?.modelProviderRouting === 'thread',
+            selectedModelOptions: selection?.options ?? {},
+          }
+        },
+        setRuntimeTaskSelectedModel: vi.fn(),
+        setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+        setRuntimeTaskSelectedModelOption: vi.fn(),
+      },
+      createTemporaryRuntimeTask: vi.fn(),
+      createProjectRuntimeTask: mocks.createTask,
+      sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
+      interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
+      sendRuntimePaneGuidance: mocks.sendRuntimePaneGuidance,
+      cancelRuntimePaneTask: mocks.cancelRuntimePaneTask,
+      subscribeRuntimeTaskStream,
+      loadRuntimeTranscriptForPane: mocks.loadRuntimeTranscriptForPane,
+      loadTurnFileChangesDiff: mocks.loadTurnFileChangesDiff,
+      revertTurnFileChanges: mocks.revertTurnFileChanges,
+    }),
+  }
+})
 
 vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
   useWorkbenchAttachments: () => ({
@@ -611,40 +618,51 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   updateRuntimeConversationBlocks: () => mocks.conversationMessages,
 }))
 
-vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
+vi.mock('@/features/workbench/runtimeTaskLifecycle', async () => {
+  const { useSyncExternalStore } = await import('react')
   let epoch = -1
   let revision = 0
-  let previousSnapshot = mocks.lifecycleSnapshot
-  const taskRevision = () => {
-    if (previousSnapshot !== mocks.lifecycleSnapshot) {
-      previousSnapshot = mocks.lifecycleSnapshot
+  let snapshot = mocks.lifecycleSnapshot
+  let listeners = new Set<() => void>()
+  Object.defineProperty(mocks, 'lifecycleSnapshot', {
+    get: () => snapshot,
+    set(next: typeof snapshot) {
+      if (next === snapshot) return
+      snapshot = next
       revision += 1
+      for (const listener of listeners) listener()
+    },
+  })
+  const createStore = () => {
+    const subscribers = new Set<() => void>()
+    listeners = subscribers
+    return {
+      markRead: mocks.markRead,
+      getTask: () => snapshot,
+      getTaskRevision: () => revision,
+      syncTranscript: mocks.syncTranscript,
+      subscribe(listener: () => void) {
+        subscribers.add(listener)
+        return () => subscribers.delete(listener)
+      },
     }
-    return revision
   }
-  let store = {
-    markRead: mocks.markRead,
-    getTask: () => mocks.lifecycleSnapshot,
-    getTaskRevision: taskRevision,
-    syncTranscript: mocks.syncTranscript,
+  let store = createStore()
+  const currentStore = () => {
+    if (epoch !== mocks.lifecycleOwnerEpoch) {
+      epoch = mocks.lifecycleOwnerEpoch
+      revision = 0
+      store = createStore()
+    }
+    return store
   }
   return {
     runtimeTaskLifecycleTransitionChanged: (a: unknown, b: unknown) => a !== b,
-    useRuntimeTaskLifecycle: () => mocks.lifecycleSnapshot,
-    useRuntimeTaskLifecycleStore: () => {
-      if (epoch !== mocks.lifecycleOwnerEpoch) {
-        epoch = mocks.lifecycleOwnerEpoch
-        revision = 0
-        previousSnapshot = mocks.lifecycleSnapshot
-        store = {
-          markRead: mocks.markRead,
-          getTask: () => mocks.lifecycleSnapshot,
-          getTaskRevision: taskRevision,
-          syncTranscript: mocks.syncTranscript,
-        }
-      }
-      return store
+    useRuntimeTaskLifecycle: () => {
+      const owner = currentStore()
+      return useSyncExternalStore(owner.subscribe, owner.getTask, owner.getTask)
     },
+    useRuntimeTaskLifecycleStore: currentStore,
   }
 })
 

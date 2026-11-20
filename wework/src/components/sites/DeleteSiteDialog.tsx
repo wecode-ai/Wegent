@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Loader2, Trash2 } from 'lucide-react'
 import type { Site } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,19 +19,10 @@ export function DeleteSiteDialog({
   onConfirm,
 }: DeleteSiteDialogProps) {
   const { t } = useTranslation('sites')
-  const cancelButtonRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    cancelButtonRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !loading) onCancel()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [loading, onCancel])
+  useDocumentEvent('keydown', event => {
+    if (event.key === 'Escape' && !loading) onCancel()
+  })
 
   return (
     <div
@@ -78,7 +69,7 @@ export function DeleteSiteDialog({
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button
-            ref={cancelButtonRef}
+            autoFocus
             type="button"
             data-testid="site-delete-cancel-button"
             onClick={onCancel}

@@ -9,7 +9,6 @@ const preparation = vi.hoisted(() => ({
   getPath: vi.fn(),
   initializeDesktopData: vi.fn(),
   prepareInstalledEnvironment: vi.fn(),
-  resolveWorkbenchPaths: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
@@ -24,12 +23,6 @@ vi.mock('./installed-preparation.js', () => ({
 vi.mock('./workbench-desktop-startup.js', () => ({
   initializeWorkbenchDesktopData: preparation.initializeDesktopData,
 }))
-vi.mock('./workbench-environment.js', () => ({
-  resolveWorkbenchPaths: preparation.resolveWorkbenchPaths,
-}))
-vi.mock('./workbench-migration-lock.js', () => ({
-  executorMigrationLock: vi.fn(() => vi.fn()),
-}))
 vi.mock('./release-diagnostics.js', () => ({ recordReleaseDiagnostic: vi.fn() }))
 
 const { prepareInstallation } = await import('./installed-preparation-bootstrap.js')
@@ -41,35 +34,30 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-test('migrates the default desktop data layout before installation preparation writes to it', async () => {
+test('selects the default desktop data directory and obtains the instance lock before preparation', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-installed-bootstrap-'))
   roots.push(root)
-  const appData = join(root, 'app-data')
-  const desktop = join(root, 'desktop')
-  const userData = join(desktop, 'user-data')
+  const userData = join(root, '.wegent', 'workbench', 'wework', 'installer-test', 'user-data')
   const order: string[] = []
   vi.stubEnv('WEWORK_USER_DATA_DIR', '')
-  vi.stubEnv('WEWORK_APP_IDENTIFIER', 'test.wegent.wework')
-  vi.stubEnv('WEWORK_EXECUTOR_PATH', join(root, 'wegent-executor'))
-  preparation.getPath.mockImplementation((name: string) => (name === 'appData' ? appData : root))
-  preparation.resolveWorkbenchPaths.mockReturnValue({ desktop })
-  preparation.initializeDesktopData.mockImplementation(async () => {
+  vi.stubEnv('WEGENT_WORKBENCH_HOME', '')
+  vi.stubEnv('HOME', root)
+  preparation.getPath.mockReturnValue(root)
+  preparation.initializeDesktopData.mockImplementation(() => {
     order.push('initialize')
-    return { userData, logs: join(userData, 'logs') }
+    return true
   })
   preparation.prepareInstalledEnvironment.mockImplementation(async () => {
     order.push('prepare')
   })
 
-  await prepareInstallation({ version: '1.2.3' })
+  await prepareInstallation({ version: '1.2.3', weworkExecutorNamespace: 'installer-test' })
 
   expect(order).toEqual(['initialize', 'prepare'])
   expect(preparation.initializeDesktopData).toHaveBeenCalledWith(
-    expect.objectContaining({
-      source: join(appData, 'test.wegent.wework'),
-      desktop,
-      additionalData: { installedPreparation: true },
-    })
+    expect.objectContaining({ getPath: preparation.getPath }),
+    userData,
+    { installedPreparation: true }
   )
   expect(preparation.prepareInstalledEnvironment).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -80,7 +68,7 @@ test('migrates the default desktop data layout before installation preparation w
   expect(preparation.exit).toHaveBeenCalledWith(0)
 })
 
-test('keeps an explicitly configured user data directory independent from desktop migration', async () => {
+test('uses the explicitly configured user data directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-installed-bootstrap-'))
   roots.push(root)
   const userData = join(root, 'isolated-user-data')

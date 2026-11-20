@@ -1,21 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import type { ReactNode } from "react";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { useCollaborationPortalTheme } from "../theme/CollaborationTheme";
-import { useEscapeKey } from "../markdown/useEscapeKey";
-import type { CodeCommentContext } from "@wegent/chat-core/code-comment";
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { ReactNode } from 'react'
+import { useConversationTranslation } from './ConversationTranslation'
+import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
+import { useEscapeKey } from '../markdown/useEscapeKey'
+import type { CodeCommentContext } from '@wegent/chat-core/code-comment'
 
 export interface CodeCommentPreviewProps {
-  getRightBoundary?: () => number;
-  comments: CodeCommentContext[];
-  testId: string;
-  children: ReactNode;
+  getRightBoundary?: () => number
+  comments: CodeCommentContext[]
+  testId: string
+  children: ReactNode
 }
 
-const COMMENT_TEXT_LIMIT = 240;
-const TARGET_TEXT_LIMIT = 120;
-const VALUE_LIMIT = 80;
+const COMMENT_TEXT_LIMIT = 240
+const TARGET_TEXT_LIMIT = 120
+const VALUE_LIMIT = 80
 
 export function CodeCommentPreview({
   comments,
@@ -23,64 +23,66 @@ export function CodeCommentPreview({
   children,
   getRightBoundary,
 }: CodeCommentPreviewProps) {
-  const triggerRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ left: 8, top: 8 });
+  const triggerRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState({ left: 8, top: 8 })
 
+  const attachTrigger = useCallback((node: HTMLDivElement | null) => {
+    triggerRef.current = node
+    if (!node) return
+    return () => {
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+      triggerRef.current = null
+    }
+  }, [])
   const clearCloseTimer = () => {
-    if (closeTimerRef.current === null) return;
-    window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = null;
-  };
+    if (closeTimerRef.current === null) return
+    window.clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = null
+  }
 
   const show = () => {
-    clearCloseTimer();
-    setOpen(true);
-  };
+    clearCloseTimer()
+    setOpen(true)
+  }
 
   useLayoutEffect(() => {
-    if (!open) return;
-    const triggerRect = triggerRef.current?.getBoundingClientRect();
-    const contentRect = contentRef.current?.getBoundingClientRect();
-    if (!triggerRect || !contentRect) return;
-    const rightBoundary = getRightBoundary?.() ?? window.innerWidth - 8;
-    let left = triggerRect.left;
+    if (!open) return
+    const triggerRect = triggerRef.current?.getBoundingClientRect()
+    const contentRect = contentRef.current?.getBoundingClientRect()
+    if (!triggerRect || !contentRect) return
+    const rightBoundary = getRightBoundary?.() ?? window.innerWidth - 8
+    let left = triggerRect.left
     if (left + contentRect.width > rightBoundary) {
-      left = rightBoundary - contentRect.width;
+      left = rightBoundary - contentRect.width
     }
-    left = Math.max(8, left);
-    let top = triggerRect.top - contentRect.height - 4;
+    left = Math.max(8, left)
+    let top = triggerRect.top - contentRect.height - 4
     if (top < 8) {
-      top = triggerRect.bottom + 4;
+      top = triggerRect.bottom + 4
     }
-    setPosition((previous) =>
-      previous.left === left && previous.top === top ? previous : { left, top },
-    );
-  }, [open, comments, getRightBoundary]);
+    setPosition(previous =>
+      previous.left === left && previous.top === top ? previous : { left, top }
+    )
+  }, [open, comments, getRightBoundary])
 
   const scheduleClose = () => {
-    clearCloseTimer();
+    clearCloseTimer()
     closeTimerRef.current = window.setTimeout(() => {
-      setOpen(false);
-      closeTimerRef.current = null;
-    }, 120);
-  };
+      setOpen(false)
+      closeTimerRef.current = null
+    }, 120)
+  }
 
-  useEffect(
-    () => () => {
-      clearCloseTimer();
-    },
-    [],
-  );
-
-  useEscapeKey(() => setOpen(false), open, contentRef);
+  useEscapeKey(() => setOpen(false), open, contentRef)
 
   return (
     <>
       <div
-        ref={triggerRef}
+        ref={attachTrigger}
         className="inline-flex"
         onPointerEnter={show}
         onPointerLeave={scheduleClose}
@@ -99,10 +101,10 @@ export function CodeCommentPreview({
             onPointerEnter={clearCloseTimer}
             onPointerLeave={scheduleClose}
           />,
-          document.body,
+          document.body
         )}
     </>
-  );
+  )
 }
 
 function CodeCommentPreviewContent({
@@ -113,14 +115,14 @@ function CodeCommentPreviewContent({
   onPointerEnter,
   onPointerLeave,
 }: {
-  contentRef: React.RefObject<HTMLDivElement | null>;
-  comments: CodeCommentContext[];
-  position: { left: number; top: number };
-  testId: string;
-  onPointerEnter: () => void;
-  onPointerLeave: () => void;
+  contentRef: React.RefObject<HTMLDivElement | null>
+  comments: CodeCommentContext[]
+  position: { left: number; top: number }
+  testId: string
+  onPointerEnter: () => void
+  onPointerLeave: () => void
 }) {
-  const portalTheme = useCollaborationPortalTheme();
+  const portalTheme = useCollaborationPortalTheme()
   return (
     <div
       {...portalTheme}
@@ -132,23 +134,21 @@ function CodeCommentPreviewContent({
       onPointerLeave={onPointerLeave}
     >
       <div className="divide-y divide-border">
-        {comments.map((comment) => (
+        {comments.map(comment => (
           <CodeCommentPreviewItem key={comment.id} comment={comment} />
         ))}
       </div>
     </div>
-  );
+  )
 }
 
 function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
-  const { t } = useConversationTranslation();
-  const target = comment.browserAnnotation?.target;
-  const adjustments = comment.adjustments ?? [];
-  const codeLabel = `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`;
+  const { t } = useConversationTranslation()
+  const target = comment.browserAnnotation?.target
+  const adjustments = comment.adjustments ?? []
+  const codeLabel = `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`
   const targetText =
-    target?.isSimpleText && target.text
-      ? truncate(target.text, TARGET_TEXT_LIMIT)
-      : "";
+    target?.isSimpleText && target.text ? truncate(target.text, TARGET_TEXT_LIMIT) : ''
 
   return (
     <div className="px-2 py-1.5 text-sm text-text-primary">
@@ -172,50 +172,42 @@ function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
       </div>
       {!target && (
         <PreviewLine
-          label={t("workbench.code_comment_selected_text")}
+          label={t('workbench.code_comment_selected_text')}
           value={comment.selectedText}
         />
       )}
       {comment.comment && (
-        <p
-          className="mt-1 truncate text-xs leading-4 text-text-primary"
-          title={comment.comment}
-        >
+        <p className="mt-1 truncate text-xs leading-4 text-text-primary" title={comment.comment}>
           {truncate(comment.comment, COMMENT_TEXT_LIMIT)}
         </p>
       )}
-      {adjustments.slice(0, 3).map((adjustment) => (
+      {adjustments.slice(0, 3).map(adjustment => (
         <PreviewLine
           key={`${comment.id}:${adjustment.property}`}
-          label={t(
-            `workbench.browser_annotation_adjustment_${adjustment.property}`,
-          )}
+          label={t(`workbench.browser_annotation_adjustment_${adjustment.property}`)}
           value={`${truncate(adjustment.before, VALUE_LIMIT)} -> ${truncate(adjustment.after, VALUE_LIMIT)}`}
         />
       ))}
       {adjustments.length > 3 && (
         <p className="mt-1 text-xs leading-4 text-text-tertiary">
-          {t("workbench.browser_annotation_more_adjustments", {
+          {t('workbench.browser_annotation_more_adjustments', {
             count: adjustments.length - 3,
           })}
         </p>
       )}
     </div>
-  );
+  )
 }
 
 function PreviewLine({ label, value }: { label: string; value: string }) {
   return (
-    <p
-      className="mt-1 truncate text-xs leading-4 text-text-secondary"
-      title={value}
-    >
+    <p className="mt-1 truncate text-xs leading-4 text-text-secondary" title={value}>
       <span className="text-text-tertiary">{label}: </span>
       {truncate(value, COMMENT_TEXT_LIMIT)}
     </p>
-  );
+  )
 }
 
 function truncate(value: string, limit: number): string {
-  return value.length > limit ? `${value.slice(0, limit)}...` : value;
+  return value.length > limit ? `${value.slice(0, limit)}...` : value
 }

@@ -49,11 +49,62 @@ it('shares stop state, rejects duplicate clicks, retries failures and isolates I
     expect(controls.stoppingMessageId).toBeNull()
     cancel.mockImplementation(async () => {})
     await act(async () =>
-      controls.stop('new-message', { deviceId: 'other-device', taskId: 'other-task' })
+      controls.stop('new-message', {
+        deviceId: 'other-device',
+        taskId: 'other-task',
+      })
     )
-    expect(cancel).toHaveBeenLastCalledWith({ deviceId: 'other-device', taskId: 'other-task' })
+    expect(cancel).toHaveBeenLastCalledWith({
+      deviceId: 'other-device',
+      taskId: 'other-task',
+    })
     expect(controls.error).toBeNull()
   } finally {
     act(() => root.unmount())
+  }
+})
+
+it('isolates an earlier visit even after returning to the same Issue', async () => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  const root = createRoot(document.createElement('div'))
+  let controls!: ReturnType<typeof useIssueExecutionCancellation>
+  const failures: ((error: Error) => void)[] = []
+  const cancel = vi.fn(() => new Promise<void>((_resolve, reject) => failures.push(reject)))
+  function Harness({ scope }: { scope: string }) {
+    controls = useIssueExecutionCancellation(scope, cancel, 'Stop failed')
+    return null
+  }
+  try {
+    await act(async () => root.render(<Harness scope="a" />))
+    let earlier!: Promise<void>
+    act(() => {
+      earlier = controls.stop('earlier', {
+        deviceId: 'device',
+        taskId: 'task',
+      })
+    })
+    await act(async () => root.render(<Harness scope="b" />))
+    await act(async () => root.render(<Harness scope="a" />))
+    let current!: Promise<void>
+    act(() => {
+      current = controls.stop('current', {
+        deviceId: 'device',
+        taskId: 'task',
+      })
+    })
+    await act(async () => {
+      failures[0](new Error('old visit'))
+      await earlier
+    })
+    expect(controls.stoppingMessageId).toBe('current')
+    expect(controls.error).toBeNull()
+    await act(async () => {
+      failures[1](new Error('current visit'))
+      await current
+    })
+    expect(controls.stoppingMessageId).toBeNull()
+    expect(controls.error).toBe('current visit')
+  } finally {
+    await act(async () => root.unmount())
   }
 })

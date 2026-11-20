@@ -1,5 +1,6 @@
 import { Check, Cloud, Copy, FolderOpen, Laptop, Server } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
@@ -36,8 +37,10 @@ export function EnvironmentSummaryOverview({
   info: EnvironmentInfo
 }) {
   const { t } = useTranslation('common')
-  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
-  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
+  const [copyReceipt, setCopyReceipt] = useState<{ path: string; deadline: number } | null>(null)
+  const copyExpired = useDeadlineExpired(copyReceipt?.deadline)
+  const copiedWorkspacePath = copyExpired ? null : copyReceipt?.path
+  const copyRequest = useRef(0)
   const executionDeviceId = info.executionDeviceId ?? info.deviceId
   const device = executionDeviceId ? findWorkbenchDevice(devices, executionDeviceId) : undefined
   const deviceName = device?.name?.trim() || ''
@@ -85,25 +88,11 @@ export function EnvironmentSummaryOverview({
           ? [info.workspacePath]
           : []
 
-  useEffect(
-    () => () => {
-      if (copiedWorkspacePathTimeoutRef.current !== null) {
-        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-      }
-    },
-    []
-  )
-
   async function handleCopyWorkspacePath(workspacePath: string) {
+    const request = ++copyRequest.current
     await copyTextToClipboard(workspacePath)
-    if (copiedWorkspacePathTimeoutRef.current !== null) {
-      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
-    }
-    setCopiedWorkspacePath(workspacePath)
-    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
-      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
-      copiedWorkspacePathTimeoutRef.current = null
-    }, COPIED_PATH_DURATION_MS)
+    if (request !== copyRequest.current) return
+    setCopyReceipt(() => ({ path: workspacePath, deadline: Date.now() + COPIED_PATH_DURATION_MS }))
   }
 
   return (

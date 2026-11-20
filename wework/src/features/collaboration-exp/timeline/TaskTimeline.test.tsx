@@ -172,6 +172,7 @@ function fixture() {
   const input = { ...data, viewer: 7, messages }
   const api = {
     activity: {},
+    issues: {},
     attachments: {
       list: vi.fn().mockResolvedValue([
         { id: 'known', display_name: 'spec' },

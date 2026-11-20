@@ -2,7 +2,7 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-transcript-sync',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useState } = React
+    const { createElement, useSyncExternalStore } = React
     const CONFIGURATION_ID = 'wework-transcript-sync.settings'
     const BACKEND_ID = 'wework-transcript-sync'
 
@@ -17,15 +17,26 @@ window.__ModuleLoader__.load({
         statusRefreshing: false,
       }
       const listeners = new Set()
+      let statusTimer
       const publish = patch => {
         snapshot = { ...snapshot, ...patch }
         for (const listener of listeners) listener(snapshot)
       }
-      return {
+      const store = {
         getSnapshot: () => snapshot,
         subscribe(listener) {
           listeners.add(listener)
-          return () => listeners.delete(listener)
+          if (listeners.size === 1) {
+            void store.refreshStatus()
+            statusTimer = setInterval(() => void store.refreshStatus(), 5000)
+          }
+          return () => {
+            listeners.delete(listener)
+            if (!listeners.size) {
+              clearInterval(statusTimer)
+              statusTimer = undefined
+            }
+          }
         },
         async reconcile() {
           try {
@@ -91,19 +102,11 @@ window.__ModuleLoader__.load({
           }
         },
       }
+      return store
     }
 
     function SyncSettingsSection({ service, store }) {
-      const [snapshot, setSnapshot] = useState(store.getSnapshot())
-      useEffect(() => {
-        const unsubscribe = store.subscribe(setSnapshot)
-        void store.refreshStatus()
-        const timer = setInterval(() => void store.refreshStatus(), 5000)
-        return () => {
-          clearInterval(timer)
-          unsubscribe()
-        }
-      }, [store])
+      const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
       const label = service.localization.translate({
         en: 'Synchronize conversations and settings across devices',
         'zh-CN': '跨设备同步会话和配置',

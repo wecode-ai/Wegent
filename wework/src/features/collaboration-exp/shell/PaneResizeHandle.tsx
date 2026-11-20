@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { useRef } from 'react'
 import { Separator } from 'react-resizable-panels'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -17,45 +18,38 @@ export function PaneResizeHandle({ id, getLayout, setLayout, resetLayout }: Pane
     pointerId: number
   } | null>(null)
 
-  useEffect(() => {
-    const endDrag = () => {
-      drag.current = null
-    }
-    const cancelDrag = () => {
-      const current = drag.current
-      if (!current) return
-      setLayout(current.layout)
-      if (current.element.hasPointerCapture?.(current.pointerId))
-        current.element.releasePointerCapture(current.pointerId)
-      // End the shared library's pointer session as well as restoring its layout.
-      current.element.ownerDocument.dispatchEvent(
-        new PointerEvent('pointerup', {
-          bubbles: true,
-          button: 0,
-          buttons: 0,
-          pointerId: current.pointerId,
-        })
-      )
-      drag.current = null
-    }
-    const cancelWithEscape = (event: KeyboardEvent) => {
+  const cancelDrag = () => {
+    const current = drag.current
+    if (!current) return
+    setLayout(current.layout)
+    if (current.element.hasPointerCapture?.(current.pointerId))
+      current.element.releasePointerCapture(current.pointerId)
+    // End the shared library's pointer session as well as restoring its layout.
+    current.element.ownerDocument.dispatchEvent(
+      new PointerEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        buttons: 0,
+        pointerId: current.pointerId,
+      })
+    )
+    drag.current = null
+  }
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape' || !drag.current) return
       event.preventDefault()
       event.stopImmediatePropagation()
       cancelDrag()
-    }
-
-    window.addEventListener('keydown', cancelWithEscape, true)
-    window.addEventListener('pointerup', endDrag)
-    window.addEventListener('pointercancel', cancelDrag)
-    window.addEventListener('blur', cancelDrag)
-    return () => {
-      window.removeEventListener('keydown', cancelWithEscape, true)
-      window.removeEventListener('pointerup', endDrag)
-      window.removeEventListener('pointercancel', cancelDrag)
-      window.removeEventListener('blur', cancelDrag)
-    }
-  }, [setLayout])
+    },
+    { capture: true }
+  )
+  useWindowEvent('pointerup', () => {
+    drag.current = null
+  })
+  useWindowEvent('pointercancel', cancelDrag)
+  useWindowEvent('blur', cancelDrag)
 
   return (
     <Separator

@@ -1,5 +1,5 @@
 import { ProviderEditor } from './ProviderEditor'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { ChevronDown, Plus } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -7,7 +7,6 @@ import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   getProviderConfigurationState,
-  initializeProviderModelConfiguration,
   reloadProviderConfiguration,
   saveProviderConfiguration,
   subscribeProviderConfiguration,
@@ -41,10 +40,6 @@ export function ProviderSettingsSection() {
     run: () => Promise<void>
   } | null>(null)
   const available = isElectronRuntime()
-
-  useEffect(() => {
-    if (available) void initializeProviderModelConfiguration()
-  }, [available])
 
   if (!available) return null
 

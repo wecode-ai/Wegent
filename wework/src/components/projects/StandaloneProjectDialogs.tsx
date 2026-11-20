@@ -1,5 +1,6 @@
 import { ChevronLeft, FolderOpen, FolderPlus, GitBranch, Globe2, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -115,13 +116,10 @@ function StandaloneFolderProjectDialogContent({
       pendingDevice.device,
     ]
   }, [devices, pendingDevice])
-  const [nativePickerError, setNativePickerError] = useState<string | null>(null)
-  const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
   const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState('')
   const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(null)
   const [gitSubmitting, setGitSubmitting] = useState(false)
-  const nativePickerStartedRef = useRef(false)
   const remoteDeviceSelectRef = useRef<HTMLSelectElement>(null)
   const remoteDeviceOptions = useMemo(
     () =>
@@ -169,12 +167,9 @@ function StandaloneFolderProjectDialogContent({
     (mode === 'existing' && activeDevice !== null && isRemoteProjectDevice(activeDevice))
   const closeDialog = useCallback(() => {
     if (onboardingBusy) return
-    nativePickerStartedRef.current = false
     setPendingDevice(null)
     setAddingProjectDevice(false)
     setOnboardingPending(false)
-    setNativePickerError(null)
-    setNativePickerFallback(false)
     setSelectedLocalRoots([])
     setSelectedLocalDeviceId('')
     setActiveDeviceId(null)
@@ -223,59 +218,39 @@ function StandaloneFolderProjectDialogContent({
     activeDevice !== null &&
     isLocalDevice(activeDevice) &&
     preferNativeLocalPicker &&
-    selectedLocalRoots.length === 0 &&
-    !nativePickerFallback
+    selectedLocalRoots.length === 0
   const nativePickerDeviceId = activeDevice?.device_id ?? null
 
-  useEffect(() => {
-    if (!open) {
-      nativePickerStartedRef.current = false
-      return undefined
-    }
-    if (!shouldUseNativeLocalPicker || !nativePickerDeviceId) return undefined
-    if (nativePickerStartedRef.current) return undefined
-    const openPickerTimer = window.setTimeout(() => {
-      nativePickerStartedRef.current = true
-      void (async () => {
-        try {
-          setNativePickerError(null)
-          const selectedPaths = await openNativeProjectDirectoryPickers()
-          const selectedPath = selectedPaths[0]
-          if (!selectedPath) {
-            closeDialog()
-            return
-          }
-          setSelectedLocalDeviceId(nativePickerDeviceId)
-          setSelectedLocalRoots(selectedPaths)
-        } catch (error) {
-          console.error('[Wework project] native picker failed', error)
-          setNativePickerError(
-            error instanceof Error
-              ? error.message
-              : t('workbench.project_directory_select_failed', '项目打开失败')
-          )
-        }
-      })()
-    }, 0)
-    return () => window.clearTimeout(openPickerTimer)
-  }, [
-    closeDialog,
-    nativePickerDeviceId,
-    onOpenStandaloneWorkspace,
-    open,
-    shouldUseNativeLocalPicker,
-    t,
-  ])
+  const [nativePicker] = useState(createNativeProjectPickerSession)
+  const subscribeNativePicker = useCallback(
+    (listener: () => void) =>
+      shouldUseNativeLocalPicker && nativePickerDeviceId
+        ? nativePicker.subscribe(listener, nativePickerDeviceId, closeDialog)
+        : () => {},
+    [closeDialog, nativePicker, nativePickerDeviceId, shouldUseNativeLocalPicker]
+  )
+  const nativeSelection = useSyncExternalStore(subscribeNativePicker, nativePicker.getSnapshot)
+  const projectRoots = nativeSelection.data?.roots.length
+    ? nativeSelection.data.roots
+    : selectedLocalRoots
+  const projectDeviceId = nativeSelection.data?.roots.length
+    ? nativeSelection.data.deviceId
+    : selectedLocalDeviceId
+  const nativePickerError =
+    nativeSelection.status === 'error'
+      ? nativeSelection.error instanceof Error
+        ? nativeSelection.error.message
+        : t('workbench.project_directory_select_failed', '项目打开失败')
+      : null
 
   if (!open) return null
-  if (selectedLocalRoots.length > 0) {
-    const selectedDevice =
-      devices.find(device => device.device_id === selectedLocalDeviceId) ?? null
+  if (projectRoots.length > 0) {
+    const selectedDevice = devices.find(device => device.device_id === projectDeviceId) ?? null
     return (
       <LocalProjectCreateDialog
         open
         device={selectedDevice}
-        initialRoots={selectedLocalRoots}
+        initialRoots={projectRoots}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
@@ -682,4 +657,55 @@ function StandaloneFolderProjectDialogContent({
     </div>,
     document.body
   )
+}
+
+/** One dialog owns one native request; observer leases can transfer its result and cancellation. */
+function createNativeProjectPickerSession() {
+  type Observer = { notify(): void; deviceId: string; onCancel(): void }
+  const observers = new Set<Observer>()
+  let stop: (() => void) | undefined
+  let request: Promise<{ deviceId: string; roots: string[] }> | undefined
+  const currentObserver = () => [...observers].at(-1)
+  const selection = createAsyncResource(
+    'standalone-project-directory',
+    async signal => {
+      // Resolve ownership at dispatch, after same-commit observer transfers have finished.
+      await Promise.resolve()
+      signal.throwIfAborted()
+      const owner = currentObserver()
+      if (!owner) throw new DOMException('Project picker is detached', 'AbortError')
+      // Native dialogs cannot be aborted: retain their request across subscription changes.
+      request ??= openNativeProjectDirectoryPickers().then(roots => ({
+        deviceId: owner.deviceId,
+        roots,
+      }))
+      return request
+    },
+    {
+      success: result => {
+        if (!result.roots.length) currentObserver()?.onCancel()
+      },
+      failure: error => {
+        if (observers.size) console.error('[Wework project] native picker failed', error)
+      },
+    }
+  )
+  return {
+    getSnapshot: selection.getSnapshot,
+    subscribe(notify: () => void, deviceId: string, onCancel: () => void) {
+      const observer = { notify, deviceId, onCancel }
+      observers.add(observer)
+      stop ??= selection.subscribe(() => {
+        for (const active of observers) active.notify()
+      })
+      return () => {
+        observers.delete(observer)
+        queueMicrotask(() => {
+          if (observers.size) return
+          stop?.()
+          stop = undefined
+        })
+      }
+    },
+  }
 }

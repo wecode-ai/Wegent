@@ -1,5 +1,11 @@
 import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { getIdleResourceSnapshot, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
+import {
+  createWorktreeSettingsResource,
+  type WorktreeSettingsChange,
+} from './worktreeSettingsResource'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -140,6 +146,28 @@ function WorktreeRow({
   )
 }
 
+type WorktreeSource = ReturnType<typeof createWorktreeSettingsResource>
+type WorktreeFailure = {
+  cause: unknown
+  key: 'load' | 'save' | 'delete' | 'restore' | 'open_conversation'
+}
+function initialWorktreeUI(source: WorktreeSource) {
+  return {
+    source,
+    baseline: undefined as RuntimeWorktreeSettings | undefined,
+    rootDraft: undefined as string | undefined,
+    keepCountDraft: undefined as string | undefined,
+    saving: false,
+    busyPaths: new Set<string>(),
+    openingTaskId: null as string | null,
+    pendingDisableCleanup: false,
+    pendingRecycle: null as RuntimeManagedWorktree | null,
+    savedReceipt: null as { message: string; deadline: number } | null,
+    error: null as WorktreeFailure | null,
+  }
+}
+const EMPTY_WORKTREES: RuntimeManagedWorktree[] = []
+
 export function WorktreesSettingsPage({
   api,
   devices = [],
@@ -161,159 +189,141 @@ export function WorktreesSettingsPage({
   const selectedDeviceId = availableDevices.some(device => device.device_id === deviceId)
     ? deviceId
     : (availableDevices[0]?.device_id ?? '')
-  const [settings, setSettings] = useState<RuntimeWorktreeSettings | null>(null)
-  const [rootDraft, setRootDraft] = useState('')
-  const [keepCountDraft, setKeepCountDraft] = useState('15')
-  const [items, setItems] = useState<RuntimeManagedWorktree[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [busyPath, setBusyPath] = useState<string | null>(null)
-  const [openingTaskId, setOpeningTaskId] = useState<string | null>(null)
-  const [pendingDisableCleanup, setPendingDisableCleanup] = useState(false)
-  const [pendingRecycle, setPendingRecycle] = useState<RuntimeManagedWorktree | null>(null)
-  const [savedNotice, setSavedNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const loadSequence = useRef(0)
-  const currentDeviceId = useRef(selectedDeviceId)
-
-  useEffect(() => {
-    currentDeviceId.current = selectedDeviceId
-    return () => {
-      loadSequence.current += 1
-    }
-  }, [selectedDeviceId])
-
+  const source = useMemo(
+    () => createWorktreeSettingsResource(api, selectedDeviceId),
+    [api, selectedDeviceId]
+  )
+  const settingsQuery = useSyncExternalStore(
+    source?.settings.subscribe ?? subscribeIdleResource,
+    source?.settings.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const listQuery = useSyncExternalStore(
+    source?.items.subscribe ?? subscribeIdleResource,
+    source?.items.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const settings = settingsQuery.data
+  const items = listQuery.data ?? EMPTY_WORKTREES
+  const loading = !!source && !listQuery.settled
+  const [ui, setUI] = useState(() => initialWorktreeUI(source))
+  if (ui.source !== source) setUI(initialWorktreeUI(source))
+  else if (ui.baseline !== settings)
+    setUI({
+      ...ui,
+      baseline: settings,
+      rootDraft: ui.rootDraft === ui.baseline?.worktreeRoot ? undefined : ui.rootDraft,
+      keepCountDraft:
+        ui.keepCountDraft === String(ui.baseline?.keepCount) ? undefined : ui.keepCountDraft,
+    })
+  const rootDraft = ui.rootDraft ?? settings?.worktreeRoot ?? ''
+  const keepCountDraft = ui.keepCountDraft ?? String(settings?.keepCount ?? 15)
+  const { saving, openingTaskId, pendingDisableCleanup, pendingRecycle } = ui
+  const busyPath = ui.busyPaths.values().next().value ?? null
+  const failure =
+    ui.error ??
+    (settingsQuery.status === 'error'
+      ? { cause: settingsQuery.error, key: 'load' as const }
+      : listQuery.status === 'error'
+        ? { cause: listQuery.error, key: 'load' as const }
+        : null)
+  const error = failure
+    ? failure.cause instanceof Error && failure.cause.message
+      ? failure.cause.message
+      : t('workbench.worktrees_' + failure.key + '_failed')
+    : null
+  const expired = useDeadlineExpired(ui.savedReceipt?.deadline)
+  const savedNotice = ui.savedReceipt && !expired ? ui.savedReceipt.message : null
+  const patchUI = useCallback(
+    (patch: Partial<typeof ui>) => {
+      setUI(current => (current.source === source ? { ...current, ...patch } : current))
+    },
+    [source]
+  )
   const load = useCallback(async () => {
-    if (currentDeviceId.current !== selectedDeviceId) return
-    const sequence = loadSequence.current + 1
-    loadSequence.current = sequence
-    if (!api || !selectedDeviceId) {
-      setSettings(null)
-      setItems([])
-      setLoading(false)
-      return
-    }
-    setSettings(null)
-    setItems([])
-    setLoading(true)
-    setError(null)
-    try {
-      const [nextSettings, response] = await Promise.all([
-        api.getWorktreeSettings({ deviceId: selectedDeviceId }),
-        api.listWorktrees({ deviceId: selectedDeviceId }),
-      ])
-      if (loadSequence.current !== sequence) return
-      setSettings(nextSettings)
-      setRootDraft(nextSettings.worktreeRoot)
-      setKeepCountDraft(String(nextSettings.keepCount))
-      setItems(response.items)
-    } catch (loadError) {
-      if (loadSequence.current !== sequence) return
-      setError(
-        loadError instanceof Error ? loadError.message : t('workbench.worktrees_load_failed')
-      )
-    } finally {
-      if (loadSequence.current === sequence) setLoading(false)
-    }
-  }, [api, selectedDeviceId, t])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0)
-    return () => window.clearTimeout(timer)
-  }, [load])
-
-  useEffect(() => {
-    if (!savedNotice) return
-    const timer = window.setTimeout(() => setSavedNotice(null), 2000)
-    return () => window.clearTimeout(timer)
-  }, [savedNotice])
+    if (!source?.active()) return
+    patchUI({ error: null })
+    await source.reload()
+  }, [source, patchUI])
 
   const updateSettings = useCallback(
-    async (
-      patch: Partial<
-        Pick<RuntimeWorktreeSettings, 'worktreeRoot' | 'autoCleanupEnabled' | 'keepCount'>
-      >,
-      successNotice?: string
-    ) => {
-      if (!api || !selectedDeviceId) return false
-      setSaving(true)
-      setError(null)
+    async (patch: WorktreeSettingsChange, successNotice?: string) => {
+      if (!source?.active()) return false
+      patchUI({ saving: true, error: null })
       try {
-        const next = await api.updateWorktreeSettings({ deviceId: selectedDeviceId, ...patch })
-        setSettings(next)
-        setRootDraft(next.worktreeRoot)
-        setKeepCountDraft(String(next.keepCount))
-        if (successNotice) setSavedNotice(successNotice)
-        return true
-      } catch (saveError) {
-        setError(
-          saveError instanceof Error ? saveError.message : t('workbench.worktrees_save_failed')
+        const receipt = await source.updateSettings(patch)
+        if (!source.active()) return false
+        setUI(current =>
+          current.source === source
+            ? {
+                ...current,
+                rootDraft:
+                  patch.worktreeRoot !== undefined && current.rootDraft === patch.worktreeRoot
+                    ? undefined
+                    : current.rootDraft,
+                keepCountDraft:
+                  patch.keepCount !== undefined &&
+                  current.keepCountDraft === String(patch.keepCount)
+                    ? undefined
+                    : current.keepCountDraft,
+                savedReceipt: successNotice
+                  ? { message: successNotice, deadline: receipt.savedAt + 2000 }
+                  : current.savedReceipt,
+              }
+            : current
         )
+        return true
+      } catch (cause) {
+        patchUI({ error: { cause, key: 'save' } })
         return false
       } finally {
-        setSaving(false)
+        patchUI({ saving: source.hasPendingSettings() })
       }
     },
-    [api, selectedDeviceId, t]
+    [source, patchUI]
   )
-
   const commitKeepCount = useCallback(() => {
     if (!settings) return
     const keepCount = Math.max(1, Number(keepCountDraft) || 1)
-    setKeepCountDraft(String(keepCount))
+    patchUI({ keepCountDraft: String(keepCount) })
     if (keepCount === settings.keepCount) return
     void updateSettings({ keepCount }, t('workbench.worktrees_saved_limit'))
-  }, [keepCountDraft, settings, t, updateSettings])
+  }, [keepCountDraft, settings, patchUI, t, updateSettings])
 
-  const deleteWorktree = useCallback(
-    async (item: RuntimeManagedWorktree) => {
-      if (!api) return
-      setBusyPath(item.path)
-      setError(null)
-      try {
-        const response = await api.deleteWorktree({
-          deviceId: item.deviceId,
-          path: item.path,
-          preserveSnapshot: true,
-        })
-        if (!response.success) throw new Error(t('workbench.worktrees_delete_failed'))
-        setPendingRecycle(null)
-        await onRefreshWorkLists?.()
-        await load()
-      } catch (deleteError) {
-        setPendingRecycle(null)
-        setError(
-          deleteError instanceof Error
-            ? deleteError.message
-            : t('workbench.worktrees_delete_failed')
-        )
-      } finally {
-        setBusyPath(null)
-      }
-    },
-    [api, t, load, onRefreshWorkLists]
-  )
-
-  const restoreWorktree = async (item: RuntimeManagedWorktree) => {
-    if (!api) return
-    setBusyPath(item.path)
-    setError(null)
-    try {
-      const response = await api.restoreWorktree({ deviceId: item.deviceId, path: item.path })
-      if (!response.success) throw new Error(t('workbench.worktrees_restore_failed'))
-      await onRefreshWorkLists?.()
-      await load()
-    } catch (restoreError) {
-      setError(
-        restoreError instanceof Error
-          ? restoreError.message
-          : t('workbench.worktrees_restore_failed')
+  const mutateWorktree = async (item: RuntimeManagedWorktree, kind: 'delete' | 'restore') => {
+    if (!source?.active() || source.actions.has(item.path)) return
+    source.actions.add(item.path)
+    patchUI({ busyPaths: new Set(source.actions), error: null })
+    const finish = (failure?: WorktreeFailure) =>
+      setUI(current =>
+        current.source === source
+          ? {
+              ...current,
+              pendingRecycle:
+                current.pendingRecycle?.path === item.path ? null : current.pendingRecycle,
+              error: failure ?? current.error,
+            }
+          : current
       )
+    try {
+      const response = await (kind === 'delete'
+        ? source.api.deleteWorktree({
+            deviceId: item.deviceId,
+            path: item.path,
+            preserveSnapshot: true,
+          })
+        : source.api.restoreWorktree({ deviceId: item.deviceId, path: item.path }))
+      if (!source.active()) return
+      if (!response.success) throw new Error(t('workbench.worktrees_' + kind + '_failed'))
+      finish()
+      await Promise.all([source.items.reload(), onRefreshWorkLists?.()])
+    } catch (cause) {
+      finish({ cause, key: kind })
     } finally {
-      setBusyPath(null)
+      source.actions.delete(item.path)
+      patchUI({ busyPaths: new Set(source.actions) })
     }
   }
-
   const groups = useMemo(
     () =>
       groupWorktrees(items.filter(item => ['active', 'restorable', 'failed'].includes(item.state))),
@@ -321,27 +331,20 @@ export function WorktreesSettingsPage({
   )
   const unavailable = !api || availableDevices.length === 0
 
-  const openConversation = useCallback(
-    async (conversation: RuntimeWorktreeConversation) => {
-      if (!onOpenRuntimeTask) return
-      setOpeningTaskId(conversation.taskId)
-      setError(null)
-      try {
-        await onRefreshWorkLists?.()
-        await onOpenRuntimeTask(conversation)
-        onLeaveSettings?.()
-      } catch (openError) {
-        setError(
-          openError instanceof Error
-            ? openError.message
-            : t('workbench.worktrees_open_conversation_failed')
-        )
-      } finally {
-        setOpeningTaskId(null)
-      }
-    },
-    [onLeaveSettings, onOpenRuntimeTask, onRefreshWorkLists, t]
-  )
+  const openConversation = async (conversation: RuntimeWorktreeConversation) => {
+    if (!source?.active() || !onOpenRuntimeTask) return
+    patchUI({ openingTaskId: conversation.taskId, error: null })
+    try {
+      await onRefreshWorkLists?.()
+      if (!source.active()) return
+      await onOpenRuntimeTask(conversation)
+      if (source.active()) onLeaveSettings?.()
+    } catch (cause) {
+      patchUI({ error: { cause, key: 'open_conversation' } })
+    } finally {
+      patchUI({ openingTaskId: null })
+    }
+  }
 
   return (
     <SettingsPage data-testid="worktrees-settings-page">
@@ -379,7 +382,7 @@ export function WorktreesSettingsPage({
                 <input
                   data-testid="worktrees-root-input"
                   value={rootDraft}
-                  onChange={event => setRootDraft(event.target.value)}
+                  onChange={event => patchUI({ rootDraft: event.target.value })}
                   onBlur={() => {
                     if (rootDraft !== settings.worktreeRoot)
                       void updateSettings(
@@ -402,7 +405,7 @@ export function WorktreesSettingsPage({
                   data-testid="worktrees-auto-cleanup-switch"
                   onCheckedChange={checked => {
                     if (!checked) {
-                      setPendingDisableCleanup(true)
+                      patchUI({ pendingDisableCleanup: true })
                     } else {
                       void updateSettings(
                         { autoCleanupEnabled: true },
@@ -425,7 +428,7 @@ export function WorktreesSettingsPage({
                     min={1}
                     data-testid="worktrees-keep-count-input"
                     value={keepCountDraft}
-                    onChange={event => setKeepCountDraft(event.target.value)}
+                    onChange={event => patchUI({ keepCountDraft: event.target.value })}
                     onBlur={commitKeepCount}
                     onKeyDown={event => {
                       if (event.key === 'Enter') event.currentTarget.blur()
@@ -463,9 +466,11 @@ export function WorktreesSettingsPage({
                 <RefreshCw className="h-4 w-4" />
               </button>
             </div>
-            <div className="rounded-2xl border border-border bg-surface px-4 py-4 text-sm text-text-secondary">
-              {t('workbench.worktrees_empty_description')}
-            </div>
+            {listQuery.data !== undefined && listQuery.status !== 'error' && (
+              <div className="rounded-2xl border border-border bg-surface px-4 py-4 text-sm text-text-secondary">
+                {t('workbench.worktrees_empty_description')}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-10">
@@ -499,10 +504,10 @@ export function WorktreesSettingsPage({
                     <WorktreeRow
                       key={`${item.deviceId}-${item.path}`}
                       item={item}
-                      busy={busyPath === item.path}
+                      busy={ui.busyPaths.has(item.path)}
                       openingTaskId={openingTaskId}
-                      onDelete={() => setPendingRecycle(item)}
-                      onRestore={() => void restoreWorktree(item)}
+                      onDelete={() => patchUI({ pendingRecycle: item })}
+                      onRestore={() => void mutateWorktree(item, 'restore')}
                       onOpenConversation={
                         onOpenRuntimeTask
                           ? conversation => void openConversation(conversation)
@@ -528,7 +533,7 @@ export function WorktreesSettingsPage({
           <button
             type="button"
             data-testid="dismiss-worktrees-saved-notice-button"
-            onClick={() => setSavedNotice(null)}
+            onClick={() => patchUI({ savedReceipt: null })}
             className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
             aria-label={t('workbench.worktrees_dismiss_saved_notice')}
           >
@@ -546,16 +551,17 @@ export function WorktreesSettingsPage({
         confirmTestId="confirm-recycle-worktree-button"
         destructive
         pending={Boolean(busyPath)}
-        onClose={() => setPendingRecycle(null)}
+        onClose={() => patchUI({ pendingRecycle: null })}
         onConfirm={() => {
-          if (pendingRecycle) void deleteWorktree(pendingRecycle)
+          if (pendingRecycle) void mutateWorktree(pendingRecycle, 'delete')
         }}
       />
       {pendingDisableCleanup && (
         <div
           className="fixed inset-0 z-modal flex items-center justify-center bg-black/45 px-4"
           onClick={event => {
-            if (!saving && event.target === event.currentTarget) setPendingDisableCleanup(false)
+            if (!saving && event.target === event.currentTarget)
+              patchUI({ pendingDisableCleanup: false })
           }}
         >
           <div
@@ -574,7 +580,7 @@ export function WorktreesSettingsPage({
               <button
                 type="button"
                 data-testid="keep-worktree-cleanup-button"
-                onClick={() => setPendingDisableCleanup(false)}
+                onClick={() => patchUI({ pendingDisableCleanup: false })}
                 disabled={saving}
                 className="h-10 rounded-xl px-5 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
               >
@@ -588,7 +594,7 @@ export function WorktreesSettingsPage({
                     { autoCleanupEnabled: false },
                     t('workbench.worktrees_saved_cleanup')
                   ).then(success => {
-                    if (success) setPendingDisableCleanup(false)
+                    if (success) patchUI({ pendingDisableCleanup: false })
                   })
                 }}
                 disabled={saving}

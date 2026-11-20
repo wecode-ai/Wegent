@@ -1,5 +1,10 @@
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { Search } from 'lucide-react'
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useMemo, useState, useSyncExternalStore, type RefObject } from 'react'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessTarget } from '@/types/api'
@@ -21,58 +26,34 @@ export function PluginShareTargetSearch({
 }: PluginShareTargetSearchProps) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
-  const [users, setUsers] = useState<PluginShareUserSearchItem[]>([])
-  const [groups, setGroups] = useState<PluginShareGroupSearchItem[]>([])
-  const [searching, setSearching] = useState(false)
-  const requestIdRef = useRef(0)
-
-  useEffect(() => {
-    const normalized = query.trim()
-    if (!normalized) return
-
-    const requestId = ++requestIdRef.current
-    const timeoutId = window.setTimeout(() => {
-      void Promise.all([searchUsers(normalized), searchGroups(normalized)])
-        .then(([nextUsers, nextGroups]) => {
-          if (requestIdRef.current !== requestId) return
-          setUsers(nextUsers)
-          setGroups(nextGroups)
-        })
-        .catch(() => {
-          if (requestIdRef.current !== requestId) return
-          setUsers([])
-          setGroups([])
-        })
-        .finally(() => {
-          if (requestIdRef.current === requestId) setSearching(false)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-
-    return () => {
-      window.clearTimeout(timeoutId)
-      if (requestIdRef.current === requestId) requestIdRef.current += 1
-    }
-  }, [query, searchGroups, searchUsers])
-
-  const clearSearch = () => {
-    requestIdRef.current += 1
-    setQuery('')
-    setUsers([])
-    setGroups([])
-    setSearching(false)
-  }
-
-  const handleQueryChange = (value: string) => {
-    requestIdRef.current += 1
-    setQuery(value)
-    setUsers([])
-    setGroups([])
-    setSearching(Boolean(value.trim()))
-  }
+  const normalized = query.trim()
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        query,
+        async () => {
+          const [users, groups] = await Promise.all([
+            searchUsers(query.trim()),
+            searchGroups(query.trim()),
+          ])
+          return { users, groups }
+        },
+        { delayMs: SEARCH_DEBOUNCE_MS, refreshOnSubscribe: true }
+      ),
+    [query, searchUsers, searchGroups]
+  )
+  const result = useSyncExternalStore(
+    normalized ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const users = result.data?.users ?? []
+  const groups = result.data?.groups ?? []
+  const searching = Boolean(normalized && (result.status === 'idle' || result.status === 'loading'))
 
   const selectTarget = (target: PluginAccessTarget) => {
     onSelect(target)
-    clearSearch()
+    setQuery('')
   }
 
   return (
@@ -86,7 +67,7 @@ export function PluginShareTargetSearch({
           data-testid="plugin-share-search"
           className="h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
           placeholder={t('workbench.plugins_share_search', '搜索成员或部门')}
-          onChange={event => handleQueryChange(event.target.value)}
+          onChange={event => setQuery(event.target.value)}
         />
       </label>
       {query.trim() ? (

@@ -12,7 +12,26 @@ export interface IssueActivityThreadModel<T> {
 export function groupIssueTimelineThreads(
   messages: ProjectChatMessage[],
 ): IssueActivityThreadModel<ProjectChatMessage>[] {
-  return groupIssueActivityThreads(messages).flatMap((thread) => {
+  const publishedResults = new Map<string, Set<string>>();
+  for (const message of messages) {
+    const activity = message.metadata.collaboration_execution_activity_id;
+    if (typeof activity !== "string") continue;
+    const results = publishedResults.get(activity) ?? new Set<string>();
+    results.add(message.content);
+    publishedResults.set(activity, results);
+  }
+  const timeline = messages
+    .filter(
+      (message) =>
+        message.type !== "agent_status" ||
+        message.metadata.collaboration_guidance !== true,
+    )
+    .map((message) =>
+      publishedResults.get(message.messageId)?.has(message.content)
+        ? { ...message, content: "" }
+        : message,
+    );
+  return groupIssueActivityThreads(timeline).flatMap((thread) => {
     if (thread.root.sender.type !== "user") return [thread];
     const discussion = {
       root: thread.root,
@@ -26,7 +45,11 @@ export function groupIssueTimelineThreads(
     >([[thread.root.messageId, discussion]]);
     for (const message of thread.replies) {
       const parent = parents.get(message.replyToMessageId ?? "") ?? discussion;
-      if (message.sender.type === "agent" && parent === discussion) {
+      if (
+        message.sender.type === "agent" &&
+        message.metadata.execution_dispatch !== "comment_only" &&
+        parent === discussion
+      ) {
         const execution = {
           root: message,
           replies: [] as ProjectChatMessage[],

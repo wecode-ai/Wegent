@@ -31,3 +31,21 @@ export function runtimePermissionProfile(mode: RuntimePermissionMode): string {
       return ":danger-full-access";
   }
 }
+
+export const RUNTIME_COMMAND_APPROVAL_OPTION = "commandApproval";
+
+export const RUNTIME_COMMAND_APPROVAL_MODES = [
+  "manual",
+  "ai",
+  "automatic",
+] as const;
+
+export type RuntimeCommandApprovalMode =
+  (typeof RUNTIME_COMMAND_APPROVAL_MODES)[number];
+
+export function runtimeCommandApprovalMode(
+  options?: Record<string, string>,
+): RuntimeCommandApprovalMode {
+  const mode = options?.[RUNTIME_COMMAND_APPROVAL_OPTION];
+  return mode === "ai" || mode === "automatic" ? mode : "manual";
+}

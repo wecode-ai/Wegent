@@ -49,15 +49,20 @@ async function readGitSnapshot(
 ): Promise<[string, string]> {
   try {
     return await Promise.all([
-      api.getWorkspaceGitBranch(target.deviceId, target.path, signal),
-      api.getWorkspaceGitDiff(target.deviceId, target.path, selection, signal),
+      api.getWorkspaceGitBranch(target.deviceId, target.path, signal, target.taskId),
+      api.getWorkspaceGitDiff(target.deviceId, target.path, selection, signal, target.taskId),
     ])
   } catch (error) {
     throwIfAborted(signal)
     // Match PC environment loading: probe a failed Git read before classifying it as non-Git.
     let isGitRepository: boolean | undefined
     try {
-      isGitRepository = await api.isWorkspaceGitRepository(target.deviceId, target.path, signal)
+      isGitRepository = await api.isWorkspaceGitRepository(
+        target.deviceId,
+        target.path,
+        signal,
+        target.taskId
+      )
     } catch {
       throwIfAborted(signal)
       throw error

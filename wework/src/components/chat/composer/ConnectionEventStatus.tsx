@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { createConnectionEventStatusSource } from './connectionEventStatusSource'
+import { useCallback, useId, useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, CircleAlert, Radio } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -22,30 +23,28 @@ export function ConnectionEventStatus({
   unsupported?: boolean
 }) {
   const { t } = useTranslation('common')
-  const [cancelled, setCancelled] = useState<string[]>([])
-  const [announcement, setAnnouncement] = useState('')
-  const [pending, setPending] = useState<string[]>([])
-  const [unsupportedFailure, setUnsupportedFailure] = useState(false)
+  const conditionId = useId()
+  const [expanded, setExpanded] = useState<string[]>([])
+  const [source] = useState(createConnectionEventStatusSource)
+  const { cancelled, announcement, pending, unsupportedFailure, errors } = useSyncExternalStore(
+    source.subscribe,
+    source.getSnapshot,
+    source.getSnapshot
+  )
+  const bindContainer = useCallback(
+    (node: HTMLDivElement | null) => source.bindContainer(node),
+    [source]
+  )
   const cancellationUnsupported = unsupported || unsupportedFailure
-  const [errors, setErrors] = useState<Record<string, boolean>>({})
-  const inFlight = useRef(new Set<string>())
-  const statusRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!announcement) return
-    const timeout = setTimeout(() => {
-      if (!statusRef.current?.contains(document.activeElement)) setAnnouncement('')
-    }, 5000)
-    return () => clearTimeout(timeout)
-  }, [announcement])
   const items = connectionEventSubscriptions(subscriptions).filter(
     item => !cancelled.includes(item.subscription_key)
   )
   if (!items.length) {
     return announcement ? (
       <div
-        ref={statusRef}
+        ref={bindContainer}
         tabIndex={-1}
-        onBlur={() => setAnnouncement('')}
+        onBlur={() => source.clearAnnouncement()}
         data-testid="connection-event-cancel-feedback"
         role="status"
         className="col-span-full min-h-8 min-w-0 truncate px-2.5 py-1 text-xs text-text-secondary"
@@ -55,46 +54,21 @@ export function ConnectionEventStatus({
       </div>
     ) : null
   }
-  const cancel = async (key: string, source: string) => {
-    if (!onCancel || unavailable || cancellationUnsupported || inFlight.current.has(key)) return
-    const focused = document.activeElement
-    const restoreFocus = statusRef.current?.contains(focused)
-    inFlight.current.add(key)
-    setPending(current => [...current, key])
-    setErrors(current => ({ ...current, [key]: false }))
-    try {
-      await onCancel(key)
-      setCancelled(current => [...current, key])
-      setAnnouncement(t('workbench.connection_event_cancelled', { source }))
-      requestAnimationFrame(() => {
-        if (
-          restoreFocus &&
-          (document.activeElement === focused || document.activeElement === document.body)
-        ) {
-          const next = statusRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
-          const target = next ?? statusRef.current
-          target?.focus()
-        }
-      })
-    } catch (failure) {
-      const code = failure && typeof failure === 'object' && 'code' in failure ? failure.code : null
-      if (code === 'unsupported_method' || code === 'connection_event_upgrade_required') {
-        setUnsupportedFailure(true)
-      } else {
-        setErrors(current => ({ ...current, [key]: true }))
-      }
-    } finally {
-      inFlight.current.delete(key)
-      setPending(current => current.filter(value => value !== key))
-    }
+  const cancel = (key: string, sourceName: string) => {
+    if (!onCancel || unavailable || cancellationUnsupported) return
+    return source.cancel(
+      key,
+      t('workbench.connection_event_cancelled', { source: sourceName }),
+      onCancel
+    )
   }
 
   return (
     <div
-      ref={statusRef}
+      ref={bindContainer}
       tabIndex={-1}
       onBlur={event => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setAnnouncement('')
+        if (!event.currentTarget.contains(event.relatedTarget)) source.clearAnnouncement()
       }}
       data-testid="connection-event-status"
       className="col-span-full w-full min-w-0 basis-full px-2.5 text-xs text-text-secondary"
@@ -104,7 +78,9 @@ export function ConnectionEventStatus({
           {announcement}
         </div>
       )}
-      {items.map(item => {
+      {items.map((item, index) => {
+        const conditionOpen = expanded.includes(item.subscription_key)
+        const detailsId = `${conditionId}-${index}`
         const summary = item.source.configurationSummary
         const sourceName =
           typeof summary === 'string' && summary.trim()
@@ -137,47 +113,77 @@ export function ConnectionEventStatus({
                   : t('workbench.connection_event_pending', '已收到事件，等待会话继续执行')
                 : t('workbench.connection_event_waiting', '等待事件，到达后自动继续')
         return (
-          <div
-            key={item.subscription_key}
-            className="flex min-h-8 min-w-0 flex-wrap items-center gap-1.5"
-            role="status"
-          >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {observing ? (
-                <ResourceObservationStatus observation={observation}>
-                  {label}
-                </ResourceObservationStatus>
-              ) : (
-                <span>{label}</span>
-              )}
-              <span className="min-w-0 max-w-full truncate" title={sourceName}>
-                · {sourceName}
-              </span>
-            </div>
-            <EventCondition match={item.match} />
-            {onCancel && (
+          <div key={item.subscription_key} className="min-w-0">
+            <div className="flex min-h-8 min-w-0 items-center gap-1.5">
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <div role="status" className="min-w-0 flex-1 truncate">
+                {observing ? (
+                  <ResourceObservationStatus observation={observation}>
+                    {label}
+                  </ResourceObservationStatus>
+                ) : (
+                  <span>{label}</span>
+                )}
+                <span title={sourceName}>
+                  {' · '}
+                  {sourceName}
+                </span>
+              </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="ml-auto h-7 min-h-11 shrink-0 px-2 text-xs text-text-secondary md:min-h-7"
-                data-testid="cancel-connection-event-subscription"
-                aria-label={t('workbench.connection_event_cancel_source', {
-                  source: sourceName,
-                })}
-                disabled={
-                  unavailable || cancellationUnsupported || pending.includes(item.subscription_key)
+                className="h-7 min-h-11 shrink-0 gap-1 whitespace-nowrap px-2 text-xs text-text-secondary md:min-h-7"
+                data-testid="connection-event-condition-toggle"
+                aria-expanded={conditionOpen}
+                aria-controls={detailsId}
+                onClick={() =>
+                  setExpanded(current =>
+                    current.includes(item.subscription_key)
+                      ? current.filter(key => key !== item.subscription_key)
+                      : [...current, item.subscription_key]
+                  )
                 }
-                onClick={() => void cancel(item.subscription_key, sourceName)}
               >
-                {pending.includes(item.subscription_key)
-                  ? t('workbench.connection_event_cancelling', '正在取消')
-                  : t('workbench.connection_event_cancel', '取消监听')}
+                <ChevronRight
+                  aria-hidden="true"
+                  className={conditionOpen ? 'h-3.5 w-3.5 rotate-90' : 'h-3.5 w-3.5'}
+                />
+                {t('workbench.event_condition_label', '等待条件')}
               </Button>
-            )}
+              {onCancel && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 min-h-11 shrink-0 whitespace-nowrap px-2 text-xs text-text-secondary md:min-h-7"
+                  data-testid="cancel-connection-event-subscription"
+                  aria-label={t('workbench.connection_event_cancel_source', {
+                    source: sourceName,
+                  })}
+                  disabled={
+                    unavailable ||
+                    cancellationUnsupported ||
+                    pending.includes(item.subscription_key)
+                  }
+                  onClick={() => void cancel(item.subscription_key, sourceName)}
+                >
+                  {pending.includes(item.subscription_key)
+                    ? t('workbench.connection_event_cancelling', '正在取消')
+                    : t('workbench.connection_event_cancel', '取消监听')}
+                </Button>
+              )}
+            </div>
+            <p
+              id={detailsId}
+              hidden={!conditionOpen}
+              className="whitespace-pre-wrap break-words pb-1 pl-5"
+              data-testid="connection-event-condition"
+            >
+              {conditionOpen && connectionEventCondition(item.match, t)}
+            </p>
             {onCancel && cancellationUnsupported && !unavailable && (
-              <span className="basis-full" data-testid="connection-event-upgrade-required">
+              <span className="block" data-testid="connection-event-upgrade-required">
                 {t(
                   'workbench.connection_event_upgrade_required',
                   '此设备需升级执行器以使用事件监听'
@@ -185,12 +191,12 @@ export function ConnectionEventStatus({
               </span>
             )}
             {onCancel && unavailable && (
-              <span className="basis-full">
+              <span className="block">
                 {t('workbench.connection_event_cancel_unavailable', '设备离线，恢复后可取消')}
               </span>
             )}
             {errors[item.subscription_key] && (
-              <span role="alert" className="basis-full text-destructive">
+              <span role="alert" className="block text-destructive">
                 {t('workbench.connection_event_cancel_failed', '取消失败，请重试')}
               </span>
             )}
@@ -200,22 +206,3 @@ export function ConnectionEventStatus({
     </div>
   )
 }
-
-const EventCondition = memo(function EventCondition({ match }: { match: unknown }) {
-  const { t } = useTranslation('common')
-  const condition = useMemo(() => connectionEventCondition(match, t), [match, t])
-  return (
-    <details className="group order-last w-full min-w-0 pl-5">
-      <summary
-        className="flex min-h-11 w-fit cursor-pointer items-center gap-1 hover:text-text-primary md:min-h-7"
-        data-testid="connection-event-condition-toggle"
-      >
-        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 group-open:rotate-90" />
-        {t('workbench.event_condition_label', '等待条件')}
-      </summary>
-      <p className="whitespace-pre-wrap break-words pb-1" data-testid="connection-event-condition">
-        {condition}
-      </p>
-    </details>
-  )
-})

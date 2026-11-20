@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Menu } from 'lucide-react'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
@@ -19,17 +19,13 @@ function openApplicationMenu(): void {
 export function ApplicationMenuButton() {
   const { t } = useTranslation('common')
   const label = t('common.application_menu')
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey) return
-      if ((event.altKey && event.code === 'KeyF') || (!event.altKey && event.key === 'F10')) {
-        event.preventDefault()
-        openApplicationMenu()
-      }
+  useWindowEvent('keydown', event => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey) return
+    if ((event.altKey && event.code === 'KeyF') || (!event.altKey && event.key === 'F10')) {
+      event.preventDefault()
+      openApplicationMenu()
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  })
 
   return (
     <Tooltip label={label} side="bottom">

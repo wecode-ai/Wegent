@@ -1,50 +1,45 @@
-import { Check, Cloud, Search, X } from "lucide-react";
-import { useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
-import type { CollaborationTranslate } from "../i18n";
-import { useCollaborationPortalTheme } from "../theme";
-import { ModelAutomaticReasoningOption } from "./ModelAutomaticReasoningOption";
+import { isolateModalBackground } from './dialogAccessibility'
+import { Check, Cloud, Search, X } from 'lucide-react'
+import { useCallback, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import type { ModelOptions, UnifiedModel } from '@wegent/chat-core/models'
+import type { CollaborationTranslate } from '../i18n'
+import { useCollaborationPortalTheme } from '../theme'
+import { ModelAutomaticReasoningOption } from './ModelAutomaticReasoningOption'
 import {
   getModelDisplayLabel,
   groupModelsByFamily,
   isSameModelSelection,
   modelSelectionKey,
   type ModelControlConfig,
-} from "./model-ui";
+} from './model-ui'
 import {
   codexProviderId,
   isCloudModel,
   modelCompatibilityDisabledMessage,
-} from "./model-selector-utils";
-import {
-  handleMobileModelSelectorDialogKeyDown,
-  useMobileModelSelectorFocus,
-} from "./model-selector-mobile-utils";
+} from './model-selector-utils'
+import { handleMobileModelSelectorDialogKeyDown } from './model-selector-mobile-utils'
 
 interface MobileModelSelectorProps {
-  translate: CollaborationTranslate;
-  buttonLabel: string;
-  mobileQuery: string;
-  setMobileQuery(value: string): void;
-  controlsAboveFamilies: ModelControlConfig[];
-  controlsBelowModels: ModelControlConfig[];
-  renderMobileControlSection(control: ModelControlConfig): ReactNode;
-  supportsReasoningControl: boolean;
-  familyGroups: ReturnType<typeof groupModelsByFamily>;
-  activeGroup:
-    | ReturnType<typeof groupModelsByFamily>[number]
-    | null
-    | undefined;
-  activateMobileFamily(id: string): void;
-  mobileModels: UnifiedModel[];
-  selectedModel: UnifiedModel | null;
-  getModelOptionId?: (model: UnifiedModel) => string;
-  selectedModelOptions: ModelOptions;
-  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void;
-  handleSelectModel(model: UnifiedModel | null): void;
-  closeMenu(): void;
-  emptyState: ReactNode;
+  translate: CollaborationTranslate
+  buttonLabel: string
+  mobileQuery: string
+  setMobileQuery(value: string): void
+  controlsAboveFamilies: ModelControlConfig[]
+  controlsBelowModels: ModelControlConfig[]
+  renderMobileControlSection(control: ModelControlConfig): ReactNode
+  supportsReasoningControl: boolean
+  familyGroups: ReturnType<typeof groupModelsByFamily>
+  activeGroup: ReturnType<typeof groupModelsByFamily>[number] | null | undefined
+  activateMobileFamily(id: string): void
+  mobileModels: UnifiedModel[]
+  selectedModel: UnifiedModel | null
+  getModelOptionId?: (model: UnifiedModel) => string
+  selectedModelOptions: ModelOptions
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  handleSelectModel(model: UnifiedModel | null): void
+  closeMenu(): void
+  emptyState: ReactNode
 }
 
 export function MobileModelSelector({
@@ -68,12 +63,19 @@ export function MobileModelSelector({
   closeMenu,
   emptyState,
 }: MobileModelSelectorProps) {
-  const portalTheme = useCollaborationPortalTheme();
-  const mobileMenuRef = useRef<HTMLDivElement>(null);
-  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
-  useMobileModelSelectorFocus(true, true, mobileCloseButtonRef);
-  const resolveControlLabel = (key: string, fallback: string) =>
-    t(key, fallback);
+  const portalTheme = useCollaborationPortalTheme()
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
+  const attachCloseButton = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    button.focus()
+    const restoreBackground = isolateModalBackground(button.closest<HTMLElement>('[role="dialog"]'))
+    return () => {
+      restoreBackground?.()
+      previous?.focus()
+    }
+  }, [])
+  const resolveControlLabel = (key: string, fallback: string) => t(key, fallback)
 
   return createPortal(
     <div
@@ -89,13 +91,9 @@ export function MobileModelSelector({
         data-testid="model-selector-menu"
         data-mobile="true"
         className="absolute inset-x-0 bottom-0 flex h-[82dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) =>
-          handleMobileModelSelectorDialogKeyDown(
-            event,
-            mobileMenuRef.current,
-            closeMenu,
-          )
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event =>
+          handleMobileModelSelectorDialogKeyDown(event, mobileMenuRef.current, closeMenu)
         }
       >
         <div className="mx-auto mt-3 h-1 w-11 rounded-full bg-border" />
@@ -105,17 +103,15 @@ export function MobileModelSelector({
               id="model-selector-mobile-title"
               className="text-lg font-semibold text-text-primary"
             >
-              {t("workbench.model_picker_title")}
+              {t('workbench.model_picker_title')}
             </h2>
-            <p className="mt-1 truncate text-xs text-text-muted">
-              {buttonLabel}
-            </p>
+            <p className="mt-1 truncate text-xs text-text-muted">{buttonLabel}</p>
           </div>
           <button
             type="button"
-            ref={mobileCloseButtonRef}
+            ref={attachCloseButton}
             data-testid="model-selector-close-button"
-            aria-label={t("workbench.close_menu")}
+            aria-label={t('workbench.close_menu')}
             onClick={() => closeMenu()}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
           >
@@ -129,8 +125,8 @@ export function MobileModelSelector({
             <input
               data-testid="model-selector-search-input"
               value={mobileQuery}
-              onChange={(event) => setMobileQuery(event.target.value)}
-              placeholder={t("workbench.search_models")}
+              onChange={event => setMobileQuery(event.target.value)}
+              placeholder={t('workbench.search_models')}
               className="min-w-0 flex-1 bg-transparent text-base leading-5 text-text-primary outline-none placeholder:text-text-muted"
             />
           </label>
@@ -139,15 +135,13 @@ export function MobileModelSelector({
         <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-5">
           <div className="mb-5 shrink-0 space-y-4">
             {controlsAboveFamilies.map(renderMobileControlSection)}
-            {!supportsReasoningControl && (
-              <ModelAutomaticReasoningOption translate={t} />
-            )}
+            {!supportsReasoningControl && <ModelAutomaticReasoningOption translate={t} />}
           </div>
 
           <div className="scrollbar-none -mx-5 mb-5 shrink-0 overflow-x-auto px-5">
             <div className="flex gap-2">
-              {familyGroups.map((group) => {
-                const active = group.config.id === activeGroup?.config.id;
+              {familyGroups.map(group => {
+                const active = group.config.id === activeGroup?.config.id
                 return (
                   <button
                     key={group.config.id}
@@ -155,15 +149,13 @@ export function MobileModelSelector({
                     data-testid={`model-family-${group.config.id}`}
                     onClick={() => activateMobileFamily(group.config.id)}
                     className={[
-                      "h-11 min-w-[44px] shrink-0 rounded-full px-4 text-sm font-medium",
-                      active
-                        ? "bg-text-primary text-background"
-                        : "bg-surface text-text-secondary",
-                    ].join(" ")}
+                      'h-11 min-w-[44px] shrink-0 rounded-full px-4 text-sm font-medium',
+                      active ? 'bg-text-primary text-background' : 'bg-surface text-text-secondary',
+                    ].join(' ')}
                   >
                     {group.config.label}
                   </button>
-                );
+                )
               })}
             </div>
           </div>
@@ -173,22 +165,22 @@ export function MobileModelSelector({
             data-testid="model-selector-submenu"
           >
             <h3 className="shrink-0 px-1 text-xs font-semibold text-text-muted">
-              {activeGroup?.config.label ?? t("workbench.model_version")}
+              {activeGroup?.config.label ?? t('workbench.model_version')}
             </h3>
             {mobileModels.length > 0 ? (
               <div
                 data-testid="model-selector-model-list"
                 className="scrollbar-none min-h-0 flex-1 space-y-2 overflow-y-auto pb-2"
               >
-                {mobileModels.map((model) => {
-                  const selected = isSameModelSelection(model, selectedModel);
-                  const modelDisabled = Boolean(model.compatibilityDisabled);
+                {mobileModels.map(model => {
+                  const selected = isSameModelSelection(model, selectedModel)
+                  const modelDisabled = Boolean(model.compatibilityDisabled)
                   const disabledMessage = modelDisabled
                     ? modelCompatibilityDisabledMessage(
                         model.compatibilityDisabledReason,
-                        resolveControlLabel,
+                        resolveControlLabel
                       )
-                    : undefined;
+                    : undefined
                   return (
                     <button
                       key={modelSelectionKey(model)}
@@ -199,57 +191,43 @@ export function MobileModelSelector({
                       title={disabledMessage}
                       onClick={() => {
                         if (modelDisabled) {
-                          onBlockedModelSelect?.(model, disabledMessage);
-                          return;
+                          onBlockedModelSelect?.(model, disabledMessage)
+                          return
                         }
-                        handleSelectModel(model);
+                        handleSelectModel(model)
                       }}
                       className={[
-                        "flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left",
-                        modelDisabled && "cursor-not-allowed opacity-70",
+                        'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left',
+                        modelDisabled && 'cursor-not-allowed opacity-70',
                         selected
-                          ? "border-primary/30 bg-primary/10"
-                          : "border-transparent bg-surface",
-                      ].join(" ")}
+                          ? 'border-primary/30 bg-primary/10'
+                          : 'border-transparent bg-surface',
+                      ].join(' ')}
                     >
                       <span className="min-w-0 flex-1">
                         <span
                           className={[
-                            "flex items-center gap-1.5 truncate text-sm font-semibold",
-                            modelDisabled
-                              ? "text-text-muted"
-                              : "text-text-primary",
-                          ].join(" ")}
+                            'flex items-center gap-1.5 truncate text-sm font-semibold',
+                            modelDisabled ? 'text-text-muted' : 'text-text-primary',
+                          ].join(' ')}
                         >
                           <span className="truncate">
-                            {getModelDisplayLabel(
-                              model,
-                              selectedModelOptions,
-                              resolveControlLabel,
-                            )}
+                            {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
                           </span>
                           {isCloudModel(model) && (
                             <Cloud
-                              aria-label={t(
-                                "workbench.environment_cloud",
-                                "云端",
-                              )}
+                              aria-label={t('workbench.environment_cloud', '云端')}
                               className="h-3.5 w-3.5 shrink-0 text-text-muted"
                             />
                           )}
                         </span>
                         <span className="mt-0.5 block truncate text-xs text-text-muted">
-                          {disabledMessage ||
-                            model.displayName ||
-                            model.modelId ||
-                            model.name}
+                          {disabledMessage || model.displayName || model.modelId || model.name}
                         </span>
                       </span>
-                      {selected && (
-                        <Check className="h-5 w-5 shrink-0 text-text-primary" />
-                      )}
+                      {selected && <Check className="h-5 w-5 shrink-0 text-text-primary" />}
                     </button>
-                  );
+                  )
                 })}
               </div>
             ) : (
@@ -271,7 +249,7 @@ export function MobileModelSelector({
             onClick={() => handleSelectModel(null)}
             className="h-11 flex-1 rounded-full border border-border bg-background text-sm font-semibold text-text-primary"
           >
-            {t("workbench.model_auto_select")}
+            {t('workbench.model_auto_select')}
           </button>
           <button
             type="button"
@@ -279,11 +257,11 @@ export function MobileModelSelector({
             onClick={() => closeMenu()}
             className="h-11 flex-1 rounded-full bg-text-primary text-sm font-semibold text-background"
           >
-            {t("workbench.use_current_model")}
+            {t('workbench.use_current_model')}
           </button>
         </div>
       </div>
     </div>,
-    document.body,
-  );
+    document.body
+  )
 }

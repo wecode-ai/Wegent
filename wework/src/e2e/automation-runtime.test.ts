@@ -14,6 +14,7 @@ import {
 import {
   clearLocalModelConfigs,
   listLegacyLocalModelConfigs,
+  markLocalModelCatalogReady,
   listLocalModelConfigs,
 } from '@/features/model-settings/localModelSettings'
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
@@ -1203,6 +1204,21 @@ describe('Electron desktop E2E automation', () => {
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
     expect(listLegacyLocalModelConfigs()).toEqual([])
     expect(owner).toHaveBeenCalledWith('modelConfiguration.save', expect.any(Object))
+  })
+
+  test('reseeding preserves the ready state of unchanged local model fixtures', () => {
+    const config = { seedLocalModels: true, localModelsCatalogReady: false }
+    const endpoint = 'http://127.0.0.1:43111'
+    const readFixture = () =>
+      listLegacyLocalModelConfigs().find(model => model.id === 'desktop-e2e-responses')
+
+    seedDesktopE2ELocalModels(config, endpoint)
+    const pending = readFixture()
+    expect(pending?.catalogReady).toBe(false)
+    markLocalModelCatalogReady([pending!])
+
+    seedDesktopE2ELocalModels(config, endpoint)
+    expect(readFixture()?.catalogReady).toBe(true)
   })
 
   test('skips a dependent model when Provider owns its vision proxy', () => {

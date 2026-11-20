@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { Archive, CheckCheck } from 'lucide-react'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import {
@@ -20,7 +20,6 @@ import { CloudTodoModal as Modal } from '@/features/todo/CloudTodoModal'
 import {
   findProjectSpaceContextSourceForTask,
   type ProjectSpaceApi,
-  type ProjectSpaceTaskContextSource,
 } from '@/features/todo/projectSpaceSelection'
 import { runtimeMyWorkItems, type RuntimeMyWorkItem } from '@/features/todo/runtimeMyWork'
 import { columnDotClasses, columns } from '@/features/todo/todoShared'
@@ -32,6 +31,13 @@ import { createCollaborationTranslator } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
 import { allSettledWithConcurrency } from '@/lib/promise-concurrency'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import {
+  BULK_TASK_CONCURRENCY,
+  createTaskBoardContextSource,
+  runtimeTaskContextKey as runtimeTaskKey,
+  sameProjectSpaceApis,
+  type RuntimeTaskContextSource,
+} from './taskBoardContextSource'
 
 interface TaskBoardViewProps {
   runtimeWork: RuntimeWorkListResponse | null
@@ -46,16 +52,24 @@ interface TaskBoardViewProps {
   onOpenRuntimeTask: (address: RuntimeTaskAddress) => void
 }
 
-type RuntimeTaskContextSource = ProjectSpaceTaskContextSource<ProjectSpaceApi>
-
-const BULK_TASK_CONCURRENCY = 8
-
-function runtimeTaskKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}\0${address.taskId}`
+interface TaskBoardBatchFields {
+  batchConfirmItems: RuntimeMyWorkItem[] | null
+  batchConfirmBusy: boolean
+  batchConfirmError: string | null
+  batchArchiveItems: RuntimeMyWorkItem[] | null
+  batchArchiveBusy: boolean
+  batchArchiveError: string | null
 }
 
-function sameProjectSpaceApis(left: ProjectSpaceApi[], right: ProjectSpaceApi[]): boolean {
-  return left.length === right.length && left.every((api, index) => api === right[index])
+function emptyBatchFields(): TaskBoardBatchFields {
+  return {
+    batchConfirmItems: null,
+    batchConfirmBusy: false,
+    batchConfirmError: null,
+    batchArchiveItems: null,
+    batchArchiveBusy: false,
+    batchArchiveError: null,
+  }
 }
 
 async function trackDefaultWorkItem(
@@ -145,19 +159,31 @@ export function TaskBoardView({
     [i18n.language]
   )
   const [activeLocalProjectFilter, setActiveLocalProjectFilter] = useState('all')
-  const [taskContexts, setTaskContexts] = useState<Map<string, RuntimeTaskContextSource>>(
-    () => new Map()
+  const [contextSource, setContextSource] = useState(() =>
+    createTaskBoardContextSource(projectSpaceApis)
   )
-  const taskContextLookupVersions = useRef(new Map<string, number>())
-  const pendingTaskContextLookups = useRef(new Map<string, ProjectSpaceApi[]>())
-  const projectSpaceApisRef = useRef(projectSpaceApis)
-  const mountedRef = useRef(true)
-  const [batchConfirmItems, setBatchConfirmItems] = useState<RuntimeMyWorkItem[] | null>(null)
-  const [batchConfirmBusy, setBatchConfirmBusy] = useState(false)
-  const [batchConfirmError, setBatchConfirmError] = useState<string | null>(null)
-  const [batchArchiveItems, setBatchArchiveItems] = useState<RuntimeMyWorkItem[] | null>(null)
-  const [batchArchiveBusy, setBatchArchiveBusy] = useState(false)
-  const [batchArchiveError, setBatchArchiveError] = useState<string | null>(null)
+  const [batch, setBatch] = useState(() => ({
+    source: contextSource,
+    fields: emptyBatchFields(),
+  }))
+  const {
+    batchConfirmItems,
+    batchConfirmBusy,
+    batchConfirmError,
+    batchArchiveItems,
+    batchArchiveBusy,
+    batchArchiveError,
+  } = batch.fields
+  function updateBatch<K extends keyof TaskBoardBatchFields>(
+    key: K,
+    value: TaskBoardBatchFields[K]
+  ) {
+    setBatch(current =>
+      current.source === contextSource
+        ? { ...current, fields: { ...current.fields, [key]: value } }
+        : current
+    )
+  }
   const groupFields = useMemo<Array<{ id: ProjectBoardGroupBy; name: string }>>(
     () => [
       { id: 'status', name: t('todo.task_board_group_status', '状态') },
@@ -211,69 +237,20 @@ export function TaskBoardView({
     () => allItems.filter(item => item.status === 'in_review'),
     [allItems]
   )
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-  useEffect(() => {
-    projectSpaceApisRef.current = projectSpaceApis
-  }, [projectSpaceApis])
-  useEffect(() => {
-    if (projectSpaceApis.length === 0 || reviewItems.length === 0) return
-    const lookupApis = projectSpaceApis
-    const unresolvedItems = reviewItems.flatMap(item => {
-      const key = runtimeTaskKey(item.runtime_address)
-      const existing = taskContexts.get(key)
-      if (
-        (existing && lookupApis.includes(existing.api)) ||
-        sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)
-      ) {
-        return []
-      }
-      // Version the whole queue before workers start so confirmation invalidates it.
-      const lookupVersion = (taskContextLookupVersions.current.get(key) ?? 0) + 1
-      taskContextLookupVersions.current.set(key, lookupVersion)
-      pendingTaskContextLookups.current.set(key, lookupApis)
-      return [{ item, key, lookupVersion }]
-    })
-    if (unresolvedItems.length === 0) return
-    void allSettledWithConcurrency(
-      unresolvedItems,
-      BULK_TASK_CONCURRENCY,
-      async ({ item, key, lookupVersion }) => {
-        try {
-          return {
-            key,
-            lookupVersion,
-            source: await findProjectSpaceContextSourceForTask(lookupApis, item.runtime_address),
-          }
-        } finally {
-          if (sameProjectSpaceApis(pendingTaskContextLookups.current.get(key) ?? [], lookupApis)) {
-            pendingTaskContextLookups.current.delete(key)
-          }
-        }
-      }
-    ).then(results => {
-      if (!mountedRef.current || !sameProjectSpaceApis(projectSpaceApisRef.current, lookupApis)) {
-        return
-      }
-      const resolved = results.flatMap(result =>
-        result.status === 'fulfilled' &&
-        result.value.source.context.loop_item &&
-        taskContextLookupVersions.current.get(result.value.key) === result.value.lookupVersion
-          ? [result.value]
-          : []
-      )
-      if (resolved.length === 0) return
-      setTaskContexts(current => {
-        const next = new Map(current)
-        for (const { key, source } of resolved) next.set(key, source)
-        return next
-      })
-    })
-  }, [projectSpaceApis, reviewItems, taskContexts])
+  if (!sameProjectSpaceApis(contextSource.apis, projectSpaceApis)) {
+    const nextSource = createTaskBoardContextSource(projectSpaceApis)
+    setContextSource(nextSource)
+    setBatch({ source: nextSource, fields: emptyBatchFields() })
+  }
+  const subscribeContexts = useCallback(
+    (listener: () => void) =>
+      contextSource.subscribe(
+        reviewItems.map(item => item.runtime_address),
+        listener
+      ),
+    [contextSource, reviewItems]
+  )
+  const taskContexts = useSyncExternalStore(subscribeContexts, contextSource.getSnapshot)
   const items = useMemo(
     () =>
       filteredItems.flatMap(item => {
@@ -328,20 +305,14 @@ export function TaskBoardView({
 
   async function confirmReviewTasks(reviewItemsToConfirm: RuntimeMyWorkItem[]) {
     if (batchConfirmBusy || reviewItemsToConfirm.length === 0) return
-    setBatchConfirmBusy(true)
-    setBatchConfirmError(null)
+    updateBatch('batchConfirmBusy', true)
+    updateBatch('batchConfirmError', null)
     let defaultWorkItemSources: ReturnType<typeof loadDefaultWorkItemSources> | null = null
     const repairTaskContext = async (item: RuntimeMyWorkItem) => {
       defaultWorkItemSources ??= loadDefaultWorkItemSources(projectSpaceApis)
       return trackDefaultWorkItem(await defaultWorkItemSources, item)
     }
-    for (const item of reviewItemsToConfirm) {
-      const key = runtimeTaskKey(item.runtime_address)
-      taskContextLookupVersions.current.set(
-        key,
-        (taskContextLookupVersions.current.get(key) ?? 0) + 1
-      )
-    }
+    contextSource.invalidate(reviewItemsToConfirm.map(item => item.runtime_address))
     const localContextKeys = new Set<string>()
     const results = await allSettledWithConcurrency(
       reviewItemsToConfirm,
@@ -393,54 +364,48 @@ export function TaskBoardView({
         console.error('[TaskBoard] Failed to confirm Runtime Task', result.reason)
       }
     }
-    if (succeeded.length > 0) {
-      setTaskContexts(current => {
-        const next = new Map(current)
-        for (const result of succeeded) next.set(result.key, result.source)
-        return next
-      })
-    }
-    if (failed.some(item => localContextKeys.has(runtimeTaskKey(item.runtime_address)))) {
-      setTaskContexts(current => {
-        const next = new Map(current)
-        for (const item of failed) {
-          const key = runtimeTaskKey(item.runtime_address)
-          if (localContextKeys.has(key)) next.delete(key)
-        }
-        return next
-      })
-    }
+    contextSource.reconcile(
+      succeeded,
+      new Set(
+        failed
+          .map(item => runtimeTaskKey(item.runtime_address))
+          .filter(key => localContextKeys.has(key))
+      )
+    )
     if (failed.length === 0) {
-      setBatchConfirmItems(null)
+      updateBatch('batchConfirmItems', null)
     } else {
-      setBatchConfirmItems(failed)
-      setBatchConfirmError(
+      updateBatch('batchConfirmItems', failed)
+      updateBatch(
+        'batchConfirmError',
         t('todo.batch_confirm_task_failed', '{{count}} 个任务确认失败，请稍后重试', {
           count: failed.length,
         })
       )
     }
-    setBatchConfirmBusy(false)
+    updateBatch('batchConfirmBusy', false)
   }
 
   async function archiveCompletedTasks(completedItems: RuntimeMyWorkItem[]) {
     if (batchArchiveBusy || completedItems.length === 0) return
-    setBatchArchiveBusy(true)
-    setBatchArchiveError(null)
+    updateBatch('batchArchiveItems', null)
+    updateBatch('batchArchiveBusy', true)
+    updateBatch('batchArchiveError', null)
     try {
       const result = await onArchiveRuntimeTasks(completedItems.map(item => item.runtime_address))
       if (result?.status === 'failed') {
-        setBatchArchiveError(
+        updateBatch(
+          'batchArchiveError',
           t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
             count: completedItems.length,
           })
         )
         return
       }
-      setBatchArchiveItems(null)
     } catch (error) {
       console.error('[TaskBoard] Failed to archive completed Runtime Tasks', error)
-      setBatchArchiveError(
+      updateBatch(
+        'batchArchiveError',
         error instanceof Error
           ? error.message
           : t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
@@ -448,12 +413,17 @@ export function TaskBoardView({
             })
       )
     } finally {
-      setBatchArchiveBusy(false)
+      updateBatch('batchArchiveBusy', false)
     }
   }
 
   return (
-    <div className="contents" data-testid="task-board-surface">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="task-board-surface">
+      {batchArchiveError && (
+        <p className="shrink-0 px-4 py-2 text-sm text-destructive" role="alert">
+          {batchArchiveError}
+        </p>
+      )}
       <ProjectBoardBody<RuntimeMyWorkItem>
         translate={boardTranslate}
         state={board.state}
@@ -541,8 +511,8 @@ export function TaskBoardView({
                   data-testid="task-board-batch-confirm-review"
                   disabled={batchConfirmBusy}
                   onClick={() => {
-                    setBatchConfirmError(null)
-                    setBatchConfirmItems([...columnItems])
+                    updateBatch('batchConfirmError', null)
+                    updateBatch('batchConfirmItems', [...columnItems])
                   }}
                   className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
                   aria-label={t('todo.batch_confirm_review_tasks', '批量确认完成待确认任务')}
@@ -564,8 +534,8 @@ export function TaskBoardView({
                   data-testid="task-board-batch-archive-completed"
                   disabled={batchArchiveBusy}
                   onClick={() => {
-                    setBatchArchiveError(null)
-                    setBatchArchiveItems([...columnItems])
+                    updateBatch('batchArchiveError', null)
+                    updateBatch('batchArchiveItems', [...columnItems])
                   }}
                   className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
                   aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
@@ -619,18 +589,18 @@ export function TaskBoardView({
                     label: t('todo.confirm_complete', '确认完成'),
                     testId: `task-board-card-confirm-${item.id}`,
                     onClick: () => {
-                      setBatchConfirmError(null)
-                      setBatchConfirmItems([item])
+                      updateBatch('batchConfirmError', null)
+                      updateBatch('batchConfirmItems', [item])
                     },
                   }
-                : item.status === 'completed'
+                : item.status === 'completed' && !batchArchiveBusy
                   ? {
                       kind: 'archive',
                       label: t('todo.archive_task', '归档任务'),
                       testId: `task-board-card-archive-${item.id}`,
                       onClick: () => {
-                        setBatchArchiveError(null)
-                        setBatchArchiveItems([item])
+                        updateBatch('batchArchiveError', null)
+                        updateBatch('batchArchiveItems', [item])
                       },
                     }
                   : undefined
@@ -658,8 +628,8 @@ export function TaskBoardView({
           title={t('todo.batch_confirm_task_title', '确认待确认任务？')}
           onClose={() => {
             if (batchConfirmBusy) return
-            setBatchConfirmItems(null)
-            setBatchConfirmError(null)
+            updateBatch('batchConfirmItems', null)
+            updateBatch('batchConfirmError', null)
           }}
         >
           <div className="px-5 pb-5 pt-4" data-testid="task-board-batch-confirm-review-dialog">
@@ -681,8 +651,8 @@ export function TaskBoardView({
                 data-testid="task-board-batch-confirm-review-cancel"
                 disabled={batchConfirmBusy}
                 onClick={() => {
-                  setBatchConfirmItems(null)
-                  setBatchConfirmError(null)
+                  updateBatch('batchConfirmItems', null)
+                  updateBatch('batchConfirmError', null)
                 }}
                 className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
               >
@@ -707,9 +677,8 @@ export function TaskBoardView({
         <Modal
           title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
           onClose={() => {
-            if (batchArchiveBusy) return
-            setBatchArchiveItems(null)
-            setBatchArchiveError(null)
+            updateBatch('batchArchiveItems', null)
+            updateBatch('batchArchiveError', null)
           }}
         >
           <div className="px-5 pb-5 pt-4" data-testid="task-board-batch-archive-completed-dialog">
@@ -720,19 +689,14 @@ export function TaskBoardView({
                 { count: batchArchiveItems.length }
               )}
             </p>
-            {batchArchiveError ? (
-              <p className="mt-3 text-xs text-destructive" role="alert">
-                {batchArchiveError}
-              </p>
-            ) : null}
+
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 data-testid="task-board-batch-archive-completed-cancel"
-                disabled={batchArchiveBusy}
                 onClick={() => {
-                  setBatchArchiveItems(null)
-                  setBatchArchiveError(null)
+                  updateBatch('batchArchiveItems', null)
+                  updateBatch('batchArchiveError', null)
                 }}
                 className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
               >
@@ -741,13 +705,10 @@ export function TaskBoardView({
               <button
                 type="button"
                 data-testid="task-board-batch-archive-completed-confirm"
-                disabled={batchArchiveBusy}
                 onClick={() => void archiveCompletedTasks(batchArchiveItems)}
                 className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
               >
-                {batchArchiveBusy
-                  ? t('todo.archiving', '归档中…')
-                  : t('todo.confirm_archive', '确认归档')}
+                {t('todo.confirm_archive', '确认归档')}
               </button>
             </div>
           </div>

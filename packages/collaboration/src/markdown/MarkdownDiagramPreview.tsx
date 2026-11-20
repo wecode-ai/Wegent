@@ -1,9 +1,9 @@
 import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
 import { useMarkdownServices } from './MarkdownServices'
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { DiagramImageActions } from './DiagramImageActions'
-import { useEscapeKey } from './useEscapeKey'
+import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { useDiagramViewport } from './useDiagramViewport'
 import { useDiagramDiagnostics } from './useDiagramDiagnostics'
@@ -18,15 +18,6 @@ interface MarkdownDiagramPreviewProps {
   sourceLine?: number
 }
 
-const FOCUSABLE_SELECTOR = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(', ')
-
 export function MarkdownDiagramPreview({
   code,
   language,
@@ -38,10 +29,7 @@ export function MarkdownDiagramPreview({
   const resolvedTheme = theme === 'system' ? (portalTheme['data-theme'] ?? documentTheme) : theme
   const containerRef = useRef<HTMLElement>(null)
   const renderViewer = useDiagramViewport(containerRef)
-  const fullscreenDialogRef = useRef<HTMLDivElement>(null)
-  const fullscreenExitButtonRef = useRef<HTMLButtonElement>(null)
   const fullscreenTriggerRef = useRef<HTMLButtonElement>(null)
-  const restoreFullscreenFocusRef = useRef(false)
   const [fullscreen, setFullscreen] = useState(false)
   const diagramType = diagramKind(language) ?? 'mermaid'
   const result = useDiagramArtifact(
@@ -73,49 +61,15 @@ export function MarkdownDiagramPreview({
   })
 
   const closeFullscreen = () => setFullscreen(false)
-  const openFullscreen = () => {
-    restoreFullscreenFocusRef.current = true
-    setFullscreen(true)
-  }
-
-  useEscapeKey(closeFullscreen, fullscreen, fullscreenDialogRef)
-
-  useEffect(() => {
-    if (fullscreen) {
-      const frameId = window.requestAnimationFrame(() => {
-        fullscreenExitButtonRef.current?.focus()
-      })
-      return () => window.cancelAnimationFrame(frameId)
-    }
-    if (!restoreFullscreenFocusRef.current) return
-
-    restoreFullscreenFocusRef.current = false
-    const frameId = window.requestAnimationFrame(() => fullscreenTriggerRef.current?.focus())
-    return () => window.cancelAnimationFrame(frameId)
-  }, [fullscreen])
-
-  const handleFullscreenKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Tab') return
-
-    const focusableElements = Array.from(
-      fullscreenDialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []
-    )
-    if (focusableElements.length === 0) {
-      event.preventDefault()
-      fullscreenDialogRef.current?.focus()
-      return
-    }
-
-    const firstElement = focusableElements[0]
-    const lastElement = focusableElements[focusableElements.length - 1]
-    if (event.shiftKey && document.activeElement === firstElement) {
-      event.preventDefault()
-      lastElement.focus()
-    } else if (!event.shiftKey && document.activeElement === lastElement) {
-      event.preventDefault()
-      firstElement.focus()
-    }
-  }
+  const openFullscreen = () => setFullscreen(true)
+  const restoreFullscreenTrigger = useCallback(() => fullscreenTriggerRef.current, [])
+  const fullscreenDialogRef = useDialogKeyboard<HTMLDivElement>(
+    closeFullscreen,
+    fullscreen,
+    '[data-testid="diagram-exit-fullscreen-button"]',
+    true,
+    restoreFullscreenTrigger
+  )
 
   const preview = (
     <section
@@ -182,7 +136,7 @@ export function MarkdownDiagramPreview({
           filename={`${diagramType}-diagram.png`}
           theme={resolvedTheme}
           fullscreen={fullscreen}
-          fullscreenButtonRef={fullscreen ? fullscreenExitButtonRef : fullscreenTriggerRef}
+          fullscreenButtonRef={fullscreen ? undefined : fullscreenTriggerRef}
           onToggleFullscreen={fullscreen ? closeFullscreen : openFullscreen}
         />
       )}
@@ -210,7 +164,6 @@ export function MarkdownDiagramPreview({
               aria-modal="true"
               aria-label={t('workbench.diagram_full_screen', '全屏查看')}
               tabIndex={-1}
-              onKeyDown={handleFullscreenKeyDown}
               className={`${portalTheme.className} fixed inset-0 z-modal h-dvh w-dvw bg-background`}
             >
               {preview}
