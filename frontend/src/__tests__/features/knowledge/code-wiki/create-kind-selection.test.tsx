@@ -11,6 +11,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
+import type { SummaryModelRef } from '@/types/knowledge'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { retrieverApis } from '@/apis/retrievers'
 import { modelApis } from '@/apis/models'
@@ -68,8 +69,26 @@ jest.mock('@/features/knowledge/code-wiki/GenerationStrategySelect', () => ({
 }))
 
 jest.mock('@/components/model-select/ModelRefSelector', () => ({
-  ModelRefSelector: ({ error }: { error?: string }) => (
-    <div data-testid="model-ref-selector">{error}</div>
+  ModelRefSelector: ({
+    error,
+    dataTestId,
+    onChange,
+  }: {
+    error?: string
+    dataTestId: string
+    onChange: (value: SummaryModelRef) => void
+  }) => (
+    <div data-testid="model-ref-selector">
+      {error}
+      {dataTestId === 'code-wiki-execution-model-select' && (
+        <button
+          type="button"
+          onClick={() => onChange({ name: 'wiki-model', type: 'public', namespace: 'default' })}
+        >
+          Choose Wiki model
+        </button>
+      )}
+    </div>
   ),
 }))
 
@@ -159,6 +178,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenCalledWith('personal', undefined)
     )
+    fireEvent.click(screen.getByTestId('rag-mode-disabled'))
     fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-team'))
@@ -172,6 +192,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       'embedding'
     )
     fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    expect(screen.getByTestId('rag-mode-auto')).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
     )
@@ -195,6 +216,9 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     fireEvent.click(await screen.findByTestId('create-space-option-personal'))
     expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
     fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
+    expect(screen.getByTestId('rag-mode-disabled')).toHaveAttribute('aria-pressed', 'true')
+    expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
+    fireEvent.click(screen.getByTestId('rag-mode-auto'))
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('personal', undefined)
     )
@@ -302,8 +326,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       target: { value: 'https://github.com/wecode-ai/Wegent.git' },
     })
     fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
-    // The URL is committed to the form only once the debounced probe has run. Until
-    // then the repository check below fails first and this proves nothing.
+    // Let the repository lookup run while a different section is visible.
     await waitFor(() => expect(codeWikiApi.resolve).toHaveBeenCalled())
     fireEvent.click(screen.getByTestId('code-wiki-show-generation-task'))
     await act(async () => finishResolve())
@@ -317,6 +340,51 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.getByTestId('kb-name-input').closest('section')?.hidden).toBe(false)
     expect(screen.getByDisplayValue('https://github.com/wecode-ai/Wegent.git')).toBeInTheDocument()
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('submits the current repository while an earlier probe is returning', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const olderUrl = 'https://github.com/wecode-ai/old-repo'
+    const currentUrl = 'https://github.com/wecode-ai/current-repo'
+    let resolveOlder!: () => void
+    jest.useFakeTimers()
+    try {
+      jest.mocked(codeWikiApi.resolve).mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOlder = () =>
+              resolve({
+                exists: true,
+                visibility: 'public',
+                default_branch: 'main',
+                name: 'Old repository',
+                description: '',
+                access: 'public',
+                existing_wikis: [],
+              })
+          })
+      )
+      render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+      fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+      fireEvent.click(screen.getByRole('button', { name: 'Choose Wiki model' }))
+      fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
+      const repository = screen.getByTestId('code-wiki-source-url')
+      fireEvent.change(repository, { target: { value: olderUrl } })
+      act(() => jest.advanceTimersByTime(600))
+      fireEvent.change(repository, { target: { value: currentUrl } })
+      await act(async () => resolveOlder())
+      fireEvent.click(screen.getByTestId('knowledge-summary-section-trigger'))
+      fireEvent.click(screen.getByRole('switch'))
+      fireEvent.click(screen.getByTestId('submit-create-kb'))
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source_url: currentUrl,
+          resolved_name: undefined,
+        })
+      )
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('tells the creator that generating exposes the repository to the model', () => {

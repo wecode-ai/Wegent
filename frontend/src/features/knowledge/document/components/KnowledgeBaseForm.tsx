@@ -171,9 +171,11 @@ export function KnowledgeBaseForm({
   const panel = useRef<HTMLDivElement>(null)
   const sidebar = useRef<HTMLElement>(null)
   const [modelsOpened, setModelsOpened] = useState(false)
+  const [generationOpened, setGenerationOpened] = useState(false)
 
   useLayoutEffect(() => {
     if (selection.section === 'models') setModelsOpened(true)
+    if (selection.section === 'generation') setGenerationOpened(true)
     const content = panel.current
     if (!content) return
     content.scrollTop = 0
@@ -559,7 +561,11 @@ export function KnowledgeBaseForm({
         {sections.map(([section, , label]) => {
           const selected = selection.section === section
           // Keep the repository picker draft and the summary default selection.
-          if (!selected && section !== 'basic' && section !== 'models') return null
+          const keepMounted =
+            section === 'basic' ||
+            section === 'models' ||
+            (section === 'generation' && generationOpened && !!generationSection)
+          if (!selected && !keepMounted) return null
           return (
             <section
               key={section}

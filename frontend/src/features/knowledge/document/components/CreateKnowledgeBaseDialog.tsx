@@ -95,6 +95,12 @@ interface CreateKnowledgeBaseDialogProps {
 /** Documents are uploaded and organised; code is generated from a repository. */
 type KnowledgeBaseKind = 'document' | 'code'
 
+interface RetrievalDraft {
+  mode?: RagConfigMode
+  config?: RetrievalConfigDraft
+  edited?: boolean
+}
+
 function createEmptySource(): CodeWikiSource {
   return {
     source_type: 'github',
@@ -178,12 +184,8 @@ export function CreateKnowledgeBaseDialog({
     formProps: multimodalFormProps,
   } = useMultimodalKBConfig()
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
-  const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
   const [retrievalProfile, setRetrievalProfile] = useState(createDefaultRetrievalConfig)
-  const [retrievalDrafts, setRetrievalDrafts] = useState(
-    () => new Map<string, RetrievalConfigDraft>()
-  )
-  const editedRetrievalScopes = useRef(new Set<string>())
+  const [retrievalDrafts, setRetrievalDrafts] = useState(() => new Map<string, RetrievalDraft>())
   const [error, setError] = useState('')
   const navigation = useKnowledgeBaseFormNavigation()
   const { selectSection } = navigation
@@ -211,12 +213,20 @@ export function CreateKnowledgeBaseDialog({
     ? (retrievalLocation?.name ?? selectedGroupId)
     : (effectiveGroupName ?? '')
   const retrievalScopeKey = `${effectiveScope}:${retrievalDestination}`
-  const retrievalConfig = retrievalDrafts.get(retrievalScopeKey) ?? retrievalProfile
-  const setRetrievalConfig = useCallback(
-    (config: RetrievalConfigDraft) => {
-      setRetrievalDrafts(drafts => new Map(drafts).set(retrievalScopeKey, config))
+  const retrievalDraft = retrievalDrafts.get(retrievalScopeKey)
+  const ragConfigMode = retrievalDraft?.mode ?? 'auto'
+  const retrievalConfig = retrievalDraft?.config ?? retrievalProfile
+  const updateRetrievalDraft = useCallback(
+    (change: Partial<RetrievalDraft>) => {
+      setRetrievalDrafts(drafts =>
+        new Map(drafts).set(retrievalScopeKey, { ...drafts.get(retrievalScopeKey), ...change })
+      )
     },
     [retrievalScopeKey]
+  )
+  const setRetrievalConfig = useCallback(
+    (config: RetrievalConfigDraft) => updateRetrievalDraft({ config }),
+    [updateRetrievalDraft]
   )
   const wasOpen = useRef(false)
 
@@ -249,10 +259,8 @@ export function CreateKnowledgeBaseDialog({
       setExecutionModelError('')
       resetMultimodal()
       setGuidedQuestions([])
-      setRagConfigMode('auto')
       setRetrievalProfile(createDefaultRetrievalConfig())
       setRetrievalDrafts(new Map())
-      editedRetrievalScopes.current.clear()
       setMaxCalls(10)
       setExemptCalls(5)
       setError('')
@@ -267,9 +275,13 @@ export function CreateKnowledgeBaseDialog({
     void getKnowledgeBaseRetrievalProfile()
       .then(profile => {
         if (cancelled || profile.health.status !== 'valid' || !profile.retrieval_config) return
-        const editedScopes = new Set(editedRetrievalScopes.current)
         setRetrievalProfile(profile.retrieval_config)
-        setRetrievalDrafts(drafts => new Map([...drafts].filter(([key]) => editedScopes.has(key))))
+        setRetrievalDrafts(
+          drafts =>
+            new Map(
+              [...drafts].map(([key, draft]) => [key, draft.edited ? draft : { mode: draft.mode }])
+            )
+        )
       })
       .catch(() => undefined)
     return () => {
@@ -386,9 +398,7 @@ export function CreateKnowledgeBaseDialog({
         direct_access_requirement: directAccessRequirement,
         allow_document_download: allowDocumentDownload,
         retrieval_config:
-          ragConfigMode === 'disabled' || !editedRetrievalScopes.current.has(retrievalScopeKey)
-            ? undefined
-            : retrievalConfig,
+          ragConfigMode === 'disabled' || !retrievalDraft?.edited ? undefined : retrievalConfig,
         rag_config_mode: ragConfigMode,
         dingtalk_auto_sync_enabled: kind !== 'code' && dingtalkAutoSyncEnabled,
         summary_enabled: summaryEnabled,
@@ -830,8 +840,9 @@ export function CreateKnowledgeBaseDialog({
                     key={mode}
                     type="button"
                     variant={ragConfigMode === mode ? 'primary' : 'outline'}
+                    aria-pressed={ragConfigMode === mode}
                     className="h-11 min-w-[44px] px-2 text-xs"
-                    onClick={() => setRagConfigMode(mode)}
+                    onClick={() => updateRetrievalDraft({ mode })}
                     data-testid={`rag-mode-${mode}`}
                   >
                     {t(`knowledge:document.ragConfigMode.${mode}`)}
@@ -845,7 +856,7 @@ export function CreateKnowledgeBaseDialog({
           retrievalConfig={retrievalConfig}
           onRetrievalConfigChange={setRetrievalConfig}
           onRetrievalConfigUserChange={() => {
-            editedRetrievalScopes.current.add(retrievalScopeKey)
+            updateRetrievalDraft({ edited: true })
           }}
           retrievalScope={effectiveScope}
           retrievalGroupName={effectiveGroupName}
