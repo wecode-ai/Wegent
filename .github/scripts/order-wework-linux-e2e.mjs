@@ -22,7 +22,6 @@ export function balanceLinuxCoreMatrix(
   matrix,
   seconds = measurements.scopes.core,
   runnerScale = 1,
-  scope = 'core',
 ) {
   if (!Array.isArray(matrix?.include))
     throw new Error('Invalid Linux Core matrix')
@@ -30,19 +29,19 @@ export function balanceLinuxCoreMatrix(
   const history = include.find((entry) =>
     entry.segments.split(',').includes(LINUX_CORE_HISTORY_CHECKPOINT),
   )
-  if (!history && scope === 'core') return { ...matrix, include }
+  if (!history) return { ...matrix, include }
   const checkpoints = (entry) =>
     expandDesktopCheckpoints(entry.segments.split(','))
   const before = include.flatMap(checkpoints).sort()
   const taskCount = include.reduce(
-    (total, entry) => total + (scope === 'core' && ['core-9', 'core-10'].includes(entry.id)
+    (total, entry) => total + (['core-9', 'core-10'].includes(entry.id)
       ? 1 : checkpoints(entry).length),
     0,
   )
-  include.push(...coreRunnerSlots(include, taskCount, runnerScale, scope))
+  include.push(...coreRunnerSlots(include, taskCount, runnerScale))
   // Keep the two latency benchmark shards exclusive.
   const receivers = include.filter(
-    (entry) => scope !== 'core' || !['core-9', 'core-10'].includes(entry.id),
+    (entry) => !['core-9', 'core-10'].includes(entry.id),
   )
   if (!receivers.some((entry) => entry !== history))
     return { ...matrix, include }
@@ -53,7 +52,7 @@ export function balanceLinuxCoreMatrix(
     .flatMap(checkpoints)
     .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
     .sort((a, b) => a.localeCompare(b))
-  const ordered = orderLinuxCheckpoints(pending, scope, seconds)
+  const ordered = orderLinuxCheckpoints(pending, 'core', seconds)
   const historySeconds = seconds[LINUX_CORE_HISTORY_CHECKPOINT]
   // History reserves every worker until it exits. Its remaining runner time
   // can serve measured ordinary checkpoints without sharing its runtime.
@@ -67,7 +66,7 @@ export function balanceLinuxCoreMatrix(
   // Exclusive checkpoints precede the worker queue and occupy the whole runner.
   // Add their duration to every worker, retaining the same runtime isolation.
   for (const checkpoint of ordered) {
-    const exclusive = isResourceExclusiveCheckpoint(checkpoint, scope === 'core')
+    const exclusive = isResourceExclusiveCheckpoint(checkpoint, true)
     const load = (assignment) =>
       exclusive
         ? Math.max(...assignment.workers)
@@ -142,15 +141,13 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  if (['--balance-core', '--balance-cloud'].includes(process.argv[2])) {
-    const scope = process.argv[2] === '--balance-cloud' ? 'cloud' : 'core'
+  if (process.argv[2] === '--balance-core') {
     if (!process.env.CORE_MATRIX) throw new Error('CORE_MATRIX is required')
     console.log(
       `matrix=${JSON.stringify(balanceLinuxCoreMatrix(
         JSON.parse(process.env.CORE_MATRIX),
-        measurements.scopes[scope],
+        measurements.scopes.core,
         Number(process.env.CORE_RUNNER_SCALE ?? 1),
-        scope,
       ))}`,
     )
   } else {
