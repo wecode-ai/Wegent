@@ -201,9 +201,11 @@ console.log('HOOK_WRITES_COMPLETE')
         installed = true
         assert.equal(result.plugin.health.status, 'ready')
         assert.equal(result.plugin.handlers.length, 3)
+        await control.command('ensureLocalModelCatalogReady', 'body', { timeoutMs: uiTimeoutMs })
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
         assert.ok(model, 'No configured native Codex model')
+        assert.equal(model.provider, 'wework-e2e', 'The default model must route to the fixture')
         for (const [name, cwd] of [
           ['git', workspace],
           ['plain', plain],
