@@ -373,6 +373,13 @@ where
     M: brz_mysql::Mysql,
 {
     let user_name = verify_session_token(config, authorization)?;
+    active_user_by_name(mysql, &user_name).await
+}
+
+pub(crate) async fn active_user_by_name<M: brz_mysql::Mysql>(
+    mysql: &M,
+    user_name: &str,
+) -> Result<UserRow, AuthFailure> {
     let user: Option<UserRow> = mysql
         .fetch_optional(USER_BY_NAME_QUERY, (user_name,))
         .await
@@ -409,7 +416,7 @@ where
 }
 
 /// `get_current_user`'s missing or inactive user rejection.
-fn select_active_user(user: Option<UserRow>) -> Result<UserRow, AuthFailure> {
+pub(crate) fn select_active_user(user: Option<UserRow>) -> Result<UserRow, AuthFailure> {
     match user {
         None => Err(AuthFailure::InvalidCredentials),
         Some(user) if user.is_active == 0 => Err(AuthFailure::UserNotActivated),
@@ -423,7 +430,9 @@ pub fn session_auth_error(failure: AuthFailure) -> crate::http_compat::FastApiEr
     session_rejection(session_auth_failure(failure))
 }
 
-fn session_rejection(failure: brz_http_server::AuthFailure) -> crate::http_compat::FastApiError {
+pub(crate) fn session_rejection(
+    failure: brz_http_server::AuthFailure,
+) -> crate::http_compat::FastApiError {
     match failure {
         brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
             crate::http_compat::FastApiError::unhandled()
