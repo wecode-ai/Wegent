@@ -62,13 +62,10 @@ const CLOUD_DEVICES_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS
      '$.spec.cloudConfig.deviceId')) = ?) ORDER BY kinds.id FOR UPDATE";
 
 /// Server-provisioned identities are global; ordinary device names are owner-scoped.
-/// The first predicate uses the bounded binary index key. The full value check
-/// excludes longer persisted values that share the indexed prefix.
+/// The cloud device ID can differ from the Kind name and is matched byte-for-byte.
 const FOREIGN_MANAGED_CLOUD_QUERY: &str = "SELECT kinds.id, kinds.user_id FROM kinds \
-     FORCE INDEX (idx_kinds_cloud_device_id) \
-     WHERE kinds.cloud_device_id_key = CAST(? AS BINARY) \
-     AND kinds.kind = 'Device' AND kinds.namespace = 'default' AND kinds.is_active IS true \
-     AND kinds.user_id <> ? \
+     WHERE kinds.user_id <> ? AND kinds.kind = 'Device' AND kinds.namespace = 'default' \
+     AND kinds.is_active IS true \
      AND BINARY JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.deviceType')) = 'cloud' \
      AND JSON_TYPE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = 'STRING' \
      AND BINARY JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = CAST(? AS BINARY) \
@@ -168,11 +165,7 @@ where
     let foreign: Option<(i64, i64)> = transaction
         .fetch_optional(
             FOREIGN_MANAGED_CLOUD_QUERY,
-            (
-                payload.device_id.as_str(),
-                user_id,
-                payload.device_id.as_str(),
-            ),
+            (user_id, payload.device_id.as_str()),
         )
         .await?;
     if foreign.is_some() {

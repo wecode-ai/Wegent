@@ -648,8 +648,9 @@ async fn cloud_match_locks_and_updates_on_the_same_transaction() {
         statements[1].starts_with("SELECT kinds.id, kinds.user_id FROM kinds")
             && statements[1].contains("kinds.user_id <> ?")
             && statements[1].contains("kinds.namespace = 'default'")
-            && statements[1].contains("FORCE INDEX (idx_kinds_cloud_device_id)")
-            && statements[1].contains("cloudConfig.deviceId"),
+            && statements[1].contains("kinds.is_active IS true")
+            && statements[1].contains("JSON_TYPE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = 'STRING'")
+            && statements[1].contains("BINARY JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = CAST(? AS BINARY)"),
         "{statements:?}"
     );
     assert!(
