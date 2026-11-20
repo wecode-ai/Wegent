@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
-import { test, vi } from 'vitest'
+import { afterEach, beforeEach, test, vi } from 'vitest'
 
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
   ...(await importOriginal()),
@@ -12,6 +12,9 @@ import { createPersistentInteractionNoticeCase } from '../e2e/desktop/modules/hu
 
 const notice = '[data-testid="runtime-interaction-notice"]'
 const absent = `body:not(:has(${notice}))`
+
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => vi.useRealTimers())
 
 function fixture(removeNotice) {
   const scenario = createPersistentInteractionNoticeCase()
@@ -53,13 +56,23 @@ function fixture(removeNotice) {
   }
 }
 
+async function runFlow(flow) {
+  const completion = flow.run().then(
+    () => null,
+    error => error
+  )
+  await vi.advanceTimersByTimeAsync(200)
+  const error = await completion
+  if (error) throw error
+}
+
 test('waits for reminder removal after the pending count has already reached zero', async () => {
   const flow = fixture(true)
-  await flow.run()
+  await runFlow(flow)
   assert.equal(flow.observedRemoval(), true)
 })
 
 test('still fails when a resolved reminder remains mounted', async () => {
   const flow = fixture(false)
-  await assert.rejects(flow.run(), /reminder/)
+  await assert.rejects(runFlow(flow), /reminder/)
 })
