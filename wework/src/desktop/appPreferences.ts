@@ -289,7 +289,8 @@ function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreferenc
 
 function normalizeUserPreferencePrompt(value: unknown): string {
   if (typeof value !== 'string') return ''
-  return value.trim().slice(0, USER_PREFERENCE_PROMPT_MAX_LENGTH)
+  const prompt = value.trim()
+  return prompt.length > USER_PREFERENCE_PROMPT_MAX_LENGTH ? '' : prompt
 }
 
 export function mergeAppPreferences(value: unknown): AppPreferences {

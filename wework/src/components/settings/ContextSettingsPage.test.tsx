@@ -2,7 +2,7 @@ import i18n from '@/i18n'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
+import { defaultAppPreferences, USER_PREFERENCE_PROMPT_MAX_LENGTH } from '@/desktop/appPreferences'
 import { ContextSettingsPage } from './ContextSettingsPage'
 
 const mocks = vi.hoisted(() => ({
@@ -116,6 +116,53 @@ test('edits and saves the global user preference prompt', async () => {
     expect(mocks.update).toHaveBeenCalledWith({ userPreferencePrompt: 'Be concise.' })
   )
   expect(editor).toHaveValue('Be concise.')
+})
+
+test('shows the empty preference prompt state without injecting preferences', async () => {
+  render(<ContextSettingsPage />)
+  const editor = await screen.findByTestId('context-user-preference-prompt-textarea')
+  expect(editor).toHaveValue('')
+  expect(editor).toHaveAttribute(
+    'placeholder',
+    '例如：回复保持简明；文档中不要随意使用 emoji；注释、commit message 和 PR 使用人类工程师可理解的表达。'
+  )
+  expect(screen.getByTestId('context-user-preference-prompt-save-button')).toBeDisabled()
+})
+
+test('keeps an unsaved preference prompt when saving fails', async () => {
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  mocks.update.mockRejectedValue(new Error('Write failed'))
+
+  try {
+    render(<ContextSettingsPage />)
+    const editor = await screen.findByTestId('context-user-preference-prompt-textarea')
+    fireEvent.change(editor, { target: { value: '  Be concise.  ' } })
+    await userEvent.click(screen.getByTestId('context-user-preference-prompt-save-button'))
+
+    expect(await screen.findByTestId('context-settings-status')).toHaveTextContent(
+      '用户偏好提示词保存失败'
+    )
+    expect(editor).toHaveValue('  Be concise.  ')
+    expect(mocks.update).toHaveBeenCalledWith({ userPreferencePrompt: 'Be concise.' })
+  } finally {
+    consoleError.mockRestore()
+  }
+})
+
+test('rejects an overlong preference prompt draft and keeps its text', async () => {
+  render(<ContextSettingsPage />)
+  const editor = await screen.findByTestId('context-user-preference-prompt-textarea')
+  const overlongPrompt = `${'x'.repeat(USER_PREFERENCE_PROMPT_MAX_LENGTH)}!`
+
+  fireEvent.change(editor, { target: { value: overlongPrompt } })
+  await userEvent.click(screen.getByTestId('context-user-preference-prompt-save-button'))
+
+  expect(editor).toHaveValue(overlongPrompt)
+  expect(editor).toHaveAttribute('maxlength', String(USER_PREFERENCE_PROMPT_MAX_LENGTH))
+  expect(screen.getByTestId('context-settings-status')).toHaveTextContent(
+    '用户偏好提示词不能超过 4000 个字符'
+  )
+  expect(mocks.update).not.toHaveBeenCalled()
 })
 
 test('rolls back a rejected optimistic toggle and leaves instructions usable', async () => {

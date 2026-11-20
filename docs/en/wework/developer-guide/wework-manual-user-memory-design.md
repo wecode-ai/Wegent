@@ -4,7 +4,7 @@ sidebar_position: 99
 
 # Wework global user preference prompt design
 
-Status: proposed first version. Date: 2026-11-20.
+Status: implemented first version. Date: 2026-11-20; updated 2026-11-21.
 
 [中文](../../../zh/wework/developer-guide/wework-manual-user-memory-design.md)
 
@@ -45,7 +45,7 @@ Rules:
 
 - Default to an empty string.
 - Trim before saving.
-- Maximum 4000 characters; the GUI rejects longer input.
+- Maximum 4000 characters; the GUI input enforces the limit and persistence rejects an over-limit stored value.
 - No list of records, no versioning, and no device or environment binding.
 - Read and write atomically with other desktop preferences; missing fields in older data read as empty.
 
@@ -110,12 +110,13 @@ Command rules:
 
 Use focused unit and component tests only:
 
-- Preference normalization: missing, blank, over-limit, and invalid values.
-- GUI: edit, save, failed-save retry, empty state, and length limit.
-- Command parsing: valid append, empty content, and over-limit rejection.
+- Preference normalization: missing, blank, over-limit rejection, and invalid values.
+- GUI: edit, save, failed save, empty state, and input length limit.
+- Command parsing: valid append, empty content, over-limit rejection, and opening settings with /memory.
 - Request construction: create, continuation, and guidance requests inject `wework.user-preferences`.
-- Remote and local requests contain the same prompt.
+- The injection layer does not filter by device type, so local, cloud, and remote requests produce the same field through the same path.
 - An empty prompt omits the field.
 - Changes affect the next turn; history remains unchanged.
+- Create-request injection also preserves attachment IDs and attachment objects prepared asynchronously.
 
 If later implementation requires real desktop interaction acceptance, run `ai:verify` explicitly under the repository policy.

@@ -3420,6 +3420,7 @@
     "context_settings_user_preference_prompt_hint": "留空表示不注入。偏好不是权限，也不能覆盖当前任务的明确要求。",
     "context_settings_user_preference_prompt_save": "保存",
     "context_settings_user_preference_prompt_save_failed": "用户偏好提示词保存失败",
+    "context_settings_user_preference_prompt_too_long": "用户偏好提示词不能超过 4000 个字符",
     "context_settings_load_failed": "上下文设置加载失败",
     "context_settings_save_failed": "上下文设置保存失败",
     "context_settings_saving": "正在保存...",

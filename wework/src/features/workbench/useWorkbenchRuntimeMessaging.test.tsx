@@ -13,6 +13,7 @@ import {
 } from './runtimeConversationCache'
 import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import { navigateTo } from '@/lib/navigation'
 import {
   buildRuntimeTaskCreateHandle,
   friendlyTitleForTask,
@@ -57,13 +58,21 @@ function messagingFixture(
   const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   type Options = Parameters<typeof useWorkbenchRuntimeMessaging>[0]
   const options: Options = {
-    state: { ...initialWorkbenchState, currentRuntimeTask: address },
+    state: {
+      ...initialWorkbenchState,
+      currentRuntimeTask: address,
+      devices: [device('local-device', 'remote')],
+    },
     dispatch: vi.fn(),
     executorClient: {
       runtime: { cancelRuntimeTask: cancel, sendRuntimeMessage: send, compactRuntimeTask: compact },
     } as unknown as Options['executorClient'],
     services: { taskApi: {} } as unknown as Options['services'],
-    runtimeTasks: {} as Options['runtimeTasks'],
+    runtimeTasks: {
+      isCurrentRuntimeTask: vi.fn(() => false),
+      openRuntimeTaskView: vi.fn(),
+      clearCurrentRuntimeTaskView: vi.fn(),
+    } as unknown as Options['runtimeTasks'],
     lifecycleStore: store,
     projectExecutionMode: 'default',
     projectWorktreeBranch: null,
@@ -90,7 +99,18 @@ function messagingFixture(
       </AppPreferencesContext.Provider>
     ),
   })
-  return { address, store, cancel, send, compact, refresh, messaging: result.current, preferences }
+  return {
+    address,
+    store,
+    cancel,
+    send,
+    compact,
+    refresh,
+    executorClient: options.executorClient,
+    services: options.services,
+    messaging: result.current,
+    preferences,
+  }
 }
 
 function cacheAsyncQuestion(
@@ -149,6 +169,31 @@ test('injects the saved user preference prompt into continuation requests', asyn
   }
 })
 
+test('omits the user preference context for an empty prompt', async () => {
+  const { address, store, send, messaging } = messagingFixture()
+  try {
+    await messaging.sendRuntimePaneMessage({
+      address,
+      message: 'Continue',
+      modelId: 'test-model',
+      clientUserMessageId: 'empty-preference-follow-up',
+      additionalContext: {
+        existing: { kind: 'application', value: 'Keep this context' },
+      },
+    })
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalContext: {
+          existing: { kind: 'application', value: 'Keep this context' },
+        },
+      })
+    )
+    expect(send.mock.calls[0][0].additionalContext).not.toHaveProperty('wework.user-preferences')
+  } finally {
+    store.remove(address)
+  }
+})
+
 test('appends a user preference from the remember command', async () => {
   vi.mocked(updateAppPreferences).mockResolvedValue({
     ...defaultAppPreferences,
@@ -159,6 +204,100 @@ test('appends a user preference from the remember command', async () => {
   expect(vi.mocked(updateAppPreferences)).toHaveBeenCalledWith({
     userPreferencePrompt: 'Existing preference\nKeep replies concise.',
   })
+})
+
+test('opens context settings from the memory command', async () => {
+  const { messaging } = messagingFixture()
+  await expect(messaging.sendCurrentInput('/memory')).resolves.toBe(true)
+  expect(vi.mocked(navigateTo)).toHaveBeenCalledWith('/settings/personal/context')
+})
+
+test('injects the saved user preference prompt into guidance requests', async () => {
+  const guide = vi.fn().mockResolvedValue({ accepted: true, success: true, turnId: 'guide-turn' })
+  const { address, store, executorClient, refresh, messaging } = messagingFixture(
+    {},
+    {},
+    'Keep replies concise.'
+  )
+  executorClient.runtime.guideRuntimeTask = guide
+
+  try {
+    await expect(
+      messaging.sendRuntimePaneGuidance({
+        address,
+        message: 'Please keep going.',
+      })
+    ).resolves.toEqual({ sent: true, turnId: 'guide-turn' })
+    expect(guide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalContext: {
+          'wework.user-preferences': {
+            kind: 'application',
+            value: 'Keep replies concise.',
+          },
+        },
+      })
+    )
+    await waitFor(() => expect(refresh).toHaveBeenCalled())
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('injects preferences and prepared attachments into a created task', async () => {
+  const create = vi.fn().mockResolvedValue({
+    accepted: true,
+    deviceId: 'local-device',
+    taskId: 'created-task',
+    workspacePath: '/workspace',
+    runtime: 'codex',
+  })
+  const { executorClient, services, messaging } = messagingFixture({}, {}, 'Keep replies concise.')
+  executorClient.runtime.createRuntimeTask = create
+  executorClient.runtime.prepareRuntimeModel = vi.fn().mockResolvedValue(true)
+  const originalUpload = services.attachmentApi?.uploadLocalAttachmentToCloud
+  services.attachmentApi = {
+    uploadLocalAttachmentToCloud: vi
+      .fn()
+      .mockResolvedValue(attachment({ id: 42, local_path: undefined })),
+  }
+
+  try {
+    await expect(
+      messaging.createProjectRuntimeTask('Create task', {
+        taskRequest: {
+          runtime: 'codex',
+          message: 'Create task',
+          deviceId: 'local-device',
+          workspacePath: '/workspace',
+          modelId: 'test-model',
+          modelType: 'runtime',
+          modelOptions: {},
+        },
+        runtime: 'codex',
+        attachments: [attachment()],
+        onRuntimeTaskOptimisticOpen: () => undefined,
+        onRuntimeTaskOptimisticRemoved: () => undefined,
+        openInMainPane: false,
+        refreshWorkListsOnResolve: false,
+      })
+    ).resolves.toMatchObject({ taskId: 'created-task' })
+  } finally {
+    services.attachmentApi = originalUpload
+  }
+
+  expect(create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      additionalContext: {
+        'wework.user-preferences': {
+          kind: 'application',
+          value: 'Keep replies concise.',
+        },
+      },
+      attachmentIds: [42],
+      attachments: [attachment({ id: 42, local_path: undefined })],
+    })
+  )
 })
 
 test('compaction renders only its native turn and remains active after an early RPC response', async () => {
@@ -787,6 +926,7 @@ function device(deviceId: string, deviceType: DeviceInfo['device_type']): Device
     status: 'online',
     is_default: false,
     device_type: deviceType,
+    executor_version: '1.8.5',
   }
 }
 

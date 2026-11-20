@@ -3424,6 +3424,7 @@
     "context_settings_user_preference_prompt_hint": "An empty prompt is not injected. Preferences are not permissions and do not override the current task's explicit requests.",
     "context_settings_user_preference_prompt_save": "Save",
     "context_settings_user_preference_prompt_save_failed": "Failed to save the user preference prompt",
+    "context_settings_user_preference_prompt_too_long": "The user preference prompt cannot exceed 4000 characters",
     "context_settings_load_failed": "Failed to load context settings",
     "context_settings_save_failed": "Failed to save context settings",
     "context_settings_saving": "Saving...",

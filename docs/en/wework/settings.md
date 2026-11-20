@@ -398,7 +398,7 @@ Open **Settings → Personal → Appearance**. Changes stay on this device. **Re
 | Restore theme accent                     | After customizing the accent, click Restore to use the current light/dark theme's accent again; fonts and background images remain unchanged                                                                       |
 | Translucent sidebar                      | Toggle transparency; system and window background affect the result                                                                                                                                                |
 | Use different light and dark backgrounds | Enable to configure each mode separately; disable for a shared background                                                                                                                                          |
-| Background visibility, Background blur | After selecting an image, use the sliders to set visibility (0–100) and blur radius (0–20px); unavailable until an image is selected |
+| Background visibility, Background blur   | After selecting an image, use the sliders to set visibility (0–100) and blur radius (0–20px); unavailable until an image is selected                                                                               |
 | Background image                         | Select or remove an image on the relevant mode card; adjust visibility and blur and choose main, sidebar or top-bar regions                                                                                        |
 | UI font, UI font size                    | Enter the interface font and adjust its size                                                                                                                                                                       |
 | Code font, Code font size                | Set the font and size for code/monospace content separately                                                                                                                                                        |
@@ -417,13 +417,13 @@ Reselecting a palette resets its color overrides; the light and dark choices rem
 
 Open **Settings → Personal → Context**:
 
-| Feature                                 | Steps and scope                                                                                                                |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Inject Terminal information             | Toggle terminal context inclusion; does not itself authorize command execution                                                 |
-| Context compaction threshold            | Enter a percentage and blur the field or press Enter; controls the manual-compaction indicator, not automatic model compaction |
-| Interaction style (Codex personality)                       | Open the selector and choose a reply style                                                                                     |
-| Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
-| Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
+| Feature                                 | Steps and scope                                                                                                                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Inject Terminal information             | Toggle terminal context inclusion; does not itself authorize command execution                                                                                                                                                                   |
+| Context compaction threshold            | Enter a percentage and blur the field or press Enter; controls the manual-compaction indicator, not automatic model compaction                                                                                                                   |
+| Interaction style (Codex personality)   | Open the selector and choose a reply style                                                                                                                                                                                                       |
+| Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                                                                                                                                               |
+| Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules                                                                                                                   |
 | User preference prompt                  | Edit preferences shared by local, cloud and remote tasks and save; append one line from the composer with `/remember <preference>`, or open this page with `/memory`; preferences are not permissions and cannot override explicit task requests |
 
 <a id="hooks-controls"></a>

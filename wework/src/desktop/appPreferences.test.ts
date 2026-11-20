@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+import { USER_PREFERENCE_PROMPT_MAX_LENGTH } from './appPreferences'
+
 const invokeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -381,6 +383,11 @@ describe('appPreferences', () => {
     ).toBe('Keep replies concise.')
     expect(mergeAppPreferences({ userPreferencePrompt: 42 }).userPreferencePrompt).toBe('')
     expect(mergeAppPreferences({}).userPreferencePrompt).toBe('')
+    expect(
+      mergeAppPreferences({
+        userPreferencePrompt: 'x'.repeat(USER_PREFERENCE_PROMPT_MAX_LENGTH + 1),
+      }).userPreferencePrompt
+    ).toBe('')
   })
 
   test('normalizes the last selected supervisor model', async () => {

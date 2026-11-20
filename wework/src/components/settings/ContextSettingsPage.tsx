@@ -116,7 +116,11 @@ export function ContextSettingsPage() {
   }
 
   const handleSaveUserPreferencePrompt = async () => {
-    const submitted = userPreferencePrompt.trim().slice(0, USER_PREFERENCE_PROMPT_MAX_LENGTH)
+    const submitted = userPreferencePrompt.trim()
+    if (submitted.length > USER_PREFERENCE_PROMPT_MAX_LENGTH) {
+      setError(t('workbench.context_settings_user_preference_prompt_too_long'))
+      return
+    }
     if (submitted === savedUserPreferencePrompt) return
     try {
       const receipt = await updateAppPreferences({ userPreferencePrompt: submitted })

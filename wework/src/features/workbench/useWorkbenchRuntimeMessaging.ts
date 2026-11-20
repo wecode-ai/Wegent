@@ -1339,10 +1339,6 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.origin ? { origin: options.origin } : {}),
         ...(options?.additionalContext ? { additionalContext: options.additionalContext } : {}),
       }
-      const requestWithPreferences = withUserPreferencePrompt(
-        createRequest,
-        preferences?.userPreferencePrompt ?? ''
-      )
       debugRuntimeCreateFlow('create-request-built', {
         taskId,
         runtime,
@@ -1429,6 +1425,10 @@ export function useWorkbenchRuntimeMessaging({
         )
         createRequest.attachmentIds = prepared.attachmentIds
         createRequest.attachments = prepared.attachments
+        const outboundRequest = withUserPreferencePrompt(
+          createRequest,
+          preferences?.userPreferencePrompt ?? ''
+        )
         const worktreeCreationDelayMs = Number(
           getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
             import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??
@@ -1446,7 +1446,7 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: optimisticAddress.deviceId,
           runtime,
         })
-        return executorClient.runtime.createRuntimeTask(requestWithPreferences)
+        return executorClient.runtime.createRuntimeTask(outboundRequest)
       })()
       void createResponsePromise.catch(() => undefined)
       logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {

@@ -8,17 +8,18 @@ sidebar_position: 4
 
 ## Individual composer controls
 
-| Feature                          | UI steps                                                                         | Conditions and result                                                                                                      |
-| -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Photos and files                 | Composer + → add photos/files → choose → review attachments                      | Removing an attachment does not delete its source file                                                                     |
-| Drawing attachment               | + → Drawing → draw → Add drawing                                                 | Cancel adds nothing; successful attachment still requires sending the message                                              |
-| Skill / plugin                   | Type / for a Skill or select an enabled plugin in the capability picker          | Installation and external app authorization remain separate                                                                |
-| Plan mode                        | + → Plan mode; close the plan-mode pill in the composer to return to normal mode | Requests planning, not scheduled execution                                                                                 |
-| Goal                             | + → Goal → enter a clear objective in the goal draft → send                      | A persistent objective, not a task title; explicitly state any intended budget rather than assuming a separate budget form |
-| Supervision                      | + → supervision → configure in the panel                                         | Does not replace native tool approvals                                                                                     |
-| Model, reasoning and permissions | Select model and supported effort; use the permission icon to change mode        | Varies by model/device; permission mode is not app authorization                                                           |
-| Voice                            | Microphone → record → stop and transcribe → review → send                        | First prepare a model and OS microphone access                                                                             |
-| Queue, guide and pause           | Use the running-task send actions; pause to interrupt the current reply          | Message queues, execution queues and persistent goals are separate                                                         |
+| Feature                          | UI steps                                                                         | Conditions and result                                                                                                                      |
+| -------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Photos and files                 | Composer + → add photos/files → choose → review attachments                      | Removing an attachment does not delete its source file                                                                                     |
+| Drawing attachment               | + → Drawing → draw → Add drawing                                                 | Cancel adds nothing; successful attachment still requires sending the message                                                              |
+| Skill / plugin                   | Type / for a Skill or select an enabled plugin in the capability picker          | Installation and external app authorization remain separate                                                                                |
+| Plan mode                        | + → Plan mode; close the plan-mode pill in the composer to return to normal mode | Requests planning, not scheduled execution                                                                                                 |
+| Goal                             | + → Goal → enter a clear objective in the goal draft → send                      | A persistent objective, not a task title; explicitly state any intended budget rather than assuming a separate budget form                 |
+| Supervision                      | + → supervision → configure in the panel                                         | Does not replace native tool approvals                                                                                                     |
+| Model, reasoning and permissions | Select model and supported effort; use the permission icon to change mode        | Varies by model/device; permission mode is not app authorization                                                                           |
+| Voice                            | Microphone → record → stop and transcribe → review → send                        | First prepare a model and OS microphone access                                                                                             |
+| Queue, guide and pause           | Use the running-task send actions; pause to interrupt the current reply          | Message queues, execution queues and persistent goals are separate                                                                         |
+| User preference prompt           | Enter /remember <preference> to append a line; enter /memory to open settings    | Takes effect on the next turn; preferences are not permissions. Edit them under [Settings](./settings.md#context-and-default-instructions) |
 
 ### Persistent-goal status and controls
 
@@ -61,7 +62,6 @@ The interface height follows its content, and saved interaction state is restore
 <a id="connection-event-waits"></a>
 
 Select **Wait condition** on the event status row above the composer to expand the full effective condition, including alternatives such as checks passing or failing in one subscription. The left task sidebar indicates waiting, received or monitoring error status and returns to the running indicator when execution resumes.
-
 
 ### Ask AI to wait for connection events
 
