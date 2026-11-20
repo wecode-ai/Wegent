@@ -85,6 +85,10 @@ def verify(engine, url):
         User.__table__.create(engine)
         Kind.__table__.create(engine)
         create_legacy_share_links(engine)
+        # The timing profile intentionally adds a persisted diagnostic table.
+        from shared.models.db.task_timing_span import TaskTimingSpan
+
+        TaskTimingSpan.__table__.create(engine)
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
