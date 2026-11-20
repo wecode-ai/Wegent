@@ -135,11 +135,14 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
   const focusKey = props.focusedPersonalIssueId
     ? (props.focusedCommentRequestKey ?? props.focusedPersonalIssueId)
     : null
-  const [appliedFocus, setAppliedFocus] = useState<string | null>(null)
+  const [appliedFocus, setAppliedFocus] = useState<{ scope: string; key: string | null }>()
   const personalIssuesApi = useCloudIssueApis(cloudConnection)?.personal ?? null
   const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
-  if (personalIssuesApi && focusKey !== appliedFocus) {
-    setAppliedFocus(focusKey)
+  if (
+    personalIssuesApi &&
+    (appliedFocus?.scope !== templateScope || appliedFocus.key !== focusKey)
+  ) {
+    setAppliedFocus({ scope: templateScope, key: focusKey })
     if (props.focusedPersonalIssueId)
       setIndependentSelection({ scope: templateScope, selection: props.focusedPersonalIssueId })
   }

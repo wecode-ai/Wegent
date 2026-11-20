@@ -3,7 +3,7 @@ import type { ProjectTaskAssignedPayload } from '@/stream/chatStream'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
-import { weworkIssueScheme } from './scheme'
+import { parseWeworkScheme, weworkIssueScheme } from './scheme'
 
 export interface RouteNotificationInput {
   chatStream: WorkbenchServices['chatStream']
@@ -19,6 +19,7 @@ interface StreamBinding {
 
 /** The window/account route session owns stream delivery and assignment replay receipts. */
 export function createRouteNotificationEvents() {
+  const deliveredShares = new Set<string>()
   const deliveredAssignments = new Set<string>()
   let observing = false
   let input: RouteNotificationInput | undefined
@@ -81,6 +82,18 @@ export function createRouteNotificationEvents() {
       const release = current.stream.subscribe({
         onWeworkNotification: () => {
           if (ownsStream()) window.dispatchEvent(new Event('wework-notifications-changed'))
+        },
+        onIssueShared: ({ id, userId, title, body, url }) => {
+          if (
+            !ownsStream() ||
+            userId !== input?.currentUserId ||
+            getDesktopWindowLabel() !== 'main' ||
+            deliveredShares.has(id) ||
+            !parseWeworkScheme(url)
+          )
+            return
+          deliveredShares.add(id)
+          void sendSystemNotification({ title, body, url })
         },
         onProjectTaskAssigned: payload => {
           if (ownsStream()) notifyAssignment(payload)

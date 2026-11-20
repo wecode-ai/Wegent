@@ -227,16 +227,17 @@ function IndependentIssueDialogContent({
                 onSave={(input, shareFiles) =>
                   state.save(
                     input,
-                    shareDraft &&
-                      ((body, projectId, projectStatus) =>
-                        api.createShared(
-                          shareDraft.requestId,
-                          shareDraft.source,
-                          body,
-                          shareFiles,
-                          projectId,
-                          projectStatus
-                        ))
+                    !issue && shareDraft
+                      ? (body, projectId, projectStatus) =>
+                          api.createShared(
+                            shareDraft.requestId,
+                            shareDraft.source,
+                            body,
+                            shareFiles,
+                            projectId,
+                            projectStatus
+                          )
+                      : undefined
                   )
                 }
                 onCancel={() => {

@@ -1,4 +1,4 @@
-import { act, cleanup, render as renderView, screen } from '@testing-library/react'
+import { act, cleanup, render as renderView, screen, waitFor } from '@testing-library/react'
 import { createContext, createRef, useContext, useImperativeHandle, useState } from 'react'
 import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -106,6 +106,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const release of releaseSchemes) release()
   releaseSchemes.clear()
+  vi.unstubAllGlobals()
   cleanup()
 })
 
@@ -223,3 +224,45 @@ test('creates one task tab when absent and reuses it for subsequent notification
     '/runtime-tasks?deviceId=device-1&taskId=second-task'
   )
 })
+
+test.each([true, false])(
+  'an old shared Issue link respects project access (access: %s)',
+  async allowed => {
+    const fetchIssue = vi.fn(async (url: string) => {
+      if (url.endsWith('/v1/personal-issues/share-12-test')) {
+        return Response.json({ detail: 'Issue not found' }, { status: 404 })
+      }
+      if (!url.endsWith('/v1/loop-items/share-12-test')) throw new Error(url)
+      return allowed
+        ? Response.json({ id: 'share-12-test', cloud_project_id: '12', can_view_detail: true })
+        : Response.json({ detail: 'Issue not found' }, { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchIssue)
+    render(
+      <CloudConnectionContext.Provider
+        value={
+          {
+            isConnected: true,
+            token: 'test-token',
+            apiBaseUrl: 'https://backend.example.test/api',
+          } as CloudConnectionContextValue
+        }
+      >
+        <Harness
+          tabs={[
+            { id: 'boards', kind: 'board', title: 'Boards', contentRoute: '/todo', fixed: true },
+          ]}
+        />
+      </CloudConnectionContext.Provider>
+    )
+    act(() => {
+      openWeworkScheme('wework://personal-issues/share-12-test')
+    })
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search)
+      expect(params.get('projectId')).toBe(allowed ? '12' : null)
+      expect(params.get('itemId')).toBe(allowed ? 'share-12-test' : null)
+      expect(params.get('personalIssueId')).toBe(allowed ? null : 'share-12-test')
+    })
+  }
+)

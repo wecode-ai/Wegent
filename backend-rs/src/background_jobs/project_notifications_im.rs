@@ -786,6 +786,8 @@ mod dingtalk_protocol_tests {
     use brz_http_server::{Handler, NoAuthenticator, Request, Response, StatusCode};
     use std::sync::{Arc, Mutex};
 
+    const ISSUE_LINK: &str = "[在 Wework 中打开](wework://personal-issues/share-1-test)";
+
     struct DingTalkApi {
         requests: Arc<Mutex<Vec<(String, Value)>>>,
         reject_card: bool,
@@ -829,7 +831,7 @@ mod dingtalk_protocol_tests {
                             serde_json::from_str(body["msgParam"].as_str().unwrap()).unwrap();
                         let text = params["text"].as_str().unwrap();
                         assert!(text.contains("CI notification"));
-                        assert!(text.contains("wework://personal-issues/share-1-test"));
+                        assert!(text.contains(ISSUE_LINK));
                         br#"{"processQueryKey":"ci-message"}"#.as_slice()
                     }
                     _ => panic!("Unexpected DingTalk API request: {path}"),

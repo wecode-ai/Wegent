@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { usePanelData } from '@wegent/collaboration/platform'
 import type { SharedIssueSource, SharedIssueTarget } from '@/api/personalIssues'
-import { Link2, Share2 } from 'lucide-react'
+import { Link2, RotateCw, Share2 } from 'lucide-react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import {
   getAssistantRenderProjection,
@@ -53,7 +53,11 @@ export function TaskIssueShare({
       Promise.resolve([]),
     [personal, address.deviceId, address.taskId]
   )
-  const { data: links, refresh: refreshLinks } = usePanelData(loadLinks, Boolean(personal))
+  const {
+    data: links,
+    error: linksError,
+    refresh: refreshLinks,
+  } = usePanelData(loadLinks, Boolean(personal))
   const clearProjectIssue = useCallback(() => setProjectIssue(null), [])
   const close = () => {
     setDraft(null)
@@ -62,6 +66,18 @@ export function TaskIssueShare({
 
   return (
     <div className="relative ml-auto flex shrink-0 items-center gap-1">
+      {linksError !== undefined && (
+        <button
+          type="button"
+          data-testid="task-linked-issues-retry"
+          aria-label={t('taskIssueShare.linksRetry')}
+          title={t('taskIssueShare.linksRetry')}
+          onClick={() => void refreshLinks()}
+          className="flex h-11 items-center rounded-lg px-2 text-destructive hover:bg-muted md:h-7"
+        >
+          <RotateCw className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
       {Boolean(links?.length) && (
         <>
           <button

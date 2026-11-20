@@ -6667,6 +6667,8 @@
   },
   "beta": "Beta",
   "taskIssueShare": {
+    "sourceRetry": "Could not load the source conversation. Retry",
+    "linksRetry": "Could not load linked issues. Retry",
     "linkedIssues": "Linked issues",
     "deliverables": "Deliverables",
     "addFiles": "Add attachments",

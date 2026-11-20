@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { Link2 } from 'lucide-react'
 import { usePanelData } from '@wegent/collaboration/platform'
+import { ApiError } from '@/api/http'
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import { openWeworkScheme } from '@/features/notifications/schemeEvents'
@@ -17,7 +18,18 @@ export function SharedIssueSourceButton({
 }) {
   const { t } = useTranslation('common')
   const load = useCallback(() => api.sharedSource(issueId), [api, issueId])
-  const { data: source } = usePanelData(load)
+  const { data: source, error, refresh } = usePanelData(load)
+  if (error !== undefined && !(error instanceof ApiError && [401, 403, 404].includes(error.status)))
+    return (
+      <button
+        type="button"
+        data-testid="shared-issue-source-retry"
+        className="rounded-md px-2 text-sm text-destructive hover:bg-muted"
+        onClick={() => void refresh()}
+      >
+        {t('taskIssueShare.sourceRetry')}
+      </button>
+    )
   if (!source) return null
   const label = t('taskIssueShare.openSource')
   return (

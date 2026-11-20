@@ -361,6 +361,15 @@ pub(crate) async fn deliver(state: &AppState, pending: Pending) {
         if pending.channels.system && notification["kind"] == "assignment" {
             frames.push(json!({"event":"project.task.assigned","payload":notification["payload"]}));
         }
+        if pending.channels.system && notification["kind"] == "issue_shared" {
+            frames.push(json!({
+                "event":"wework.issue.shared",
+                "payload":{
+                    "id":notification["id"],"userId":user,"title":notification["title"],
+                    "body":notification["body"],"url":notification["url"]
+                }
+            }));
+        }
         let room = format!("wework-runtime:user:{user}");
         for frame in frames {
             crate::socketio::runtime::deliver_local_emit(

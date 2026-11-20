@@ -1,6 +1,10 @@
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import type { TFunction } from 'i18next'
+import { ApiError, createHttpClient } from '@/api/http'
+import { createPersonalIssuesApi } from '@/api/personalIssues'
+import { createDeliveryApi } from '@/api/deliveries'
+import { getRuntimeConfig } from '@/config/runtime'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
@@ -63,7 +67,7 @@ export function createWeworkSchemeService() {
   async function open(url: string, deferInRenderer = true): Promise<boolean> {
     if (!input) return false
     const revision = generation
-    const destination = parseWeworkScheme(url)
+    let destination = parseWeworkScheme(url)
     if (!destination) return true
     if (destination.kind === 'collaboration-exp') {
       if (!input.experiment.loaded) {
@@ -115,10 +119,11 @@ export function createWeworkSchemeService() {
       return true
     }
     if (destination.kind === 'smart-app') {
+      const { smartAppId } = destination
       try {
         const installations = await harnessAppsApi.list()
         if (!input || revision !== generation) return false
-        const installation = installations.find(item => item.smartAppId === destination.smartAppId)
+        const installation = installations.find(item => item.smartAppId === smartAppId)
         if (installation?.state === 'running') {
           openHarnessAppTab(input.tabs, installation)
           return true
@@ -141,6 +146,39 @@ export function createWeworkSchemeService() {
       (!cloud?.isConnected || !cloud.token)
     ) {
       return deferForCloud(url, deferInRenderer, cloud)
+    }
+    if (destination.kind === 'personal-issue' && cloud) {
+      const client = createHttpClient({
+        baseUrl: cloud.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl,
+        getToken: () => cloud.token,
+        redirectOnUnauthorized: false,
+      })
+      const issueId = destination.issueId
+      const movedIssue = await createPersonalIssuesApi(client)
+        .get(issueId)
+        .then(
+          () => null,
+          async reason => {
+            if (!(reason instanceof ApiError) || reason.status !== 404) return null
+            return createDeliveryApi(client)
+              .getLoopItem(issueId)
+              .catch(() => null)
+          }
+        )
+      if (
+        !input ||
+        revision !== generation ||
+        cloud.user?.id !== input.connection?.user?.id ||
+        cloud.apiBaseUrl !== input.connection?.apiBaseUrl
+      )
+        return false
+      if (movedIssue?.cloud_project_id && movedIssue.can_view_detail !== false) {
+        destination = {
+          kind: 'board',
+          projectId: String(movedIssue.cloud_project_id),
+          itemId: issueId,
+        }
+      }
     }
     const experimentTab =
       destination.kind === 'board' && input.experiment.enabled

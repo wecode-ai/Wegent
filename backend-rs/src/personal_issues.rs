@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 
 mod participants;
-mod share;
+pub(crate) mod share;
 use participants::{ResourceInvitation, ResourceParticipant};
 
 const SELECT: &str = "SELECT id,COALESCE(title,'') AS title,description,status,priority,created_by_user_id AS creator_id,NULLIF(assignee_user_id,0) AS assignee_id,version,metadata,CAST(created_at AS CHAR) AS created_at,CAST(updated_at AS CHAR) AS updated_at,(SELECT COALESCE(JSON_OBJECTAGG(CAST(u.id AS CHAR),u.user_name),JSON_OBJECT()) FROM users u WHERE u.id=loop_items.created_by_user_id OR JSON_CONTAINS(loop_items.metadata,CAST(u.id AS JSON),'$.participants')) AS people FROM loop_items";
@@ -58,14 +58,13 @@ fn serialize_metadata<S: serde::Serializer>(
             }
         }
     }
-    if let Some(share) = public["share"].as_object_mut() {
-        if let Some(files) = share.get_mut("files").and_then(Value::as_array_mut) {
-            for file in files {
-                if let Some(file) = file.as_object_mut() {
-                    file.remove("object_key");
-                    file.remove("sha256");
-                }
-            }
+    if let Some(files) = public
+        .pointer_mut("/share/files")
+        .and_then(Value::as_array_mut)
+    {
+        for file in files.iter_mut().filter_map(Value::as_object_mut) {
+            file.remove("object_key");
+            file.remove("sha256");
         }
     }
     public.serialize(serializer)
@@ -507,7 +506,11 @@ async fn delete_issue(
         Ok(Ok(row.metadata.0.share))
     }).await.map_err(internal)?;
     match result {
-        Ok(Some(share)) => share::delete_files(state, &share.files).await,
+        Ok(Some(share)) => {
+            share::clean_deleted_share(state, issue_id, &share.files)
+                .await
+                .map_err(internal)?;
+        }
         Ok(None) => {}
         Err(reason) => admitted(reason)?,
     }
@@ -700,7 +703,7 @@ async fn move_to_project(
         .0
         .get("task_provider")
         .and_then(Value::as_str)
-        .unwrap_or("backend");
+        .unwrap_or("local");
     if !matches!(provider, "backend" | "local") {
         return Ok(Admission::InvalidTarget);
     }
@@ -729,10 +732,10 @@ async fn move_to_project(
                         (),
                     )
                     .await?;
-                if !access
+                if access
                     .map(|role| role.get_required::<i64>("anon_1_priority"))
                     .transpose()?
-                    .is_some_and(|priority| priority <= 4)
+                    .is_none_or(|priority| priority > 4)
                 {
                     return Ok(Admission::InvalidRecipients);
                 }

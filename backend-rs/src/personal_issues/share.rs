@@ -74,6 +74,9 @@ async fn create_shared_issue(
         return Err(invalid("Invalid conversation reference"));
     }
     request.issue.validate()?;
+    if !assignee_is_invited(&request.issue, user.0.id) {
+        return Err(invalid("Invite the assignee before assigning"));
+    }
     let project = request.project_id.map(|project_id| ProjectInput {
         project_id,
         status: request.project_status,
@@ -89,20 +92,23 @@ async fn create_shared_issue(
         project,
     };
     let result = create_issue_record(state, user.0.id, request.issue, &id, Some(&share)).await;
-    let target = share_target(state, user.0.id, &id).await?;
     if let Err(error) = result {
         // The transaction may have committed despite a lost response. Only
         // reclaim this attempt's objects after confirming they aren't attached.
-        let stored: Vec<StoredFile> = fetch_object_keys(state, &id).await?;
+        let stored: Vec<StoredFile> = fetch_object_keys(state, &id).await.inspect_err(|_| {
+            tracing::warn!(issue_id=%id, attachment_ids=?share.files.iter().map(|file| &file.id).collect::<Vec<_>>(), "Share staging retained after an uncertain commit");
+        })?;
         let unattached: Vec<_> = share
             .files
             .into_iter()
             .filter(|file| !stored.iter().any(|row| row.object_key == file.object_key))
             .collect();
         delete_files(state, &unattached).await;
-        return target.ok_or(error);
+        return share_target(state, user.0.id, &id).await?.ok_or(error);
     }
-    target.ok_or_else(missing)
+    share_target(state, user.0.id, &id)
+        .await?
+        .ok_or_else(missing)
 }
 
 #[derive(FromMysqlRow)]
@@ -366,6 +372,13 @@ async fn stage_files(
         };
         let id = random_id();
         let object_key = format!("issue-share/{id}");
+        staged.push(SharedAttachment {
+            id,
+            filename: filename.into(),
+            size: file.bytes.len(),
+            sha256: format!("{:x}", Sha256::digest(&file.bytes)),
+            object_key: object_key.clone(),
+        });
         if crate::delivery_storage::write_object(&state.attachment_http, &object_key, &file.bytes)
             .await
             .is_err()
@@ -373,22 +386,65 @@ async fn stage_files(
             delete_files(state, &staged).await;
             return Err(FastApiError::internal());
         }
-        staged.push(SharedAttachment {
-            id,
-            filename: filename.into(),
-            size: file.bytes.len(),
-            sha256: format!("{:x}", Sha256::digest(&file.bytes)),
-            object_key,
-        });
     }
     Ok(staged)
 }
 
-pub(super) async fn delete_files(state: &AppState, files: &[SharedAttachment]) {
+async fn delete_files(state: &AppState, files: &[SharedAttachment]) -> bool {
+    let mut complete = true;
     for file in files {
-        let _ =
-            crate::delivery_storage::delete_object(&state.attachment_http, &file.object_key).await;
+        if crate::delivery_storage::delete_object(&state.attachment_http, &file.object_key)
+            .await
+            .is_err()
+        {
+            complete = false;
+            tracing::warn!(attachment_id=%file.id, "Share attachment storage cleanup failed");
+        }
     }
+    complete
+}
+
+pub(super) async fn clean_deleted_share(
+    state: &AppState,
+    id: &str,
+    files: &[SharedAttachment],
+) -> brz_mysql::MysqlResult<bool> {
+    let complete = delete_files(state, files).await;
+    // The committed tombstone retains the keys until storage confirms deletion.
+    let metadata = if complete {
+        "JSON_REMOVE(metadata,'$.share')"
+    } else {
+        "metadata"
+    };
+    state.mysql.execute(
+        format!("UPDATE loop_items SET metadata={metadata},updated_at=UTC_TIMESTAMP(6) WHERE id=? AND deleted_at>'1970-01-01 00:00:01'"),
+        (id,),
+    ).await?;
+    Ok(complete)
+}
+
+pub(crate) async fn retry_deleted_shares(state: &AppState) -> anyhow::Result<Value> {
+    #[derive(FromMysqlRow)]
+    struct Tombstone {
+        id: String,
+        metadata: Json<Metadata>,
+    }
+    let rows: Vec<Tombstone> = state.mysql.fetch_all(
+        "SELECT id,metadata FROM loop_items WHERE resource_type='task' AND deleted_at>'1970-01-01 00:00:01' AND JSON_EXTRACT(metadata,'$.standalone')=true AND JSON_LENGTH(JSON_EXTRACT(metadata,'$.share.files'))>0 ORDER BY updated_at,id LIMIT 32",
+        (),
+    ).await?;
+    let mut completed = 0;
+    let mut pending = 0;
+    for row in rows {
+        if let Some(share) = row.metadata.0.share {
+            if clean_deleted_share(state, &row.id, &share.files).await? {
+                completed += 1;
+            } else {
+                pending += 1;
+            }
+        }
+    }
+    Ok(json!({"completed":completed,"pending":pending}))
 }
 
 #[brz_http_server::get("/api/v1/personal-issues/:issue_id/attachments/:attachment_id")]

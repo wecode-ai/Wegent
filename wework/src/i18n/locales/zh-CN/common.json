@@ -6662,6 +6662,8 @@
   },
   "beta": "Beta",
   "taskIssueShare": {
+    "sourceRetry": "加载来源会话失败，重试",
+    "linksRetry": "加载关联事项失败，重试",
     "linkedIssues": "关联事项",
     "deliverables": "交付物",
     "addFiles": "添加附件",
