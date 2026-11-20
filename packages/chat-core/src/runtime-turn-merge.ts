@@ -110,6 +110,10 @@ export function mergeRuntimeConversationTurn(
       preserveLocalTerminal || preserveLocalFailure
         ? local.errorType
         : snapshot.errorType,
+    errorInfo:
+      preserveLocalTerminal || preserveLocalFailure
+        ? local.errorInfo
+        : snapshot.errorInfo,
     stoppedNotice: preserveLocalTerminal
       ? local.stoppedNotice
       : snapshot.stoppedNotice,

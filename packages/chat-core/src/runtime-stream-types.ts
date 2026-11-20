@@ -69,6 +69,7 @@ export interface ChatErrorPayload {
   subtaskId?: string;
   error: string;
   type?: string;
+  errorInfo?: import("./api-types").ChatErrorInfo;
   deviceId?: string;
   shellType?: string;
   startedAt?: number;

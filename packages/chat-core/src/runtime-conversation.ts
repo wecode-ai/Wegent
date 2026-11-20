@@ -105,6 +105,7 @@ export interface RuntimeConversationTurn {
   completedAt?: string | number | null;
   error?: string;
   errorType?: string;
+  errorInfo?: import("./api-types").ChatErrorInfo;
   stoppedNotice?: boolean | null;
   contentTruncated?: boolean;
   streamingThinkingContent?: string;

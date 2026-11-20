@@ -678,9 +678,20 @@ fn error_payload(event: &ExecutionEvent) -> Value {
     payload.insert("subtask_id".into(), json!(event.subtask_id));
     payload.insert("error".into(), Value::String(error.to_string()));
     payload.insert("task_id".into(), json!(event.task_id));
-    if let Some(error_type) = event.error_code.as_deref() {
-        payload.insert("type".into(), Value::String(error_type.to_string()));
-    }
+    let info = crate::chat_errors::classify_chat_error(event.error_code.as_deref(), Some(error));
+    payload.insert(
+        "type".into(),
+        json!(event.error_code.as_deref().unwrap_or(info.code)),
+    );
+    payload.insert(
+        "error_info".into(),
+        json!({
+            "code": info.code,
+            "category": info.category,
+            "retry_policy": info.retry_policy,
+            "stage": crate::chat_errors::error_stage(info.code),
+        }),
+    );
     if let Some(message_id) = event.message_id {
         payload.insert("message_id".into(), json!(message_id));
     }

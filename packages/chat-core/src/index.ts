@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type {
+  ChatErrorInfo,
   ContextMetricsSnapshot,
   TaskDetail,
   TaskDetailSubtask,
@@ -20,7 +21,7 @@ export {
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
   settleWorkbenchProcessingBlock,
-  resolveStreamingThinkingContent
+  resolveStreamingThinkingContent,
 } from './workbench-message-reducer'
 export type {
   BaseWorkbenchProcessingBlock,
@@ -60,10 +61,7 @@ export type {
   TaskStatus as TaskStateStatus,
   UnifiedMessage,
 } from './task-state'
-export {
-  createAuthenticatedSocketClient,
-  createSocketClient,
-} from './socket'
+export { createAuthenticatedSocketClient, createSocketClient } from './socket'
 export type {
   AuthenticatedSocketClient,
   AuthenticatedSocketClientOptions,

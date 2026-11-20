@@ -87,7 +87,9 @@ impl RuntimeWorkRpcHandler {
                 });
                 let error = AppIpcError::new("executor_restarted", error);
                 if store
-                    .update_task(&task_id, |link| apply_local_task_failure(link, &error))
+                    .update_task(&task_id, |link| {
+                        apply_local_task_failure(link, &error);
+                    })
                     .is_some()
                 {
                     failed_task_ids.insert(task_id);
