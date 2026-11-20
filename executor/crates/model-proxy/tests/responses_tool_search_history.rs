@@ -104,7 +104,7 @@ async fn strict_model(
     if protocol
         .tool_entries(&body)
         .iter()
-        .any(|(_, id)| id.as_str().is_none_or(str::is_empty))
+        .any(|(_, id)| id.as_str().unwrap_or_default().is_empty())
     {
         return (
             StatusCode::BAD_REQUEST,
