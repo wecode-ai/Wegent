@@ -389,8 +389,8 @@ impl RuntimeWorkRpcHandler {
         }
         if is_claude_runtime(&link.runtime) {
             let goal = self.set_claude_goal(&link, &payload);
-            self.sync_runtime_task_goal_status(&link.local_task_id, string_field(&goal, "status"));
             self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
+            self.sync_runtime_task_goal_status(&link.local_task_id, string_field(&goal, "status"));
             let mut response = task_action_success(&link);
             response["goal"] = goal;
             return Ok(response);
@@ -451,11 +451,11 @@ impl RuntimeWorkRpcHandler {
                     .cloned()
                     .map(normalize_runtime_goal_timestamps)
                     .unwrap_or(Value::Null);
+                self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
                 self.sync_runtime_task_goal_status(
                     &link.local_task_id,
                     string_field(&goal, "status"),
                 );
-                self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
                 if string_field(&goal, "status").as_deref() == Some("active") {
                     self.journal_active_goal_turn(
                         &link.local_task_id,

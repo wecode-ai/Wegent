@@ -755,7 +755,7 @@ export function TemporaryChatPanel({
     }
     const key = submissionKey(requestKey)
     const fallback = t('interactions.failed')
-    let submissionError = fallback
+    let submissionError: string | undefined
     let accepted = false
     setInputSubmissions(current => ({ ...current, [key]: { pending: true } }))
     try {
@@ -777,8 +777,8 @@ export function TemporaryChatPanel({
     } finally {
       setInputSubmissions(current => {
         const next = { ...current }
-        if (accepted) delete next[key]
-        else next[key] = { pending: false, error: submissionError }
+        if (!accepted && submissionError) next[key] = { pending: false, error: submissionError }
+        else delete next[key]
         return next
       })
     }

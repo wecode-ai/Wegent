@@ -3407,8 +3407,12 @@ describe('TemporaryChatPanel', () => {
     rerender(panel({ ...approval, interactionScope: 'turn-2' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     rerender(panel())
+    mocks.sendRuntimePaneMessage.mockResolvedValueOnce(false)
     await userEvent.click(submit())
-    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(submit()).toBeEnabled()
+    await userEvent.click(submit())
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(3)
     expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         address,
