@@ -847,6 +847,11 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 - 工作台会话状态专项在 Linux 打包实例通过。该专项的截图覆盖默认分屏和恢复分屏。协作分栏的键盘、拖拽及取消证据见上一轮 `collaboration-exp`，同一场景在 e20 的后续失败发生于返回看板后等待发布正文。[工作台分屏与协作场景日志](https://github.com/wecode-ai/Wegent/actions/runs/44707080529/job/136191327037)
 - macOS 打包 `system-drag-panel-only` 已验证系统拖放后的 Popout 会话输入与焦点隔离，主窗口未获得焦点，草稿进入 Popout，截图可见草稿及工具栏。已查看 `system-drag-popout-window.png`。这一路径的证据记录于 2026-11-20 02:12 UTC 启动的本地批次，覆盖拖放浮窗，完整独立工作台页面及 Aqua 前台激活仍待复核。
 
+## Linux 打包 Electron 复核（c0727cde03）
+
+- 小组协作流程完整通过，覆盖按两次 Escape、焦点恢复及智能体选择器的箭头导航。Python 运行时专项也已通过，包含准备通知与真实插件执行验证。[小组日志](https://github.com/wecode-ai/Wegent/actions/runs/44712386714/job/136209245363) · [Python 日志](https://github.com/wecode-ai/Wegent/actions/runs/44712386714/job/136209245582)
+- 插件开发、Stand-in 与 Stand-in 个人任务通过同轮打包验证。后台会话队列在切出源会话后等待第三条跟进请求超时，仍需复验。[桌面 Core 8 日志](https://github.com/wecode-ai/Wegent/actions/runs/44712386714/job/136209245622)
+
 ## 仍需真实验收的边界
 
 - 未逐一打开全部 234 个 source owner 或 45 个真实 Page。DSH 动态入口、委托表单、弹出工作台、进程视图、设备/插件/应用工作区仍需登录与原生 host 前提。

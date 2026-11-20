@@ -823,13 +823,12 @@ export function createDesktopScenario({
           value: `/todo?projectStore=local&projectId=${localProject.id}&itemId=${localIssue.id}`,
         })
         const legacyDetail = `${ACTIVE} [data-testid="collaboration-issue-detail"]`
-        // The route commits before the restored board mounts its issue activity feed.
-        await control.command(
-          'waitFor',
-          `${legacyDetail} [data-testid="cloud-task-activity-${localIssue.id}"]`,
-          { visible: true }
-        )
-        await control.command('waitFor', legacyDetail, {
+        const legacyActivity = `${legacyDetail} [data-testid="cloud-task-activity-${localIssue.id}"]`
+        // The activity mounts below the fold after the restored board route commits.
+        await control.command('waitFor', legacyActivity)
+        await control.command('scrollIntoView', legacyActivity, { visible: true })
+        await control.command('waitFor', legacyActivity, {
+          visible: true,
           text: PUBLIC,
         })
         assert.equal((await comments()).filter(row => row.content === PUBLIC).length, 1)
