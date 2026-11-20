@@ -7,9 +7,6 @@ import type {
   MemberRole,
 } from '@/types/knowledge'
 
-export const COMPANY_SPACE_FILTER = 'organization'
-export const PERSONAL_SPACE_FILTER = 'space:personal'
-
 export interface NavigationKnowledgeBase extends KnowledgeBaseWithGroupInfo {
   namespace_level: 'personal' | 'group' | 'organization' | null
   namespace_display_name: string | null

@@ -36,7 +36,7 @@ The knowledge page lists active libraries you can currently access directly.
 | Shared with me | Libraries created by others and accessible through user, team, or other grants, excluding company-space libraries |
 | Company knowledge | Libraries that belong to company spaces |
 
-Filter by the library's actual personal or team space. All also supports company spaces; Company knowledge hides the space filter. Sharing with a team does not change ownership. Multiple access paths produce one row per library. Sidebar counts remain independent of local filters; filter option counts reflect the current entry, search, and type. Leaving a team does not trigger additional discovery beyond the existing list API.
+Filter by the library's actual personal space, all organizations, a specific organization, or unknown space. All also supports company spaces; Company knowledge hides the space filter. Specific organizations remain searchable by name or identifier. All organizations and unknown space are filters only; creation defaults to personal space when either is selected. Sharing with a team does not change ownership. Multiple access paths produce one row per library. Sidebar counts remain independent of local filters; filter option counts reflect the current entry, search, and type. Leaving a team does not trigger additional discovery beyond the existing list API.
 
 On mobile, expand navigation and use the vertical list to see names, spaces, and actions. Unknown space categories are shown as unknown; unconfirmed effective permissions are hidden in the list. The permissions action confirms effective access and its sources with the server; managers can also manage members and roles. Existing library links, code libraries, and migration actions remain available.
 
