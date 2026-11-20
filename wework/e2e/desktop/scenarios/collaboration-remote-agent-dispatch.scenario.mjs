@@ -388,11 +388,12 @@ async function verifyConfiguredExecutionEnvironment(
     }
   )
   const initialize = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-initialize-${remoteDeviceId}"]`)
-  await control.command(
-    'click',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}"]`)
-  )
-  await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  const actions = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-actions-toggle-${remoteDeviceId}"]`)
+  const initializeEnvironment = async () => {
+    await control.command('setExpanded', actions, { value: 'true', visible: true, timeoutMs })
+    await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  }
+  await initializeEnvironment()
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}`),
     value =>
@@ -428,7 +429,7 @@ async function verifyConfiguredExecutionEnvironment(
       timeoutMs,
     }
   )
-  await control.command('clickWhenEnabled', initialize, { timeoutMs })
+  await initializeEnvironment()
   const readyDevice = await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}`),
     value =>

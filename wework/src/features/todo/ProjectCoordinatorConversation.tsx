@@ -157,8 +157,7 @@ function ProjectCoordinatorConversationContent({
             }}
           >
             <DialogSurface
-              onClose={closeConversation}
-              active={open && !memory && !publication}
+              onClose={() => leave(closeConversation)}
               render={
                 <section
                   ref={dialogRef}
