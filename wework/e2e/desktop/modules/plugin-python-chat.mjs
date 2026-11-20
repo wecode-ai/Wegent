@@ -5,7 +5,7 @@ import { join, relative, isAbsolute } from 'node:path'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { shellCommandPollResponse, shellCommandResponse } from './shell-command-response.mjs'
 import { assertManagedPythonHome, PYTHON_BOOTSTRAP_TIMEOUT_MS } from './managed-python.mjs'
-import { createSingleRootLocalProject, selectE2EModel } from './shared.mjs'
+import { createSingleRootLocalProject, selectE2EModel, withTimeout } from './shared.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -30,6 +30,7 @@ export function createPluginPythonChat({
   const scriptPath = join(plugin, 'skills', 'example', 'scripts', 'inspect runtime.py')
   const localPlugin = join(resultDir, 'chat-python-local-plugin')
   const localScriptPath = join(localPlugin, 'skills', 'example', 'scripts', 'inspect runtime.py')
+  const shellCommandRequested = Promise.withResolvers()
   let active = false
   let started = false
   let details
@@ -114,6 +115,7 @@ export function createPluginPythonChat({
       if (!JSON.stringify(body).includes(PROMPT)) return false
       const id = `${CALL}-${Date.now()}`
       let events
+      let requestsShellCommand = false
       if (codexRequestKind(body) === 'prewarm') {
         events = [assistantMessage('Ready')]
       } else {
@@ -145,10 +147,12 @@ export function createPluginPythonChat({
           assert.equal(started, false, 'The chat must start the plugin command only once')
           started = true
           events = shellCommandResponse(body, CALL, command, workspacePath)
+          requestsShellCommand = true
         }
       }
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+      if (requestsShellCommand) shellCommandRequested.resolve()
       return true
     },
     async start(control) {
@@ -166,6 +170,11 @@ export function createPluginPythonChat({
       await control.command('clickWhenEnabled', `${PANE} [data-testid="send-message-button"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await withTimeout(
+        shellCommandRequested.promise,
+        uiTimeoutMs,
+        'The chat did not request the Python plugin shell command'
+      )
     },
     async verify(control) {
       await control.command('waitFor', `${PANE} [data-testid="message-assistant"]`, {

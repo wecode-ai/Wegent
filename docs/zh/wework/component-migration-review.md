@@ -830,6 +830,12 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 - 协作分栏通过 `collaboration-exp`，覆盖键盘调整、真实拖拽和 Escape 恢复布局。[Core 4 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269385)
 - 看板重新加载后保留顺序及跨列变更。通知进入看板的专项在关闭详情后开始拖拽时失败，已根据命中日志补上关闭完成的等待，待同场景复测。[Core 10 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269383) [Core 5 日志](https://github.com/wecode-ai/Wegent/actions/runs/44685838973/job/136122269750)
 
+## Linux 打包 Electron 复核（e20dfde2d8）
+
+- 已查看 `issue-handoff-02-project-pending.png`。待你处理的事项预览只显示一个详情标题，项目路径、时间与打开原页面操作共用一行。截图左栏含测试夹具的云端点错误，真实云设备仍未验收。[事项介入与工具条 E2E](https://github.com/wecode-ai/Wegent/actions/runs/44707080529/job/136191327554)
+- Stand-in 日历设置从放弃确认返回详情的完整路径已通过。[Stand-in E2E](https://github.com/wecode-ai/Wegent/actions/runs/44707080529/job/136191327052)
+- 看板分配通知与待处理互动已通过。小组流程通过 Escape 与回焦，后续智能体选择的键盘断言失败。[看板分配通知 E2E](https://github.com/wecode-ai/Wegent/actions/runs/44707080529/job/136191327248) · [互动与小组 E2E](https://github.com/wecode-ai/Wegent/actions/runs/44707080529/job/136191327144)
+
 ## 仍需真实验收的边界
 
 - 未逐一打开全部 234 个 source owner 或 45 个真实 Page。DSH 动态入口、委托表单、弹出工作台、进程视图、设备/插件/应用工作区仍需登录与原生 host 前提。

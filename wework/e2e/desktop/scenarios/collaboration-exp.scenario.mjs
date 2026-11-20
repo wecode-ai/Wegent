@@ -822,7 +822,14 @@ export function createDesktopScenario({
         await control.command('navigate', 'body', {
           value: `/todo?projectStore=local&projectId=${localProject.id}&itemId=${localIssue.id}`,
         })
-        await control.command('waitFor', `${ACTIVE} [data-testid="collaboration-issue-detail"]`, {
+        const legacyDetail = `${ACTIVE} [data-testid="collaboration-issue-detail"]`
+        // The route commits before the restored board mounts its issue activity feed.
+        await control.command(
+          'waitFor',
+          `${legacyDetail} [data-testid="cloud-task-activity-${localIssue.id}"]`,
+          { visible: true }
+        )
+        await control.command('waitFor', legacyDetail, {
           text: PUBLIC,
         })
         assert.equal((await comments()).filter(row => row.content === PUBLIC).length, 1)

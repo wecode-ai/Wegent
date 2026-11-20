@@ -166,15 +166,17 @@ async function createDisabledSchedule(control, scoped) {
   await control.command('fill', find('automatic-processing-prompt'), {
     value: 'Settings version regression; never enable this rule.',
   })
-  if (
-    Number(
-      await control.command('getElementCount', `${find('automatic-processing-enabled')}:checked`)
-    ) > 0
-  )
-    await control.command('click', find('automatic-processing-enabled'))
+  const enabled = find('automatic-processing-enabled')
+  if ((await control.command('getAttribute', enabled, { value: 'aria-checked' })) === 'true') {
+    await control.command('click', enabled)
+  }
+  await control.command('waitFor', `${enabled}[aria-checked="false"]`, { visible: true })
   await control.command('click', find('automatic-processing-target'))
-  await control.command('waitFor', find('automatic-processing-target-search'), { visible: true })
-  const options = find('automatic-processing-target-picker') + ' [role="option"]'
+  const searchId = 'automatic-processing-target-search'
+  const search = find(searchId)
+  const picker = find('automatic-processing-target-picker')
+  await control.command('waitFor', search, { visible: true })
+  const options = picker + ' [role="option"]'
   assert.ok(
     Number(await control.command('getElementCount', options)) >= 2,
     'The local fixture must provide multiple Agent targets'
@@ -185,15 +187,28 @@ async function createDisabledSchedule(control, scoped) {
   const second = await control.command('getAttribute', options + ':nth-child(2)', {
     value: 'data-testid',
   })
-  await control.command('nativePress', find('automatic-processing-target-search'), {
-    key: 'ArrowDown',
-  })
-  await assertKeyboardFocus(control, first)
-  await control.command('nativePress', find(first), { key: 'ArrowDown' })
-  await assertKeyboardFocus(control, second)
-  await control.command('nativePress', find(second), { key: 'ArrowUp' })
-  await assertKeyboardFocus(control, first)
-  await control.command('nativePress', find(first), { key: 'Escape' })
+  // The searchable combobox moves its accessible active option and keeps input focus.
+  for (const [key, optionId] of [
+    ['ArrowDown', first],
+    ['ArrowDown', second],
+    ['ArrowUp', first],
+  ]) {
+    const option = find(optionId)
+    const optionDomId = await control.command('getAttribute', option, { value: 'id' })
+    assert.ok(optionDomId, 'Each keyboard option must have a DOM id')
+    await control.command('nativePress', search, { key })
+    await assertKeyboardFocus(control, searchId)
+    await waitForBoardValue(
+      () => control.command('getAttribute', search, { value: 'aria-activedescendant' }),
+      optionDomId,
+      key + ' must highlight ' + optionId,
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    assert.equal(await control.command('getAttribute', option, { value: 'data-active' }), 'true')
+  }
+  await control.command('nativePress', search, { key: 'Escape' })
+  await control.command('waitFor', picker, { visible: false })
+  await control.command('waitFor', find('automatic-processing-form'), { visible: true })
   await assertKeyboardFocus(control, 'automatic-processing-target')
   await control.command('click', find('automatic-processing-cron-advanced-toggle'))
   const validCron = await control.command('getValue', find('automatic-processing-cron'))
