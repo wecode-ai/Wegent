@@ -33,13 +33,21 @@ async fn unknown_question_ids_cannot_consume_an_empty_native_request_map() {
 }
 
 #[tokio::test]
-async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() {
+async fn stand_in_native_answers_use_the_live_request_and_reject_invalid_replays() {
     let (handler, _root) = isolated_runtime_work_handler("im-sync-answer");
-    handler.begin_active_codex_transcript("task", "thread", "turn");
-    let execution_id = start_test_execution(&handler, "task");
-    handler.record_active_codex_turn("task", execution_id, "thread".into(), "turn".into());
+    let task = "stand-in-chat-7-primary";
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task.into(),
+        runtime: "codex".into(),
+        thread_id: Some("thread".into()),
+        runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7}}),
+        ..Default::default()
+    });
+    handler.begin_active_codex_transcript(task, "thread", "turn");
+    let execution_id = start_test_execution(&handler, task);
+    handler.record_active_codex_turn(task, execution_id, "thread".into(), "turn".into());
     handler.record_active_codex_transcript_item(
-        "task",
+        task,
         "turn",
         &json!({
             "id":42,"method":"item/tool/requestUserInput","params":{
@@ -49,7 +57,7 @@ async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() 
     );
     let (sender, mut receiver) = mpsc::channel(1);
     handler.active_request_user_inputs.lock().unwrap().insert(
-        "task".into(),
+        task.into(),
         ActiveRequestUserInput {
             execution_id,
             sender,
@@ -57,27 +65,21 @@ async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() 
     );
     let answer =
         json!({"requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Yes"]}}});
+    let reply = |response: Value| {
+        handler.handle_runtime_rpc(json!({
+            "method":"runtime.tasks.send",
+            "payload":{"taskId":task,"message":"Yes","requestUserInputResponse":response}
+        }))
+    };
     let mut wrong = answer.clone();
     wrong["requestId"] = json!(43);
-    let rejected = handler
-        .send_request_user_input_response("task", wrong, None)
-        .await
-        .unwrap();
+    let rejected = reply(wrong).await.unwrap();
     assert_eq!(rejected["code"], "stale_request_user_input");
     assert!(receiver.try_recv().is_err());
-    assert_eq!(
-        handler
-            .send_request_user_input_response("task", answer.clone(), None)
-            .await
-            .unwrap()["accepted"],
-        true
-    );
+    assert_eq!(reply(answer.clone()).await.unwrap()["accepted"], true);
     assert_eq!(receiver.recv().await.unwrap(), answer);
     assert_eq!(
-        handler
-            .send_request_user_input_response("task", answer, None)
-            .await
-            .unwrap()["code"],
+        reply(answer).await.unwrap()["code"],
         "stale_request_user_input"
     );
     assert!(receiver.try_recv().is_err());

@@ -38,6 +38,9 @@ async function withNativeGpuLaunch(disableGpuSandbox, verify) {
     const environment = {
       ...process.env,
       ...launch.env,
+      // GTK's host-side GLX probe can block in Mesa before app.ready on Xvfb.
+      // The fixture exercises Chromium's GPU child, which does not use GDK_GL.
+      GDK_GL: 'disable',
       WEWORK_E2E_GPU_SMOKE_ROOT: root,
       WEWORK_E2E_GPU_SMOKE_RESULT: resultPath,
       WEWORK_E2E_GPU_LAUNCHER_VALUE: argument.slice('--gpu-launcher='.length),

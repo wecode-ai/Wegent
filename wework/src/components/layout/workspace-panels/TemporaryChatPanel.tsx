@@ -62,6 +62,7 @@ import {
 import {
   appendAcceptedRuntimeConversationMessage,
   getRuntimeConversationTurnIds,
+  runtimeConversationKey,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   useRuntimeTaskLifecycle,
@@ -160,6 +161,11 @@ export function TemporaryChatPanel({
   const [localAddress, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
   const address = controlledAddress === undefined ? localAddress : controlledAddress
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
+  const [inputSubmissions, setInputSubmissions] = useState<
+    Record<string, { pending: boolean; error?: string }>
+  >({})
+  const submissionKey = (requestKey: string | null) =>
+    JSON.stringify([address && runtimeConversationKey(address), requestKey])
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
   const catalogDeviceId =
@@ -728,18 +734,55 @@ export function TemporaryChatPanel({
 
   const submitRequestUserInput = async (response: RequestUserInputResponse): Promise<boolean> => {
     if (!address || !active || readOnly) return false
-    const payload = findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
+    const requestKey = requestUserInputResponseKey(response)
+    const payload =
+      focusedRequest && requestUserInputPayloadKey(focusedRequest) === requestKey
+        ? focusedRequest
+        : findRequestUserInputPayload(messages, requestKey)
     const hosted = await requestUserInputHost?.submit(response, payload)
     if (hosted !== undefined) return hosted
     const appendUserMessage = isAsyncRequestUserInputPayload(payload)
     const attachments = requestUserInputResponseAttachments(response)
-    return sendRuntimePaneMessage({
-      address,
-      message: requestUserInputResponseText(response),
-      requestUserInputResponse: appendUserMessage ? { ...response, delivery: 'async' } : response,
-      ...(attachments.length ? { attachments } : {}),
-      ...runtimeContext,
-    })
+    if (appendUserMessage) {
+      return sendRuntimePaneMessage({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: { ...response, delivery: 'async' },
+        ...(attachments.length ? { attachments } : {}),
+        ...runtimeContext,
+      })
+    }
+    const key = submissionKey(requestKey)
+    const fallback = t('interactions.failed')
+    let submissionError: string | undefined
+    let accepted = false
+    setInputSubmissions(current => ({ ...current, [key]: { pending: true } }))
+    try {
+      accepted = await sendRuntimePaneMessage(
+        {
+          address,
+          message: requestUserInputResponseText(response),
+          requestUserInputResponse: response,
+          ...(attachments.length ? { attachments } : {}),
+          ...runtimeContext,
+        },
+        {
+          onError: error => {
+            submissionError = error
+          },
+        }
+      )
+    } catch (cause) {
+      submissionError = getErrorMessage(cause, fallback)
+    } finally {
+      setInputSubmissions(current => {
+        const next = { ...current }
+        if (!accepted && submissionError) next[key] = { pending: false, error: submissionError }
+        else delete next[key]
+        return next
+      })
+    }
+    return accepted
   }
 
   const ignoreRequestUserInput = async (payload: RequestUserInputPayload) => {
@@ -776,6 +819,11 @@ export function TemporaryChatPanel({
           !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
         ? focusedRequest
         : null
+  const pendingRequestKey = pendingRequest && requestUserInputPayloadKey(pendingRequest)
+  const pendingSubmission = inputSubmissions[submissionKey(pendingRequestKey)]
+  const submittingInput =
+    pendingRequest &&
+    (pendingSubmission?.pending || requestUserInputHost?.isSubmitting(pendingRequest))
   return (
     <TemporaryConversationLayout
       messageCount={presentation.messages.length}
@@ -800,7 +848,7 @@ export function TemporaryChatPanel({
               <StandInNotificationPrompt scopeKey={lifecycleStore.notificationScope} />
             )}
             {!pendingRequest && composerHeader}
-            {pendingRequest && requestUserInputHost?.isSubmitting(pendingRequest) ? (
+            {submittingInput ? (
               <div
                 data-testid="runtime-input-submitting"
                 role="status"
@@ -815,11 +863,15 @@ export function TemporaryChatPanel({
               renderQuestion={onCollapse =>
                 pendingRequest ? (
                   <RequestUserInputCard
-                    key={requestUserInputPayloadKey(pendingRequest)}
+                    key={submissionKey(pendingRequestKey)}
                     payload={pendingRequest}
                     source={address}
-                    disabled={requestUserInputHost?.isDisabled(pendingRequest)}
-                    error={requestUserInputHost?.getError(pendingRequest)}
+                    disabled={
+                      Boolean(submittingInput) || requestUserInputHost?.isDisabled(pendingRequest)
+                    }
+                    error={
+                      pendingSubmission?.error ?? requestUserInputHost?.getError(pendingRequest)
+                    }
                     messages={presentation.messages}
                     draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
                     onDraftAnswersChange={answers =>
