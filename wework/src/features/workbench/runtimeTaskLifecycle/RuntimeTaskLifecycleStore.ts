@@ -100,6 +100,11 @@ export class RuntimeTaskLifecycleStore {
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
 
+  isNewlyUnread(key: string): boolean {
+    const state = this.unreadStateByTask.get(key)
+    return state?.unread === true && state.revision > 0
+  }
+
   getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
     if (!this.currentTaskKey) return null
     return this.snapshot.tasks.get(this.currentTaskKey) ?? null

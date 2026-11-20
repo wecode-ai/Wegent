@@ -91,6 +91,7 @@ export interface HttpClientOptions {
 
 export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
+  expectedErrorStatuses?: readonly number[]
   signal?: AbortSignal
   headers?: HeadersInit
   cache?: RequestCache
@@ -209,8 +210,9 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       })
     } catch (error) {
       window.clearTimeout(slowTimer)
-      console.warn(
-        `[Wework] HTTP ${method} ${endpoint} failed.`,
+      const report = signal?.aborted ? console.debug : console.warn
+      report(
+        `[Wework] HTTP ${method} ${endpoint} ${signal?.aborted ? 'cancelled' : 'failed'}.`,
         requestLogFields(logContext, {
           phase: 'transport',
           error: errorDetails(error),
@@ -246,10 +248,12 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
 
   async function parseAndLogHttpError(
     response: Response,
-    diagnostics: HttpResponseDiagnostics
+    diagnostics: HttpResponseDiagnostics,
+    expected = false
   ): Promise<ApiError> {
     const error = await parseError(response)
-    console.warn(
+    const report = expected ? console.debug : console.warn
+    report(
       `[Wework] HTTP ${diagnostics.logContext.method} ${diagnostics.logContext.endpoint} returned ${response.status}.`,
       requestLogFields(diagnostics.logContext, {
         phase: 'http_error',
@@ -281,7 +285,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const { response } = diagnostics
 
     if (!response.ok) {
-      const error = await parseAndLogHttpError(response, diagnostics)
+      const error = await parseAndLogHttpError(
+        response,
+        diagnostics,
+        requestOptions.expectedErrorStatuses?.includes(response.status)
+      )
       const redirectOnUnauthorized =
         requestOptions.redirectOnUnauthorized ?? options.redirectOnUnauthorized ?? true
       if (response.status === 401 && redirectOnUnauthorized) {
