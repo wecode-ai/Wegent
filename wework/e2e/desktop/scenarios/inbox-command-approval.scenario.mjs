@@ -103,10 +103,10 @@ export function createDesktopScenario({ workspacePath, workbenchReadyTimeoutMs }
       })
       await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
       await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-show-context"]`)
-      const submit = `${PAGE} [data-testid="request-user-input-submit-button"]`
-      await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
+      const allow = `${PAGE} [data-testid="request-user-input-option-__codex_approval-0"]`
+      await control.command('waitFor', `${allow}:not(:disabled)`, { visible: true })
       await access(fixture)
-      await control.command('clickWhenEnabled', submit)
+      await control.command('clickWhenEnabled', allow)
       await verifyPendingInteractionsTab(control, 0)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)

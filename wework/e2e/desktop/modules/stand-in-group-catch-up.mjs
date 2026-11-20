@@ -5,6 +5,19 @@ import { storyUntil } from './stand-in-source-story-evidence.mjs'
 
 export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, providerId }) {
   const groupId = 'group-catch-up'
+  const writeMessages = messages =>
+    writeFile(
+      join(root, 'group-catch-up-message.json'),
+      JSON.stringify({
+        success: true,
+        result: {
+          hasMore: false,
+          nextCursor: '0',
+          conversationMessagesList: [{ openConversationId: groupId, singleChat: false, messages }],
+        },
+      })
+    )
+  await writeMessages([])
   const settings = await rpc('runtime.stand_in.personal.get', { userId })
   settings.primary.connections.push({
     providerId,
@@ -26,24 +39,11 @@ export async function verifyStandInGroupCatchUp({ database, rpc, root, userId, p
   const row = await storyUntil(
     source,
     value => value?.state.checkpoint?.after,
-    // A newly saved source may just miss the 15-second collection tick.
-    20_000,
+    // Registration can land just after the 15-second maintenance poll starts.
+    22_000,
     'The all-message group must establish its collection checkpoint'
   )
   const staleStart = new Date(Date.now() - 30 * 60_000).toISOString()
-  const writeMessages = messages =>
-    writeFile(
-      join(root, 'group-catch-up-message.json'),
-      JSON.stringify({
-        success: true,
-        result: {
-          hasMore: false,
-          nextCursor: '0',
-          conversationMessagesList: [{ openConversationId: groupId, singleChat: false, messages }],
-        },
-      })
-    )
-  await writeMessages([])
   await writeFile(join(root, 'group-catch-up-start'), staleStart)
   // Resume the persisted five-minute checkpoint created after the first timeout.
   assert.equal(

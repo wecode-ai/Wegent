@@ -475,9 +475,10 @@ impl RuntimeWorkRpcHandler {
         }
         // A refresh can replace the linked provider session before publishing.
         let directory = snapshot_directory();
+        let cleanup = self.transcript_transfer_cleanup.clone();
         super::super::transcript_work::run(move |cancellation| {
             cancellation.check()?;
-            transcript_transport::remove_expired_transfers(&runtime_directory)?;
+            cleanup.run_if_due(&runtime_directory, Instant::now());
             transcript_transport::encode_cancellable(&directory, response, cancellation)
         })
         .await

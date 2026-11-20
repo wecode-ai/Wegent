@@ -17,11 +17,11 @@ fn main() {
             .find(|pair| pair[0] == flag)
             .map(|pair| pair[1])
     };
-    if let (Some("group-catch-up"), Ok(old_start)) = (
-        argument("--conversation-ids"),
-        fs::read_to_string(root.join("group-catch-up-start")),
-    ) {
-        if argument("--start") == Some(old_start.as_str()) {
+    if argument("--conversation-ids") == Some("group-catch-up") {
+        if let Some(old_start) = fs::read_to_string(root.join("group-catch-up-start"))
+            .ok()
+            .filter(|start| argument("--start") == Some(start.as_str()))
+        {
             fs::write(root.join("group-catch-up-requested"), &old_start)
                 .expect("record attempted stale group query");
             // Simulate an upstream request that outlives the host collection deadline.
