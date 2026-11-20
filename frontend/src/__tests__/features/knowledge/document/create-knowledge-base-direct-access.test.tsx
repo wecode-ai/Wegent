@@ -34,8 +34,10 @@ jest.mock('@/apis/knowledge', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
+  ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
   KnowledgeBaseForm: ({
-    advancedExtras,
+    documentSyncSetting,
+    locationSection,
     typeSection,
     directAccessRequirement,
     onDirectAccessRequirementChange,
@@ -45,7 +47,8 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
   }: {
-    advancedExtras?: import('react').ReactNode
+    documentSyncSetting?: import('react').ReactNode
+    locationSection?: import('react').ReactNode
     typeSection?: import('react').ReactNode
     directAccessRequirement: DirectAccessRequirement
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
@@ -56,7 +59,8 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigUserChange: () => void
   }) => (
     <div>
-      {advancedExtras}
+      {documentSyncSetting}
+      {locationSection}
       {typeSection}
       <button type="button" onClick={() => onNameChange('Private docs')}>
         set name

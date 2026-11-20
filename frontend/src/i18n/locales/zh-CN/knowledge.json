@@ -777,7 +777,13 @@
       "readOnly": "只读"
     },
     "formSections": {
-      "basic": "基础设置",
+      "basic": "基本信息",
+      "navigation": "知识库设置",
+      "accessAndDownload": "访问与下载",
+      "summaryAndMultimodal": "摘要与多模态",
+      "retrieval": "检索",
+      "guidanceAndLimits": "引导与额度",
+      "generationAndSchedule": "生成与定时更新",
       "access": "访问设置",
       "summary": "摘要设置",
       "guidedQuestions": "引导问题"

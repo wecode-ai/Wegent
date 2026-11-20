@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { BookOpen, Code2, Database } from 'lucide-react'
+import { BookOpen, Code2, Database, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { ScheduledUpdateDialog } from '@/features/knowledge/code-wiki/ScheduledUpdateDialog'
-import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { KnowledgeBaseForm, useKnowledgeBaseFormNavigation } from './KnowledgeBaseForm'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
@@ -48,6 +48,7 @@ interface EditKnowledgeBaseDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   knowledgeBase: KnowledgeBase | null
+  spaceName?: string
   onSubmit: (data: KnowledgeBaseUpdate) => Promise<void>
   loading?: boolean
   /** Optional team ID for reading cached model preference (only used when KB has no existing summary_model_ref) */
@@ -62,13 +63,14 @@ export function EditKnowledgeBaseDialog({
   open,
   onOpenChange,
   knowledgeBase,
+  spaceName,
   onSubmit,
   loading,
   knowledgeDefaultTeamId,
   bindModel,
   onTypeConverted,
 }: EditKnowledgeBaseDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { t: tKnowledge } = useTranslation('knowledge')
   const [name, setName] = useState('')
   const [showGenerationTask, setShowGenerationTask] = useState(false)
@@ -111,7 +113,8 @@ export function EditKnowledgeBaseDialog({
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const effectiveMultimodalEnabled = multimodalFeatureEnabled && multimodalAnalysisEnabled
   const [error, setError] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const navigation = useKnowledgeBaseFormNavigation()
+  const { selectSection } = navigation
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({})
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
 
@@ -131,28 +134,32 @@ export function EditKnowledgeBaseDialog({
   const [fullKnowledgeBaseLoadFailed, setFullKnowledgeBaseLoadFailed] = useState(false)
   const fullKnowledgeBaseRequestId = useRef(0)
 
-  const loadFullKnowledgeBase = useCallback(async (knowledgeBaseId: number) => {
-    const requestId = ++fullKnowledgeBaseRequestId.current
-    setFullKnowledgeBase(null)
-    setIsLoadingFullKnowledgeBase(true)
-    setFullKnowledgeBaseLoadFailed(false)
+  const loadFullKnowledgeBase = useCallback(
+    async (knowledgeBaseId: number) => {
+      const requestId = ++fullKnowledgeBaseRequestId.current
+      selectSection('basic')
+      setFullKnowledgeBase(null)
+      setIsLoadingFullKnowledgeBase(true)
+      setFullKnowledgeBaseLoadFailed(false)
 
-    try {
-      const fullKb = await getKnowledgeBase(knowledgeBaseId)
-      if (fullKnowledgeBaseRequestId.current === requestId) {
-        setFullKnowledgeBase(fullKb)
+      try {
+        const fullKb = await getKnowledgeBase(knowledgeBaseId)
+        if (fullKnowledgeBaseRequestId.current === requestId) {
+          setFullKnowledgeBase(fullKb)
+        }
+      } catch (err) {
+        console.error('Failed to fetch full knowledge base data:', err)
+        if (fullKnowledgeBaseRequestId.current === requestId) {
+          setFullKnowledgeBaseLoadFailed(true)
+        }
+      } finally {
+        if (fullKnowledgeBaseRequestId.current === requestId) {
+          setIsLoadingFullKnowledgeBase(false)
+        }
       }
-    } catch (err) {
-      console.error('Failed to fetch full knowledge base data:', err)
-      if (fullKnowledgeBaseRequestId.current === requestId) {
-        setFullKnowledgeBaseLoadFailed(true)
-      }
-    } finally {
-      if (fullKnowledgeBaseRequestId.current === requestId) {
-        setIsLoadingFullKnowledgeBase(false)
-      }
-    }
-  }, [])
+    },
+    [selectSection]
+  )
 
   // Fetch full knowledge base data when dialog opens
   useEffect(() => {
@@ -195,7 +202,6 @@ export function EditKnowledgeBaseDialog({
       setShowGenerationTask(kb.show_generation_task ?? false)
       setGenerationStrategy(kb.generation_strategy || '')
       setGenerationStrategyTouched(false)
-      setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (kb.retrieval_config) {
         setRetrievalConfig(kb.retrieval_config)
@@ -223,28 +229,33 @@ export function EditKnowledgeBaseDialog({
 
     if (!name.trim()) {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
+      selectSection('basic', '#knowledge-name')
       return
     }
 
     if (name.length > 100) {
       setError(t('knowledge:document.knowledgeBase.nameTooLong'))
+      selectSection('basic', '#knowledge-name')
       return
     }
 
     // Validate summary model when summary is enabled
     if (summaryEnabled && !summaryModelRef) {
       setSummaryModelError(t('knowledge:document.summary.modelRequired'))
+      selectSection('models', '[data-testid="summary-model-select"]')
       return
     }
 
     // Validate multimodal analysis model when multimodal analysis is enabled
     if (!validateMultimodal()) {
+      selectSection('models', '[data-testid="multimodal-analysis-model-select"]')
       return
     }
 
     // Validate call limits
     if (exemptCalls >= maxCalls) {
       setError(t('knowledge:document.callLimits.validationError'))
+      selectSection('usage', '#knowledge-exempt-calls [role="slider"]')
       return
     }
 
@@ -359,220 +370,266 @@ export function EditKnowledgeBaseDialog({
         }}
       >
         <DialogContent
-          className="w-[calc(100%_-_1rem)] max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col"
+          className="w-[calc(100%_-_1rem)] max-w-4xl h-[min(90dvh,46rem)] overflow-hidden flex flex-col"
           closeButtonProps={{
             className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
             'data-testid': 'close-edit-kb',
           }}
         >
-          <DialogHeader>
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
             <DialogDescription>
               {t('knowledge:document.knowledgeBase.editDialogDescription')}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto space-y-4 py-4">
-            {isLoadingFullKnowledgeBase ? (
+          {isLoadingFullKnowledgeBase ? (
+            <div className="flex flex-1 items-center justify-center">
               <Spinner
                 center
                 text={tKnowledge('document.knowledgeBase.loadingDetails')}
                 data-testid="edit-knowledge-base-loading"
               />
-            ) : fullKnowledgeBaseLoadFailed ? (
-              <div
-                className="flex min-h-[200px] flex-col items-center justify-center gap-4 text-center"
-                data-testid="edit-knowledge-base-load-error"
+            </div>
+          ) : fullKnowledgeBaseLoadFailed ? (
+            <div
+              className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto text-center"
+              data-testid="edit-knowledge-base-load-error"
+            >
+              <p className="text-sm text-error">
+                {tKnowledge('document.knowledgeBase.loadDetailsFailed')}
+              </p>
+              <Button
+                variant="outline"
+                onClick={() => knowledgeBase?.id && loadFullKnowledgeBase(knowledgeBase.id)}
+                className="min-h-11 min-w-11"
+                data-testid="edit-knowledge-base-retry"
               >
-                <p className="text-sm text-error">
-                  {tKnowledge('document.knowledgeBase.loadDetailsFailed')}
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => knowledgeBase?.id && loadFullKnowledgeBase(knowledgeBase.id)}
-                  data-testid="edit-knowledge-base-retry"
-                >
-                  {tKnowledge('document.knowledgeBase.retryLoadDetails')}
-                </Button>
-              </div>
-            ) : fullKnowledgeBase ? (
-              <>
-                {/* First, because it is what this knowledge base is rather than a
-                    setting on it. Stated, not editable: the binding is fixed at
-                    creation, and its version history hangs off it. */}
-                {isCodeWiki && kb?.source?.sourceUrl && (
-                  <div className="mb-4 flex items-center gap-2 rounded-md bg-muted px-3 py-2">
-                    <Code2 className="h-4 w-4 shrink-0 text-primary" />
-                    <span className="truncate text-sm" title={kb.source.sourceUrl}>
-                      {tKnowledge('codeWiki.create.repository')}:{' '}
-                      {kb.source.projectName || kb.source.sourceUrl}
-                    </span>
-                  </div>
-                )}
-
-                {isCodeWiki && (
-                  <div className="mb-4">
-                    <SimpleConfigRow
-                      label={tKnowledge('codeWiki.create.modelLabel')}
-                      description={tKnowledge('codeWiki.create.modelDescription')}
-                      align="start"
-                    >
-                      <ModelRefSelector
-                        value={executionModelRef}
-                        onChange={value => {
-                          setExecutionModelRef(value)
-                          setExecutionModelTouched(true)
-                        }}
-                        placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
-                        // Passed unconditionally: with autoSelect off it no longer
-                        // risks the cache overriding what the wiki already has, and
-                        // it is what lets a pick made here be remembered.
-                        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-                        preferenceScope="wiki"
-                        // Nothing is filled in for a wiki that has no model: an empty
-                        // box is the truth there, and only a real pick may change it.
-                        autoSelect={false}
-                        dataTestId="code-wiki-execution-model-select"
-                      />
-                    </SimpleConfigRow>
-                  </div>
-                )}
-
-                <KnowledgeBaseForm
-                  advancedExtras={
-                    isCodeWiki ? (
-                      <>
-                        <SimpleConfigRow
-                          label={tKnowledge('codeWiki.strategy.label')}
-                          description={tKnowledge('codeWiki.strategy.settingsDescription')}
-                        >
-                          <GenerationStrategySelect
-                            value={generationStrategy}
-                            onChange={strategy => {
-                              setGenerationStrategy(strategy)
-                              setGenerationStrategyTouched(true)
-                            }}
-                            testId="code-wiki-generation-strategy"
-                          />
-                        </SimpleConfigRow>
-                        <SimpleConfigRow
-                          label={tKnowledge('codeWiki.create.scheduledUpdate')}
-                          description={tKnowledge('codeWiki.scheduledUpdate.settingsHint')}
-                          align="start"
-                        >
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => setScheduledUpdateOpen(true)}
-                            disabled={isSavingChanges}
-                            data-testid="code-wiki-scheduled-settings"
-                          >
-                            {tKnowledge('codeWiki.scheduledUpdate.configure')}
-                          </Button>
-                        </SimpleConfigRow>
-                        {scheduledUpdateChange && (
-                          <p
-                            className="text-xs text-text-muted"
-                            data-testid="code-wiki-scheduled-pending-change"
-                          >
-                            {tKnowledge(
-                              scheduledUpdateChange.action === 'delete'
-                                ? 'codeWiki.scheduledUpdate.pendingDelete'
-                                : 'codeWiki.scheduledUpdate.pendingConfigure'
-                            )}
-                          </p>
+                {tKnowledge('document.knowledgeBase.retryLoadDetails')}
+              </Button>
+            </div>
+          ) : fullKnowledgeBase ? (
+            <>
+              <KnowledgeBaseForm
+                navigation={navigation}
+                kindSection={
+                  <div className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      {isCodeWiki ? (
+                        <Code2 className="h-4 w-4" />
+                      ) : (
+                        <FileText className="h-4 w-4" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium">
+                        {tKnowledge(
+                          isCodeWiki
+                            ? 'document.knowledgeBase.kindCode'
+                            : 'document.knowledgeBase.kindDocument'
                         )}
-                        <GenerationTaskRow
-                          checked={showGenerationTask}
-                          onChange={setShowGenerationTask}
-                        />
-                      </>
-                    ) : (
-                      <DingtalkAutoSyncSetting
-                        checked={dingtalkAutoSyncEnabled}
-                        onCheckedChange={setDingtalkAutoSyncEnabled}
-                      />
-                    )
-                  }
-                  name={name}
-                  description={description}
-                  onNameChange={value => setName(value)}
-                  onDescriptionChange={value => setDescription(value)}
-                  directAccessRequirement={directAccessRequirement}
-                  onDirectAccessRequirementChange={setDirectAccessRequirement}
-                  allowDocumentDownload={allowDocumentDownload}
-                  onAllowDocumentDownloadChange={setAllowDocumentDownload}
-                  summaryEnabled={summaryEnabled}
-                  onSummaryEnabledChange={checked => {
-                    setSummaryEnabled(checked)
-                    if (!checked) {
-                      setSummaryModelRef(null)
-                      setSummaryModelError('')
-                    }
-                  }}
-                  summaryModelRef={summaryModelRef}
-                  summaryModelError={summaryModelError}
-                  onSummaryModelChange={value => {
-                    setSummaryModelRef(value)
-                    setSummaryModelError('')
-                  }}
-                  {...multimodalFormProps}
-                  knowledgeDefaultTeamId={
-                    !kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined
-                  }
-                  bindModel={bindModel}
-                  callLimits={{ maxCalls, exemptCalls }}
-                  onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
-                    setMaxCalls(nextMax)
-                    setExemptCalls(nextExempt)
-                  }}
-                  advancedOpen={showAdvanced}
-                  onAdvancedOpenChange={setShowAdvanced}
-                  showRetrievalSection={!!kb?.retrieval_config}
-                  retrievalConfig={retrievalConfig}
-                  onRetrievalConfigChange={handleRetrievalConfigChange}
-                  retrievalReadOnly={false}
-                  retrievalPartialReadOnly={true}
-                  showGuidedQuestions={true}
-                  guidedQuestions={guidedQuestions}
-                  onGuidedQuestionsChange={setGuidedQuestions}
-                />
-
-                {/* Default opening view section. A code wiki has neither view — it
-                    is read in its own reader — so offering to switch between them
-                    would show it as "classic" and let it be converted into one. */}
-                {!isCodeWiki && (
-                  <div className="border-t border-border pt-4 mt-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {isNotebook ? (
-                          <BookOpen className="w-4 h-4 text-primary" />
-                        ) : (
-                          <Database className="w-4 h-4 text-text-secondary" />
-                        )}
-                        <span className="text-sm font-medium">
-                          {tKnowledge('document.knowledgeBase.currentDefaultView')}:{' '}
-                          {isNotebook
-                            ? tKnowledge('document.knowledgeBase.typeNotebook')
-                            : tKnowledge('document.knowledgeBase.typeClassic')}
-                        </span>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowConvertDialog(true)}
-                        className="flex items-center gap-1.5"
-                      >
-                        {tKnowledge('document.knowledgeBase.changeDefaultView')}
-                      </Button>
+                      <div className="text-xs text-text-muted">
+                        {tKnowledge(
+                          isCodeWiki
+                            ? 'document.knowledgeBase.kindCodeDesc'
+                            : 'document.knowledgeBase.kindDocumentDesc'
+                        )}
+                      </div>
                     </div>
                   </div>
-                )}
+                }
+                locationSection={
+                  <SimpleConfigRow label={tKnowledge('document.navigation.space')}>
+                    <p className="break-words text-sm text-text-primary">
+                      {spaceName ||
+                        (kb?.namespace === 'default'
+                          ? tKnowledge('document.navigation.personalSpace')
+                          : kb?.namespace)}
+                    </p>
+                  </SimpleConfigRow>
+                }
+                typeSection={
+                  isCodeWiki ? (
+                    <>
+                      {kb?.source?.sourceUrl && (
+                        <SimpleConfigRow label={tKnowledge('codeWiki.create.repository')}>
+                          <p className="break-all text-sm" title={kb.source.sourceUrl}>
+                            {kb.source.projectName || kb.source.sourceUrl}
+                          </p>
+                        </SimpleConfigRow>
+                      )}
+                      <SimpleConfigRow
+                        label={tKnowledge('codeWiki.create.modelLabel')}
+                        description={tKnowledge('codeWiki.create.modelDescription')}
+                        align="start"
+                      >
+                        <ModelRefSelector
+                          value={executionModelRef}
+                          onChange={value => {
+                            setExecutionModelRef(value)
+                            setExecutionModelTouched(true)
+                          }}
+                          placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
+                          // Passed unconditionally: with autoSelect off it no longer
+                          // risks the cache overriding what the wiki already has, and
+                          // it is what lets a pick made here be remembered.
+                          knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+                          preferenceScope="wiki"
+                          // Nothing is filled in for a wiki that has no model: an empty
+                          // box is the truth there, and only a real pick may change it.
+                          autoSelect={false}
+                          dataTestId="code-wiki-execution-model-select"
+                        />
+                      </SimpleConfigRow>
+                    </>
+                  ) : (
+                    <SimpleConfigRow
+                      label={tKnowledge('document.knowledgeBase.type')}
+                      align="start"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="flex items-center gap-2 text-sm text-text-primary">
+                          {isNotebook ? (
+                            <BookOpen className="h-4 w-4" />
+                          ) : (
+                            <Database className="h-4 w-4" />
+                          )}
+                          {tKnowledge(
+                            isNotebook
+                              ? 'document.knowledgeBase.typeNotebook'
+                              : 'document.knowledgeBase.typeClassic'
+                          )}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowConvertDialog(true)}
+                          className="min-h-11 min-w-11"
+                          data-testid="edit-kb-default-view"
+                        >
+                          {tKnowledge('document.knowledgeBase.changeDefaultView')}
+                        </Button>
+                      </div>
+                    </SimpleConfigRow>
+                  )
+                }
+                generationSection={
+                  isCodeWiki ? (
+                    <>
+                      <SimpleConfigRow
+                        label={tKnowledge('codeWiki.strategy.label')}
+                        description={tKnowledge('codeWiki.strategy.settingsDescription')}
+                      >
+                        <GenerationStrategySelect
+                          value={generationStrategy}
+                          onChange={strategy => {
+                            setGenerationStrategy(strategy)
+                            setGenerationStrategyTouched(true)
+                          }}
+                          testId="code-wiki-generation-strategy"
+                        />
+                      </SimpleConfigRow>
+                      <SimpleConfigRow
+                        label={tKnowledge('codeWiki.create.scheduledUpdate')}
+                        description={tKnowledge('codeWiki.scheduledUpdate.settingsHint')}
+                        align="start"
+                      >
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setScheduledUpdateOpen(true)}
+                          className="min-h-11 min-w-11"
+                          disabled={isSavingChanges}
+                          data-testid="code-wiki-scheduled-settings"
+                        >
+                          {tKnowledge('codeWiki.scheduledUpdate.configure')}
+                        </Button>
+                      </SimpleConfigRow>
+                      {scheduledUpdateChange && (
+                        <p
+                          className="text-xs text-text-muted"
+                          data-testid="code-wiki-scheduled-pending-change"
+                        >
+                          {tKnowledge(
+                            scheduledUpdateChange.action === 'delete'
+                              ? 'codeWiki.scheduledUpdate.pendingDelete'
+                              : 'codeWiki.scheduledUpdate.pendingConfigure'
+                          )}
+                        </p>
+                      )}
+                      <GenerationTaskRow
+                        checked={showGenerationTask}
+                        onChange={setShowGenerationTask}
+                      />
+                    </>
+                  ) : undefined
+                }
+                documentSyncSetting={
+                  !isCodeWiki && (
+                    <DingtalkAutoSyncSetting
+                      checked={dingtalkAutoSyncEnabled}
+                      onCheckedChange={setDingtalkAutoSyncEnabled}
+                    />
+                  )
+                }
+                name={name}
+                description={description}
+                onNameChange={value => setName(value)}
+                onDescriptionChange={value => setDescription(value)}
+                directAccessRequirement={directAccessRequirement}
+                onDirectAccessRequirementChange={setDirectAccessRequirement}
+                allowDocumentDownload={allowDocumentDownload}
+                onAllowDocumentDownloadChange={setAllowDocumentDownload}
+                summaryEnabled={summaryEnabled}
+                onSummaryEnabledChange={checked => {
+                  setSummaryEnabled(checked)
+                  if (!checked) {
+                    setSummaryModelRef(null)
+                    setSummaryModelError('')
+                  }
+                }}
+                summaryModelRef={summaryModelRef}
+                summaryModelError={summaryModelError}
+                onSummaryModelChange={value => {
+                  setSummaryModelRef(value)
+                  setSummaryModelError('')
+                }}
+                {...multimodalFormProps}
+                knowledgeDefaultTeamId={!kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined}
+                bindModel={bindModel}
+                callLimits={{ maxCalls, exemptCalls }}
+                onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+                  setMaxCalls(nextMax)
+                  setExemptCalls(nextExempt)
+                }}
+                retrievalModeSection={
+                  <p className="text-sm text-text-secondary">
+                    {tKnowledge(
+                      kb?.retrieval_config
+                        ? 'document.ragConfigMode.auto'
+                        : 'document.ragConfigMode.disabled'
+                    )}
+                  </p>
+                }
+                showRetrievalSection={!!kb?.retrieval_config}
+                retrievalConfig={retrievalConfig}
+                onRetrievalConfigChange={handleRetrievalConfigChange}
+                retrievalReadOnly={false}
+                retrievalPartialReadOnly={true}
+                showGuidedQuestions={true}
+                guidedQuestions={guidedQuestions}
+                onGuidedQuestionsChange={setGuidedQuestions}
+              />
 
-                {error && <p className="text-sm text-error">{error}</p>}
-              </>
-            ) : null}
-          </div>
-          <DialogFooter>
+              {error && (
+                <p role="alert" className="shrink-0 text-sm text-error">
+                  {error}
+                </p>
+              )}
+            </>
+          ) : null}
+          <DialogFooter className="shrink-0 flex-row justify-end gap-2 space-y-0">
             <Button
               variant="outline"
               onClick={() => handleOpenChange(false)}

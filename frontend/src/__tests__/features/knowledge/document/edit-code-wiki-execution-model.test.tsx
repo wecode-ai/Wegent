@@ -44,8 +44,18 @@ jest.mock('@/apis/code-wiki', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
-  KnowledgeBaseForm: ({ advancedExtras }: { advancedExtras?: ReactNode }) => (
-    <div data-testid="knowledge-base-form">{advancedExtras}</div>
+  ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
+  KnowledgeBaseForm: ({
+    generationSection,
+    typeSection,
+  }: {
+    generationSection?: ReactNode
+    typeSection?: ReactNode
+  }) => (
+    <div data-testid="knowledge-base-form">
+      {typeSection}
+      {generationSection}
+    </div>
   ),
 }))
 

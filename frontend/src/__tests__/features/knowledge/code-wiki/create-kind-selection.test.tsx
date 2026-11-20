@@ -128,6 +128,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() =>
       expect(retrieverApis.getUnifiedRetrievers).toHaveBeenCalledWith('personal', undefined)
     )
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-team'))
 
@@ -144,6 +145,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       )
     )
 
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('group-selector'))
     fireEvent.click(await screen.findByTestId('create-space-option-personal'))
     await waitFor(() =>
@@ -151,13 +153,22 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     )
   })
 
-  it('starts on documents, where a name is required', async () => {
+  it('opens Basic Information and returns to the name when validation fails on another section', () => {
     const onSubmit = jest.fn()
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    const basic = screen.getByTestId('knowledge-basic-section-trigger')
+    expect(basic.getAttribute('aria-current')).toBe('true')
+    fireEvent.change(screen.getByTestId('kb-description-input'), {
+      target: { value: 'Release documentation' },
+    })
+    fireEvent.click(screen.getByTestId('knowledge-access-section-trigger'))
     fireEvent.click(screen.getByTestId('submit-create-kb'))
 
-    await waitFor(() => expect(onSubmit).not.toHaveBeenCalled())
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(basic.getAttribute('aria-current')).toBe('true')
+    expect(document.activeElement).toBe(screen.getByTestId('kb-name-input'))
+    expect(screen.getByDisplayValue('Release documentation')).toBeInTheDocument()
   })
 
   it('loads the retrieval profile for documents before a kind is selected', async () => {
@@ -220,6 +231,22 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     // A wiki hands a whole repository to whichever model it names, so that is a
     // choice the creator makes rather than one inherited from the team's bot.
     const onSubmit = jest.fn()
+    let finishResolve!: () => void
+    jest.mocked(codeWikiApi.resolve).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishResolve = () =>
+            resolve({
+              exists: true,
+              visibility: 'public',
+              default_branch: 'main',
+              name: 'wecode-ai/Wegent',
+              description: '',
+              access: 'public',
+              existing_wikis: [],
+            })
+        })
+    )
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
@@ -227,15 +254,21 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     fireEvent.change(screen.getByTestId('code-wiki-source-url'), {
       target: { value: 'https://github.com/wecode-ai/Wegent.git' },
     })
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
     // The URL is committed to the form only once the debounced probe has run. Until
     // then the repository check below fails first and this proves nothing.
     await waitFor(() => expect(codeWikiApi.resolve).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('code-wiki-show-generation-task'))
+    await act(async () => finishResolve())
+    expect(screen.getByTestId('code-wiki-show-generation-task')).toBeChecked()
 
     fireEvent.click(screen.getByTestId('submit-create-kb'))
 
     // Named rather than just absent: without the model error the repository check
     // above would produce the same silence, and this would pass for the wrong reason.
     await screen.findByText('knowledge:codeWiki.create.modelRequired')
+    expect(screen.getByTestId('kb-name-input').closest('section')?.hidden).toBe(false)
+    expect(screen.getByDisplayValue('https://github.com/wecode-ai/Wegent.git')).toBeInTheDocument()
     expect(onSubmit).not.toHaveBeenCalled()
   })
 

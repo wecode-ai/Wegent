@@ -799,6 +799,13 @@ function KnowledgeDocumentSession({
         loading={dialogs.isCreating}
         scope={dialogs.createScope}
         groupName={dialogs.createGroupName}
+        spaceName={
+          sidebar.groups.find(group =>
+            dialogs.createScope === 'organization'
+              ? group.type === 'organization'
+              : group.name === dialogs.createGroupName
+          )?.displayName
+        }
         kbType={dialogs.createKbType}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}
@@ -813,6 +820,9 @@ function KnowledgeDocumentSession({
         open={!!dialogs.editingKb}
         onOpenChange={open => !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
+        spaceName={
+          sidebar.groups.find(group => group.name === dialogs.editingKb?.namespace)?.displayName
+        }
         onSubmit={dialogs.handleUpdate}
         onTypeConverted={handleKnowledgeBaseTypeConverted}
         loading={dialogs.isUpdating}

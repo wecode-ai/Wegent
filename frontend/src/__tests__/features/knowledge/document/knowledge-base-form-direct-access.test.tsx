@@ -5,7 +5,10 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 
-import { KnowledgeBaseForm } from '@/features/knowledge/document/components/KnowledgeBaseForm'
+import {
+  KnowledgeBaseForm,
+  useKnowledgeBaseFormNavigation,
+} from '@/features/knowledge/document/components/KnowledgeBaseForm'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -16,50 +19,45 @@ jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled', (
 }))
 
 describe('KnowledgeBaseForm direct access section', () => {
-  it('places direct access immediately before advanced settings', () => {
+  it('reveals the access settings when its navigation button is selected', () => {
     const onDirectAccessRequirementChange = jest.fn()
 
-    render(
-      <KnowledgeBaseForm
-        name="Docs"
-        description=""
-        onNameChange={jest.fn()}
-        onDescriptionChange={jest.fn()}
-        directAccessRequirement="edit"
-        onDirectAccessRequirementChange={onDirectAccessRequirementChange}
-        summaryEnabled={false}
-        onSummaryEnabledChange={jest.fn()}
-        summaryModelRef={null}
-        onSummaryModelChange={jest.fn()}
-        multimodalAnalysisEnabled={false}
-        onMultimodalAnalysisEnabledChange={jest.fn()}
-        multimodalAnalysisModelRef={null}
-        onMultimodalAnalysisModelChange={jest.fn()}
-        callLimits={{ maxCalls: 10, exemptCalls: 5 }}
-        onCallLimitsChange={jest.fn()}
-        advancedOpen={false}
-        onAdvancedOpenChange={jest.fn()}
-        showRetrievalSection={false}
-        retrievalConfig={{}}
-        onRetrievalConfigChange={jest.fn()}
-      />
-    )
+    function Form() {
+      const navigation = useKnowledgeBaseFormNavigation()
+      return (
+        <KnowledgeBaseForm
+          name="Docs"
+          description=""
+          onNameChange={jest.fn()}
+          onDescriptionChange={jest.fn()}
+          directAccessRequirement="edit"
+          onDirectAccessRequirementChange={onDirectAccessRequirementChange}
+          summaryEnabled={false}
+          onSummaryEnabledChange={jest.fn()}
+          summaryModelRef={null}
+          onSummaryModelChange={jest.fn()}
+          multimodalAnalysisEnabled={false}
+          onMultimodalAnalysisEnabledChange={jest.fn()}
+          multimodalAnalysisModelRef={null}
+          onMultimodalAnalysisModelChange={jest.fn()}
+          callLimits={{ maxCalls: 10, exemptCalls: 5 }}
+          onCallLimitsChange={jest.fn()}
+          navigation={navigation}
+          showRetrievalSection={false}
+          retrievalConfig={{}}
+          onRetrievalConfigChange={jest.fn()}
+        />
+      )
+    }
 
+    render(<Form />)
     const basicSection = screen.getByTestId('knowledge-basic-section-trigger')
     const accessSection = screen.getByTestId('knowledge-access-section-trigger')
-    const summarySection = screen.getByTestId('knowledge-summary-section-trigger')
-    const advancedSection = screen.getByTestId('knowledge-advanced-section-trigger')
+    expect(basicSection).toHaveAttribute('aria-current', 'true')
+    expect(screen.queryByRole('radio')).toBeNull()
 
-    expect(
-      basicSection.compareDocumentPosition(summarySection) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(
-      summarySection.compareDocumentPosition(accessSection) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(
-      accessSection.compareDocumentPosition(advancedSection) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-
+    fireEvent.click(accessSection)
+    expect(accessSection).toHaveAttribute('aria-current', 'true')
     expect(screen.getByTestId('knowledge-base-direct-access-edit')).toBeChecked()
     fireEvent.click(screen.getByTestId('knowledge-base-direct-access-read'))
     expect(onDirectAccessRequirementChange).toHaveBeenCalledWith('read')

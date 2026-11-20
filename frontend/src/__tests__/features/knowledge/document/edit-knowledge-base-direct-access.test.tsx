@@ -18,17 +18,18 @@ jest.mock('@/apis/knowledge', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
+  ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
   KnowledgeBaseForm: ({
-    advancedExtras,
+    documentSyncSetting,
     directAccessRequirement,
     onDirectAccessRequirementChange,
   }: {
-    advancedExtras?: import('react').ReactNode
+    documentSyncSetting?: import('react').ReactNode
     directAccessRequirement: 'read' | 'edit'
     onDirectAccessRequirementChange: (value: 'read' | 'edit') => void
   }) => (
     <div data-testid="knowledge-base-form">
-      {advancedExtras}
+      {documentSyncSetting}
       <button
         type="button"
         role="radio"

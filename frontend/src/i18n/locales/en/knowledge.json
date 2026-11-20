@@ -777,7 +777,13 @@
       "readOnly": "Read-only"
     },
     "formSections": {
-      "basic": "Basic Settings",
+      "basic": "Basic Information",
+      "navigation": "Knowledge base settings",
+      "accessAndDownload": "Access and Downloads",
+      "summaryAndMultimodal": "Summary and Multimodal",
+      "retrieval": "Retrieval",
+      "guidanceAndLimits": "Guided Questions and Limits",
+      "generationAndSchedule": "Generation and Schedule",
       "access": "Access and Usage",
       "summary": "Summary Settings",
       "guidedQuestions": "Guided Questions"
