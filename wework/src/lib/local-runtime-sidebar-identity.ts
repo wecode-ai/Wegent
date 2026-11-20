@@ -40,7 +40,7 @@ export function qualifyLocalRuntimeWork(
     workspace.workspaceSource !== 'remote'
       ? qualifyLocalRuntimeSource(workspace, identity)
       : workspace
-  return {
+  const qualifiedWork = {
     ...work,
     projects: work.projects.map(projectWork => ({
       ...projectWork,
@@ -53,6 +53,8 @@ export function qualifyLocalRuntimeWork(
     })),
     chats: work.chats.map(qualifyWorkspace),
   }
+  // Keep inventory-wide provenance on the original validated snapshot only.
+  return Object.defineProperty(qualifiedWork, localRuntimeSource, { value: identity })
 }
 
 export function localRuntimeSidebarIdentity(
