@@ -214,11 +214,12 @@ export function createProjectSpacePickerRegression({
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
+      const currentProject = '[aria-current="true"]'
+      await control.command('waitFor', `${optionSelector(sharedB)}${currentProject}`)
       assert.equal(
-        await control.command('getAttribute', optionSelector(sharedA), { value: 'aria-selected' }),
-        'false',
-        'Reload selected both same-named projects'
+        Number(await control.command('getElementCount', `${OPTIONS}${currentProject}`)),
+        1,
+        'Reload must mark only the persisted project as current'
       )
       assert.equal(
         await control.command('getValue', SEARCH),

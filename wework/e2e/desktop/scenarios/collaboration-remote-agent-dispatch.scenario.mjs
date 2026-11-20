@@ -477,10 +477,11 @@ async function verifyAutomaticProcessingControls(
   assert.equal(
     await control.command(
       'getAttribute',
-      scoped('[data-testid="automatic-processing-trigger-created"]'),
-      { value: 'checked' }
+      scoped('[data-testid="automatic-processing-trigger-created"][role="radio"]'),
+      { value: 'aria-checked' }
     ),
-    ''
+    'true',
+    'The Issue creation trigger must be selected by default'
   )
   await control.command('click', scoped('[data-testid="automatic-processing-target-kind-human"]'))
   assert.equal(

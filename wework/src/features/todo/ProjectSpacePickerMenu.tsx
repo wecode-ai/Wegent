@@ -69,6 +69,7 @@ export function ProjectSpacePickerMenu({
     <SearchableSelect
       hideTrigger
       activateSelected
+      autoHighlight="always"
       anchor={anchor}
       open
       onOpenChange={next => {
