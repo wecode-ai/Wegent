@@ -154,7 +154,10 @@ export class EventBus {
   async #collect(provider, key, query, job) {
     const timeout = setTimeout(() => {
       job.controller.abort(
-        Object.assign(new Error('Event provider timed out'), { code: 'request_timeout' })
+        Object.assign(new Error('Event provider timed out'), {
+          code: 'request_timeout',
+          retryAfterMs: 30_000,
+        })
       )
     }, this.timeoutMs)
     timeout.unref?.()

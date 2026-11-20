@@ -25,6 +25,7 @@ const GIT_READ_FIELDS = new Set([
   'providerId',
   'query',
   'repository',
+  'repositoryId',
   'sha',
 ])
 

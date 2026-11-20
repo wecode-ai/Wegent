@@ -43,15 +43,25 @@ export async function apply(ctx) {
               name: '发布文档 · PR 检查结果',
               server: tools[0].server,
             },
+            {
+              id: 'pr-status-record',
+              profile: 'fixture',
+              kind: 'record',
+              name: 'PR status',
+              server: tools[0].server,
+            },
           ],
           hasMore: false,
         }
       },
       async validate(_context, source) {
         if (
-          !['archive-record', 'long-archive-record', 'preexisting-checks-record'].includes(
-            source.id
-          ) ||
+          ![
+            'archive-record',
+            'long-archive-record',
+            'preexisting-checks-record',
+            'pr-status-record',
+          ].includes(source.id) ||
           source.profile !== 'fixture' ||
           source.kind !== 'record'
         )
@@ -59,12 +69,29 @@ export async function apply(ctx) {
         return source
       },
       async initialize(context, source) {
+        if (source.id === 'pr-status-record') return { cursor: 0 }
         const events = await read(context, source)
         // This resource exposes the currently stored result on its first observation.
         return { cursor: source.id === 'preexisting-checks-record' ? 0 : events.length }
       },
       async collect(context, { source, checkpoint }) {
         const events = await read(context, source)
+        if (source.id === 'pr-status-record') {
+          if (events.stall) {
+            context.signal.throwIfAborted()
+            await new Promise((_, reject) => {
+              context.signal.addEventListener('abort', () => reject(context.signal.reason), {
+                once: true,
+              })
+            })
+          }
+          return {
+            events: [],
+            nextCheckpoint: checkpoint,
+            hasMore: false,
+            resourceStates: [events.status],
+          }
+        }
         return {
           events: events
             .slice(checkpoint.cursor)
