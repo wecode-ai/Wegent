@@ -156,6 +156,14 @@ export function createDesktopScenario({
           state => Number.isInteger(state.observedSince),
           'The real coordination plugin must start observing'
         )
+        const discovery = await rpc(control, 'runtime.coordination.contexts', {})
+        const idleContext = discovery.contexts.find(context => context.id === `personal:${USER}`)
+        assert.equal(idleContext?.enabled, true, 'The personal context must be enabled')
+        assert.equal(
+          idleContext.needsProcessing,
+          false,
+          'An enabled personal context with no intake or work changes must skip snapshots'
+        )
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
