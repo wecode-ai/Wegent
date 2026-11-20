@@ -90,6 +90,7 @@ export function TaskIssueShareFiles({
         type="button"
         data-testid={selectionId}
         aria-label={file.name}
+        title={file.name}
         aria-pressed={selected}
         onClick={toggle}
         className="group relative block w-full min-w-0 overflow-hidden rounded-lg text-left ring-inset aria-pressed:ring-2 aria-pressed:ring-focus keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-ring"
@@ -109,7 +110,6 @@ export function TaskIssueShareFiles({
         </span>
         <span
           className={`pointer-events-none absolute inset-x-0 bottom-0 truncate bg-background py-2 pl-9 text-xs opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 ${file instanceof File ? 'pr-12 md:pr-8' : 'pr-2'}`}
-          title={file.name}
         >
           {file.name}
         </span>
