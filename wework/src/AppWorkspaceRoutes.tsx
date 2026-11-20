@@ -389,6 +389,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
           role="tabpanel"
           aria-labelledby={`workspace-tab-select-${tab.id}`}
           tabIndex={active ? 0 : -1}
+          inert={!active}
           aria-hidden={!active}
         >
           {renderProvider ? (
@@ -716,6 +717,7 @@ export function AppRoutes({
               role="tabpanel"
               aria-labelledby={`workspace-tab-select-${tab.id}`}
               tabIndex={tab.id === workspaceTabs.activeTabId ? 0 : -1}
+              inert={tab.id !== workspaceTabs.activeTabId}
               aria-hidden={tab.id !== workspaceTabs.activeTabId}
             >
               <WorkbenchProvider
