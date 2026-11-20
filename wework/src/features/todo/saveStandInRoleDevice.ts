@@ -1,5 +1,9 @@
 import { dequal } from 'dequal'
-import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
+import {
+  newStandInRole,
+  type PersonalStandInSettings,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 
 /** Stage the target before redirecting new intake; old tasks retain their source configuration. */
@@ -60,15 +64,6 @@ export async function saveStandInRoleDevice(
       }
     )
   }
-  if (!previous) {
-    // New roles have no accepted source work or receiver to redirect.
-    const result = await api.personalSave(
-      userId,
-      { ...target, roles: [...target.roles.filter(row => row.id !== role.id), role] },
-      targetDevice
-    )
-    return result.roles.find(row => row.id === role.id)!
-  }
   const current = await api.personalGet(userId, sourceDevice)
   if (current.version !== source.version || !dequal(current.roles, source.roles)) {
     throw Object.assign(new Error('The source profile changed'), { code: 'version_conflict' })
@@ -77,7 +72,7 @@ export async function saveStandInRoleDevice(
     ...role,
     migrationSource,
     previousExecutionDevices: [
-      ...new Set([...(previous?.previousExecutionDevices ?? []), sourceDevice]),
+      ...new Set(previous ? [...(previous.previousExecutionDevices ?? []), sourceDevice] : []),
     ].filter(device => device !== targetDevice),
   }
   const staged = await api.personalSave(
@@ -100,7 +95,12 @@ export async function saveStandInRoleDevice(
         roles: draft.roles.map(row =>
           row.id === role.id
             ? {
-                ...(previous ?? row),
+                ...(previous ?? {
+                  ...newStandInRole(targetDevice, role.id),
+                  name: role.name,
+                  prompt: role.prompt,
+                  enabled: role.enabled,
+                }),
                 executionDeviceId: targetDevice,
                 migrationSource,
               }

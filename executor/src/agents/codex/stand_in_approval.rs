@@ -154,6 +154,15 @@ pub(super) fn stand_in_mcp_approval_overrides(
             ));
         }
     }
+    if request.extra.get("origin").is_some_and(|origin| {
+        origin["type"] == "stand_in_task" && origin["roleDelegation"].is_object()
+    }) {
+        // A specialist may start another restricted personal task. The host
+        // checks its owner, role, lineage and execution budget before dispatch.
+        result.push(
+            "mcp_servers.wework_stand_in.tools.delegate_role_task.approval_mode=\"approve\"".into(),
+        );
+    }
     // Schedule changes execute directly rather than producing a profile proposal.
     // Keep their native mutation confirmation even in an identity conversation.
     if request

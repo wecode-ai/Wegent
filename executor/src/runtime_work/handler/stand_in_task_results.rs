@@ -8,7 +8,7 @@ struct IdentityConversationTarget<'a> {
 }
 use sha2::{Digest, Sha256};
 
-fn completion_generation(handle: &Value) -> Value {
+pub(super) fn completion_generation(handle: &Value) -> Value {
     let request = &handle["executionRequest"];
     json!({"nativeTurnId":handle["lastTurnId"],
         "commandId":request["runtime_command_id"],
@@ -29,6 +29,23 @@ impl RuntimeWorkRpcHandler {
                 && matches!(status, "done" | "failed" | "cancelled")
             {
                 let generation = completion_generation(&link.runtime_handle);
+                let role_root = &link.runtime_handle["origin"]["roleDelegation"]["root"];
+                if role_root.is_string() && request["standInRoleResultRoot"] == *role_root {
+                    let command = &request["runtime_command_id"];
+                    if command.as_str().is_some_and(|id| {
+                        id.starts_with("stand-in-result:")
+                            || id.starts_with("stand-in-role-result:")
+                    }) {
+                        let mut consumed = link.runtime_handle["standInRoleConsumedResults"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default();
+                        if !consumed.contains(command) {
+                            consumed.push(command.clone());
+                            link.runtime_handle["standInRoleConsumedResults"] = json!(consumed);
+                        }
+                    }
+                }
                 let recorded = &link.runtime_handle["standInResult"];
                 // Archive/cancel reconciliation can confirm the same terminal
                 // execution again. Its observation time is not a new result.
@@ -196,6 +213,51 @@ impl RuntimeWorkRpcHandler {
             return None;
         };
         let parent = self.local_task_link(source);
+        let role_branch = &origin["roleDelegation"];
+        let role_task = role_branch.is_object();
+        if role_task {
+            let store = LocalTaskStore::open(self.task_store_path.as_ref()).ok()?;
+            if store
+                .stand_in_role_cancellation(source, user)
+                .ok()?
+                .is_some()
+                || store
+                    .stand_in_role_cancellation(&child.local_task_id, user)
+                    .ok()?
+                    == Some(true)
+            {
+                return None;
+            }
+        }
+        if role_task
+            && (saved["standInDelegation"]["roleDelegation"] != *role_branch
+                || saved["standInDelegation"]["sourceTaskId"] != source
+                || role_branch["ancestors"]
+                    .as_array()
+                    .and_then(|ancestors| ancestors.last())
+                    .and_then(Value::as_str)
+                    != Some(source))
+        {
+            return None;
+        }
+        if role_task
+            && !parent.as_ref().is_some_and(|parent| {
+                let parent_origin = &parent.runtime_handle["origin"];
+                super::stand_in_role_delegation::owned_role_task(parent, user, &self.device_id)
+                    && !matches!(parent.status.as_str(), "archived" | "cancelled")
+                    && parent.thread_id.is_some()
+                    && parent.interaction_status.is_none()
+                    && ((parent_origin["type"] == "stand_in_identity"
+                        && parent_origin["conversationScope"].is_null())
+                        || (parent_origin["type"] == "stand_in_task"
+                            && parent_origin["roleDelegation"]["root"] == role_branch["root"]))
+            })
+        {
+            return None;
+        }
+        if role_task && self.role_task_has_unprocessed_children(child, user) {
+            return None;
+        }
         let source_parent = saved["standInDelegation"]["sourceMessageId"].is_string();
         if source_parent {
             self.source_task_parent(child).ok()?;
@@ -209,7 +271,8 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .map(|parent| parent.runtime_handle["origin"]["conversationScope"].clone())
             .unwrap_or(Value::Null);
-        if !source_parent
+        if !role_task
+            && !source_parent
             && super::stand_in_conversations::scoped_conversation_task_id(user, None, &scope)
                 .ok()
                 .as_deref()
@@ -217,7 +280,8 @@ impl RuntimeWorkRpcHandler {
         {
             return None;
         }
-        if !source_parent
+        if !role_task
+            && !source_parent
             && parent.as_ref().is_some_and(|parent| {
                 parent.status == "archived"
                     || parent.interaction_status.is_some()
@@ -236,7 +300,10 @@ impl RuntimeWorkRpcHandler {
         let mut request = parent
             .map(|parent| parent.runtime_handle["executionRequest"].clone())
             .unwrap_or_else(|| json!({"user_id":user}));
-        let message = if source_parent {
+        let message = if role_task {
+            request["standInRoleResultRoot"] = role_branch["root"].clone();
+            format!("{message}\nCheck list_role_tasks for related specialist branches. If any required branch is still pending, continue coordination and wait before presenting the final result. Describe work using task titles and role names. Keep internal identifiers out of the user response. A cancelled branch needs a new owner request before restarting.")
+        } else if source_parent {
             format!("{message}\nThis result belongs to the owner self-channel request with immutable recordId={}. Use current scoped provider assistance and the original source reply operation to report the verified outcome there under unchanged native approvals. A private Wework response alone is not a source reply. Do not repeat a reply already sent or retry an uncertain send.", saved["standInDelegation"]["sourceMessageId"].as_str()?)
         } else {
             message
@@ -245,7 +312,7 @@ impl RuntimeWorkRpcHandler {
         let manual = source_parent && request["origin"]["manual"] == true;
         Some(
             json!({"taskId":source,"userId":user,"message":message,"executionRequest":request,
-            "commandId":command,"clientUserMessageId":command,"queueIfBusy":true,"automaticStandIn":source_parent,"manualStandInConfirmation":manual,
+            "commandId":command,"clientUserMessageId":command,"queueIfBusy":true,"automaticStandIn":source_parent || role_task,"manualStandInConfirmation":manual,
             "userMessagePresentation":{"content":format!("委派任务「{}」已结束（{}）",child.title,child.status),"source":{"source":"stand_in_activity","taskId":child.local_task_id}}}),
         )
     }
@@ -256,7 +323,11 @@ impl RuntimeWorkRpcHandler {
                 continue;
             };
             let command = payload["commandId"].clone();
-            let result = if child.runtime_handle["executionRequest"]["standInDelegation"]
+            let result = if child.runtime_handle["origin"]["roleDelegation"].is_object() {
+                Box::pin(self.send_stand_in_role_result(payload.clone()))
+                    .await
+                    .map(Some)
+            } else if child.runtime_handle["executionRequest"]["standInDelegation"]
                 ["sourceMessageId"]
                 .is_string()
             {
