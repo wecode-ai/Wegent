@@ -36,6 +36,8 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 选择「完整任务数据」后，反馈包的 `context/task.json` 包含 `modelSelection`。快照包含模型名称、类型、资源归属和诊断指纹。快照不包含任意模型参数和认证配置。
 
+反馈框以打开时选定的任务为准。预览读取该任务的完整记录，避免窗格在重连时刷新记录或切换会话中断导出。
+
 - `configured`：传入模型选择器的配置。
 - `effective`：解析默认值后的配置。
 - `selected`：输入框当前模型。

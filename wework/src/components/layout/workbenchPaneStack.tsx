@@ -1,5 +1,5 @@
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
- 
+
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { WorkbenchSplitActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
