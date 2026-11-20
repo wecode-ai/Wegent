@@ -4,7 +4,6 @@
 import { expect, test } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
-import { openKnowledgeBase } from '../../utils/external-import-test-support'
 
 // Reuses the existing hybrid Backend and Chromium CI shards. No extra service
 // or provider is needed; this does not enable the deployment scheduler.
@@ -52,8 +51,9 @@ test('web auto update persists through the real settings UI and enforces KB role
     expect(enabled.status()).toBe(200)
     expect(await enabled.json()).toEqual({ enabled: true })
 
-    await openKnowledgeBase(page, kbId!)
-    await page.getByTestId(`kb-settings-${kbId}`).click()
+    await page.goto('/knowledge?type=document', { waitUntil: 'domcontentloaded' })
+    await page.getByTestId('nav-all-item').click()
+    await page.getByTestId(`edit-kb-${kbId}`).click()
     const toggle = page.getByTestId('knowledge-web-auto-update')
     await expect(toggle).toBeEnabled()
     await expect(toggle).toBeChecked()
@@ -66,7 +66,7 @@ test('web auto update persists through the real settings UI and enforces KB role
     expect((await saved).status()).toBe(200)
     await expect(toggle).not.toBeChecked()
     await page.reload()
-    await page.getByTestId(`kb-settings-${kbId}`).click()
+    await page.getByTestId(`edit-kb-${kbId}`).click()
     await expect(toggle).toBeEnabled()
     await expect(toggle).not.toBeChecked()
     expect(await (await request.get(endpoint, { headers })).json()).toEqual({ enabled: false })

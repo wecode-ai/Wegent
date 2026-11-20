@@ -417,7 +417,6 @@ async fn scan_dingtalk(
         }
         let rows:Vec<Candidate>=state.mysql.fetch_all("SELECT d.id,d.index_generation FROM knowledge_documents d JOIN knowledge_document_external_sources e ON e.document_id=d.id JOIN kinds k ON k.id=d.kind_id WHERE d.id>? AND e.external_provider='dingtalk' AND d.index_status NOT IN ('queued','pending_conversion','converting','indexing') AND k.kind='KnowledgeBase' AND k.is_active=true AND JSON_EXTRACT(k.json,'$.spec.dingtalkAutoSyncEnabled')=true AND (? IS NULL OR d.kind_id=?) ORDER BY d.id LIMIT 100",(cursor,kb,kb)).await?;
         if rows.is_empty() {
-            cursor = 0;
             break;
         }
         for row in rows {
