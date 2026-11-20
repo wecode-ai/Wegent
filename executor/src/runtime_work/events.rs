@@ -321,6 +321,7 @@ pub(crate) struct CodexNotificationEventMapper {
     proxy_retry_wait_ids: BTreeSet<String>,
     native_retry_waits: BTreeMap<String, Value>,
     completed_context_compaction_ids: BTreeSet<String>,
+    unavailable_mcp_servers: BTreeSet<String>,
 }
 
 struct ProcessTextStream {
@@ -390,6 +391,27 @@ impl CodexNotificationEventMapper {
             );
         }
         match notification.method.as_str() {
+            "mcpServer/startupStatus/updated" => {
+                let server = notification.params["name"].as_str().unwrap_or_default();
+                if matches!(
+                    notification.params["status"].as_str(),
+                    Some("failed" | "cancelled")
+                ) && self.unavailable_mcp_servers.insert(server.to_owned())
+                {
+                    self.emit_completed_process_text(
+                        &emit_context,
+                        "text",
+                        "assistant_message",
+                        Some(format!(
+                            "mcp-unavailable-{}-{}",
+                            request.subtask_id,
+                            self.unavailable_mcp_servers.len()
+                        )),
+                        wegent_mcp_runtime::interactive_mcp::MCP_UNAVAILABLE_MESSAGE.to_owned(),
+                        None,
+                    );
+                }
+            }
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
                     self.emit_subagent_text_delta(
@@ -2751,6 +2773,35 @@ mod tests {
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn mcp_startup_failures_emit_one_safe_notice_without_failing_the_response() {
+        let (event_tx, mut events) = broadcast::channel(4);
+        let request = ExecutionRequest::default();
+        let mut mapper = CodexNotificationEventMapper::default();
+        for status in ["starting", "failed", "failed", "cancelled"] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &request,
+                json!({"method":"mcpServer/startupStatus/updated",
+                    "params":{"name":"connector", "status":status,
+                        "failureReason":"private-credential-and-response"}}),
+            );
+        }
+        let notice = events.try_recv().unwrap();
+        assert_eq!(notice["event"], "response.block.created");
+        assert_eq!(notice["payload"]["data"]["block"]["status"], "done");
+        assert_eq!(
+            notice["payload"]["data"]["block"]["content"],
+            wegent_mcp_runtime::interactive_mcp::MCP_UNAVAILABLE_MESSAGE
+        );
+        assert!(!notice
+            .to_string()
+            .contains("private-credential-and-response"));
+        assert!(events.try_recv().is_err());
+    }
 
     #[test]
     fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {

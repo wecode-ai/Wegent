@@ -625,7 +625,7 @@ while IFS= read -r line; do
   case "$line" in
     *'"method":"thread/read"'*) result='{{"thread":{{"id":"00000000-0000-0000-0000-000000000001","status":{{"type":"notLoaded"}},"turns":[{{"items":[{{"id":"call","type":"mcpToolCall","server":"wework_control","tool":"present_interaction","arguments":{{"tools":[]}},"result":{{"content":[],"structuredContent":{{"title":"Saved interaction"}},"_meta":{{"ui":{{"resourceUri":"ui://wework-control/interaction.html","html":"<p>Original card</p>","tools":[]}}}}}}}}]}}]}}}}';;
     *'"method":"thread/resume"'*)
-      case "$line" in *'"mcp_servers.wework_control.url":'*) control_ready=true;; esac
+      case "$line" in *'"wework_control":{{'*) control_ready=true;; esac
       result='{{}}';;
     *'"method":"mcpServerStatus/list"'*)
       if "$control_ready"; then
@@ -661,7 +661,7 @@ done
                     .map(|line| serde_json::from_str(line).unwrap()).collect();
                 let resume = calls.iter().find(|call| call["method"] == "thread/resume").unwrap();
                 let config = &resume["params"]["config"];
-                assert!(config["mcp_servers.wework_control.url"].as_str().unwrap().ends_with("/control/mcp"));
+                assert!(config["mcp_servers"]["wework_control"]["url"].as_str().unwrap().ends_with("/control/mcp"));
                 assert_eq!(config["shell_environment_policy.set.WEGENT_TASK_ID"], "owning-task");
                 assert!(!calls.iter().any(|call| call["method"] == "mcpServer/tool/call"), "Restoration must not repeat a business operation");
             });

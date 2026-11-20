@@ -3,13 +3,45 @@
 
 use super::*;
 
+pub(super) fn consolidate_thread_config(config: &mut Map<String, Value>) {
+    let mut servers = config.remove("mcp_servers").unwrap_or_else(|| json!({}));
+    let mut keys = config
+        .keys()
+        .filter(|key| key.starts_with("mcp_servers."))
+        .cloned()
+        .collect::<Vec<_>>();
+    // Apply complete definitions before their field overrides, including env.
+    keys.sort();
+    for key in keys {
+        let path = toml_edit::Key::parse(&key).expect("generated MCP config key");
+        let value = config.remove(&key).expect("collected MCP config entry");
+        let mut table = &mut servers;
+        for segment in &path[1..path.len() - 1] {
+            table = table
+                .as_object_mut()
+                .expect("MCP config table")
+                .entry(segment.get().to_owned())
+                .or_insert_with(|| json!({}));
+        }
+        table
+            .as_object_mut()
+            .expect("MCP config table")
+            .insert(path.last().unwrap().get().to_owned(), value);
+    }
+    // One replacement is independent of native HashMap iteration order and
+    // removes services and grants omitted from the current execution.
+    config.insert("mcp_servers".to_owned(), servers);
+}
+
 pub(super) fn configure_task_mcp(
     request: &ExecutionRequest,
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
+    // Saved MCP definitions are validated and rebound through thread RPC.
+    // Prevent their unbound or malformed table from being loaded at child startup.
+    launch.config_overrides.push("mcp_servers={}".to_owned());
     if super::super::instance_home::request_home(request).is_none() {
-        let overrides = global_mcp_config_overrides(&mut launch.thread_config)?;
-        launch.config_overrides.extend(overrides);
+        launch.mcp_unavailable = configure_global_mcps(request, &mut launch.thread_config)?;
     }
     launch
         .config_overrides
@@ -18,10 +50,8 @@ pub(super) fn configure_task_mcp(
     launch.config_overrides.extend(overrides);
     launch.env.extend(environment);
     configure_managed_wework_mcp(request, launch)?;
-    let (overrides, environment) =
-        runtime_capabilities::request_mcp_config_overrides(request, &mut launch.thread_config)?;
-    launch.config_overrides.extend(overrides);
-    launch.env.extend(environment);
+    launch.mcp_unavailable |=
+        runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)
         && !external_work::applies(request)
     {

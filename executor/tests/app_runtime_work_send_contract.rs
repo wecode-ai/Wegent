@@ -1692,7 +1692,7 @@ async fn runtime_tasks_reload_a_generic_codex_thread_when_project_space_is_bound
     );
     let resume_call = &calls[resume_index];
     assert_eq!(
-        resume_call["params"]["config"]["mcp_servers.wework_space.enabled"],
+        resume_call["params"]["config"]["mcp_servers"]["wework_space"]["enabled"],
         true
     );
     assert!(resume_call["params"]["developerInstructions"]

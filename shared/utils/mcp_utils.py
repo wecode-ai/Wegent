@@ -17,6 +17,55 @@ if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("mcp_utils")
+TASK_REFERENCE = re.compile(r"\$\{\{([^}]+)\}\}")
+
+
+def _missing_backend_context(
+    value: Any, task_data: Optional["ExecutionRequest"]
+) -> Optional[str]:
+    if isinstance(value, dict):
+        values = value.values()
+    elif isinstance(value, list):
+        values = value
+    elif isinstance(value, str):
+        for match in TASK_REFERENCE.finditer(value):
+            path = match.group(1).strip()
+            if path in ("backend_url", "backend_api_url"):
+                context = _get_nested_value(task_data, path)
+                if context is None or (
+                    isinstance(context, str) and not context.strip()
+                ):
+                    return path
+        return None
+    else:
+        return None
+    for child in values:
+        if path := _missing_backend_context(child, task_data):
+            return path
+    return None
+
+
+def filter_backend_dependent_mcp_servers(
+    servers: dict[str, dict[str, Any]],
+    task_data: Optional["ExecutionRequest"],
+) -> dict[str, dict[str, Any]]:
+    """Skip unavailable backend integrations before resolving their credentials."""
+    configured: dict[str, dict[str, Any]] = {}
+    for name, server in servers.items():
+        server_type = server.get("type")
+        if isinstance(server_type, str):
+            server_type = _replace_placeholders_in_string(server_type, task_data)
+        fields = ("url", "headers")
+        if server_type == "stdio":
+            fields = ("command", "args", "env")
+        elif server_type == "sse":
+            fields = ("url", "headers", "timeout")
+        consumed = {key: server[key] for key in fields if key in server}
+        if path := _missing_backend_context(consumed, task_data):
+            logger.info("Unconfigured MCP skipped: server=%s context=%s", name, path)
+        else:
+            configured[name] = server
+    return configured
 
 
 def extract_mcp_servers_config(config: Dict[str, Any]) -> Optional[Any]:
@@ -171,8 +220,6 @@ def _replace_placeholders_in_string(
         >>> _replace_placeholders_in_string("${{user.email}}", task_data)
         '${{user.email}}'
     """
-    # Pattern to match ${{path.to.value}}
-    pattern = r"\$\{\{([^}]+)\}\}"
 
     def replace_match(match: re.Match) -> str:
         path = match.group(1).strip()
@@ -184,7 +231,7 @@ def _replace_placeholders_in_string(
             # Keep original placeholder if path not found
             return match.group(0)
 
-    return re.sub(pattern, replace_match, text)
+    return TASK_REFERENCE.sub(replace_match, text)
 
 
 def _replace_variables_recursive(
