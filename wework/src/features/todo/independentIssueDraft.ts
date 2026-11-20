@@ -13,12 +13,16 @@ interface IssueDraftState {
 }
 
 /** The editor and its leave guard observe the same Issue draft and project selection. */
-export function createIndependentIssueDraft(issue: IndependentIssue | null, userId: number) {
+export function createIndependentIssueDraft(
+  issue: IndependentIssue | null,
+  userId: number,
+  initialTitle = ''
+) {
   const owner = issue?.creator_id ?? userId
   const draft: IndependentIssueInput = issue
     ? independentIssueInput(issue)
     : {
-        title: '',
+        title: initialTitle,
         description: '',
         status: 'pending',
         priority: 'medium',

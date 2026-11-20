@@ -9,7 +9,7 @@ import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
-import { createPersonalIssuesApi } from '@/api/personalIssues'
+import { useCloudIssueApis } from './useCloudIssueApis'
 import { PersonalIssuesView } from './PersonalIssuesView'
 
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -132,19 +132,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
     scope: string
     selection: string | null | undefined
   }>({ scope: '', selection: undefined })
-  const personalIssuesApi = useMemo(
-    () =>
-      cloudConnection.isConnected
-        ? createPersonalIssuesApi(
-            createHttpClient({
-              baseUrl: templateBackend,
-              getToken: () => cloudConnection.token,
-              redirectOnUnauthorized: false,
-            })
-          )
-        : null,
-    [cloudConnection.isConnected, cloudConnection.token, templateBackend]
-  )
+  const personalIssuesApi = useCloudIssueApis(cloudConnection)?.personal ?? null
   const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
   const projectPins = useCollaborationProjectPins(templateScope)
   const independentIssueSelection =

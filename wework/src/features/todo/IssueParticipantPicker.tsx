@@ -21,6 +21,7 @@ import {
 export function IssueParticipantPicker({
   api,
   collaborationApi,
+  colleaguesOnly = false,
   selected,
   onChange,
   disabled,
@@ -28,6 +29,7 @@ export function IssueParticipantPicker({
 }: {
   api: PersonalIssuesApi
   collaborationApi?: SharedWorkspaceApi
+  colleaguesOnly?: boolean
   selected: IssueParticipant[]
   onChange(people: IssueParticipant[]): void
   disabled: boolean
@@ -144,10 +146,15 @@ export function IssueParticipantPicker({
         aria-label={t('independentIssues.participants')}
       >
         <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-sm text-text-secondary">
-            {t('independentIssues.participants')}
-          </span>
-          {selected.map(person => {
+          {!colleaguesOnly && (
+            <span className="mr-1 text-sm text-text-secondary">
+              {t('independentIssues.participants')}
+            </span>
+          )}
+          {(colleaguesOnly
+            ? selected.filter(person => person.key !== `human:${userId}`)
+            : selected
+          ).map(person => {
             const Icon = icon(person.kind)
             const label = participantLabel(person, [...selected, ...results], {
               id: userId,
@@ -190,14 +197,18 @@ export function IssueParticipantPicker({
               className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted md:min-h-7"
             >
               <Plus className="h-4 w-4" />
-              {t('issue_creation.add_participants')}
+              {t(
+                colleaguesOnly ? 'taskIssueShare.addColleagues' : 'issue_creation.add_participants'
+              )}
             </button>
           </Popover.Trigger>
         </div>
         <Popover.Portal>
           <Popover.Content
             ref={popoverRef}
-            aria-label={t('issue_creation.add_participants')}
+            aria-label={t(
+              colleaguesOnly ? 'taskIssueShare.addColleagues' : 'issue_creation.add_participants'
+            )}
             align="start"
             sideOffset={6}
             collisionPadding={8}
@@ -213,51 +224,53 @@ export function IssueParticipantPicker({
             className="z-system-popover grid max-h-[var(--radix-popover-content-available-height)] w-[min(374px,calc(100vw-16px))] gap-2 overflow-y-auto rounded-xl border border-border bg-popover p-3 text-text-primary shadow-lg"
             data-testid="issue-participant-picker"
           >
-            <div
-              role="tablist"
-              aria-label={t('issue_creation.participant_type')}
-              className="flex gap-1"
-            >
-              {(['human', 'agent', 'group'] as const).map(kind => (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={kind === tab}
-                  id={`${pickerId}-${kind}-tab`}
-                  aria-controls={`${pickerId}-panel`}
-                  tabIndex={kind === tab ? 0 : -1}
-                  disabled={disabled}
-                  data-testid={`issue-participant-tab-${kind}`}
-                  key={kind}
-                  onClick={() => {
-                    setTab(kind)
-                    setQuery('')
-                  }}
-                  onKeyDown={event => {
-                    const kinds = ['human', 'agent', 'group'] as const
-                    const index = kinds.indexOf(kind)
-                    const next =
-                      event.key === 'ArrowRight'
-                        ? kinds[(index + 1) % kinds.length]
-                        : event.key === 'ArrowLeft'
-                          ? kinds[(index + kinds.length - 1) % kinds.length]
-                          : event.key === 'Home'
-                            ? kinds[0]
-                            : event.key === 'End'
-                              ? kinds[2]
-                              : null
-                    if (!next) return
-                    event.preventDefault()
-                    setTab(next)
-                    setQuery('')
-                    document.getElementById(`${pickerId}-${next}-tab`)?.focus()
-                  }}
-                  className={`min-h-11 rounded-md px-3 text-sm md:min-h-8 ${kind === tab ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
-                >
-                  {t(`issue_creation.participant_${kind}`)}
-                </button>
-              ))}
-            </div>
+            {!colleaguesOnly && (
+              <div
+                role="tablist"
+                aria-label={t('issue_creation.participant_type')}
+                className="flex gap-1"
+              >
+                {(['human', 'agent', 'group'] as const).map(kind => (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={kind === tab}
+                    id={`${pickerId}-${kind}-tab`}
+                    aria-controls={`${pickerId}-panel`}
+                    tabIndex={kind === tab ? 0 : -1}
+                    disabled={disabled}
+                    data-testid={`issue-participant-tab-${kind}`}
+                    key={kind}
+                    onClick={() => {
+                      setTab(kind)
+                      setQuery('')
+                    }}
+                    onKeyDown={event => {
+                      const kinds = ['human', 'agent', 'group'] as const
+                      const index = kinds.indexOf(kind)
+                      const next =
+                        event.key === 'ArrowRight'
+                          ? kinds[(index + 1) % kinds.length]
+                          : event.key === 'ArrowLeft'
+                            ? kinds[(index + kinds.length - 1) % kinds.length]
+                            : event.key === 'Home'
+                              ? kinds[0]
+                              : event.key === 'End'
+                                ? kinds[2]
+                                : null
+                      if (!next) return
+                      event.preventDefault()
+                      setTab(next)
+                      setQuery('')
+                      document.getElementById(`${pickerId}-${next}-tab`)?.focus()
+                    }}
+                    className={`min-h-11 rounded-md px-3 text-sm md:min-h-8 ${kind === tab ? 'bg-muted font-medium' : 'text-text-secondary hover:bg-muted'}`}
+                  >
+                    {t(`issue_creation.participant_${kind}`)}
+                  </button>
+                ))}
+              </div>
+            )}
             <label className="flex items-center gap-2 rounded-md border border-border px-2">
               <Search className="h-4 w-4 text-text-muted" />
               <input
@@ -281,8 +294,8 @@ export function IssueParticipantPicker({
             </label>
             <div
               id={`${pickerId}-panel`}
-              role="tabpanel"
-              aria-labelledby={`${pickerId}-${tab}-tab`}
+              role={colleaguesOnly ? undefined : 'tabpanel'}
+              aria-labelledby={colleaguesOnly ? undefined : `${pickerId}-${tab}-tab`}
               className="max-h-48 overflow-y-auto"
             >
               {error && (

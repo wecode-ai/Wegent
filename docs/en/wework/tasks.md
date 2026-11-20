@@ -50,6 +50,14 @@ During the initial task load, the desktop sidebar shows **Loading tasks…** bel
 | Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage                                                                                                                                                                                                                                                                                                                            |
 | Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                                                                                                                                                                                                                                                                                                                                               |
 
+### Share a conversation as an issue
+
+In a desktop task, select **Share as issue** above the composer. In **Create a collaborative issue**, choose colleagues or a cloud project where you can create issues, review the title and content, and select **Create and share**. Sign in to your team's Wework service if prompted.
+
+- Sharing with specific colleagues creates an independent issue visible to you and the people you invite.
+- Sharing to a project places the issue on its board and uses the project's default issue visibility.
+- No conversation excerpts are selected by default. Add any context and select the messages you want to include. The issue keeps the submitted content as a snapshot while the original conversation continues separately.
+
 <a id="conversation-interactions"></a>
 
 ### Interact inside a conversation

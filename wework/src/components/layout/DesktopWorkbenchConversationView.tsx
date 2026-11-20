@@ -22,6 +22,7 @@ import {
 } from './requestUserInputOverlay'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SupervisorSuggestionCards } from './TaskSupervisorControl'
+import { TaskIssueShare } from '@/features/todo/TaskIssueShare'
 import { BufferedChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
@@ -128,6 +129,7 @@ export function DesktopWorkbenchConversationView({
     activeHarnessDisplayError,
     submitWorkbenchInput,
     paneMessages,
+    workbenchTitle,
     pendingRequestUserInput,
     paneQueuedMessages,
     paneGuidanceMessages,
@@ -501,15 +503,24 @@ export function DesktopWorkbenchConversationView({
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
                                     contextHeader={
-                                      projectSpaceContext && (
+                                      (projectSpaceContext || currentRuntimeTask) && (
                                         <div
                                           className={cn(
-                                            'flex',
+                                            'flex min-w-0 items-center justify-between gap-1',
                                             paneSession.transcriptLoading && 'invisible'
                                           )}
                                           inert={paneSession.transcriptLoading}
                                         >
                                           {projectSpaceContext}
+                                          {currentRuntimeTask &&
+                                            paneVisible &&
+                                            workbenchVisible && (
+                                              <TaskIssueShare
+                                                key={`${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`}
+                                                title={workbenchTitle ?? ''}
+                                                messages={paneMessages}
+                                              />
+                                            )}
                                         </div>
                                       )
                                     }

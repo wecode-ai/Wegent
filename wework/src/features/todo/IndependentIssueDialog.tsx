@@ -2,7 +2,10 @@ import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
 import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { createIndependentIssueDialogState } from './independentIssueDialogState'
+import {
+  createIndependentIssueDialogState,
+  type CreateSharedProjectIssue,
+} from './independentIssueDialogState'
 import { createPortal } from 'react-dom'
 import { X, Maximize2, Minimize2 } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -11,6 +14,7 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DialogForm } from '@/components/common/DialogForm'
 import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
+import type { TaskIssueShareDraft } from './TaskIssueShare'
 import { IndependentIssueEditor } from './IndependentIssueEditor'
 
 const action =
@@ -21,9 +25,11 @@ type IndependentIssueDialogProps = {
   api: PersonalIssuesApi
   userId: number
   issueId: string | null
+  shareDraft?: TaskIssueShareDraft
+  createSharedProjectIssue?: CreateSharedProjectIssue
   onClose(): void
   onSaved(issue: IndependentIssue | null): void
-  onOpenProjectIssue?(projectId: string, issueId: string): void
+  onOpenProjectIssue?(projectId: string, issueId: string, restricted?: boolean): void
   presentation?: 'dialog' | 'drawer'
   expanded?: boolean
   onExpandedChange?(expanded: boolean): void
@@ -43,6 +49,8 @@ function IndependentIssueDialogContent({
   collaborationApi,
   userId,
   issueId,
+  shareDraft,
+  createSharedProjectIssue,
   onClose,
   onSaved,
   onOpenProjectIssue,
@@ -89,7 +97,7 @@ function IndependentIssueDialogContent({
   const ref = useDialogKeyboard<HTMLDivElement>(
     requestClose,
     presentation === 'dialog',
-    '[data-testid="independent-issue-title"]'
+    shareDraft ? '[data-testid="issue-participant-add"]' : '[data-testid="independent-issue-title"]'
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   const name = (id: number | null) =>
@@ -126,11 +134,12 @@ function IndependentIssueDialogContent({
                 id="independent-issue-dialog-title"
                 className="truncate text-heading-sm font-medium"
               >
-                {issue?.title ?? t('independentIssues.create')}
+                {issue?.title ??
+                  t(shareDraft ? 'taskIssueShare.title' : 'independentIssues.create')}
               </h2>
-              {issueId && (
+              {(issueId || (shareDraft && issue)) && (
                 <p className="mt-1 text-sm text-text-secondary">
-                  {t('independentIssues.noProject')}
+                  {t(shareDraft ? 'taskIssueShare.shared' : 'independentIssues.noProject')}
                 </p>
               )}
             </div>
@@ -213,12 +222,13 @@ function IndependentIssueDialogContent({
                 autoFocus={presentation === 'drawer' || Boolean(issue)}
                 api={api}
                 collaborationApi={collaborationApi}
-                allowProjectSelection={!issueId}
+                allowProjectSelection={!issueId && !(shareDraft && issue)}
                 issue={issue}
+                shareDraft={issue ? undefined : shareDraft}
                 userId={userId}
                 busy={busy}
                 onDirtyChange={setDirty}
-                onSave={state.save}
+                onSave={input => state.save(input, createSharedProjectIssue)}
                 onCancel={() => {
                   if (dirty) setDiscarding(issue ? 'edit' : 'close')
                   else if (issue) {

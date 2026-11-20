@@ -19,10 +19,18 @@ interface DialogSnapshot {
   body: string
   associationPending: boolean
 }
+type CreatedProjectIssue = { project_id: string; issue_id: string; restricted?: boolean }
+
+export type CreateSharedProjectIssue = (
+  projectId: string,
+  projectStatus: string | undefined,
+  input: IssueCreationInput
+) => Promise<CreatedProjectIssue>
+
 interface DialogCallbacks {
   onClose(): void
   onSaved(issue: IndependentIssue | null): void
-  onOpenProjectIssue?(projectId: string, issueId: string): void
+  onOpenProjectIssue?(projectId: string, issueId: string, restricted?: boolean): void
 }
 interface Observer extends DialogCallbacks {
   listener(): void
@@ -155,6 +163,14 @@ export function createIndependentIssueDialogState(
       if (current()) publish({ busy: false })
     }
   }
+  function openProjectIssue(target: CreatedProjectIssue, current: () => boolean) {
+    notify(observer => {
+      observer.onSaved(null)
+      if (!current()) return
+      observer.onOpenProjectIssue?.(target.project_id, target.issue_id, target.restricted)
+      if (current()) observer.onClose()
+    })
+  }
   function refreshSavedIssue() {
     if (snapshot.associationPending && snapshot.issue) {
       const row = snapshot.issue
@@ -208,8 +224,16 @@ export function createIndependentIssueDialogState(
     clearActionError() {
       if (owned()) publish({ error: '' })
     },
-    save({ project_id, project_status, ...input }: IssueCreationInput) {
+    save(
+      { project_id, project_status, ...input }: IssueCreationInput,
+      createSharedProjectIssue?: CreateSharedProjectIssue
+    ) {
       return run(async current => {
+        if (project_id && createSharedProjectIssue) {
+          const target = await createSharedProjectIssue(project_id, project_status, input)
+          if (current()) openProjectIssue(target, current)
+          return
+        }
         const existing = snapshot.issue
         const row = existing
           ? await api.update(existing.id, { ...input, version: existing.version })
@@ -222,12 +246,7 @@ export function createIndependentIssueDialogState(
           const target = await api.associate(row.id, project_id, row.version, project_status ?? '')
           if (!current()) return
           publish({ associationPending: false })
-          notify(observer => {
-            observer.onSaved(null)
-            if (!current()) return
-            observer.onOpenProjectIssue?.(target.project_id, target.issue_id)
-            if (current()) observer.onClose()
-          })
+          openProjectIssue(target, current)
           return
         }
         publish({ editing: false })
