@@ -525,7 +525,7 @@ export function createDesktopScenario({
       }
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: RESUME_COMPLETION,
-        timeoutMs: modelResponseTimeoutMs,
+        timeoutMs: uiTimeoutMs,
       })
 
       assert.equal(provider.authorizeRequests, 1, 'The consent page must load exactly once')
@@ -618,7 +618,7 @@ export function createDesktopScenario({
       })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TOOL_COMPLETION,
-        timeoutMs: modelResponseTimeoutMs,
+        timeoutMs: uiTimeoutMs,
       })
       assert.deepEqual(provider.toolCalls, [{ name: 'echo', arguments: { value: TOOL_PROMPT } }])
       const completedTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
