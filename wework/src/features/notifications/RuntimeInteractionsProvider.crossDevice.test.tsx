@@ -131,4 +131,26 @@ describe('cross-device human input', () => {
       expect.objectContaining({ id: remote.id, address: remote.task.address }),
     ])
   })
+
+  it('injects the user preference prompt into direct runtime interaction replies', async () => {
+    await discoverQuestions(false)
+
+    const local = context!.pending.find(
+      item => item.task.address.deviceId === interactionTask.address.deviceId
+    )!
+    await act(async () => {
+      expect(await context!.respond(local, 'replace')).toBe(true)
+    })
+
+    expect(harness.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalContext: {
+          'wework.user-preferences': {
+            kind: 'application',
+            value: 'Keep replies concise.',
+          },
+        },
+      })
+    )
+  })
 })

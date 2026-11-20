@@ -38,9 +38,11 @@ import { createStandInRecordStore } from './standInNotificationStorage'
 import { readActiveNotificationPreferences } from './notificationPreferences'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import { weworkInteractionScheme } from './scheme'
 import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
+import { withUserPreferencePrompt } from '@/features/workbench/userPreferencePrompt'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import { logInteractionLoadFailure } from './interactionDiagnostics'
 import { interactionHistoryEntry, persistInteractionArchive } from './interactionArchive'
@@ -599,6 +601,7 @@ export function createRuntimeInteractionsSource(
         clientIds.set(item.id, { answer, id })
         const message = requestUserInputResponseText(response)
         const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+        const userPreferencePrompt = (await getAppPreferences()).userPreferencePrompt
         const result = options?.send
           ? { accepted: await options.send(), error: undefined }
           : live.project
@@ -610,29 +613,37 @@ export function createRuntimeInteractionsSource(
                 context.t('interactions.failed')
               ).then(() => ({ accepted: true, error: undefined }))
             : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-              ? await api.guideRuntimeTask({
-                  address: live.task.address,
-                  message,
-                  clientGuidanceId: id,
-                })
-              : await api.sendRuntimeMessage(
-                  await prepareRuntimeContinuationModel(
+              ? await api.guideRuntimeTask(
+                  withUserPreferencePrompt(
                     {
                       address: live.task.address,
                       message,
-                      ...(asyncInput
-                        ? {
-                            queueIfBusy: true,
-                          }
-                        : { requestUserInputResponse: response }),
                       clientUserMessageId: id,
                     },
-                    {
-                      projects: [],
-                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                      totalTasks: 1,
-                    },
-                    () => api.listRuntimeWork()
+                    userPreferencePrompt
+                  )
+                )
+              : await api.sendRuntimeMessage(
+                  withUserPreferencePrompt(
+                    await prepareRuntimeContinuationModel(
+                      {
+                        address: live.task.address,
+                        message,
+                        ...(asyncInput
+                          ? {
+                              queueIfBusy: true,
+                            }
+                          : { requestUserInputResponse: response }),
+                        clientUserMessageId: id,
+                      },
+                      {
+                        projects: [],
+                        chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                        totalTasks: 1,
+                      },
+                      () => api.listRuntimeWork()
+                    ),
+                    userPreferencePrompt
                   )
                 )
         const accepted = result.accepted ?? ('success' in result && result.success)

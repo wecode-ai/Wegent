@@ -37,6 +37,7 @@ const harness = vi.hoisted(() => ({
   flushStorage: vi.fn(),
   commitStorage: vi.fn(),
   hostListeners: new Set<(event: { type: string }) => void>(),
+  preferences: vi.fn(),
   transcript: vi.fn(),
   send: vi.fn(),
   guide: vi.fn(),
@@ -72,6 +73,11 @@ vi.mock('@/api/dsh/desktopHost', () => ({
     harness.hostListeners.add(listener)
     return () => harness.hostListeners.delete(listener)
   },
+}))
+
+vi.mock('@/desktop/appPreferences', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/desktop/appPreferences')>()),
+  getAppPreferences: harness.preferences,
 }))
 
 export let context: ReturnType<typeof useRuntimeInteractions>
@@ -143,6 +149,7 @@ beforeEach(() => {
   harness.desktop = false
   harness.hostListeners.clear()
   harness.host.mockReset()
+  harness.preferences.mockResolvedValue({ userPreferencePrompt: 'Keep replies concise.' })
   harness.flushStorage.mockReset().mockResolvedValue(undefined)
   harness.commitStorage.mockReset().mockImplementation(async (key: string, value: string) => {
     await harness.flushStorage()
