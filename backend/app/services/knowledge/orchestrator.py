@@ -1505,6 +1505,9 @@ class KnowledgeOrchestrator:
         multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
         multimodal_analysis_video_prompt: Optional[str] = None,
         multimodal_analysis_image_prompt: Optional[str] = None,
+        guided_questions: Optional[List[str]] = None,
+        max_calls_per_conversation: Optional[int] = None,
+        exempt_calls_before_check: Optional[int] = None,
     ) -> KnowledgeBaseResponse:
         """Create a knowledge base bound to a source repository.
 
@@ -1552,6 +1555,9 @@ class KnowledgeOrchestrator:
             show_generation_task=show_generation_task,
             language=language,
             generation_strategy=generation_strategy,
+            guided_questions=guided_questions,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
         )
         claim_repository(db, source, kb_id)
         db.commit()

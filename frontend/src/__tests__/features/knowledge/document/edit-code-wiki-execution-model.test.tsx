@@ -46,16 +46,18 @@ jest.mock('@/apis/code-wiki', () => ({
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   ...jest.requireActual('@/features/knowledge/document/components/KnowledgeBaseForm'),
   KnowledgeBaseForm: ({
+    disabled,
     generationSection,
     typeSection,
   }: {
+    disabled?: boolean
     generationSection?: ReactNode
     typeSection?: ReactNode
   }) => (
-    <div data-testid="knowledge-base-form">
+    <fieldset disabled={disabled} data-testid="knowledge-base-form">
       {typeSection}
       {generationSection}
-    </div>
+    </fieldset>
   ),
 }))
 
@@ -65,10 +67,12 @@ jest.mock('@/features/knowledge/document/components/ConvertKnowledgeBaseTypeDial
 
 jest.mock('@/features/knowledge/code-wiki/ScheduledUpdateSettings', () => ({
   ScheduledUpdateSettings: ({
+    draft,
     deleteRequested,
     onDraftSaved,
     onDeleteRequested,
   }: {
+    draft?: CodeWikiScheduledUpdateRequest | null
     deleteRequested?: boolean
     onDraftSaved: (plan: CodeWikiScheduledUpdateRequest) => void
     onDeleteRequested: () => void
@@ -92,6 +96,16 @@ jest.mock('@/features/knowledge/code-wiki/ScheduledUpdateSettings', () => ({
       >
         stage scheduled update
       </button>
+      {draft && (
+        <input
+          type="number"
+          data-testid="code-wiki-scheduled-custom-days"
+          value={draft.interval_days}
+          onChange={event =>
+            onDraftSaved({ ...draft, cadence: 'custom', interval_days: Number(event.target.value) })
+          }
+        />
+      )}
       <button type="button" data-testid="stage-scheduled-delete" onClick={onDeleteRequested}>
         stage scheduled delete
       </button>
@@ -221,7 +235,7 @@ describe('editing a code wiki that has no model of its own', () => {
     expect(payload.execution_model_ref).toEqual(expect.objectContaining({ name: 'aaa-default' }))
   })
 
-  it('retries a failed schedule save without writing the knowledge base twice', async () => {
+  it('retries a corrected schedule without writing the knowledge base twice', async () => {
     const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
     jest.mocked(getKnowledgeBase).mockResolvedValue(wiki)
     jest
@@ -249,11 +263,19 @@ describe('editing a code wiki that has no model of its own', () => {
     await screen.findByText('codeWiki.scheduledUpdate.saveFailedAfterKnowledgeBase')
     expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledTimes(1)
     expect(onOpenChange).not.toHaveBeenCalled()
+    const customDays = screen.getByTestId('code-wiki-scheduled-custom-days')
+    expect(customDays).toBeEnabled()
+    fireEvent.change(customDays, { target: { value: '0' } })
+    fireEvent.click(screen.getByTestId('code-wiki-scheduled-save-retry'))
+    expect(await screen.findByText('codeWiki.scheduledUpdate.invalidCustomDays')).toBeVisible()
+    expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledTimes(1)
+    fireEvent.change(customDays, { target: { value: '3' } })
     fireEvent.click(screen.getByTestId('code-wiki-scheduled-save-retry'))
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
     expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledTimes(2)
-    expect(jest.mocked(codeWikiApi.configureScheduledUpdate).mock.calls[0]).toEqual(
-      jest.mocked(codeWikiApi.configureScheduledUpdate).mock.calls[1]
+    expect(codeWikiApi.configureScheduledUpdate).toHaveBeenLastCalledWith(
+      wiki.id,
+      expect.objectContaining({ cadence: 'custom', interval_days: 3 })
     )
     expect(onSubmit).toHaveBeenCalledTimes(1)
     expect(onSubmit.mock.invocationCallOrder[0]).toBeLessThan(

@@ -32,6 +32,7 @@ import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hoo
 
 interface KnowledgeBaseFormProps {
   disabled?: boolean
+  editableSection?: Section
   navigation: ReturnType<typeof useKnowledgeBaseFormNavigation>
   kindSection?: ReactNode
   locationSection?: ReactNode
@@ -115,6 +116,7 @@ export function useKnowledgeBaseFormNavigation() {
 
 export function KnowledgeBaseForm({
   disabled,
+  editableSection,
   navigation,
   kindSection,
   locationSection,
@@ -564,7 +566,12 @@ export function KnowledgeBaseForm({
               hidden={!selected}
               aria-label={t(`document.formSections.${label}`)}
             >
-              <SimpleConfigGroup>{content[section]}</SimpleConfigGroup>
+              <fieldset
+                disabled={editableSection !== undefined && editableSection !== section}
+                className="min-w-0"
+              >
+                <SimpleConfigGroup>{content[section]}</SimpleConfigGroup>
+              </fieldset>
             </section>
           )
         })}

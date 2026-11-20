@@ -219,6 +219,16 @@ export function EditKnowledgeBaseDialog({
     setRetrievalConfig(config)
   }, [])
 
+  const validateScheduledChange = () => {
+    if (scheduledUpdateChange?.action !== 'configure') return true
+    const { cadence, interval_days: days } = scheduledUpdateChange.data
+    if (cadence !== 'custom' || (Number.isInteger(days) && days >= 2 && days <= 365)) return true
+
+    setError(tKnowledge('codeWiki.scheduledUpdate.invalidCustomDays'))
+    selectSection('generation', '[data-testid="code-wiki-scheduled-custom-days"]')
+    return false
+  }
+
   const saveScheduledChange = async (kbId: number) => {
     try {
       if (scheduledUpdateChange?.action === 'configure') {
@@ -235,6 +245,8 @@ export function EditKnowledgeBaseDialog({
 
   const retryScheduledChange = async () => {
     if (!fullKnowledgeBase || !scheduledUpdateChange || isSavingChanges) return
+    setError('')
+    if (!validateScheduledChange()) return
     setIsSavingChanges(true)
     try {
       await saveScheduledChange(fullKnowledgeBase.id)
@@ -277,14 +289,7 @@ export function EditKnowledgeBaseDialog({
       return
     }
 
-    if (scheduledUpdateChange?.action === 'configure') {
-      const { cadence, interval_days: days } = scheduledUpdateChange.data
-      if (cadence === 'custom' && (!Number.isInteger(days) || days < 2 || days > 365)) {
-        setError(tKnowledge('codeWiki.scheduledUpdate.invalidCustomDays'))
-        selectSection('generation', '[data-testid="code-wiki-scheduled-custom-days"]')
-        return
-      }
-    }
+    if (!validateScheduledChange()) return
 
     // Validate call limits
     if (exemptCalls >= maxCalls) {
@@ -438,7 +443,8 @@ export function EditKnowledgeBaseDialog({
           ) : fullKnowledgeBase ? (
             <>
               <KnowledgeBaseForm
-                disabled={isSavingChanges || !!scheduleError}
+                disabled={isSavingChanges}
+                editableSection={scheduleError ? 'generation' : undefined}
                 navigation={navigation}
                 kindSection={
                   <div className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/5 p-3">
@@ -546,19 +552,21 @@ export function EditKnowledgeBaseDialog({
                 generationSection={
                   isCodeWiki ? (
                     <>
-                      <SimpleConfigRow
-                        label={tKnowledge('codeWiki.strategy.label')}
-                        description={tKnowledge('codeWiki.strategy.settingsDescription')}
-                      >
-                        <GenerationStrategySelect
-                          value={generationStrategy}
-                          onChange={strategy => {
-                            setGenerationStrategy(strategy)
-                            setGenerationStrategyTouched(true)
-                          }}
-                          testId="code-wiki-generation-strategy"
-                        />
-                      </SimpleConfigRow>
+                      {!scheduleError && (
+                        <SimpleConfigRow
+                          label={tKnowledge('codeWiki.strategy.label')}
+                          description={tKnowledge('codeWiki.strategy.settingsDescription')}
+                        >
+                          <GenerationStrategySelect
+                            value={generationStrategy}
+                            onChange={strategy => {
+                              setGenerationStrategy(strategy)
+                              setGenerationStrategyTouched(true)
+                            }}
+                            testId="code-wiki-generation-strategy"
+                          />
+                        </SimpleConfigRow>
+                      )}
                       <SimpleConfigRow
                         label={tKnowledge('codeWiki.create.scheduledUpdate')}
                         description={tKnowledge('codeWiki.scheduledUpdate.settingsHint')}
@@ -573,13 +581,15 @@ export function EditKnowledgeBaseDialog({
                               : null
                           }
                           deleteRequested={scheduledUpdateChange?.action === 'delete'}
-                          onDraftSaved={data =>
+                          retryingSave={!!scheduleError}
+                          onDraftSaved={data => {
+                            setError('')
                             setScheduledUpdateChange({ action: 'configure', data })
-                          }
+                          }}
                           onDeleteRequested={() => setScheduledUpdateChange({ action: 'delete' })}
                         />
                       </SimpleConfigRow>
-                      {scheduledUpdateChange && (
+                      {scheduledUpdateChange && !scheduleError && (
                         <p
                           className="text-xs text-text-muted"
                           data-testid="code-wiki-scheduled-pending-change"
@@ -591,10 +601,12 @@ export function EditKnowledgeBaseDialog({
                           )}
                         </p>
                       )}
-                      <GenerationTaskRow
-                        checked={showGenerationTask}
-                        onChange={setShowGenerationTask}
-                      />
+                      {!scheduleError && (
+                        <GenerationTaskRow
+                          checked={showGenerationTask}
+                          onChange={setShowGenerationTask}
+                        />
+                      )}
                     </>
                   ) : undefined
                 }

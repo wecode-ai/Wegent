@@ -68,6 +68,7 @@ interface Props {
   draft?: CodeWikiScheduledUpdateRequest | null
   /** The outer knowledge-base form has staged deletion of the saved plan. */
   deleteRequested?: boolean
+  retryingSave?: boolean
   onDraftSaved: (plan: CodeWikiScheduledUpdateRequest) => void
   onDeleteRequested: () => void
 }
@@ -76,6 +77,7 @@ export function ScheduledUpdateSettings({
   knowledgeBaseId,
   draft,
   deleteRequested = false,
+  retryingSave = false,
   onDraftSaved,
   onDeleteRequested,
 }: Props) {
@@ -145,7 +147,7 @@ export function ScheduledUpdateSettings({
   return (
     <div className="space-y-3">
       {!plan && !loadError && <p role="status">{t('common:actions.loading')}</p>}
-      {plan?.can_configure && (
+      {plan?.can_configure && !retryingSave && (
         <p className="text-xs text-text-muted">
           {t(
             deleteRequested
