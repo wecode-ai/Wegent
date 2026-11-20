@@ -42,6 +42,15 @@ const CONTEXT_HANDLE_HEADER: &str = "x-wework-mcp-context";
 const MCP_SESSION_ID_HEADER: &str = "mcp-session-id";
 const CONTEXT_HANDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
+fn control_context_idle_ttl() -> Duration {
+    std::env::var("WEWORK_E2E_CONTROL_MCP_IDLE_TTL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .filter(|ttl| !ttl.is_zero() && *ttl < CONTEXT_HANDLE_TTL)
+        .unwrap_or(CONTEXT_HANDLE_TTL)
+}
+
 mod contexts;
 #[cfg(test)]
 use contexts::register_context;
@@ -89,7 +98,7 @@ impl Drop for ControlMcpExecution {
             if let Some(registered) = contexts.get_mut(&self.handle) {
                 registered.active_executions -= 1;
                 if registered.active_executions == 0 {
-                    registered.expires_at = Instant::now() + CONTEXT_HANDLE_TTL;
+                    registered.expires_at = Instant::now() + control_context_idle_ttl();
                 }
             }
         }

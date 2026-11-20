@@ -687,7 +687,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
-    goal_model_route: Option<Arc<crate::agents::LocalProxyRegistration>>,
+    goal_model_route: Option<crate::agents::ModelActionRegistration>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,

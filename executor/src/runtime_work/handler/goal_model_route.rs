@@ -57,8 +57,8 @@ impl RuntimeWorkRpcHandler {
             .routes
             .get_mut(thread_id)
         {
-            // Native Goal turns may run without a local send future. The existing
-            // Goal lifecycle, rather than the mutation response, owns this lease.
+            // Native Goal turns may run without a local send future. Retain both
+            // inference and control registrations until the Goal stops.
             route.goal_model_route = registration;
         }
         Ok(())

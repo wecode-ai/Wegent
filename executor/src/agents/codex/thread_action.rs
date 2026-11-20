@@ -4,6 +4,11 @@
 
 use super::*;
 
+pub(crate) struct ModelActionRegistration {
+    _model_route: Option<Arc<LocalProxyRegistration>>,
+    _control_context: Option<Arc<crate::task_runtime::mcp_http::ControlMcpExecution>>,
+}
+
 struct ThreadActionActivity {
     client: CodexAppServerClient,
     thread_id: Option<String>,
@@ -38,7 +43,7 @@ impl CodexAppServerClient {
         request: &ExecutionRequest,
         thread_id: &str,
         thread_path: Option<&str>,
-    ) -> Result<(String, Option<Arc<LocalProxyRegistration>>), String> {
+    ) -> Result<(String, Option<ModelActionRegistration>), String> {
         ensure_codex_mcp_endpoints().await?;
         let launch = build_codex_launch_config(request)?;
         let mut params = thread_resume_params(thread_id, request, &launch);
@@ -72,7 +77,13 @@ impl CodexAppServerClient {
                 ("model", codex_request_model(request).unwrap_or_default()),
             ],
         );
-        Ok((resumed, launch.local_proxy_registration))
+        let registration = (launch.local_proxy_registration.is_some()
+            || launch.control_mcp_execution.is_some())
+        .then_some(ModelActionRegistration {
+            _model_route: launch.local_proxy_registration,
+            _control_context: launch.control_mcp_execution,
+        });
+        Ok((resumed, registration))
     }
 
     async fn reload_model_action_context(
