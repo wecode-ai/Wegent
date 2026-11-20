@@ -13,6 +13,7 @@ import { requestPluginExecutor, until } from './plugin-regression-fixture.mjs'
 const manageSites = '[data-testid="plugin-connection-manage-group:sites"]'
 const sourceAction = '[data-testid="plugin-connector-source-continue"]'
 const detailError = '[data-testid="plugin-detail-action-error"]'
+const confirmation = '[data-testid="confirmation-request-dialog"]'
 const logoutStepMs = 3_000
 
 async function openNativePluginDetail(control, installedId) {
@@ -40,38 +41,28 @@ async function withLogoutConfirmation(control, resultDir, run) {
   const main = (await client({ action: 'targets' })).find(
     target => target.type === 'window' && target.url.startsWith(mainOrigin + '/wework/app/')
   )
-  assert.ok(main, 'The main renderer must be available for Native logout confirmation')
+  assert.ok(main, 'The main renderer must be available to observe Native logout')
   const page = (method, params) => client({ action: 'command', target: main.id, method, params })
   const confirm = async beforeAccept => {
-    const { latest: after } = await client({ action: 'events', target: main.id })
-    const accept = async () => {
-      const opening = await until(
-        async () =>
-          (await client({ action: 'events', target: main.id, after })).events.find(
-            event => event.method === 'Page.javascriptDialogOpening'
-          ),
-        Boolean,
-        'The Native logout button did not open its confirmation',
-        logoutStepMs
-      )
-      const expected =
-        opening.params.type === 'confirm' && /^确定退出「.+」登录？/.test(opening.params.message)
-      let prepared = false
-      try {
-        if (expected) await beforeAccept?.()
-        prepared = expected
-      } finally {
-        await page('Page.handleJavaScriptDialog', { accept: prepared })
-      }
-      assert.ok(expected, 'The unexpected native dialog was canceled')
+    await control.command('clickWhenEnabled', sourceAction, { timeoutMs: logoutStepMs })
+    const message = await control.command('waitFor', confirmation, {
+      visible: true,
+      timeoutMs: logoutStepMs,
+    })
+    try {
+      assert.match(message, /确定退出「[^\n]+」登录？/)
+      await beforeAccept?.()
+    } catch (error) {
+      await control.command('click', `${confirmation} [data-testid="confirmation-request-cancel"]`)
+      throw error
     }
-    await Promise.all([
-      accept(),
-      control.command('clickWhenEnabled', sourceAction, { timeoutMs: logoutStepMs }),
-    ])
+    await control.command(
+      'clickWhenEnabled',
+      `${confirmation} [data-testid="confirmation-request-confirm"]`,
+      { timeoutMs: logoutStepMs }
+    )
   }
   try {
-    await page('Page.enable')
     await run(confirm, page)
   } finally {
     await client({ action: 'detach', target: main.id })
