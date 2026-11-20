@@ -281,10 +281,9 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let Some(link) = self
-            .coordinator_work(user)
-            .into_iter()
-            .find(|link| Some(&link.local_task_id) == target.as_ref())
+        let Some(link) = target
+            .as_deref()
+            .and_then(|id| self.coordinator_work_by_id(user, id))
         else {
             return Ok(None);
         };

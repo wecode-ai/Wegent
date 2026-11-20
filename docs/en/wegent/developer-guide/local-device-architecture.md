@@ -162,6 +162,8 @@ The startup splash follows the user's light, dark, or system appearance preferen
 
 ### Runtime Task and Goal State
 
+Pending-reply notifications read the local task index through `runtime.tasks.list` with `pendingOnly` and `preferCached`. The Executor selects unarchived tasks awaiting a reply before building list summaries. When investigating idle CPU usage, compare `candidate_tasks` and `tasks` in the `runtime work list finished` log to see how many candidates reached summary generation and how many tasks were returned.
+
 The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
 
 Two live signals jointly determine `running`: the active-task set owned by the current executor process and a turn explicitly marked `inProgress` in the Codex thread. The latter covers cases such as automatic Goal continuation, where the local execution wrapper has returned while the provider is still running a later turn. A Codex thread-level `active` status, persisted task summaries, and Wework reminder state cannot independently infer execution. The task list, transcript, detail pane, system tray, and sleep-inhibition logic must consume the same executor-provided `running` value. After an executor or Wework restart, the UI must restore running state when `thread/read` or `thread/list` still returns an active turn, and settle to idle only when no active turn remains.
