@@ -761,8 +761,9 @@ fn inactive_managed_cloud_rows_follow_the_generic_reactivation_path() {
 
     let managed = managed_cloud_registration(&row, &payload).unwrap();
     assert!(managed, "the record must first be recognized as managed");
+    let rows = [row];
     let selected = select_registration_device(
-        &[row],
+        &rows,
         &payload.device_id,
         payload.runtime_instance_id.as_deref(),
         None,
