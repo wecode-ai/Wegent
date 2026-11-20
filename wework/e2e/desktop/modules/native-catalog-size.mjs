@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { restartCodexWhenIdle } from './executor-restart-readiness.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 
 /** Exercise a large aggregate catalog while respecting the per-request RPC budget. */
@@ -24,18 +25,11 @@ export async function verifyLargeNativeCatalog(control, baselines, timeoutMs) {
       assert.ok(Buffer.byteLength(JSON.stringify(params)) < 900_000)
       await rpc('runtime.codex.catalog.overrides.write', params)
     }
-    const restartWhenIdle = async () => {
-      const deadline = Date.now() + timeoutMs
-      let restart
-      do {
-        restart = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
-        if (restart.restarted) return
-        if ((restart.activeTaskCount ?? 0) > 0 || (restart.backgroundTerminalCount ?? 0) > 0) break
-        await new Promise(resolve => setTimeout(resolve, 100))
-      } while (Date.now() < deadline)
-      assert.equal(restart?.restarted, true, JSON.stringify(restart))
-    }
-    await restartWhenIdle()
+    // Reply prediction can still own a native turn after the conversation becomes idle.
+    await restartCodexWhenIdle(
+      () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
+      timeoutMs
+    )
     const models = await rpc('runtime.codex.models.list', { includeHidden: true })
     for (const entry of entries) {
       assert.equal(
