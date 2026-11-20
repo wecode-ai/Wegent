@@ -41,7 +41,8 @@ export type {
   CommentIssueActions,
   IssueCommentBoardContext,
 } from './issue-detail/issueCommentActions'
-export { IssueDetailSearchableSelect } from './issue-detail/IssueDetailControls'
+export { SearchableSelect } from './controls/SearchableSelect'
+export { Tooltip, type TooltipProps } from './controls/Tooltip'
 export * from './permissions'
 export * from './platform'
 export * from './plugin-catalog'

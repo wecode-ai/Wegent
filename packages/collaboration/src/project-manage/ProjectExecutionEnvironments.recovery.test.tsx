@@ -1,3 +1,4 @@
+import { sdkSelectValue } from '../test/selectControl'
 // @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -66,11 +67,11 @@ async function setup(saveConflict = true) {
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
   if (saveConflict) {
-  await click('-save-configuration')
-  expect(element('-configuration-error').textContent).toContain('草稿尚未保存')
-  expect(element<HTMLButtonElement>('-save-configuration').disabled).toBe(true)
-  expect(input.value).toBe('echo draft')
-  expect(onProjectChange).not.toHaveBeenCalled()
+    await click('-save-configuration')
+    expect(element('-configuration-error').textContent).toContain('草稿尚未保存')
+    expect(element<HTMLButtonElement>('-save-configuration').disabled).toBe(true)
+    expect(input.value).toBe('echo draft')
+    expect(onProjectChange).not.toHaveBeenCalled()
   }
   return { update, get, onProjectChange, api }
 }
@@ -143,16 +144,22 @@ it('preserves the draft after a failed read and retries only that read before lo
   expect(get).toHaveBeenCalledTimes(2)
   expect(update).toHaveBeenCalledTimes(1)
   expect(element<HTMLInputElement>('-setup-command-0').value).toBe('echo server')
-  expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
+  expect(await sdkSelectValue(element('-workspace-policy'))).toBe('project')
   expect(element('-configuration-error')).toBeNull()
   expect(element<HTMLButtonElement>('-save-configuration').disabled).toBe(true)
 })
 
 it('requires an explicit choice when saved environment fields change underneath a draft', async () => {
   const { api, update, get } = await setup(false)
-  await act(async () => root.render(
-    <ProjectExecutionEnvironments api={api} project={latest} translate={createCollaborationTranslator('zh-CN')} />
-  ))
+  await act(async () =>
+    root.render(
+      <ProjectExecutionEnvironments
+        api={api}
+        project={latest}
+        translate={createCollaborationTranslator('zh-CN')}
+      />
+    )
+  )
   expect(element<HTMLInputElement>('-setup-command-0').value).toBe('echo draft')
   expect(element('-configuration-error').textContent).toContain('草稿尚未保存')
   expect(element<HTMLButtonElement>('-save-configuration').disabled).toBe(true)

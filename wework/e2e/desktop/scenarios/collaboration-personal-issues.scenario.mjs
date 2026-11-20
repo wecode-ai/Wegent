@@ -453,7 +453,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await verifyIssueDeviceLayout(control, appDevice.id)
       await captureScreenshot(control, 'new-issue-project-devices.png')
-      await click(control, 'issue-environment-picker-trigger')
+      await control.command('nativePress', '[data-testid="issue-environment-picker"]', {
+        key: 'Escape',
+      })
+      await wait(control, '[data-testid="issue-environment-picker"]', { visible: false })
       assert.equal(
         await control.command('getValue', '[data-testid="independent-issue-title"]'),
         `Project selection ${process.pid}`,

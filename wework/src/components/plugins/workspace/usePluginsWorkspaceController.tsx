@@ -1,3 +1,4 @@
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { createPluginDetailNavigation } from './pluginWorkspaceNavigation'
 import { useInstalledPluginDetail } from '../hooks/useInstalledPluginDetail'
 import { useMarketplacePluginDetail } from '../hooks/useMarketplacePluginDetail'
@@ -79,6 +80,9 @@ export function usePluginsWorkspaceController({
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const localExecutorCloudConnection = useLocalExecutorCloudConnectionStatus()
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
@@ -591,6 +595,7 @@ export function usePluginsWorkspaceController({
     managePluginConnector,
     verifyCodexAuthorization,
   } = usePluginWorkspaceConnectors({
+    requestConfirmation,
     operations,
     cloudApiBaseUrl,
     cloudToken,
@@ -615,6 +620,7 @@ export function usePluginsWorkspaceController({
     installMarketplacePlugin,
     executeMarketplaceInstall,
   } = usePluginWorkspaceInstallation({
+    requestConfirmation,
     selectedMarketplacePlugin,
     selectedMarketplacePluginDetail,
     localPluginApi,
@@ -830,6 +836,7 @@ export function usePluginsWorkspaceController({
     [normalizedQuery, setBrowsingCategoryKey, setSearchResultWindow]
   )
   return {
+    requestDialogs,
     selectedPlugin,
     findOwnedMarketplacePlugin,
     pluginMarketplaceState,

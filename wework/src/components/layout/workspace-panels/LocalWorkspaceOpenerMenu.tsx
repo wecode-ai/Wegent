@@ -1,27 +1,25 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import type { TFunction } from 'i18next'
-import { ChevronDown, Code2, Folder, Monitor, Plus, SquareTerminal } from 'lucide-react'
-import { createPortal } from 'react-dom'
-import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { fileManagerAppLabel, terminalAppLabel } from '@/lib/file-manager'
 import {
   prioritizeWorkspaceOpener,
   visibleOpenersForPlatform,
   type LocalWorkspaceOpenerDef,
   type LocalWorkspaceOpenerId,
 } from '@/lib/local-workspace-openers'
-import { fileManagerAppLabel, terminalAppLabel } from '@/lib/file-manager'
 import { getPlatform } from '@/lib/platform'
-import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-
-const MENU_GAP = 8
-const VIEWPORT_PADDING = 8
-const MENU_WIDTH = 280
-
-interface MenuPosition {
-  left: number
-  top: number
-}
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+} from '@wegent/collaboration/controls/MenuParts'
+import { controlOption, controlPopup } from '@wegent/collaboration/controls/recipes'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import type { TFunction } from 'i18next'
+import { ChevronDown, Code2, Folder, Monitor, Plus, SquareTerminal } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
 
 interface LocalWorkspaceOpenerPickerProps {
   ariaLabel: string
@@ -58,86 +56,24 @@ export function LocalWorkspaceOpenerPicker({
 }: LocalWorkspaceOpenerPickerProps) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<MenuPosition | null>(null)
-  const buttonRef = useRef<HTMLButtonElement | null>(null)
-  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [preparing, setPreparing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const request = useRef(0)
+  const theme = useCollaborationPortalTheme()
 
-  useLayoutEffect(() => {
-    if (!open) return
-
-    const updatePosition = () => {
-      const buttonRect = buttonRef.current?.getBoundingClientRect()
-      const menuRect = menuRef.current?.getBoundingClientRect()
-      if (!buttonRect || !menuRect) return
-
-      const viewportWidth = window.innerWidth
-      const viewportHeight = window.innerHeight
-      const menuWidth = Math.max(menuRect.width, MENU_WIDTH)
-      const menuHeight = menuRect.height
-      const belowTop = buttonRect.bottom + MENU_GAP
-      const aboveTop = buttonRect.top - menuHeight - MENU_GAP
-      const hasRoomBelow = belowTop + menuHeight <= viewportHeight - VIEWPORT_PADDING
-      const hasRoomAbove = aboveTop >= VIEWPORT_PADDING
-      const placeBelow =
-        preferredPlacement === 'below'
-          ? hasRoomBelow || !hasRoomAbove
-          : !(hasRoomAbove || !hasRoomBelow)
-      const top = placeBelow ? belowTop : Math.max(VIEWPORT_PADDING, aboveTop)
-      const preferredLeft = align === 'end' ? buttonRect.right - menuWidth : buttonRect.left
-      const maxLeft = viewportWidth - menuWidth - VIEWPORT_PADDING
-      const left = Math.max(VIEWPORT_PADDING, Math.min(preferredLeft, maxLeft))
-
-      setPosition({ left, top })
+  const prepareMenu = async () => {
+    const revision = ++request.current
+    setPreparing(true)
+    setError(null)
+    try {
+      await onOpen?.()
+      if (request.current === revision) setOpen(true)
+    } catch (cause) {
+      if (request.current === revision)
+        setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (request.current === revision) setPreparing(false)
     }
-
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [align, open, preferredPlacement])
-
-  useDocumentEvent(
-    'pointerdown',
-    event => {
-      const target = event.target as Node
-      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return
-      setOpen(false)
-      setPosition(null)
-    },
-    { enabled: open, capture: true }
-  )
-  useDocumentEvent(
-    'keydown',
-    event => {
-      if (event.key === 'Escape') {
-        setOpen(false)
-        setPosition(null)
-      }
-    },
-    { enabled: open }
-  )
-
-  const toggleOpen = async (event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation()
-
-    if (open) {
-      setOpen(false)
-      setPosition(null)
-      return
-    }
-
-    await onOpen?.()
-    setPosition(null)
-    setOpen(true)
-  }
-
-  const selectOpener = async (opener: LocalWorkspaceOpenerId) => {
-    setOpen(false)
-    setPosition(null)
-    await onSelect(opener)
   }
 
   const platform = getPlatform()
@@ -146,76 +82,84 @@ export function LocalWorkspaceOpenerPicker({
 
   return (
     <>
-      <button
-        ref={buttonRef}
-        type="button"
-        data-testid={buttonTestId}
-        onClick={event => void toggleOpen(event)}
-        disabled={disabled}
-        className={buttonClassName}
-        aria-label={ariaLabel}
-        aria-expanded={open}
-        aria-haspopup="menu"
+      <Menu
+        open={open}
+        onOpenChange={(next, details) => {
+          if (next && onOpen) {
+            details.cancel()
+            if (!preparing) void prepareMenu()
+          } else {
+            setOpen(next)
+          }
+        }}
       >
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            data-testid={menuTestId}
-            role="menu"
-            style={{
-              left: position?.left ?? 0,
-              top: position?.top ?? 0,
-              visibility: position ? 'visible' : 'hidden',
-            }}
-            className="fixed z-system-popover max-h-[520px] w-[280px] overflow-y-auto rounded-2xl border border-border bg-popover p-2 text-text-primary shadow-[0_18px_54px_rgba(0,0,0,0.16)] ring-1 ring-black/5"
-          >
-            <div className="py-1">
-              {openers.map(opener => {
-                const openerId = opener.id as LocalWorkspaceOpenerId
-                if (availability[openerId] !== true) return null
-                return (
-                  <button
-                    key={openerId}
-                    type="button"
-                    role="menuitem"
-                    data-testid={
-                      optionTestIdPrefix ? `${optionTestIdPrefix}-${openerId}` : undefined
-                    }
-                    onClick={() => void selectOpener(openerId)}
-                    className="flex h-10 w-full min-w-0 items-center gap-3 rounded-xl px-2.5 text-left text-base font-normal leading-5 text-text-primary transition-colors hover:bg-muted"
-                  >
-                    <LocalWorkspaceOpenerIcon opener={openerId} className="h-5 w-5 shrink-0" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {openerDisplayLabel(opener, t, labels)}
-                    </span>
-                  </button>
-                )
-              })}
-              {showChooseOther && (
-                <>
-                  <div className="my-1 h-px bg-border/60" />
-                  <button
-                    type="button"
-                    data-testid="open-local-workspace-choose-other-button"
-                    onClick={() => void onChooseOther?.()}
-                    className="flex h-10 w-full min-w-0 items-center gap-3 rounded-xl px-2.5 text-left text-base font-normal leading-5 text-text-secondary transition-colors hover:bg-muted"
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted text-text-secondary shadow-sm wework:border-black/5">
-                      <Plus className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">
-                      {t('workbench.opener_choose_other')}
-                    </span>
-                  </button>
-                </>
-              )}
-            </div>
-          </div>,
-          document.body
-        )}
+        <MenuTrigger
+          render={<button type="button" />}
+          data-testid={buttonTestId}
+          disabled={disabled || preparing}
+          aria-busy={preparing || undefined}
+          aria-label={ariaLabel}
+          className={buttonClassName}
+          onClick={event => event.stopPropagation()}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </MenuTrigger>
+        <MenuContent
+          {...theme}
+          data-testid={menuTestId}
+          aria-label={ariaLabel}
+          side={preferredPlacement === 'above' ? 'top' : 'bottom'}
+          align={align}
+          sideOffset={4}
+          collisionPadding={8}
+          className={cn(controlPopup, 'w-70')}
+        >
+          {openers
+            .filter(opener => availability[opener.id] === true)
+            .map(opener => (
+              <MenuItem
+                key={opener.id}
+                value={opener.id}
+                render={<button type="button" />}
+                data-testid={optionTestIdPrefix ? optionTestIdPrefix + '-' + opener.id : undefined}
+                onSelect={() => {
+                  setOpen(false)
+                  return onSelect(opener.id)
+                }}
+                className={controlOption}
+              >
+                <LocalWorkspaceOpenerIcon opener={opener.id} className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {openerDisplayLabel(opener, t, labels)}
+                </span>
+              </MenuItem>
+            ))}
+          {showChooseOther && (
+            <>
+              <MenuSeparator className="my-1 h-px bg-border" />
+              <MenuItem
+                value="choose-other"
+                render={<button type="button" />}
+                data-testid="open-local-workspace-choose-other-button"
+                onSelect={onChooseOther}
+                className={controlOption}
+              >
+                <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {t('workbench.opener_choose_other')}
+              </MenuItem>
+            </>
+          )}
+        </MenuContent>
+      </Menu>
+      {error && (
+        <span
+          role="alert"
+          data-testid={buttonTestId ? buttonTestId + '-error' : undefined}
+          className="text-sm text-destructive"
+        >
+          {ariaLabel}: {error}
+        </span>
+      )}
     </>
   )
 }

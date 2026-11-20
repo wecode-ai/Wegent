@@ -39,7 +39,7 @@ async function switchMode(control, mode) {
 async function assertMode(control, mode) {
   assert.equal(
     await control.command('getAttribute', `[data-testid="general-workbench-mode-${mode}-button"]`, {
-      value: 'aria-pressed',
+      value: 'aria-checked',
     }),
     'true',
     `Workbench mode did not persist as ${mode}`

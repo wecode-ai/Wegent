@@ -1,21 +1,20 @@
-import type { ReactNode } from 'react'
-import { AuthProvider } from '@/features/auth/AuthProvider'
-import { AppearanceProvider } from '@/features/appearance'
-import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
-import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
-import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
-import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
-import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
-import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
-import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
+import { AppearanceProvider } from '@/features/appearance'
+import { AuthProvider } from '@/features/auth/AuthProvider'
+import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
-import { isPopoutWindowRuntime } from './appWindowIdentity'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
+import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
+import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
+import type { ReactNode } from 'react'
 import { AppShell } from './AppShell'
 import { useCurrentPath } from './appLocation'
+import { isPopoutWindowRuntime } from './appWindowIdentity'
 export { WorkspaceTabSurface } from './AppWorkspaceRoutes'
 
 export default function App() {
@@ -37,7 +36,6 @@ export default function App() {
     >
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
-      <GlobalIconButtonTooltip />
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <div className="pointer-events-none fixed inset-0 z-system-popover">

@@ -78,7 +78,7 @@ export function assertFocusIndicatorMetrics(metrics, { checkClipping = false } =
   }
 }
 
-function readFocusMetrics(selector) {
+function readFocusMetrics(selector, focusSelector) {
   return withProjectRenderer(async (client, target) => {
     const value = await client({
       action: 'command',
@@ -89,6 +89,7 @@ function readFocusMetrics(selector) {
         expression: `(() => {
         const element = document.querySelector(${JSON.stringify(selector)})
         if (!element) return null
+        const focusTarget = document.querySelector(${JSON.stringify(focusSelector)})
         const style = getComputedStyle(element)
         const layers = [], clips = [{ x: true, y: true, left: 0, top: 0, right: innerWidth, bottom: innerHeight }]
         let settled = true
@@ -100,7 +101,7 @@ function readFocusMetrics(selector) {
             left: rect.left + node.clientLeft, top: rect.top + node.clientTop,
             right: rect.left + node.clientLeft + node.clientWidth, bottom: rect.top + node.clientTop + node.clientHeight })
         }
-        return { focused: document.activeElement === element && element.matches(':focus-visible'),
+        return { focused: document.activeElement === focusTarget && focusTarget?.matches(':focus-visible'),
           outline: style.outlineColor, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset),
           style: style.outlineStyle, layers, settled, clips, rect: element.getBoundingClientRect().toJSON() }
       })()`,
@@ -110,9 +111,9 @@ function readFocusMetrics(selector) {
   })
 }
 
-export async function assertProjectKeyboardFocus(selector, options) {
+export async function assertProjectKeyboardFocus(selector, { focusSelector = selector, ...options } = {}) {
   const metrics = await waitForValue(
-    () => readFocusMetrics(selector),
+    () => readFocusMetrics(selector, focusSelector),
     value => value?.settled && value.layers.every(layer => layer.opacity === 1),
     'The model popup did not finish its transitions before focus verification',
     DEFAULT_STEP_TIMEOUT_MS

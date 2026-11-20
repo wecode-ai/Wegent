@@ -415,7 +415,7 @@ export async function createDesktopScenario({
             await control.command('waitFor', '[data-testid="plugin-connector-source-dialog"]', {
               text: 'git.three.example',
             })
-            await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+            await control.command('select', '[data-testid="plugin-connector-source-select"]', {
               value: 'oauth',
             })
             await control.command('click', '[data-testid="plugin-connector-source-continue"]')
@@ -548,7 +548,7 @@ export async function createDesktopScenario({
             )
             await control.command('waitFor', '[data-testid="plugin-connection-manage-group:sites"]')
             await control.command('click', '[data-testid="plugin-connection-manage-group:sites"]')
-            await control.command('fill', '[data-testid="plugin-connector-source-select"]', {
+            await control.command('select', '[data-testid="plugin-connector-source-select"]', {
               value: 'mail',
             })
             await waitForValue(

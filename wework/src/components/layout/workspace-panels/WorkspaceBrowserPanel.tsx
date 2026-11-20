@@ -1,29 +1,12 @@
-import { useWorkspaceBrowserPanelSession } from './useWorkspaceBrowserPanelSession'
-import {
-  ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
-  Download,
-  EllipsisVertical,
-  ExternalLink,
-  Globe2,
-  CircleAlert,
-  Loader2,
-  MessageSquarePlus,
-  Pause,
-  Play,
-  RotateCw,
-  Trash2,
-  X,
-} from 'lucide-react'
-import { deviceSurfaceExtension } from '@extensions/device-surface'
-import { TransientNotice } from '@/components/common/TransientNotice'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import { useTranslation } from '@/hooks/useTranslation'
+import { zoomPercentToScaleFactor } from '@/lib/browser-zoom'
 import {
   canUseEmbeddedBrowser,
-  deleteEmbeddedBrowserDownload,
   clearEmbeddedBrowserAnnotations,
+  deleteEmbeddedBrowserDownload,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -33,24 +16,44 @@ import {
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { zoomPercentToScaleFactor } from '@/lib/browser-zoom'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  CircleAlert,
+  Download,
+  EllipsisVertical,
+  ExternalLink,
+  Globe2,
+  Loader2,
+  MessageSquarePlus,
+  Pause,
+  Play,
+  RotateCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { BrowserFindBar } from './browser-find/BrowserFindBar'
 import { BrowserDeviceToolbar } from './BrowserDeviceToolbar'
-import { cn } from '@/lib/utils'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
+import { useWorkspaceBrowserPanelSession } from './useWorkspaceBrowserPanelSession'
 import {
   BrowserToolbarButton,
   OriginalViewEye,
   OriginalViewEyeOff,
 } from './workspaceBrowserPanelChrome'
 import {
-  getFallbackBrowserTitle,
   formatDownloadBytes,
+  getFallbackBrowserTitle,
   shouldShowAgentState,
-  type WorkspaceBrowserPanelProps,
   type BrowserStateUpdate,
+  type WorkspaceBrowserPanelProps,
 } from './workspaceBrowserSessionTypes'
 export function WorkspaceBrowserTabPanel(props: WorkspaceBrowserPanelProps) {
   return (
@@ -254,7 +257,8 @@ function WorkspaceBrowserSession({
                     : t('workbench.browser'),
                 })}
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-browser-annotation-original-view-button"
             aria-pressed={originalViewEnabled}
@@ -282,7 +286,7 @@ function WorkspaceBrowserSession({
                 <OriginalViewEye className="h-4 w-4" />
               )}
             </span>
-          </button>
+          </ControlButton>
           {annotations.length > 0 ? (
             <span
               data-testid="workspace-browser-annotation-count"
@@ -323,7 +327,9 @@ function WorkspaceBrowserSession({
             <RotateCw className="h-4 w-4" />
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
-            <input
+            <ControlInput
+              density="compact"
+              appearance="plain"
               ref={bindAddressInput}
               name="url"
               data-testid="workspace-browser-url-input"
@@ -344,7 +350,7 @@ function WorkspaceBrowserSession({
                 if (currentPageUrl) setAddress(currentPageUrl)
               }}
               placeholder={t('workbench.browser_url_placeholder')}
-              className="workbench-chrome-input h-8 w-full rounded-md border-0 bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:bg-background"
+              className="workbench-chrome-input w-full transition-colors placeholder:text-text-muted focus:bg-background"
             />
           </form>
           <BrowserToolbarButton
@@ -385,7 +391,8 @@ function WorkspaceBrowserSession({
               placement="bottom-end"
               width={240}
               itemClassName="min-h-9 px-2"
-              triggerClassName="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              density="compact"
+              triggerClassName="flex shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
               items={[
                 {
                   label: t('workbench.browser_find_in_page'),
@@ -518,7 +525,9 @@ function WorkspaceBrowserSession({
           </span>
           {agentState?.approval ? (
             <>
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="workspace-browser-agent-approval-approve-button"
                 data-approval-id={agentState.approval.approvalId}
@@ -527,8 +536,10 @@ function WorkspaceBrowserSession({
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 {t('workbench.browser_agent_approval_continue')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="workspace-browser-agent-approval-reject-button"
                 data-approval-id={agentState.approval.approvalId}
@@ -537,10 +548,12 @@ function WorkspaceBrowserSession({
               >
                 <X className="h-3.5 w-3.5" />
                 {t('workbench.browser_agent_approval_cancel')}
-              </button>
+              </ControlButton>
             </>
           ) : agentState?.status === 'paused' ? (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="workspace-browser-agent-resume-button"
               className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
@@ -548,7 +561,7 @@ function WorkspaceBrowserSession({
             >
               <Play className="h-3.5 w-3.5" />
               {t('workbench.browser_agent_resume')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       ) : null}
@@ -561,7 +574,8 @@ function WorkspaceBrowserSession({
             <span className="text-xs font-medium text-text-secondary">
               {t('workbench.browser_downloads')}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-browser-downloads-close"
               aria-label={t('workbench.browser_downloads_close')}
@@ -569,7 +583,7 @@ function WorkspaceBrowserSession({
               onClick={() => setDownloadsOpen(false)}
             >
               <X className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </div>
           {downloads.length === 0 ? (
             <span className="text-xs text-text-muted">
@@ -611,17 +625,19 @@ function WorkspaceBrowserSession({
                         : t(`workbench.browser_download_${download.status}`)}
                     </span>
                     {download.status === 'finished' && download.path ? (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="workspace-browser-download-reveal-button"
                         className="shrink-0 rounded-md px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
                         onClick={() => void revealLocalFile(download.path ?? undefined)}
                       >
                         {fileManagerRevealLabel(t)}
-                      </button>
+                      </ControlButton>
                     ) : null}
                     {downloading ? (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="workspace-browser-download-pause-button"
                         className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -629,11 +645,12 @@ function WorkspaceBrowserSession({
                         onClick={() => void pauseEmbeddedBrowserDownload(download.id)}
                       >
                         <Pause className="h-3.5 w-3.5" />
-                      </button>
+                      </ControlButton>
                     ) : null}
                     {download.status === 'paused' ? (
                       <>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="workspace-browser-download-resume-button"
                           className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -641,16 +658,13 @@ function WorkspaceBrowserSession({
                           onClick={() => void resumeEmbeddedBrowserDownload(download.id)}
                         >
                           <Play className="h-3.5 w-3.5" />
-                        </button>
-                        <button
+                        </ControlButton>
+                        <DeleteIconButton
                           type="button"
                           data-testid="workspace-browser-download-delete-button"
-                          className="shrink-0 rounded-md p-1 text-destructive hover:bg-destructive/10 wework:text-red-500 wework:hover:bg-red-500/10"
                           aria-label={t('workbench.browser_download_delete')}
                           onClick={() => void deleteEmbeddedBrowserDownload(download.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        />
                       </>
                     ) : null}
                   </div>
@@ -703,7 +717,8 @@ function WorkspaceBrowserSession({
                 {downloadPeek.fileName}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-browser-download-peek-dismiss"
               aria-label={t('workbench.browser_download_peek_dismiss')}
@@ -711,12 +726,13 @@ function WorkspaceBrowserSession({
               onClick={() => setDownloadPeek(null)}
             >
               <X className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </div>
           <div className="flex items-center gap-1.5">
             {downloadPeek.status === 'finished' && downloadPeek.path ? (
               <>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-browser-download-peek-open"
                   className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -726,8 +742,9 @@ function WorkspaceBrowserSession({
                   }}
                 >
                   {t('workbench.browser_download_peek_open')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-browser-download-peek-show-in-folder"
                   className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -737,10 +754,11 @@ function WorkspaceBrowserSession({
                   }}
                 >
                   {fileManagerRevealLabel(t)}
-                </button>
+                </ControlButton>
               </>
             ) : null}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-browser-download-peek-view-downloads"
               className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -750,7 +768,7 @@ function WorkspaceBrowserSession({
               }}
             >
               {t('workbench.browser_download_peek_view_downloads')}
-            </button>
+            </ControlButton>
           </div>
         </div>
       ) : null}

@@ -1,8 +1,7 @@
-import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
-import { memo, useState } from 'react'
-import type { ReactNode } from 'react'
-import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
+import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   supportsCloudSessions,
@@ -10,40 +9,43 @@ import {
   supportsRemoteCodeServerSessions,
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
-import {
-  DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
-  LOCAL_WORKSPACE_OPENERS,
-  type LocalWorkspaceOpenerId,
-} from '@/lib/local-workspace-openers'
-import {
-  isLocalTerminalAvailable,
-  openLocalWorkspace,
-  pickLocalWorkspaceOpenerExe,
-} from '@/lib/local-terminal'
-import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
-import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
-import { Tooltip } from '@/components/ui/tooltip'
 import { openExternalUrl } from '@/lib/external-links'
 import {
   getActiveKeybinding,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDE_PANEL_COMMAND,
 } from '@/lib/keybindings'
+import {
+  isLocalTerminalAvailable,
+  openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
+} from '@/lib/local-terminal'
+import {
+  DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
+  LOCAL_WORKSPACE_OPENERS,
+  type LocalWorkspaceOpenerId,
+} from '@/lib/local-workspace-openers'
+import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { cn } from '@/lib/utils'
-import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
-import { WorkspaceToolbarExtensions } from './WorkspaceToolbarExtensions'
-import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
-import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage } from '@/types/workbench'
-import type { WorkspaceTarget } from '@/types/workspace-files'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import {
   resolveWorkspaceOpener,
   setPreferredWorkspaceOpener,
   usePreferredWorkspaceOpener,
 } from '@/lib/workspace-opener-preferences'
+import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkbenchMessage } from '@/types/workbench'
+import type { WorkspaceTarget } from '@/types/workspace-files'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { memo, useState } from 'react'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
+import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
+import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
+import { WorkspaceToolbarExtensions } from './WorkspaceToolbarExtensions'
 
 interface WorkspacePanelActionsProps {
   mode?:
@@ -327,7 +329,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             ideLoading && 'cursor-wait opacity-70'
           )}
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="open-code-server-titlebar-button"
             onClick={() => void handleOpenLocalWorkspace()}
@@ -349,7 +352,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             <span data-testid="open-workspace-location-label" className="whitespace-nowrap">
               {t('workbench.open_workspace_location')}
             </span>
-          </button>
+          </ControlButton>
           <Tooltip
             label={t('workbench.choose_project_ide')}
             side="bottom"
@@ -385,7 +388,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           align="end"
           testId="open-code-server-titlebar-button-tooltip"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="open-code-server-titlebar-button"
             data-workspace-path={normalizedWorkspacePath || undefined}
@@ -403,7 +407,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             ) : (
               <LocalWorkspaceOpenerIcon opener="vscode" className="h-[18px] w-[18px]" />
             )}
-          </button>
+          </ControlButton>
         </Tooltip>
       )}
       {showPrimaryTarget && localWorkspaceEnabled && openers.status === 'error' && (
@@ -421,7 +425,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         <>
           {showRightPanelToggle && rightPanelOpen && (
             <TitlebarTooltip label={rightPanelExpandedTitle} align="end">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="toggle-right-workspace-panel-expanded-button"
                 onClick={onToggleRightPanelExpanded}
@@ -434,7 +439,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 aria-pressed={rightPanelExpanded}
               >
                 {rightPanelExpanded ? <Minimize2 /> : <Maximize2 />}
-              </button>
+              </ControlButton>
             </TitlebarTooltip>
           )}
           {showBottomPanelToggle && (
@@ -443,7 +448,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               shortcut={getActiveKeybinding(OPEN_TERMINAL_COMMAND) ?? 'Command+J'}
               align="end"
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="toggle-bottom-workspace-panel-button"
                 onClick={onToggleBottomPanel}
@@ -454,7 +460,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 aria-label={bottomPanelTitle}
               >
                 <PanelBottom />
-              </button>
+              </ControlButton>
             </TitlebarTooltip>
           )}
           {showRightPanelToggle && (
@@ -463,7 +469,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
               shortcut={getActiveKeybinding(TOGGLE_SIDE_PANEL_COMMAND) ?? 'Alt+Command+B'}
               align="end"
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="toggle-right-workspace-panel-button"
                 onClick={onToggleRightPanel}
@@ -475,7 +482,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 aria-label={rightPanelTitle}
               >
                 <PanelRight />
-              </button>
+              </ControlButton>
             </TitlebarTooltip>
           )}
         </>
@@ -494,12 +501,16 @@ function CodeServerErrorDialog({ message, onClose }: { message: string; onClose:
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        data-testid="code-server-error-dialog"
-        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        kind="alertdialog"
+        onClose={onClose}
+        render={
+          <div
+            data-testid="code-server-error-dialog"
+            className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive wework:bg-red-500/10 wework:text-red-500">
@@ -513,16 +524,18 @@ function CodeServerErrorDialog({ message, onClose }: { message: string; onClose:
           </div>
         </div>
         <div className="mt-5 flex justify-end">
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="close-code-server-error-dialog-button"
             onClick={onClose}
             className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
           >
             {t('workbench.project_ide_error_close')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

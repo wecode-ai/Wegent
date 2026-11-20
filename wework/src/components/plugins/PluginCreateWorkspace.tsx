@@ -1,10 +1,10 @@
-import { X } from 'lucide-react'
-import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type { ProjectWorkControls } from '@/components/chat/ChatInput'
+import { ChatInput } from '@/components/chat/ChatInput'
 import { ComposerSkillIcon } from '@/components/chat/composer/ComposerSkillIcon'
 import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
-import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -12,10 +12,13 @@ import { navigateTo } from '@/lib/navigation'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
 import { beginOperation } from '@/telemetry/operationBus'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { linkedCloudPluginId } from './installedPluginMerge'
 import { toInstalledPluginItem } from './installedPluginPresentation'
 import { createdPluginSlugFromKey, findPackableCreatedPlugin } from './pluginOwnerLocalPackage'
-import { linkedCloudPluginId } from './installedPluginMerge'
 import { createDefaultPluginApi } from './workspace/marketplaceWorkspaceHelpers'
 
 interface PluginCreateWorkspaceProps {
@@ -312,7 +315,8 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
               >
                 <ComposerSkillIcon className="h-4 w-4 shrink-0" />
                 <span>Plugin Creator</span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="plugin-creator-context-dismiss"
                   aria-label={t('workbench.cancel', '取消')}
@@ -320,7 +324,7 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
                   onClick={dismissPluginCreator}
                 >
                   <X className="h-3 w-3" aria-hidden="true" />
-                </button>
+                </ControlButton>
               </span>
             }
             onDismissInputLeadingContext={dismissPluginCreator}

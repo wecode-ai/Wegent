@@ -1,4 +1,16 @@
+import { roleIncludesProject } from '@/api/personalStandIn'
 import { BetaBadge } from '@/components/common/BetaBadge'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo } from '@/types/api'
+import type {
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceStandInSettings,
+} from '@wegent/collaboration'
+import { StandInIcon } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   createAsyncResource,
@@ -7,18 +19,7 @@ import {
 } from '@wegent/chat-core/async-resource'
 import { createStandInPopoverSettingsResource } from './standInPopoverSettingsResource'
 import { createPortal } from 'react-dom'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import type {
-  CollaborationProject,
-  SharedWorkspaceApi,
-  WorkspaceStandInSettings,
-} from '@wegent/collaboration'
-import { roleIncludesProject } from '@/api/personalStandIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
 import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
-import { StandInIcon } from '@wegent/collaboration'
 
 /** Project entries select or create a personally owned stand-in for this project. */
 export function StandInPopover({
@@ -60,7 +61,7 @@ export function StandInPopover({
   const requestClose = () => {
     if (!saving) editorRef.current?.requestClose()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(requestClose, open && !embedded)
+  const dialogRef = useRef<HTMLElement>(null)
   const settingsResource = useMemo(
     () =>
       services?.standInApi && userId != null
@@ -148,7 +149,8 @@ export function StandInPopover({
   if (embedded) return editor
   return (
     <>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="stand-in-open"
         aria-label={t('standIn.title')}
@@ -167,7 +169,7 @@ export function StandInPopover({
             className="h-1.5 w-1.5 rounded-full bg-text-primary"
           />
         )}
-      </button>
+      </ControlButton>
       {open &&
         createPortal(
           <div
@@ -176,17 +178,21 @@ export function StandInPopover({
               if (event.target === event.currentTarget) requestClose()
             }}
           >
-            <section
-              ref={dialogRef}
-              tabIndex={-1}
-              role="dialog"
-              aria-modal="true"
-              aria-label={t('standIn.title')}
-              data-testid="stand-in-dialog"
-              className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
+            <DialogSurface
+              onClose={requestClose}
+              active={open && !embedded}
+              render={
+                <section
+                  ref={dialogRef}
+                  tabIndex={-1}
+                  aria-label={t('standIn.title')}
+                  data-testid="stand-in-dialog"
+                  className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background shadow-lg"
+                />
+              }
             >
               {editor}
-            </section>
+            </DialogSurface>
           </div>,
           document.body
         )}

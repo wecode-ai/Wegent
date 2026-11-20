@@ -1,4 +1,7 @@
 {
+  "homePage": {
+    "workspaceComingSoon": "多平台工作区，敬请期待。"
+  },
   "personalHome": {
     "backToIssues": "返回事项",
     "codeWorkspace": "代码工作区（可选）",
@@ -4484,6 +4487,9 @@
     "remote_task_access_save_failed": "设置保存失败，远程任务访问状态未改变。",
     "agent_creator_environment_automatic": "自动选择项目可用环境",
     "agent_creator_environment_configured": "已指定环境，展开查看",
+    "codex_personality_read_failed": "读取交流风格失败，请重试。",
+    "codex_personality_save_failed": "保存交流风格失败，请重试。",
+    "reorder_item": "调整 {{name}} 的顺序",
     "codex_home_check_title": "检查 Codex 配置",
     "codex_home_check_loading": "正在读取本机配置。您可以重试检查。",
     "codex_home_check_recovery": "请根据下方错误修复本机配置或执行环境，然后重试检查。",

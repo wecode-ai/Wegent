@@ -387,6 +387,7 @@ let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let systemDragPresentationSequence = 0
 let systemDragPresentationId: number | null = null
+let systemDragPresentedAt = 0
 let systemDragPresentationRequested = false
 const currentSystemDragContext = () => ({
   ...systemDragContext,
@@ -590,7 +591,11 @@ app.on('web-contents-created', (_event, contents) => {
         message: redactLog(message).slice(0, 1024),
       })
     }
-    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
+    if (
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      (message.startsWith('[interaction-focus-state]') ||
+        message.startsWith('[desktop-e2e-drag-start] '))
+    )
       console.info(redactLog(message).slice(0, 4096))
     const diagnostic = rendererConsoleDiagnostic({
       e2e: process.env.VITE_WEWORK_E2E === 'true',
@@ -1428,6 +1433,7 @@ function resizePopoutWindow(previousMode: PopoutWindowMode, mode: PopoutWindowMo
 async function showSystemDragPanel(): Promise<number> {
   const presentationId = ++systemDragPresentationSequence
   systemDragPresentationId = presentationId
+  systemDragPresentedAt = Date.now()
   systemDragPresentationRequested = true
   publishSystemDragContext()
   let target: BrowserWindow
@@ -2799,8 +2805,13 @@ async function configureDesktopRuntime(): Promise<void> {
             return owner === systemDragPresentationId
           },
           dismissPopout: () => popoutWindow?.hide(),
-          dismissSystemDragPanel: presentationId => {
-            if (presentationId === null || presentationId !== systemDragPresentationId) return false
+          dismissSystemDragPanel: (presentationId, inputAt) => {
+            if (systemDragPresentationId === null) return false
+            const ownsPresentation =
+              presentationId !== null
+                ? presentationId === systemDragPresentationId
+                : inputAt !== undefined && inputAt >= systemDragPresentedAt
+            if (!ownsPresentation) return false
             // Native dragend may hide before the matching drop request reaches the host.
             // Keep its identity valid for that drop, while cancelling any pending show.
             systemDragPresentationRequested = false
@@ -2845,10 +2856,15 @@ async function configureDesktopRuntime(): Promise<void> {
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()
             ),
-          takePendingSystemDrops: () => {
+          takePendingSystemDrops: windowLabel => {
             const drops = pendingSystemDrops
-            pendingSystemDrops = []
-            return drops
+            if (windowLabel === 'popout-window') {
+              pendingSystemDrops = []
+              return drops
+            }
+            // The Popout Window is opened by the host to receive new-chat drops.
+            pendingSystemDrops = drops.filter(drop => drop.action === 'new-chat')
+            return drops.filter(drop => drop.action !== 'new-chat')
           },
           workspaceWindowSnapshots: () =>
             [...workspaceWindows.entries()].flatMap(([label, target]) =>

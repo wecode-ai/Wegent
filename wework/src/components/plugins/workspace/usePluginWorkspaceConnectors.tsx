@@ -59,6 +59,7 @@ export function usePluginWorkspaceConnectors({
   selectedPluginId,
   setPluginDetailActionError,
   localConnectorAuthBySlug,
+  requestConfirmation,
 }: Pick<
   PluginWorkspaceServices,
   | 'operations'
@@ -74,7 +75,7 @@ export function usePluginWorkspaceConnectors({
   | 'selectedPluginId'
   | 'setPluginDetailActionError'
   | 'localConnectorAuthBySlug'
->) {
+> & { requestConfirmation(message: string): Promise<boolean> }) {
   const capturePluginScope = catalog.captureScope
   const [pendingCodexAuthorization, setPendingCodexAuthorization] = useState<{
     app: LocalDeviceApp
@@ -300,7 +301,7 @@ export function usePluginWorkspaceConnectors({
       }
 
       if (action === 'logout') {
-        const confirmed = window.confirm(
+        const confirmed = await requestConfirmation(
           t(
             githubCli
               ? 'workbench.github_cli_logout_confirm'
@@ -311,7 +312,7 @@ export function usePluginWorkspaceConnectors({
             }
           )
         )
-        if (!confirmed) return
+        if (!confirmed || !detailIsCurrent()) return
         connectorHealth.clearError()
         setPluginDetailActionError(null)
         try {

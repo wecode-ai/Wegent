@@ -1,15 +1,16 @@
-import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import type { StandInExecutorApi } from '@/api/standIn'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import {
   createAsyncResource,
   getIdleResourceSnapshot,
   subscribeIdleResource,
 } from '@wegent/chat-core/async-resource'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInExecutorApi } from '@/api/standIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { Button } from '@/components/ui/button'
-import { navigateTo } from '@/lib/navigation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
 
 export function StandInHomeSetupPrompt() {
   const { t } = useTranslation('common')
@@ -65,7 +66,8 @@ export function StandInHomeSetup({
     !api || failed ? (
       <div role="alert" className="p-5 text-sm text-error">
         {failed ? getStandInErrorMessage(snapshot.error) : t('personalHome.workUnavailable')}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="personal-home-setup-retry"
           className="ml-2 min-h-11 underline md:min-h-8"
@@ -74,7 +76,7 @@ export function StandInHomeSetup({
           }}
         >
           {t('standIn.reload')}
-        </button>
+        </ControlButton>
       </div>
     ) : null
   if (!settings && error) return error

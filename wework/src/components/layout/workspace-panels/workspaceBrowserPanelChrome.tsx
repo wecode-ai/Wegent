@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { ReactNode } from 'react'
 export function BrowserToolbarButton({
   children,
@@ -13,7 +14,8 @@ export function BrowserToolbarButton({
   testId: string
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       disabled={disabled}
@@ -23,7 +25,7 @@ export function BrowserToolbarButton({
       title={label}
     >
       {children}
-    </button>
+    </ControlButton>
   )
 }
 export const ORIGINAL_VIEW_EYE_PATH =

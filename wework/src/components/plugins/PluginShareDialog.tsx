@@ -1,9 +1,11 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { X } from 'lucide-react'
-import { useState } from 'react'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { PluginShareTargetSearch } from './PluginShareTargetSearch'
 
 interface PluginShareDialogProps {
@@ -35,13 +37,7 @@ export function PluginShareDialog({
   const [scope, setScope] = useState(access.scope)
   const [targets, setTargets] = useState(access.targets)
   const [allowCopy, setAllowCopy] = useState(access.allowCopy)
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    () => {
-      if (!saving) onClose()
-    },
-    true,
-    '[data-testid="plugin-share-save"]:not([disabled])'
-  )
+  const dialogRef = useRef<HTMLElement>(null)
 
   const addTarget = (target: PluginAccessTarget) => {
     setTargets(current =>
@@ -55,13 +51,19 @@ export function PluginShareDialog({
 
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center p-0 sm:items-center sm:p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugin-share-title"
-        data-testid="plugin-share-dialog"
-        className="plugin-dialog-surface w-full max-w-lg rounded-b-none p-5 sm:rounded-b-[20px]"
+      <DialogSurface
+        onClose={() => {
+          if (!saving) onClose()
+        }}
+        initialFocus={'[data-testid="plugin-share-save"]:not([disabled])'}
+        render={
+          <section
+            ref={dialogRef}
+            aria-labelledby="plugin-share-title"
+            data-testid="plugin-share-dialog"
+            className="plugin-dialog-surface w-full max-w-lg rounded-b-none p-5 sm:rounded-b-[20px]"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4">
           <div>
@@ -70,7 +72,8 @@ export function PluginShareDialog({
             </h2>
             <p className="mt-1 text-sm text-text-secondary">{pluginName}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="plugin-share-close"
             aria-label={t('common.close', '关闭')}
@@ -78,11 +81,12 @@ export function PluginShareDialog({
             onClick={onClose}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
 
         <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="plugin-share-scope-private"
             className={`h-10 rounded-lg text-sm ${
@@ -96,8 +100,9 @@ export function PluginShareDialog({
             }}
           >
             {t('workbench.plugins_share_private', '仅自己')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="plugin-share-scope-restricted"
             className={`h-10 rounded-lg text-sm ${
@@ -108,7 +113,7 @@ export function PluginShareDialog({
             onClick={() => setScope('restricted')}
           >
             {t('workbench.plugins_share_restricted', '指定成员')}
-          </button>
+          </ControlButton>
         </div>
 
         {scope === 'restricted' && (
@@ -126,7 +131,8 @@ export function PluginShareDialog({
                   className="inline-flex h-8 items-center gap-1 rounded-lg bg-surface pl-2.5 pr-1 text-sm"
                 >
                   {target.displayName}
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     aria-label={`${t('common.remove', '移除')} ${target.displayName}`}
                     className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
@@ -141,7 +147,7 @@ export function PluginShareDialog({
                     }
                   >
                     <X className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 </span>
               ))}
             </div>
@@ -155,12 +161,11 @@ export function PluginShareDialog({
                   {t('workbench.plugins_share_allow_copy_hint', '接收者可创建独立的本地副本')}
                 </small>
               </span>
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
                 className="h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                onChange={event => setAllowCopy(event.target.checked)}
+                onCheckedChange={checked => setAllowCopy(checked === true)}
               />
             </label>
           </div>
@@ -178,14 +183,17 @@ export function PluginShareDialog({
           </p>
         )}
         <footer className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="h-10 rounded-lg px-4 text-sm hover:bg-surface"
             onClick={onClose}
           >
             {t('common.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="plugin-share-save"
             disabled={saving || (scope === 'restricted' && targets.length === 0)}
@@ -195,9 +203,9 @@ export function PluginShareDialog({
             }
           >
             {saving ? t('workbench.plugins_share_saving', '保存中…') : t('common.save', '保存')}
-          </button>
+          </ControlButton>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

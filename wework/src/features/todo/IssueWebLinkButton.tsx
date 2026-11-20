@@ -1,9 +1,10 @@
-import { useContext, useState } from 'react'
-import { Check, Link } from 'lucide-react'
 import type { CloudProject } from '@/api/deliveries'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Link } from 'lucide-react'
+import { useContext, useState } from 'react'
 
 export function IssueWebLinkButton({
   project,
@@ -31,7 +32,8 @@ export function IssueWebLinkButton({
         : t('todo.copy_web_link', '复制网页链接')
 
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="issue-copy-web-link"
       aria-label={label}
@@ -60,6 +62,6 @@ export function IssueWebLinkButton({
       <span className="sr-only" role="status">
         {result ? label : ''}
       </span>
-    </button>
+    </ControlButton>
   )
 }

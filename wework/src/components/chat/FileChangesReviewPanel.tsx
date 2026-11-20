@@ -1,3 +1,15 @@
+import type { GitPatchAction } from '@/api/environment'
+import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
+import { createTransientFeedback } from '@/components/common/transientFeedback'
+import { useDialogRequests } from '@/components/common/useDialogRequests'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import type { CodeCommentContext } from '@/types/workspace-files'
+import { Virtualizer } from '@pierre/diffs/react'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { useScrollRequest } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowRight,
   Check,
@@ -15,25 +27,11 @@ import {
   Rows3,
   WrapText,
 } from 'lucide-react'
-import { Virtualizer } from '@pierre/diffs/react'
-import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import type { CSSProperties, RefObject } from 'react'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import { useDOMEvent, useScrollRequest } from '@wegent/collaboration/dom-events'
-import { createTransientFeedback } from '@/components/common/transientFeedback'
-import type { CodeCommentContext } from '@/types/workspace-files'
-import type { GitPatchAction } from '@/api/environment'
-import {
-  getDiffStats,
-  getSectionsDiffStats,
-  parseUnifiedDiff,
-  type DiffFileSection,
-} from './parseUnifiedDiff'
+import { FileChangesPatchDiff } from './FileChangesPatchDiff'
 import { DiffCommentComposer, ReviewPatchActionButton } from './fileChangesReviewInteractions'
+import { ReviewFileTree } from './FileChangesReviewTree'
 import {
   ensureTrailingNewline,
   fileNameFromPath,
@@ -42,8 +40,12 @@ import {
   type DiffCommentSelection,
   type FileChangesReviewMode,
 } from './fileChangesReviewUtils'
-import { FileChangesPatchDiff } from './FileChangesPatchDiff'
-import { ReviewFileTree } from './FileChangesReviewTree'
+import {
+  getDiffStats,
+  getSectionsDiffStats,
+  parseUnifiedDiff,
+  type DiffFileSection,
+} from './parseUnifiedDiff'
 
 const COPY_FEEDBACK_DURATION_MS = 1500
 const REFRESH_FEEDBACK_DURATION_MS = 600
@@ -94,6 +96,11 @@ export function FileChangesReviewPanel({
   onAddCodeComment,
 }: FileChangesReviewPanelProps) {
   const { t } = useTranslation('chat')
+  const { t: dialogTranslate } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => dialogTranslate(key, { defaultValue: fallback })
+  )
+
   const appearance = useOptionalAppearance()
   const codeLineHeight = Math.round(
     (appearance?.appearance.codeFontSize ?? defaultAppearance.codeFontSize) * 1.8
@@ -170,7 +177,7 @@ export function FileChangesReviewPanel({
       if (!onApplyPatch || pendingAction) return
       if (
         action === 'revert' &&
-        !window.confirm(t('file_changes.confirm_partial_revert_description'))
+        !(await requestConfirmation(t('file_changes.confirm_partial_revert_description')))
       ) {
         return
       }
@@ -184,7 +191,7 @@ export function FileChangesReviewPanel({
         setPendingAction(null)
       }
     },
-    [onApplyPatch, pendingAction, t]
+    [onApplyPatch, pendingAction, t, requestConfirmation]
   )
 
   const toggleSectionCollapsed = (section: DiffFileSection, index: number) => {
@@ -215,129 +222,135 @@ export function FileChangesReviewPanel({
     : undefined
 
   return (
-    <div
-      data-testid="file-changes-review-panel"
-      data-theme={themeType}
-      className={cn('min-h-0 flex-1 overflow-hidden bg-background', className)}
-    >
-      {loading ? (
-        <p className="py-8 text-center text-sm text-text-muted">{t('file_changes.loading_diff')}</p>
-      ) : error ? (
-        <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive wework:bg-red-50 wework:text-red-700">
-          {error}
-        </p>
-      ) : (
-        <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <ReviewToolbar
-            title={reviewTitle}
-            branchName={branchName}
-            targetBranchName={targetBranchName}
-            viewOptions={viewOptions}
-            additions={diffStats.additions}
-            deletions={diffStats.deletions}
-            wrapLines={wrapLines}
-            hunksCollapsed={hunksCollapsed}
-            fileTreeVisible={fileTreeVisible}
-            diffStyle={diffStyle}
-            canRefresh={Boolean(onRefresh)}
-            refreshing={refreshFeedbackActive}
-            onRefresh={refresh}
-            onToggleWrap={() => setWrapLines(value => !value)}
-            onToggleHunks={() => setHunksCollapsed(value => !value)}
-            onToggleFileTree={() => setFileTreeVisible(value => !value)}
-            onToggleDiffStyle={() =>
-              setDiffStyle(current => (current === 'unified' ? 'split' : 'unified'))
-            }
-            gitApplyCommandCopied={gitApplyCommandCopied}
-            onCopyGitApplyCommand={copyGitApplyCommand}
-          />
-          {actionError ? (
-            <p
-              role="alert"
-              data-testid="file-changes-review-action-error"
-              className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-700"
-            >
-              {actionError}
-            </p>
-          ) : null}
-          <div
-            data-testid="file-changes-review-content"
-            className="relative flex min-h-0 flex-1 overflow-hidden"
-          >
-            {sections.length === 0 ? (
-              <div
-                data-testid="file-changes-review-empty"
-                className="flex min-w-0 flex-1 items-center justify-center px-4 py-8 text-center text-sm text-text-muted"
+    <>
+      {' '}
+      {requestDialogs}{' '}
+      <div
+        data-testid="file-changes-review-panel"
+        data-theme={themeType}
+        className={cn('min-h-0 flex-1 overflow-hidden bg-background', className)}
+      >
+        {loading ? (
+          <p className="py-8 text-center text-sm text-text-muted">
+            {t('file_changes.loading_diff')}
+          </p>
+        ) : error ? (
+          <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive wework:bg-red-50 wework:text-red-700">
+            {error}
+          </p>
+        ) : (
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <ReviewToolbar
+              title={reviewTitle}
+              branchName={branchName}
+              targetBranchName={targetBranchName}
+              viewOptions={viewOptions}
+              additions={diffStats.additions}
+              deletions={diffStats.deletions}
+              wrapLines={wrapLines}
+              hunksCollapsed={hunksCollapsed}
+              fileTreeVisible={fileTreeVisible}
+              diffStyle={diffStyle}
+              canRefresh={Boolean(onRefresh)}
+              refreshing={refreshFeedbackActive}
+              onRefresh={refresh}
+              onToggleWrap={() => setWrapLines(value => !value)}
+              onToggleHunks={() => setHunksCollapsed(value => !value)}
+              onToggleFileTree={() => setFileTreeVisible(value => !value)}
+              onToggleDiffStyle={() =>
+                setDiffStyle(current => (current === 'unified' ? 'split' : 'unified'))
+              }
+              gitApplyCommandCopied={gitApplyCommandCopied}
+              onCopyGitApplyCommand={copyGitApplyCommand}
+            />
+            {actionError ? (
+              <p
+                role="alert"
+                data-testid="file-changes-review-action-error"
+                className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-700"
               >
-                {t('file_changes.empty_diff')}
-              </div>
-            ) : (
-              <AllDiffSections
-                codeLineHeight={codeLineHeight}
-                sections={sections}
-                ariaLabel={t('file_changes.all_files_diff_label')}
-                wrapLines={wrapLines}
-                diffLinesRef={diffLinesRef}
-                diffStyle={diffStyle}
-                hunksCollapsed={hunksCollapsed}
-                collapsedSections={collapsedSections}
-                expandFileLabel={t('file_changes.actions.expand_file_diff')}
-                collapseFileLabel={t('file_changes.actions.collapse_file_diff')}
-                onToggleSectionCollapsed={toggleSectionCollapsed}
-                reviewMode={reviewMode}
-                pendingAction={pendingAction}
-                onApplyPatch={applyPatch}
-                onOpenSourceFile={onOpenSourceFile}
-                canComment={Boolean(onAddCodeComment)}
-                commentSelection={commentSelection}
-                onCommentSelectionChange={selection => {
-                  // A typed draft keeps its selection until it is cancelled or added.
-                  if (comment.trim()) return
-                  setCommentSelection(selection)
-                  setComment('')
-                }}
-                themeType={themeType}
-              />
-            )}
-            {sections.length > 0 && (
-              <ReviewFileTree
-                visible={fileTreeVisible}
-                selectedSection={selectedSection}
-                sections={sections}
-                onSelectSection={selectSection}
-              />
-            )}
-            {commentSelection ? (
-              <DiffCommentComposer
-                selection={commentSelection}
-                comment={comment}
-                onCommentChange={setComment}
-                onCancel={() => {
-                  setCommentSelection(null)
-                  setComment('')
-                }}
-                onSubmit={() => {
-                  if (!onAddCodeComment || !comment.trim()) return
-                  onAddCodeComment({
-                    id: `code-comment-${Date.now()}`,
-                    source: 'code_selection',
-                    filePath: commentSelection.path,
-                    fileName: fileNameFromPath(commentSelection.path),
-                    startLine: commentSelection.startLine,
-                    endLine: commentSelection.endLine,
-                    selectedText: commentSelection.selectedText,
-                    comment: comment.trim(),
-                    createdAt: new Date().toISOString(),
-                  })
-                  setCommentSelection(null)
-                  setComment('')
-                }}
-              />
+                {actionError}
+              </p>
             ) : null}
+            <div
+              data-testid="file-changes-review-content"
+              className="relative flex min-h-0 flex-1 overflow-hidden"
+            >
+              {sections.length === 0 ? (
+                <div
+                  data-testid="file-changes-review-empty"
+                  className="flex min-w-0 flex-1 items-center justify-center px-4 py-8 text-center text-sm text-text-muted"
+                >
+                  {t('file_changes.empty_diff')}
+                </div>
+              ) : (
+                <AllDiffSections
+                  codeLineHeight={codeLineHeight}
+                  sections={sections}
+                  ariaLabel={t('file_changes.all_files_diff_label')}
+                  wrapLines={wrapLines}
+                  diffLinesRef={diffLinesRef}
+                  diffStyle={diffStyle}
+                  hunksCollapsed={hunksCollapsed}
+                  collapsedSections={collapsedSections}
+                  expandFileLabel={t('file_changes.actions.expand_file_diff')}
+                  collapseFileLabel={t('file_changes.actions.collapse_file_diff')}
+                  onToggleSectionCollapsed={toggleSectionCollapsed}
+                  reviewMode={reviewMode}
+                  pendingAction={pendingAction}
+                  onApplyPatch={applyPatch}
+                  onOpenSourceFile={onOpenSourceFile}
+                  canComment={Boolean(onAddCodeComment)}
+                  commentSelection={commentSelection}
+                  onCommentSelectionChange={selection => {
+                    // A typed draft keeps its selection until it is cancelled or added.
+                    if (comment.trim()) return
+                    setCommentSelection(selection)
+                    setComment('')
+                  }}
+                  themeType={themeType}
+                />
+              )}
+              {sections.length > 0 && (
+                <ReviewFileTree
+                  visible={fileTreeVisible}
+                  selectedSection={selectedSection}
+                  sections={sections}
+                  onSelectSection={selectSection}
+                />
+              )}
+              {commentSelection ? (
+                <DiffCommentComposer
+                  selection={commentSelection}
+                  comment={comment}
+                  onCommentChange={setComment}
+                  onCancel={() => {
+                    setCommentSelection(null)
+                    setComment('')
+                  }}
+                  onSubmit={() => {
+                    if (!onAddCodeComment || !comment.trim()) return
+                    onAddCodeComment({
+                      id: `code-comment-${Date.now()}`,
+                      source: 'code_selection',
+                      filePath: commentSelection.path,
+                      fileName: fileNameFromPath(commentSelection.path),
+                      startLine: commentSelection.startLine,
+                      endLine: commentSelection.endLine,
+                      selectedText: commentSelection.selectedText,
+                      comment: comment.trim(),
+                      createdAt: new Date().toISOString(),
+                    })
+                    setCommentSelection(null)
+                    setComment('')
+                  }}
+                />
+              ) : null}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>{' '}
+    </>
   )
 }
 
@@ -383,9 +396,6 @@ function ReviewToolbar({
   onCopyGitApplyCommand: () => void
 }) {
   const { t } = useTranslation('chat')
-  const [menuOpen, setMenuOpen] = useState(false)
-  const switcherRef = useRef<HTMLDivElement>(null)
-  const switcherButtonRef = useRef<HTMLButtonElement>(null)
   const sourceBranchLabel = branchName?.trim() || t('file_changes.branch_unknown')
   const targetBranchLabel = targetBranchName?.trim()
   const hasBranchContext = Boolean(branchName?.trim() || targetBranchName?.trim())
@@ -394,24 +404,6 @@ function ReviewToolbar({
     (hasBranchContext ? t('file_changes.branch_label') : t('file_changes.changes_label'))
   const canSwitchView = Boolean(viewOptions?.length)
 
-  useEscapeKey(
-    () => {
-      setMenuOpen(false)
-      switcherButtonRef.current?.focus()
-    },
-    menuOpen,
-    switcherRef
-  )
-
-  useDOMEvent<PointerEvent>(
-    'document',
-    'pointerdown',
-    event => {
-      if (!switcherRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    },
-    { enabled: menuOpen }
-  )
-
   return (
     <div
       data-testid="file-changes-review-toolbar"
@@ -419,48 +411,22 @@ function ReviewToolbar({
     >
       <div className="flex min-h-8 items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium text-text-primary">
-          <div ref={switcherRef} className="relative shrink-0">
+          <div className="relative shrink-0">
             {canSwitchView ? (
-              <>
-                <button
-                  ref={switcherButtonRef}
-                  type="button"
-                  data-testid="review-view-switcher-button"
-                  aria-haspopup="menu"
-                  aria-expanded={menuOpen}
-                  onClick={() => setMenuOpen(open => !open)}
-                  className="flex h-8 items-center gap-1 rounded-md bg-muted px-2 text-xs font-medium text-text-primary transition-colors hover:bg-muted/80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40"
-                >
-                  <span>{toolbarTitle}</span>
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
-                {menuOpen ? (
-                  <div
-                    data-testid="review-view-switcher-menu"
-                    role="menu"
-                    className="absolute left-0 top-full z-popover mt-1 w-40 overflow-hidden rounded-lg border border-border bg-background py-1 text-xs shadow-lg"
-                  >
-                    {viewOptions?.map(option => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={option.active}
-                        disabled={option.disabled}
-                        data-testid="review-view-switcher-option"
-                        onClick={() => {
-                          setMenuOpen(false)
-                          option.onSelect()
-                        }}
-                        className="flex h-8 w-full items-center gap-2 px-2.5 text-left font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                        {option.active ? <Check className="h-4 w-4 shrink-0" /> : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </>
+              <SelectField
+                value={viewOptions?.find(option => option.active)?.id ?? ''}
+                onChange={id => viewOptions?.find(option => option.id === id)?.onSelect()}
+                testId="review-view-switcher-button"
+                menuTestId="review-view-switcher-menu"
+                accessibleLabel={toolbarTitle}
+                triggerContent={toolbarTitle}
+                options={(viewOptions ?? []).map(option => ({
+                  value: option.id,
+                  label: option.label,
+                  disabled: option.disabled,
+                  testId: 'review-view-switcher-option',
+                }))}
+              />
             ) : (
               <span className="shrink-0">{toolbarTitle}</span>
             )}
@@ -572,7 +538,8 @@ function ToolbarButton({
   iconClassName?: string
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       aria-label={label}
@@ -586,7 +553,7 @@ function ToolbarButton({
       )}
     >
       <Icon className={cn('h-4 w-4', iconClassName)} />
-    </button>
+    </ControlButton>
   )
 }
 
@@ -750,7 +717,8 @@ function FileDiffSection({
       className="group/file-diff overflow-clip border-b border-border bg-background last:border-b-0"
     >
       <div className="group/diff-header sticky top-0 z-10 flex h-8 items-center gap-1 border-b border-border bg-background px-2 text-xs font-medium text-text-primary">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="file-changes-review-file-diff-toggle"
           aria-expanded={!collapsed}
@@ -766,9 +734,10 @@ function FileDiffSection({
             <ChevronDown className="h-3.5 w-3.5 text-text-muted" />
           )}
           <span className="sr-only">{section.path}</span>
-        </button>
+        </ControlButton>
         <FileText className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="file-changes-review-open-source-button"
           title={section.path}
@@ -776,7 +745,7 @@ function FileDiffSection({
           className="min-w-0 flex-1 truncate rounded px-1 text-left hover:bg-muted hover:underline"
         >
           {section.path}
-        </button>
+        </ControlButton>
         <span className="shrink-0 font-normal text-diff-added wework:text-green-600">
           +{stats.additions}
         </span>

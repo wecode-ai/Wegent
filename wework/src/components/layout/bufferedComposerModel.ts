@@ -9,6 +9,10 @@ export const BUFFERED_COMPOSER_FOCUS_GUARD = {
   },
   guardModalFocus: true,
 }
+export const BUFFERED_COMPOSER_AUTO_FOCUS_GUARD = {
+  ...BUFFERED_COMPOSER_FOCUS_GUARD,
+  onlyFromBodyOrTarget: true,
+}
 export interface BufferedComposerInput {
   value: string
   scopeKey?: string
@@ -344,20 +348,11 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
     if (stopFocus) return
     stopFocus = subscribeMainWindowFocus(focused => {
       if (!focused || !input.autoFocus || input.disabled) return
-      const target = composerRef.current
-      const active = document.activeElement
-      if (
-        active &&
-        active !== document.body &&
-        active !== document.documentElement &&
-        active !== target?.element
-      )
-        return
       if (focusFrame !== undefined) window.cancelAnimationFrame(focusFrame)
       focusFrame = window.requestAnimationFrame(() => {
         focusFrame = undefined
         if (!input.autoFocus || input.disabled) return
-        focusEditorTarget(composerRef.current, BUFFERED_COMPOSER_FOCUS_GUARD)
+        focusEditorTarget(composerRef.current, BUFFERED_COMPOSER_AUTO_FOCUS_GUARD)
       })
     })
   }

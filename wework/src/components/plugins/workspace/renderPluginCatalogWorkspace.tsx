@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { PluginReconciliationStatus } from '../PluginReconciliationStatus'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
@@ -136,7 +137,8 @@ export function renderPluginCatalogWorkspace({
             className="flex w-full max-w-[420px] shrink-0 flex-col items-end gap-2 sm:w-auto"
           >
             <div className="flex items-center gap-2 md:gap-[9px]">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="plugins-refresh-button"
                 data-reconciling={isReconcilingPlugins}
@@ -154,13 +156,12 @@ export function renderPluginCatalogWorkspace({
                 <RefreshCw
                   className={['h-4 w-4', isCatalogRefreshBusy ? 'animate-spin' : ''].join(' ')}
                 />
-              </button>
+              </ControlButton>
               <PluginCreateMenu
                 isOpen={isCreateMenuOpen}
-                onToggle={() => setIsCreateMenuOpen(previous => !previous)}
+                onOpenChange={setIsCreateMenuOpen}
                 onCreatePlugin={openPluginCreator}
                 onImportPlugin={() => {
-                  setIsCreateMenuOpen(false)
                   setShowPluginImportDialog(true)
                 }}
                 onAddMarket={() => {
@@ -168,7 +169,8 @@ export function renderPluginCatalogWorkspace({
                   setShowAddMarketDialog(true)
                 }}
               />
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="plugins-manage-button"
                 className="plugin-market-action-button"
@@ -176,7 +178,7 @@ export function renderPluginCatalogWorkspace({
               >
                 <Settings2 className="h-[17px] w-[17px]" aria-hidden="true" />
                 {t('workbench.plugins_manage_plugins', '管理插件')}
-              </button>
+              </ControlButton>
             </div>
             {isReconcilingPlugins && (
               <PluginReconciliationStatus

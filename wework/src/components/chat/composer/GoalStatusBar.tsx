@@ -1,10 +1,12 @@
-import { useState } from 'react'
-import { useClock } from '@wegent/collaboration/clock'
-import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
 import type { ConnectionGoalWaitState } from '@/lib/runtime-connection-events'
+import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
+import { useClock } from '@wegent/collaboration/clock'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CircleDot, Pause, Pencil, Play, Target } from 'lucide-react'
+import { useState } from 'react'
 
 interface GoalStatusBarProps {
   goal: RuntimeGoal
@@ -113,7 +115,8 @@ export function GoalStatusBar({
         data-testid="goal-status-details"
         className="flex max-w-0 shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-80 group-hover:opacity-100 group-focus-within:max-w-80 group-focus-within:opacity-100"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="edit-goal-button"
           onClick={onEditGoal}
@@ -123,21 +126,20 @@ export function GoalStatusBar({
           title={t('workbench.goal_edit', '编辑目标')}
         >
           <Pencil className="h-3.5 w-3.5" />
-        </button>
-        <button
+        </ControlButton>
+        <DeleteIconButton
           type="button"
           data-testid="clear-goal-button"
           onClick={onClearGoal}
           disabled={!onClearGoal}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={t('workbench.goal_clear', '删除目标')}
           title={t('workbench.goal_clear', '删除目标')}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+          density="compact"
+        />
       </div>
       {canToggle && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
           onClick={toggleAction}
@@ -166,7 +168,7 @@ export function GoalStatusBar({
               />
             </span>
           )}
-        </button>
+        </ControlButton>
       )}
     </div>
   )

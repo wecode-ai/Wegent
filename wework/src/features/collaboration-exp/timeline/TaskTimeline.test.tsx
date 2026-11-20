@@ -70,10 +70,10 @@ it('keeps background collapsed and presents the current reader question after th
       onRetry={vi.fn()}
     />
   )
-  const background = view.getByTestId('collaboration-exp-background')
-  expect(background).not.toHaveAttribute('open')
-  fireEvent.click(background.querySelector('summary')!)
-  expect(background).toHaveAttribute('open')
+  const backgroundToggle = view.getByTestId('task-timeline-toggle')
+  expect(backgroundToggle).toHaveAttribute('aria-expanded', 'false')
+  fireEvent.click(backgroundToggle)
+  expect(backgroundToggle).toHaveAttribute('aria-expanded', 'true')
   expect(view.getByText('Task background')).toBeVisible()
   const turn = view.getByTestId('collaboration-exp-current-turn')
   expect(turn).toHaveTextContent('Approve the actual task scope?')

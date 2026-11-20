@@ -6,16 +6,27 @@ export function useExperiencePaneWidth(container: RefObject<HTMLDivElement | nul
   useLayoutEffect(() => {
     const element = container.current
     if (!element) return
+    let frame = 0
     const measure = () => {
       setWidth(element.getBoundingClientRect().width || window.innerWidth)
     }
+    const scheduleMeasure = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        measure()
+      })
+    }
     measure()
-    const observer = new ResizeObserver(measure)
+    // Pane visibility can change when publishing width. Apply that change
+    // outside the ResizeObserver delivery that measured it.
+    const observer = new ResizeObserver(scheduleMeasure)
     observer.observe(element)
-    window.addEventListener('resize', measure)
+    window.addEventListener('resize', scheduleMeasure)
     return () => {
       observer.disconnect()
-      window.removeEventListener('resize', measure)
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', scheduleMeasure)
     }
   }, [container])
 

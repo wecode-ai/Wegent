@@ -1,15 +1,21 @@
-import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { SettingsSwitch } from '@/components/settings/settings-ui'
-import { ChevronDown, Folder } from 'lucide-react'
-import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInHandlingPolicy, StandInProjectRef, StandInRole } from '@/api/personalStandIn'
 import { roleSelectsProject, standInPolicy } from '@/api/personalStandIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { TagEditor, createTagDraft, type TagDraftStore } from '@wegent/collaboration'
-import { StandInProcessingSettings } from './StandInProcessingSettings'
-import { useImperativeHandle, useState, useSyncExternalStore, type Ref } from 'react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { TagEditor, createTagDraft, type TagDraftStore } from '@wegent/collaboration'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { Folder } from 'lucide-react'
+import { useImperativeHandle, useState, useSyncExternalStore, type Ref } from 'react'
+import { StandInConnectionHeader } from './StandInConnectionHeader'
+import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
 export interface StandInProjectNavigationHandle extends AutomationNavigationHandle {
@@ -95,13 +101,12 @@ export function StandInConnections({
           {t('standIn.workspace.connection_scope')}
         </legend>
         <label className="flex min-h-11 items-start gap-3 md:min-h-9">
-          <input
-            type="checkbox"
+          <Checkbox
             className="mt-1 accent-text-primary"
             data-testid="stand-in-all-projects"
             checked={source.allProjects}
             disabled={disabled}
-            onChange={event => setSource({ allProjects: event.target.checked })}
+            onCheckedChange={checked => setSource({ allProjects: checked === true })}
           />
           <span>
             {t('standIn.personal.all_projects')}
@@ -128,8 +133,7 @@ export function StandInConnections({
                 className={`flex min-h-11 min-w-0 items-center gap-3 rounded-md px-2 md:min-h-9 ${project.id === focusedProjectId ? 'bg-muted' : ''}`}
               >
                 <label className="flex min-h-11 min-w-0 flex-1 items-center gap-3 md:min-h-9">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     className="accent-text-primary"
                     data-testid={`stand-in-connect-project-${project.id}`}
                     aria-label={project.name}
@@ -140,7 +144,7 @@ export function StandInConnections({
                         project.project_store === 'local' &&
                         !roleSelectsProject(role, ref(project)))
                     }
-                    onChange={event => toggleProject(project, event.target.checked)}
+                    onCheckedChange={checked => toggleProject(project, checked === true)}
                   />
                   <span className="min-w-0 flex-1 break-words">{project.name}</span>
                   <span className="shrink-0 text-xs text-text-secondary">
@@ -163,44 +167,44 @@ export function StandInConnections({
             </p>
           )}
         </div>
-        <details
+        <CollapsibleRoot
           className="group border-t border-border pt-3"
-          open={source.tags.length ? true : undefined}
+          defaultOpen={source.tags.length ? true : undefined}
         >
-          <summary
+          <CollapsibleTrigger
             className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
             data-testid="stand-in-source-tags-toggle"
           >
             <span className="min-w-0 flex-1 font-medium">{t('standIn.personal.limit_tags')}</span>
             <span className="rounded-md border border-border bg-background px-2 py-1">
-              <span className="group-open:hidden">{t('standIn.workspace.processing_edit')}</span>
-              <span className="hidden group-open:inline">
+              <span className="group-data-[open]:hidden">
+                {t('standIn.workspace.processing_edit')}
+              </span>
+              <span className="hidden group-data-[open]:inline">
                 {t('standIn.workspace.processing_hide')}
               </span>
             </span>
-            <ChevronDown
-              aria-hidden="true"
-              className="h-4 w-4 text-text-secondary group-open:rotate-180"
-            />
-          </summary>
-          <div className="mt-2 rounded-md border border-border p-2">
-            <TagEditor
-              key={draftVersion}
-              tags={source.tags}
-              onChange={tags => setSource({ tags })}
-              draftStore={tagDraft}
-              disabled={disabled}
-              suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
-              placeholder={t('standIn.personal.add_tag')}
-              lengthErrorLabel={t('standIn.personal.tag_too_long')}
-              removeLabel={tag => t('standIn.personal.remove_tag', { tag })}
-              testIdPrefix="stand-in-connection-tags"
-            />
-          </div>
-          <p className="mt-2 text-xs text-text-secondary">
-            {t('standIn.personal.limit_tags_help')}
-          </p>
-        </details>
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <div className="mt-2 rounded-md border border-border p-2">
+              <TagEditor
+                key={draftVersion}
+                tags={source.tags}
+                onChange={tags => setSource({ tags })}
+                draftStore={tagDraft}
+                disabled={disabled}
+                suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
+                placeholder={t('standIn.personal.add_tag')}
+                lengthErrorLabel={t('standIn.personal.tag_too_long')}
+                removeLabel={tag => t('standIn.personal.remove_tag', { tag })}
+                testIdPrefix="stand-in-connection-tags"
+              />
+            </div>
+            <p className="mt-2 text-xs text-text-secondary">
+              {t('standIn.personal.limit_tags_help')}
+            </p>
+          </CollapsiblePanel>
+        </CollapsibleRoot>
       </fieldset>
       {tagDraftDirty && (
         <p

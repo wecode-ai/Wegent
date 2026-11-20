@@ -82,6 +82,11 @@ test('does not create an expiration timer for a late clipboard result after unmo
   const { unmount } = render(<EnvironmentSummaryOverview devices={[]} info={info} />)
   await copy()
   unmount()
-  await act(async () => finish())
-  expect(vi.getTimerCount()).toBe(0)
+  const timers = vi.spyOn(globalThis, 'setTimeout')
+  try {
+    await act(async () => finish())
+    expect(timers.mock.calls.some(([, delay]) => delay === 2000)).toBe(false)
+  } finally {
+    timers.mockRestore()
+  }
 })

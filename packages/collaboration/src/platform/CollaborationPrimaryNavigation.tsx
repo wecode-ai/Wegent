@@ -1,7 +1,7 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react";
 import {
   Bot,
   ChevronRight,
@@ -13,19 +13,20 @@ import {
   Settings,
   SquarePen,
   UsersRound,
-} from "lucide-react";
+} from 'lucide-react'
+import { useState } from 'react'
+import type { PlatformMessages } from './platformMessages'
 import type {
   CollaborationDomain,
   CollaborationPlatformHostAdapter,
   CollaborationPlatformRootView,
-} from "./types";
-import type { PlatformMessages } from "./platformMessages";
+} from './types'
 
 type NavigationProps = {
-  domain: CollaborationDomain;
-  host: CollaborationPlatformHostAdapter;
-  messages: PlatformMessages;
-};
+  domain: CollaborationDomain
+  host: CollaborationPlatformHostAdapter
+  messages: PlatformMessages
+}
 
 function NavigationLink({
   domain,
@@ -34,51 +35,48 @@ function NavigationLink({
   label,
   icon: Icon,
   testId,
-}: Omit<NavigationProps, "messages"> & {
-  view: CollaborationPlatformRootView;
-  label: string;
-  icon: typeof Bot;
-  testId: string;
+}: Omit<NavigationProps, 'messages'> & {
+  view: CollaborationPlatformRootView
+  label: string
+  icon: typeof Bot
+  testId: string
 }) {
   const selected =
     !host.location.workspaceId &&
     !host.location.projectId &&
-    (host.location.rootView ?? "home") === view;
+    (host.location.rootView ?? 'home') === view
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
-      className={selected ? "active" : undefined}
-      aria-current={selected ? "page" : undefined}
+      className={selected ? 'active' : undefined}
+      aria-current={selected ? 'page' : undefined}
       data-testid={testId}
       onClick={() =>
         host.navigate({
-          platformView: "spaces",
+          platformView: 'spaces',
           collaborationDomain: domain,
           rootView: view,
           workspaceId: null,
-          workspaceView: "home",
+          workspaceView: 'home',
           projectId: null,
-          projectView: "board",
+          projectView: 'board',
           issueId: null,
         })
       }
     >
       <Icon aria-hidden="true" />
       <span>{label}</span>
-    </button>
-  );
+    </ControlButton>
+  )
 }
 
-export function CollaborationPrimaryNavigation({
-  domain,
-  host,
-  messages,
-}: NavigationProps) {
+export function CollaborationPrimaryNavigation({ domain, host, messages }: NavigationProps) {
   const link = (
     view: CollaborationPlatformRootView,
     label: string,
     icon: typeof Bot,
-    testId: string,
+    testId: string
   ) => (
     <NavigationLink
       key={view}
@@ -89,69 +87,59 @@ export function CollaborationPrimaryNavigation({
       icon={icon}
       testId={testId}
     />
-  );
+  )
   return (
-    <nav
-      className="collaboration-primary-navigation"
-      aria-label={messages.collaborationHome}
-    >
+    <nav className="collaboration-primary-navigation" aria-label={messages.collaborationHome}>
       {link(
-        "home",
+        'home',
         host.renderPersonalHome ? messages.personalHome : messages.home,
         host.renderPersonalHome ? CircleUserRound : FilePlus2,
-        "collaboration-primary-home",
+        'collaboration-primary-home'
       )}
       {host.renderIssueList || host.createIndependentIssue ? (
         <>
           {host.createIndependentIssue ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               onClick={host.createIndependentIssue}
               data-testid="collaboration-primary-create-issue"
             >
               <FilePlus2 aria-hidden="true" />
               <span>{messages.createIndependentIssue}</span>
-            </button>
+            </ControlButton>
           ) : null}
           {host.renderIssueList ? (
             <>
               {link(
-                "issues-assigned",
+                'issues-assigned',
                 messages.assignedIssues,
                 CircleUserRound,
-                "collaboration-primary-issues-assigned",
+                'collaboration-primary-issues-assigned'
               )}
               {link(
-                "issues-created",
+                'issues-created',
                 messages.createdIssues,
                 SquarePen,
-                "collaboration-primary-issues-created",
+                'collaboration-primary-issues-created'
               )}
               {link(
-                "issues-participating",
+                'issues-participating',
                 messages.participatingIssues,
                 MessageSquare,
-                "collaboration-primary-issues-participating",
+                'collaboration-primary-issues-participating'
               )}
             </>
           ) : null}
         </>
       ) : null}
     </nav>
-  );
+  )
 }
 
-export function CollaborationManagementNavigation({
-  domain,
-  host,
-  messages,
-}: NavigationProps) {
-  const [expanded, setExpanded] = useState(false);
-  const link = (
-    view: CollaborationPlatformRootView,
-    label: string,
-    icon: typeof Bot,
-  ) => (
+export function CollaborationManagementNavigation({ domain, host, messages }: NavigationProps) {
+  const [expanded, setExpanded] = useState(false)
+  const link = (view: CollaborationPlatformRootView, label: string, icon: typeof Bot) => (
     <NavigationLink
       key={view}
       domain={domain}
@@ -161,38 +149,36 @@ export function CollaborationManagementNavigation({
       icon={icon}
       testId={`collaboration-primary-${view}`}
     />
-  );
+  )
   return (
     <nav
       className="collaboration-primary-navigation collaboration-management"
       aria-label={messages.collaborationManagement}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="collaboration-management-toggle"
         aria-expanded={expanded}
         aria-controls="collaboration-management-navigation"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => setExpanded(value => !value)}
       >
         <Settings aria-hidden="true" />
         <span>{messages.collaborationManagement}</span>
-        <ChevronRight
-          aria-hidden="true"
-          className={expanded ? "rotate-90" : undefined}
-        />
-      </button>
+        <ChevronRight aria-hidden="true" className={expanded ? 'rotate-90' : undefined} />
+      </ControlButton>
       <div
         id="collaboration-management-navigation"
         className="collaboration-management-navigation"
         hidden={!expanded}
       >
-        {link("devices", messages.devices, Monitor)}
+        {link('devices', messages.devices, Monitor)}
         {host.templateStore && host.templateNavigation
-          ? link("templates", messages.templates, LayoutTemplate)
+          ? link('templates', messages.templates, LayoutTemplate)
           : null}
-        {link("agents", messages.agents, Bot)}
-        {link("teams", messages.teams, UsersRound)}
+        {link('agents', messages.agents, Bot)}
+        {link('teams', messages.teams, UsersRound)}
       </div>
     </nav>
-  );
+  )
 }

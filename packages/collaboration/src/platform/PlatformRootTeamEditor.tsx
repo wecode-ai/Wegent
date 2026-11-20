@@ -1,10 +1,11 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useRef, useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { X } from 'lucide-react'
-import { useFocusRequest } from '../dom-events'
 import { templateMessages } from '../templates/messages'
 import { applyWorkspaceTemplate } from '../templates/workspaceConfiguration'
 import { readTemplateAgents } from '../templates/agents'
@@ -78,12 +79,6 @@ export function RootTeamEditor({
         ? participantSnapshot.error.message
         : String(participantSnapshot.error)
       : null
-  const dialogRef = useRef<HTMLElement>(null)
-  useFocusRequest(dialogRef, groupId, {
-    enabled: Boolean(groupId && !loading && !error),
-    selector: 'button',
-    restoreFocus: true,
-  })
   const commands = useMemo<WorkspaceResourceCommands>(() => {
     if (!api.workspaces) {
       throw new Error('Workspace API is unavailable')
@@ -158,10 +153,18 @@ export function RootTeamEditor({
   if (loading || error) {
     return (
       <div className="collaboration-dialog-backdrop" role="presentation">
-        <section className="collaboration-resource-dialog" role="dialog">
+        <DialogSurface
+          onClose={onClose}
+          render={
+            <section
+              className="collaboration-resource-dialog"
+              aria-labelledby="root-team-editor-status-title"
+            />
+          }
+        >
           <header>
             <div>
-              <h2>
+              <h2 id="root-team-editor-status-title">
                 {groupId
                   ? locale === 'zh-CN'
                     ? '协作小组设置'
@@ -177,11 +180,11 @@ export function RootTeamEditor({
                     : 'Loading workspace members and agents…')}
               </p>
             </div>
-            <button type="button" onClick={onClose}>
+            <ControlButton variant="unstyled" type="button" onClick={onClose}>
               <X aria-hidden="true" />
-            </button>
+            </ControlButton>
           </header>
-        </section>
+        </DialogSurface>
       </div>
     )
   }
@@ -236,38 +239,16 @@ export function RootTeamEditor({
     />
   )
   return groupId ? (
-    <div
-      className="collaboration-resource-dialog-backdrop"
-      onKeyDown={event => {
-        if (event.key === 'Escape') {
-          event.stopPropagation()
-          onClose()
+    <div className="collaboration-resource-dialog-backdrop">
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            className="collaboration-resource-dialog collaboration-team-settings-dialog"
+            aria-label={locale === 'zh-CN' ? '协作小组设置' : 'Team settings'}
+            data-testid="collaboration-team-settings-dialog"
+          />
         }
-        if (event.key === 'Tab') {
-          const controls = Array.from(
-            dialogRef.current?.querySelectorAll<HTMLElement>(
-              'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]'
-            ) ?? []
-          )
-          const first = controls[0]
-          const last = controls[controls.length - 1]
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault()
-            last?.focus()
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault()
-            first?.focus()
-          }
-        }
-      }}
-    >
-      <section
-        ref={dialogRef}
-        className="collaboration-resource-dialog collaboration-team-settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={locale === 'zh-CN' ? '协作小组设置' : 'Team settings'}
-        data-testid="collaboration-team-settings-dialog"
       >
         <header className="collaboration-team-settings-header">
           <div>
@@ -278,17 +259,18 @@ export function RootTeamEditor({
                 : 'Edit team details, participants, and collaboration rules'}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             aria-label={locale === 'zh-CN' ? '关闭' : 'Close'}
             data-testid="collaboration-team-settings-close"
             onClick={onClose}
           >
             ×
-          </button>
+          </ControlButton>
         </header>
         {form}
-      </section>
+      </DialogSurface>
     </div>
   ) : (
     form

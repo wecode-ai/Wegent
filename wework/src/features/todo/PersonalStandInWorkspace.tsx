@@ -1,32 +1,33 @@
-import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { useDOMEvent } from '@wegent/collaboration/dom-events'
-import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
-import type { CollaborationProject } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage, requiresStandInUpgrade } from '@/lib/stand-in-error-message'
-import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { createLocalWorkspaceApi } from './localWorkspaceApi'
-import { createWeworkPlatformApi } from './weworkPlatformApi'
-import { StandInOverviewPage } from './StandInOverviewPage'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { isStandInBindingOwner } from '@/api/standIn'
-import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { Button } from '@/components/ui/button'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { availableStandInDevices } from './standInDevices'
-import { useStandInInstance } from './useStandInInstance'
-import { StandInMigration } from './StandInMigration'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   navigateTo,
   WORKSPACE_NAVIGATION_EVENT,
   type WorkspaceNavigationDetail,
 } from '@/lib/navigation'
-import { useStandInRoleDirectory } from './useStandInRoleDirectory'
-import { StandInHomeWorkspace } from './StandInHomeWorkspace'
+import { getStandInErrorMessage, requiresStandInUpgrade } from '@/lib/stand-in-error-message'
+import type { DeviceInfo, RuntimeTaskAddress, User } from '@/types/api'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createLocalWorkspaceApi } from './localWorkspaceApi'
+import { createPersonalStandInWorkspaceSource } from './personalStandInWorkspaceSource'
+import { availableStandInDevices } from './standInDevices'
 import { StandInHomeSetup, StandInHomeSetupPrompt } from './StandInHomeSetup'
+import { StandInHomeWorkspace } from './StandInHomeWorkspace'
+import { StandInMigration } from './StandInMigration'
+import { StandInOverviewPage } from './StandInOverviewPage'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInInstance } from './useStandInInstance'
+import { useStandInRoleDirectory } from './useStandInRoleDirectory'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
+import { createWeworkPlatformApi } from './weworkPlatformApi'
 
 type PersonalStandInWorkspaceProps = {
   services: WorkbenchServices
@@ -185,7 +186,8 @@ function AccountStandInWorkspace({
     cloud?.isConnected ? availableStandInDevices(devices).map(device => device.device_id) : []
   )
   const actions = (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="stand-in-instance-stop"
       disabled={busy || !ownerAvailable}
@@ -199,7 +201,7 @@ function AccountStandInWorkspace({
       }}
     >
       {t(binding?.status === 'stopping' ? 'standIn.instance.retry_stop' : 'standIn.instance.stop')}
-    </button>
+    </ControlButton>
   )
   const failure = instance.error || error?.message
   const upgradeRequired = requiresStandInUpgrade(
@@ -224,7 +226,8 @@ function AccountStandInWorkspace({
               {t('standIn.view_devices')}
             </Button>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-project-catalog-retry"
             aria-busy={view.loadingProjects}
@@ -235,7 +238,7 @@ function AccountStandInWorkspace({
             }}
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {!binding ? (
@@ -274,7 +277,9 @@ function AccountStandInWorkspace({
                   }))
                 : []),
             ].map(value => (
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 key={`${value.userId}:${value.deviceId}`}
                 type="button"
                 data-testid={`stand-in-instance-bind-${value.userId}-${value.deviceId}`}
@@ -289,7 +294,7 @@ function AccountStandInWorkspace({
                 }
               >
                 {value.name}
-              </button>
+              </ControlButton>
             ))}
           </div>
           {cloud?.isConnected && target && instance.stoppedProfile && (

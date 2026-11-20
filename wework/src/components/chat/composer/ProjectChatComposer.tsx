@@ -34,8 +34,11 @@ import {
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { applyQuickPhrase } from '@wegent/collaboration/composer/applyQuickPhrase'
-import { ComposerErrorBanner } from '@wegent/collaboration/composer'
-import { ProjectComposerBody } from '@wegent/collaboration/composer'
+import {
+  ComposerErrorBanner,
+  PROJECT_CHAT_WORK_BAR_CLASS,
+  ProjectComposerBody,
+} from '@wegent/collaboration/composer'
 import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
 
@@ -345,8 +348,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 middleContext={projectWorkBarMiddleContext}
                 trailingContext={projectWorkBarTrailingContext}
                 endContext={projectWorkBarEndContext}
-                className="-mb-2 min-h-10 rounded-t-[20px] bg-muted/45 px-3 pb-2"
-                buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+                className={PROJECT_CHAT_WORK_BAR_CLASS}
               />
             ))
           }

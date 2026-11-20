@@ -1,11 +1,11 @@
+import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Check, Loader2, X } from 'lucide-react'
 import { useRef, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
-import { Button } from '@/components/ui/button'
-import { Tooltip } from '@/components/ui/tooltip'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useTranslation } from '@/hooks/useTranslation'
 import type { DrawingCanvasHandle } from './DrawingCanvas'
 
 interface DrawingAttachmentDialogProps {
@@ -36,9 +36,7 @@ export function DrawingAttachmentDialog({
   const [exporting, setExporting] = useState(false)
   const busyRef = useRef(false)
   const canvasRef = useRef<DrawingCanvasHandle>(null)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(() => {
-    if (!busyRef.current) onClose()
-  })
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   const attachDrawing = async () => {
     if (!canvasRef.current || !hasContent || disabled || busyRef.current) return
@@ -60,15 +58,20 @@ export function DrawingAttachmentDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 p-4 max-md:p-0">
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="drawing-attachment-title"
-        aria-busy={exporting}
-        tabIndex={-1}
-        data-testid="drawing-attachment-dialog"
-        className="flex h-[min(800px,90dvh)] w-[min(1100px,92vw)] flex-col overflow-hidden rounded-[20px] border border-border bg-background text-text-primary shadow-lg max-md:h-dvh max-md:w-full max-md:rounded-none"
+      <DialogSurface
+        onClose={() => {
+          if (!busyRef.current) onClose()
+        }}
+        render={
+          <div
+            ref={dialogRef}
+            aria-labelledby="drawing-attachment-title"
+            aria-busy={exporting}
+            tabIndex={-1}
+            data-testid="drawing-attachment-dialog"
+            className="flex h-[min(800px,90dvh)] w-[min(1100px,92vw)] flex-col overflow-hidden rounded-[20px] border border-border bg-background text-text-primary shadow-lg max-md:h-dvh max-md:w-full max-md:rounded-none"
+          />
+        }
       >
         <div className="flex shrink-0 items-center justify-between px-4 py-2">
           <h2 id="drawing-attachment-title" className="text-base font-medium">
@@ -130,7 +133,7 @@ export function DrawingAttachmentDialog({
             {t('workbench.drawing.attach')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

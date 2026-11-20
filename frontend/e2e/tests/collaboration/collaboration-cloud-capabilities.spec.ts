@@ -10,6 +10,7 @@ import {
   dragCollaborationIssueToColumn,
   enableLegacyBoardGrouping,
   openBlankProjectCreation,
+  chooseCollaborationOption,
   selectCollaborationProjectView,
   webApi,
   writeSharedComposer,
@@ -765,8 +766,8 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.getByRole('button', { name: folderName, exact: true }).click()
       await expect(page.getByTestId(`cloud-file-preview-${uploaded.id}`)).toBeVisible()
-      page.once('dialog', dialog => dialog.accept())
       await page.getByTestId(`cloud-file-delete-${uploaded.id}`).click()
+      await page.getByTestId('confirmation-request-confirm').click()
       await expect
         .poll(async () => {
           const response = await webApi<{ items: CloudFile[] }>(
@@ -782,8 +783,8 @@ test.describe('Collaboration cloud capabilities', () => {
         .getByRole('button', { name: /共享文件|Shared files/, exact: true })
         .click()
       const folder = files.find(file => file.path === folderName)!
-      page.once('dialog', dialog => dialog.accept())
       await page.getByTestId(`cloud-file-delete-${folder.id}`).click()
+      await page.getByTestId('confirmation-request-confirm').click()
       await expect(page.getByRole('button', { name: folderName, exact: true })).toHaveCount(0)
     } finally {
       if (projectId) await archiveProject(page, projectId)
@@ -889,7 +890,9 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.getByTestId('collaboration-project-settings-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
-      await page.getByTestId('cloud-member-role').selectOption('Developer')
+      await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {
+        value: 'Developer',
+      })
       await page.getByTestId(`cloud-member-result-${member.id}`).click()
       await expect(page.getByTestId(`cloud-project-member-${member.id}`)).toBeVisible()
       await expect
@@ -1094,11 +1097,17 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
       await page.getByTestId('collaboration-project-settings-project').click()
       await page.getByTestId('cloud-project-manage-visibility-public').click()
-      await expect(page.getByTestId('cloud-project-public-access-role')).toHaveValue('Viewer')
+      await expect(
+        page.getByTestId('cloud-project-public-access-role').locator('[data-value]')
+      ).toHaveAttribute('data-value', 'Viewer')
       await expect(
         page.getByTestId('cloud-project-public-access-role').locator('option[value="Developer"]')
       ).toHaveCount(0)
-      await page.getByTestId('cloud-project-default-issue-security').selectOption('related')
+      await chooseCollaborationOption(
+        page,
+        page.getByTestId('cloud-project-default-issue-security'),
+        { value: 'related' }
+      )
       await expect
         .poll(async () => {
           const updated = await webApi<

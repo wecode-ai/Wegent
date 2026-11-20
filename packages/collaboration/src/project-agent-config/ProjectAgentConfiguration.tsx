@@ -1,3 +1,5 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -158,19 +160,23 @@ export function ProjectAgentConfiguration({
           }
         }}
       >
-        <section
-          aria-labelledby="project-agent-dialog-title"
-          aria-modal="true"
-          className={styles.modal}
-          data-testid="project-agent-dialog"
-          role="dialog"
+        <DialogSurface
+          onClose={busy ? undefined : () => resource.closeComposer(composerVersion)}
+          render={
+            <section
+              aria-labelledby="project-agent-dialog-title"
+              className={styles.modal}
+              data-testid="project-agent-dialog"
+            />
+          }
         >
           <header className={styles.modalHeader}>
             <div className={styles.composerHeader}>
               <h3 id="project-agent-dialog-title">{dialogTitle}</h3>
               <p>{dialogDescription}</p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               aria-label={closeLabel}
               className={styles.closeButton}
               data-testid="project-agent-dialog-close"
@@ -179,10 +185,10 @@ export function ProjectAgentConfiguration({
               type="button"
             >
               <X aria-hidden="true" />
-            </button>
+            </ControlButton>
           </header>
           {children}
-        </section>
+        </DialogSurface>
       </div>
     )
   }
@@ -241,7 +247,8 @@ export function ProjectAgentConfiguration({
           </p>
         </div>
         {canBrowseSources ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             className={styles.addButton}
             data-testid="project-agent-add"
             disabled={loading || loadError !== null}
@@ -249,21 +256,22 @@ export function ProjectAgentConfiguration({
             type="button"
           >
             {translate('todo.add_project_agent', '添加智能体')}
-          </button>
+          </ControlButton>
         ) : null}
       </div>
 
       {loadError ? (
         <div role="alert" className={styles.error} data-testid="project-agent-config-error">
           {loadError}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className={styles.retryButton}
             data-testid="project-agent-config-retry"
             onClick={resource.retryList}
           >
             {translate('common.retry', '重试')}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       {loading && agents.length === 0 ? (
@@ -335,21 +343,23 @@ export function ProjectAgentConfiguration({
                   {canManage ? (
                     <div className={styles.agentActions}>
                       {scope === 'project' && agent.status === 'archived' ? (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid={`project-agent-reactivate-${agent.id}`}
                           disabled={archivingId === agent.id}
                           onClick={() => void resource.archiveAgent(agent, true)}
                         >
                           {translate('todo.agent_reactivate_share', '授权并重新启用')}
-                        </button>
+                        </ControlButton>
                       ) : null}
                       {agent.canEdit &&
                       ((agent.definitionSource === 'project' && usesProjectAgentEditor) ||
                         (agent.definitionSource === 'shared_agent' &&
                           host?.renderAgentEditor &&
                           agent.wegentTeamId !== null)) ? (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           className={styles.archiveButton}
                           data-testid={`project-agent-edit-${agent.id}`}
                           disabled={archivingId === agent.id}
@@ -357,10 +367,11 @@ export function ProjectAgentConfiguration({
                           type="button"
                         >
                           {translate('todo.edit_project_agent', '编辑')}
-                        </button>
+                        </ControlButton>
                       ) : null}
                       {agent.deletable && agent.status !== 'archived' ? (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           className={styles.archiveButton}
                           data-testid={`project-agent-archive-${agent.id}`}
                           disabled={archivingId === agent.id}
@@ -372,10 +383,11 @@ export function ProjectAgentConfiguration({
                             : scope === 'workspace'
                               ? translate('todo.remove_workspace_agent', '移出分组')
                               : translate('todo.archive_project_agent', '停用')}
-                        </button>
+                        </ControlButton>
                       ) : null}
                       {scope === 'project' && agent.deletable && (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           className={styles.archiveButton}
                           data-testid={`project-agent-delete-${agent.id}`}
@@ -383,7 +395,7 @@ export function ProjectAgentConfiguration({
                           onClick={() => resource.requestRemoval(agent)}
                         >
                           {translate('todo.delete_project_agent', '删除')}
-                        </button>
+                        </ControlButton>
                       )}
                     </div>
                   ) : null}
@@ -456,7 +468,10 @@ export function ProjectAgentConfiguration({
                 resourceId: editingAgent.id,
                 onClose: () => resource.closeEditor(editingVersion),
                 onSaved: () =>
-                  resource.finishAgentChange({ id: editingAgent.id, version: editingVersion }),
+                  resource.finishAgentChange({
+                    id: editingAgent.id,
+                    version: editingVersion,
+                  }),
               })
             : editingAgent &&
                 editingAgent.definitionSource === 'shared_agent' &&

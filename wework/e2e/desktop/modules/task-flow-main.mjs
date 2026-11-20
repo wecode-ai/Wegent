@@ -599,7 +599,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-model-select"]', {
+  await control.command('select', '[data-testid="local-project-model-select"]', {
     value: PROJECT_AI_MODEL_VALUE,
   })
   await waitForControlValue(
@@ -608,7 +608,7 @@ async function verifyProjectAiSettings({
     PROJECT_AI_MODEL_VALUE,
     'The project default model selection did not update'
   )
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'low',
   })
   await waitForControlValue(
@@ -741,7 +741,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_UPDATED_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'high',
   })
   await waitForControlValue(
@@ -2908,6 +2908,35 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           testId.startsWith('runtime-local-task-row-')
         )
       )
+      const [viewport] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+        )
+      )
+      const [dock] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-empty-composer-dock"]`
+        )
+      )
+      const [environmentSpacer] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-spacer"]`
+        )
+      )
+      const usableCenter = viewport.left + (viewport.width - environmentSpacer.width) / 2
+      const dockCenter = dock.left + dock.width / 2
+      assert.ok(
+        Math.abs(dockCenter - usableCenter) <= 2,
+        `The new-task composer must be centered in its workbench. Center offset: ${dockCenter - usableCenter}px`
+      )
+      const bottomGap = viewport.bottom - dock.bottom
+      assert.ok(
+        bottomGap >= 0 && bottomGap <= 16,
+        `The new-task composer must stay at the bottom of its workbench. Bottom gap: ${bottomGap}px`
+      )
       phase = 'initial-task'
       const initialTaskRequest = await sendPromptUntilScenarioRequest(
         control,
@@ -4125,6 +4154,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
+      await control.command('pointerLeave', filePanelLinkSelector, {
+        target: rightWorkspacePanelSelector,
+      })
       await control.command('hover', filePanelLinkSelector)
       await control.command('waitFor', filePanelLinkTooltipSelector, {
         visible: true,
@@ -4163,14 +4195,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
       await captureVerificationScreenshot(control, 'file-panel-anchor-03-link-tooltip.png')
       await control.command('press', filePanelLinkSelector, { key: 'Escape' })
-      await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.includes(linkedFileTabId) &&
-          !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
-        'The assistant file-link tooltip did not dismiss above the open file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      await control.command('waitFor', filePanelLinkTooltipSelector, {
+        visible: false,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', linkedFileTabSelector, {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(

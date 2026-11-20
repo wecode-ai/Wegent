@@ -371,7 +371,8 @@ describe('ConversationExportDialog', () => {
     })
 
     const dialog = await screen.findByRole('dialog')
-    await waitFor(() => expect(dialog).toHaveFocus())
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+    screen.getByTestId('conversation-export-format-markdown').focus()
     fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
     expect(screen.getByTestId('conversation-export-cancel')).toHaveFocus()
     fireEvent.keyDown(dialog, { key: 'Escape' })

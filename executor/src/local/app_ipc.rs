@@ -1609,10 +1609,26 @@ impl AppIpcServer {
                 .runtime_work_handler
                 .as_ref()
                 .ok_or_else(|| AppIpcError::new("runtime_unavailable", "Runtime is unavailable"))?;
-            let result = handler
+            return match handler
                 .handle_runtime_rpc(json!({"method":method,"payload":payload}))
-                .await?;
-            return Ok(json!({"success":true,"exit_code":0,"stdout":result,"stderr":""}));
+                .await
+            {
+                Ok(result) => Ok(json!({"success":true,"exit_code":0,"stdout":result,"stderr":""})),
+                Err(error)
+                    if command_key == "connection_observer_start"
+                        && error.code == "connector_auth_required" =>
+                {
+                    // Authorization is a command outcome that the UI observer presents to users.
+                    Ok(json!({
+                        "success":false,
+                        "exit_code":1,
+                        "stdout":"",
+                        "stderr":error.message,
+                        "error":error.code,
+                    }))
+                }
+                Err(error) => Err(error),
+            };
         }
 
         if matches!(

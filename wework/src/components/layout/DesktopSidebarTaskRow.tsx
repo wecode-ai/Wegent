@@ -1,18 +1,22 @@
-import { preferredEventSubscription } from '@/lib/sidebar-event-state'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { SidebarConnectionEventStatus } from './SidebarConnectionEventStatus'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
+import { preferredEventSubscription } from '@/lib/sidebar-event-state'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
-  subscribePendingRuntimeTaskArchive,
+  dismissPendingRuntimeTaskArchiveNotice,
   getPendingRuntimeTaskArchive,
   schedulePendingRuntimeTaskArchive,
+  subscribePendingRuntimeTaskArchive,
   undoPendingRuntimeTaskArchive,
-  dismissPendingRuntimeTaskArchiveNotice,
 } from './pendingRuntimeTaskArchives'
+import { SidebarConnectionEventStatus } from './SidebarConnectionEventStatus'
 
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
+import { TextInputDialog } from '@/components/common/TextInputDialog'
 import {
-  Archive,
   AlarmClock,
+  Archive,
   ArrowDown,
   ArrowUp,
   CircleHelp,
@@ -29,13 +33,10 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useContext, useMemo, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import { ActionMenu } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
-import { CompositedSpinner } from '@/components/common/CompositedSpinner'
-import { TextInputDialog } from '@/components/common/TextInputDialog'
 
 import { Tooltip } from '@/components/ui/tooltip'
 
@@ -45,9 +46,6 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
 import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
 
-import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
-import { useRuntimeTaskRateLimitWait } from '@/features/workbench/useRuntimeTaskRateLimitWait'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
   getRuntimeConversationQueuePaused,
   subscribeRuntimeConversation,
@@ -57,6 +55,9 @@ import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import { useRuntimeTaskRateLimitWait } from '@/features/workbench/useRuntimeTaskRateLimitWait'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 
@@ -67,11 +68,11 @@ import { SidebarTaskTitle } from './SidebarTaskTitle'
 
 import type {
   DeviceInfo,
-  RuntimeTaskSummary,
   RuntimeDeviceWorkspace,
   RuntimeIMNotificationSettingsResponse,
-  RuntimeTaskPinRequest,
   RuntimeTaskAddress,
+  RuntimeTaskPinRequest,
+  RuntimeTaskSummary,
 } from '@/types/api'
 
 import type {
@@ -87,27 +88,26 @@ import {
   getRuntimeTaskAddress,
   getRuntimeTaskTime,
   getRuntimeTaskWorkspaceTitle,
-  shortenSidebarHomePath,
   isRuntimeTaskQueued,
   isRuntimeWorktreeTask,
+  shortenSidebarHomePath,
 } from './runtimeTaskSidebarHelpers'
 
 import { formatRelativeSidebarTime } from './runtimeSidebarTime'
 
-import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
-import type { ProjectCreateMenuPosition, RuntimeTaskPriorityReason } from './desktopSidebarTypes'
 import {
   SIDEBAR_ROW_METADATA_CLASS,
-  handleSidebarRowKeyDown,
-  getSidebarDeviceState,
-  getRuntimeTaskRepositoryLabel,
-  getRuntimeTaskBranch,
-  hasRuntimeTaskBranchWarning,
-  getRuntimeWorkspaceDeviceColor,
-  isRuntimeTaskNotificationSubscribed,
   dshMenuItemIcon,
+  getRuntimeTaskBranch,
+  getRuntimeTaskRepositoryLabel,
+  getRuntimeWorkspaceDeviceColor,
+  getSidebarDeviceState,
+  hasRuntimeTaskBranchWarning,
+  isRuntimeTaskNotificationSubscribed,
 } from './desktopSidebarHelpers'
+import type { ProjectCreateMenuPosition, RuntimeTaskPriorityReason } from './desktopSidebarTypes'
 import { ArchiveConversationsConfirmDialog } from './DesktopSidebarWidgets'
+import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
 export function RuntimeTaskRow({
   nowMs,
   workspace,
@@ -360,7 +360,8 @@ export function RuntimeTaskRow({
   const NotificationIcon = notificationsSubscribed ? MessageCircle : MessageCircleOff
   const renderNotificationButton = (testId: string, iconTestId: string) => (
     <Tooltip label={notificationActionLabel} testId={`${testId}-tooltip`}>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={testId}
         disabled={notificationsDisabled}
@@ -376,7 +377,7 @@ export function RuntimeTaskRow({
           data-testid={iconTestId}
           className={cn('h-[15px] w-[15px]', notificationsSubscribed && 'fill-current')}
         />
-      </button>
+      </ControlButton>
     </Tooltip>
   )
 
@@ -405,8 +406,6 @@ export function RuntimeTaskRow({
           data-testid={`runtime-local-task-row-${task.taskId}`}
           data-sidebar-task-row
           data-marked={marked ? 'true' : undefined}
-          role="button"
-          tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
           aria-label={
             worktreeTask ? `${task.title} · ${t('workbench.git_worktree_session')}` : undefined
@@ -421,7 +420,8 @@ export function RuntimeTaskRow({
                 : undefined
           }
           onClick={event => {
-            if (event.detail > 1) return
+            if (event.detail > 1 || !event.currentTarget.contains(event.target as Node)) return
+            if ((event.target as Element).closest('button, a, input, [role="button"]')) return
             handleOpen()
           }}
           onContextMenu={event => {
@@ -435,7 +435,6 @@ export function RuntimeTaskRow({
               setRenameOpen(true)
             }
           }}
-          onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
           className={cn(
             'group/task relative flex min-w-0 items-center rounded-[10px] pr-2 text-base leading-5',
             priorityLayout ? 'min-h-[48px] py-1.5' : 'h-[30px]',
@@ -453,37 +452,49 @@ export function RuntimeTaskRow({
             props={{ priorityLayout, statusInIndent, task, workspace }}
             slot={WEWORK_DSH_SLOTS.taskStatus}
           />
-          {priorityLayout ? (
-            <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid={`runtime-local-task-open-${task.taskId}`}
+            disabled={disabled}
+            onClick={event => {
+              event.stopPropagation()
+              if (event.detail <= 1) handleOpen()
+            }}
+            className="flex h-full min-h-0 min-w-0 flex-1 items-center rounded-lg bg-transparent p-0 text-left text-inherit disabled:opacity-100"
+          >
+            {priorityLayout ? (
+              <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+                <SidebarTaskTitle
+                  text={task.title}
+                  testId={`runtime-local-task-title-${task.taskId}`}
+                  textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+                  shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
+                  className="flex-none"
+                />
+                <span
+                  data-testid={`runtime-local-task-source-${task.taskId}`}
+                  className="flex min-w-0 items-center gap-1 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]"
+                >
+                  {projectName ? (
+                    <FolderOpen className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Laptop className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="truncate">
+                    {projectName || t('workbench.app_wework', 'Wework')}
+                  </span>
+                </span>
+              </span>
+            ) : (
               <SidebarTaskTitle
                 text={task.title}
                 testId={`runtime-local-task-title-${task.taskId}`}
                 textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
                 shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
-                className="flex-none"
               />
-              <span
-                data-testid={`runtime-local-task-source-${task.taskId}`}
-                className="flex min-w-0 items-center gap-1 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]"
-              >
-                {projectName ? (
-                  <FolderOpen className="h-3 w-3 shrink-0" aria-hidden="true" />
-                ) : (
-                  <Laptop className="h-3 w-3 shrink-0" aria-hidden="true" />
-                )}
-                <span className="truncate">
-                  {projectName || t('workbench.app_wework', 'Wework')}
-                </span>
-              </span>
-            </span>
-          ) : (
-            <SidebarTaskTitle
-              text={task.title}
-              testId={`runtime-local-task-title-${task.taskId}`}
-              textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
-              shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
-            />
-          )}
+            )}
+          </ControlButton>
           {splitGroup && splitGroupLabel ? (
             <span
               data-testid={`runtime-local-task-split-group-${task.taskId}`}
@@ -675,7 +686,8 @@ export function RuntimeTaskRow({
                     label={t('workbench.runtime_task_queue_move_up')}
                     testId={`runtime-local-task-queue-up-${task.taskId}-tooltip`}
                   >
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`runtime-local-task-queue-up-${task.taskId}`}
                       onClick={event => {
@@ -693,13 +705,14 @@ export function RuntimeTaskRow({
                       aria-label={t('workbench.runtime_task_queue_move_up')}
                     >
                       <ArrowUp className="h-[15px] w-[15px]" />
-                    </button>
+                    </ControlButton>
                   </Tooltip>
                   <Tooltip
                     label={t('workbench.runtime_task_queue_move_down')}
                     testId={`runtime-local-task-queue-down-${task.taskId}-tooltip`}
                   >
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`runtime-local-task-queue-down-${task.taskId}`}
                       onClick={event => {
@@ -716,13 +729,14 @@ export function RuntimeTaskRow({
                       aria-label={t('workbench.runtime_task_queue_move_down')}
                     >
                       <ArrowDown className="h-[15px] w-[15px]" />
-                    </button>
+                    </ControlButton>
                   </Tooltip>
                   <Tooltip
                     label={t('workbench.runtime_task_force_start')}
                     testId={`runtime-local-task-force-start-${task.taskId}-tooltip`}
                   >
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`runtime-local-task-force-start-${task.taskId}`}
                       onClick={event => {
@@ -738,7 +752,7 @@ export function RuntimeTaskRow({
                       ) : (
                         <Sparkles className="h-[15px] w-[15px]" />
                       )}
-                    </button>
+                    </ControlButton>
                   </Tooltip>
                 </>
               ) : (
@@ -748,7 +762,8 @@ export function RuntimeTaskRow({
                   }
                   testId={`runtime-local-task-mark-${task.taskId}-tooltip`}
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`runtime-local-task-mark-${task.taskId}`}
                     onClick={handleToggleMark}
@@ -765,14 +780,15 @@ export function RuntimeTaskRow({
                       data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
                       className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
                     />
-                  </button>
+                  </ControlButton>
                 </Tooltip>
               )}
               <Tooltip
                 label={t('workbench.archive_runtime_task', '归档')}
                 testId={`runtime-local-task-archive-${task.taskId}-tooltip`}
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`runtime-local-task-archive-${task.taskId}`}
                   disabled={archiveDisabled}
@@ -788,7 +804,7 @@ export function RuntimeTaskRow({
                       className="h-[15px] w-[15px]"
                     />
                   )}
-                </button>
+                </ControlButton>
               </Tooltip>
             </span>
           </span>
@@ -925,21 +941,23 @@ export function RuntimeTaskRow({
             aria-live="polite"
             className="electron-titlebar-interactive-region pointer-events-auto fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`runtime-local-task-archive-undo-${task.taskId}`}
               onClick={handleUndoArchive}
               className="font-medium text-primary hover:underline"
             >
               {t('workbench.archive_runtime_task_undo', '撤销')}
-            </button>
+            </ControlButton>
             <span>{t('workbench.archive_runtime_task_pending', '，稍后将归档')}</span>
             <Tooltip
               label={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
               testId={`runtime-local-task-archive-toast-close-${task.taskId}-tooltip`}
               className="ml-2"
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`runtime-local-task-archive-toast-close-${task.taskId}`}
                 onClick={handleDismissArchiveNotice}
@@ -947,7 +965,7 @@ export function RuntimeTaskRow({
                 aria-label={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
               >
                 <X className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             </Tooltip>
           </div>,
           document.body

@@ -1628,11 +1628,12 @@ async function selectE2EModel(
     )
   } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
     await waitForE2EModelOptionSelected(control, targetSelector)
-    await control.command('press', 'body', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('model-selector-menu'),
-      'The model selector menu did not close after selecting the E2E model'
+    await verifyModelPickerEscape(control, '[data-model-selector-layer="true"]', 'press', () =>
+      waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('model-selector-menu'),
+        'The model selector menu did not close after selecting the E2E model'
+      )
     )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
@@ -1644,6 +1645,34 @@ async function selectE2EModel(
       expectedProviderId,
       'The model selector did not retain the expected provider'
     )
+  }
+}
+
+export async function verifyModelPickerEscape(control, selector, pressAction, waitForClose) {
+  const readLayers = () =>
+    control
+      .command(
+        'getElementMetrics',
+        '[data-model-selector-layer="true"], [data-slot$="-content"][data-open], :focus',
+        {
+          value: JSON.stringify({
+            attributeNames: ['data-testid', 'data-slot', 'role', 'aria-hidden', 'inert', 'id'],
+          }),
+        }
+      )
+      .catch(() => 'unavailable')
+  const before = await readLayers()
+  await control.command(pressAction, selector, { key: 'Escape' })
+  try {
+    await waitForClose()
+  } catch (error) {
+    console.error('[desktop-e2e-model-dismissal]', {
+      selector,
+      pressAction,
+      before,
+      after: await readLayers(),
+    })
+    throw error
   }
 }
 

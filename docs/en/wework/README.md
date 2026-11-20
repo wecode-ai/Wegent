@@ -31,6 +31,7 @@ Wework is a desktop workbench for collaborating with AI. Open a local project an
 
 ## Developer docs
 
+- [Component library and Storybook](./component-library.md): shared controls, business components, runnable examples, and AI MCP access
 - [Plugin Marketplace Developer Guide](./developer-guide/wework-plugin-marketplace-dev.md): build plugins, migrate open-source packages, local integration, and publish paths
 - [Isolated Core DSH plugin development](./developer-guide/wework-core-dsh-plugin-development.md): debug Wework plugins in a second Wework instance with HMR, DevTools, and isolated logs
 - [Plugin Marketplace V2](./developer-guide/plugin-marketplace-v2.md): cloud control-plane architecture and operations

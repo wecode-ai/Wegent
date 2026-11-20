@@ -1,6 +1,7 @@
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { useState } from 'react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 
 /** Settlement never implies that a concurrent sender's text was delivered. */
@@ -29,7 +30,7 @@ export function InteractionDraftRecovery() {
         <div key={item.id} data-testid="interaction-unsent-reply" className="space-y-2">
           <p className="break-words text-sm">{item.title}</p>
           <p className="break-words text-sm text-text-secondary">{item.question}</p>
-          <textarea
+          <ControlTextarea
             data-testid="interaction-unsent-text"
             aria-label={t('interactions.unsent_reply')}
             readOnly

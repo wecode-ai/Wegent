@@ -68,15 +68,23 @@ it('loads hooks only for the external editor, retries failures and initializes e
   external()
   fireEvent.click(await screen.findByTestId('automatic-processing-hooks-retry'))
   await waitFor(() =>
-    expect(screen.getByTestId('automatic-processing-hook')).toHaveValue(hooks[0].id)
+    expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute(
+      'data-value',
+      hooks[0].id
+    )
   )
-  fireEvent.change(screen.getByTestId('automatic-processing-hook'), { target: { value: '' } })
-  expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('')
+  expect(screen.getByTestId('automatic-processing-hook')).toHaveTextContent('First hook')
+  fireEvent.click(screen.getByTestId('automatic-processing-hook'))
+  fireEvent.click(await screen.findByRole('option', { name: 'Select' }))
+  expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute('data-value', '')
   fireEvent.click(screen.getByTestId('automatic-processing-trigger-created'))
   external()
   await waitFor(() => expect(f.hookList).toHaveBeenCalledTimes(3))
   await waitFor(() =>
-    expect(screen.getByTestId('automatic-processing-hook')).toHaveValue(hooks[0].id)
+    expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute(
+      'data-value',
+      hooks[0].id
+    )
   )
 })
 
@@ -87,7 +95,10 @@ it('clears a prior API hook catalog even if both APIs share the same hook transp
   await openEditor()
   external()
   await waitFor(() =>
-    expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('Old hook')
+    expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute(
+      'data-value',
+      'Old hook'
+    )
   )
   let finish!: (hooks: Hook[]) => void
   f.hookList.mockImplementationOnce(
@@ -102,7 +113,7 @@ it('clears a prior API hook catalog even if both APIs share the same hook transp
   external()
   expect(screen.queryByRole('option', { name: 'Old hook' })).not.toBeInTheDocument()
   await act(async () => finish([hook('New hook')]))
-  expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('New hook')
+  expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute('data-value', 'New hook')
 })
 
 it('accepts newer agent props without repeating candidate requests', async () => {
@@ -140,10 +151,16 @@ it('does not replace another project hook selection with a late response', async
   await openEditor()
   external()
   await waitFor(() =>
-    expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('Other project hook')
+    expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute(
+      'data-value',
+      'Other project hook'
+    )
   )
   await act(async () => finish([hook('Old project hook')]))
-  expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('Other project hook')
+  expect(screen.getByTestId('automatic-processing-hook')).toHaveAttribute(
+    'data-value',
+    'Other project hook'
+  )
   expect(screen.queryByRole('option', { name: 'Old project hook' })).not.toBeInTheDocument()
   expect(f.hookList).toHaveBeenLastCalledWith('other-project')
 })

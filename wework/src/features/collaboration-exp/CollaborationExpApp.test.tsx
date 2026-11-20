@@ -922,7 +922,7 @@ describe('CollaborationExpApp integration', () => {
     const summary = await screen.findByTestId('collaboration-exp-issue-summary')
     fireEvent.keyDown(summary, { key: 'Escape' })
     expect(screen.queryByTestId('collaboration-exp-issue-summary')).not.toBeInTheDocument()
-    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(trigger).toHaveFocus())
     expect(new URLSearchParams(window.location.search).has('inspector')).toBe(false)
     fireEvent.click(trigger)
     fireEvent.click(await screen.findByTestId('collaboration-exp-issue-summary-project'))

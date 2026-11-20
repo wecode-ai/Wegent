@@ -1,3 +1,4 @@
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { type IssueReplyContextKind } from './issueReplyCopy'
 
 import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
@@ -600,9 +601,13 @@ export function useTaskActivityController({
   }
   const acceptTask = activity.acceptTask
   const approveTaskRun = activity.approveTaskRun
+  const { prompt: requestText, dialogs: requestDialogs } = useDialogRequests((key, fallback) =>
+    String(t(key, { defaultValue: fallback }))
+  )
   async function rejectTaskRun() {
-    const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt')) ?? undefined
-    if (reason !== undefined) await activity.rejectTaskRun(reason.trim() || undefined)
+    const isCurrent = activity.captureScope()
+    const reason = await requestText(t('workbench.task_activity_reject_reason_prompt'))
+    if (reason !== null && isCurrent()) await activity.rejectTaskRun(reason.trim() || undefined)
   }
 
   async function stopRuntimeTask(message: ProjectChatMessage) {
@@ -881,6 +886,7 @@ export function useTaskActivityController({
     return true
   }
   return {
+    requestDialogs,
     acceptTask,
     activeUserId,
     activity,

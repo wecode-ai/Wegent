@@ -690,6 +690,7 @@ fn connection_source_identity(source: &Value) -> Value {
 
 fn set_connection_message_presentation(payload: &mut Value, messages: &[Value]) {
     payload["restoreUserMessageContent"] = json!(true);
+    payload["source"] = json!({"source": "connection_work"});
     payload["message"] = json!(messages
         .iter()
         .map(|message| format!(
@@ -886,6 +887,13 @@ mod tests {
             user_message_presentation(&payload).unwrap()["content"],
             payload["message"]
         );
+        let mut request = execution_request(&payload).unwrap();
+        apply_runtime_payload_metadata(&mut request, &payload);
+        let live_message = &request.extra["runtime_generated_user_message"];
+        assert_eq!(live_message["id"], "batch");
+        assert_eq!(live_message["message"], payload["message"]);
+        assert_eq!(live_message["source"], payload["source"]);
+        assert_eq!(request.prompt, "Internal orchestration");
         let mut transcript = vec![
             json!({"role":"user","clientUserMessageId":"batch","content":"Internal orchestration"}),
         ];

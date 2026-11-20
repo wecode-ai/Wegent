@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import {
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -127,7 +128,7 @@ export function MessageHoverActions({
       data-testid="copy-message-action"
       className="group/copy relative flex h-6 w-6 items-center justify-center"
     >
-      <button
+      <ControlButton variant="unstyled"
         type="button"
         data-testid="copy-message-button"
         onClick={handleCopy}
@@ -145,7 +146,7 @@ export function MessageHoverActions({
         ) : (
           <Copy data-testid="copy-message-icon" className="h-3.5 w-3.5" />
         )}
-      </button>
+      </ControlButton>
       <span
         data-testid="copy-message-label"
         className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/copy:opacity-100"
@@ -160,7 +161,7 @@ export function MessageHoverActions({
       data-testid="edit-message-action"
       className="group/edit relative flex h-6 w-6 items-center justify-center"
     >
-      <button
+      <ControlButton variant="unstyled"
         type="button"
         data-testid="edit-message-button"
         onClick={event => {
@@ -174,7 +175,7 @@ export function MessageHoverActions({
         aria-label={t('message_actions.edit_message')}
       >
         <Pencil data-testid="edit-message-icon" className="h-3.5 w-3.5" />
-      </button>
+      </ControlButton>
       <span
         data-testid="edit-message-label"
         className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/edit:opacity-100"
@@ -186,7 +187,7 @@ export function MessageHoverActions({
 
   const forkAction = onFork ? (
     <span className="group/fork relative flex h-6 w-6 items-center justify-center">
-      <button
+      <ControlButton variant="unstyled"
         type="button"
         data-testid="fork-message-button"
         onClick={() => {
@@ -208,7 +209,7 @@ export function MessageHoverActions({
         className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary disabled:pointer-events-none disabled:opacity-50"
       >
         <ForkTurnIcon />
-      </button>
+      </ControlButton>
       <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/fork:opacity-100">
         {t('continue_in_new_task')}
       </span>

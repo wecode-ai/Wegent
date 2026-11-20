@@ -1,19 +1,35 @@
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+import { standInRoleName, type PersonalStandInSettings } from '@/api/personalStandIn'
+import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useImperativeHandle, useMemo, useState, useSyncExternalStore, type Ref } from 'react'
-import { Plus } from 'lucide-react'
-import { StandInSettingsHeader } from './StandInSettingsLayout'
-import { dequal } from 'dequal'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { CollaborationProject } from '@wegent/collaboration'
-import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
-import { standInRoleName, type PersonalStandInSettings } from '@/api/personalStandIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { dequal } from 'dequal'
+import { Plus } from 'lucide-react'
+import {
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
 import { StandInMemoryEvidence } from './StandInMemoryEvidence'
 import { StandInMemoryRules } from './StandInMemoryRules'
+import { StandInSettingsHeader } from './StandInSettingsLayout'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 
 interface StandInMemoryPanelProps {
   api: StandInExecutorApi
@@ -135,7 +151,7 @@ function StandInMemoryPanelContent({
     )
   const navigation = useStandInPanelNavigation(dirty, busy, () => setDiscard('close'))
   const close = () => navigation.requestLeave(onClose)
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  const dialogRef = useRef<HTMLDivElement>(null)
   useImperativeHandle(ref, () => ({ requestClose: close, requestLeave: navigation.requestLeave }))
   const mutate = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -149,10 +165,16 @@ function StandInMemoryPanelContent({
     }
   }
   return (
-    <div
-      ref={dialogRef}
-      className="flex min-h-full flex-col px-5"
-      data-testid="stand-in-memory-panel"
+    <DialogSurface
+      onClose={close}
+      active={!discard}
+      render={
+        <div
+          ref={dialogRef}
+          className="flex min-h-full flex-col px-5"
+          data-testid="stand-in-memory-panel"
+        />
+      }
     >
       <StandInSettingsHeader
         title={t('standIn.memory.title')}
@@ -180,7 +202,8 @@ function StandInMemoryPanelContent({
       {visibleError && (
         <div role="alert" className="mb-4 text-sm text-error">
           <p>{visibleError}</p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-memory-retry"
             disabled={busy}
@@ -191,14 +214,16 @@ function StandInMemoryPanelContent({
             className="mt-2 underline"
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {items === null && !visibleError && <p role="status">{t('standIn.loading')}</p>}
       {items !== null && (
         <>
           {!editing && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="stand-in-memory-add"
               disabled={busy}
@@ -207,7 +232,7 @@ function StandInMemoryPanelContent({
             >
               <Plus className="h-4 w-4" />
               {t('standIn.memory.add')}
-            </button>
+            </ControlButton>
           )}
           {editing && (
             <form
@@ -231,7 +256,7 @@ function StandInMemoryPanelContent({
             >
               <label className="grid gap-2 text-sm">
                 {t('standIn.memory.content')}
-                <textarea
+                <ControlTextarea
                   data-testid="stand-in-memory-content"
                   autoFocus
                   required
@@ -245,32 +270,40 @@ function StandInMemoryPanelContent({
               </label>
               <label className="grid gap-2 text-sm">
                 {t('standIn.memory.scope')}
-                <select
-                  data-testid="stand-in-memory-scope"
+                <SelectRoot
                   disabled={busy}
-                  value={JSON.stringify(selectedScope?.scope ?? editing.scope)}
-                  onChange={event =>
-                    setEditing({
-                      ...editing,
-                      scope: JSON.parse(event.target.value) as StandInMemoryScope,
-                    })
-                  }
-                  className="min-h-8 rounded-md border border-border bg-background px-2"
-                >
-                  {!selectedScope && (
-                    <option value={JSON.stringify(editing.scope)} disabled>
-                      {t('standIn.memory.disconnected')}
-                    </option>
+                  value={normalizeSelectValue(
+                    JSON.stringify(selectedScope?.scope ?? editing.scope)
                   )}
-                  {scopes.map(row => (
-                    <option key={JSON.stringify(row.scope)} value={JSON.stringify(row.scope)}>
-                      {row.label}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null)
+                      return setEditing({
+                        ...editing,
+                        scope: JSON.parse(selectedValue) as StandInMemoryScope,
+                      })
+                  }}
+                >
+                  <SelectTrigger density="compact" data-testid="stand-in-memory-scope" />
+                  <SelectContent data-testid="stand-in-memory-scope-options">
+                    {!selectedScope && (
+                      <SelectItem value={String(JSON.stringify(editing.scope))} disabled>
+                        {t('standIn.memory.disconnected')}
+                      </SelectItem>
+                    )}
+                    {scopes.map(row => (
+                      <SelectItem
+                        key={JSON.stringify(row.scope)}
+                        value={String(JSON.stringify(row.scope))}
+                      >
+                        {row.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </label>
               <div className="flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="stand-in-memory-cancel"
                   disabled={busy}
@@ -281,15 +314,17 @@ function StandInMemoryPanelContent({
                   className="min-h-8 rounded-md px-3 hover:bg-muted"
                 >
                   {t('standIn.cancel')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="submit"
                   data-testid="stand-in-memory-save"
                   disabled={busy || !editing.content?.trim() || !selectedScope}
                   className="min-h-8 rounded-md bg-text-primary px-3 text-background disabled:opacity-50"
                 >
                   {t('standIn.save')}
-                </button>
+                </ControlButton>
               </div>
             </form>
           )}
@@ -305,7 +340,8 @@ function StandInMemoryPanelContent({
                 </p>
                 <StandInMemoryEvidence memory={row} />
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="stand-in-memory-edit"
                     disabled={busy || editing !== null}
@@ -313,8 +349,9 @@ function StandInMemoryPanelContent({
                     className="min-h-8 rounded-md px-2 text-sm hover:bg-muted"
                   >
                     {t('standIn.memory.edit')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="stand-in-memory-delete"
                     disabled={busy || editing !== null}
@@ -322,13 +359,14 @@ function StandInMemoryPanelContent({
                     className="min-h-8 rounded-md px-2 text-sm hover:bg-muted"
                   >
                     {t('standIn.memory.forget')}
-                  </button>
+                  </ControlButton>
                   {deleting === row.id && (
                     <>
                       <p className="basis-full text-sm text-text-muted">
                         {t('standIn.memory.forget_retention')}
                       </p>
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="stand-in-memory-delete-confirm"
                         disabled={busy}
@@ -349,8 +387,9 @@ function StandInMemoryPanelContent({
                         className="min-h-8 rounded-md px-2 text-sm text-error hover:bg-muted"
                       >
                         {t('standIn.memory.confirm_forget')}
-                      </button>
-                      <button
+                      </ControlButton>
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="stand-in-memory-delete-cancel"
                         disabled={busy}
@@ -358,7 +397,7 @@ function StandInMemoryPanelContent({
                         className="min-h-8 rounded-md px-2 text-sm hover:bg-muted"
                       >
                         {t('standIn.cancel')}
-                      </button>
+                      </ControlButton>
                     </>
                   )}
                 </div>
@@ -398,6 +437,6 @@ function StandInMemoryPanelContent({
           })
         }}
       />
-    </div>
+    </DialogSurface>
   )
 }

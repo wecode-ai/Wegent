@@ -53,6 +53,7 @@ interface MarketplaceOperationsInput {
   mode: 'marketplace' | 'owned'
   currentPendingInstall: PendingInstall | null
   installModelKey: string
+  requestConfirmation(message: string): Promise<boolean>
   navigateFromSmartApps(path: string): void
 }
 export function createMarketplaceOperations({
@@ -65,6 +66,7 @@ export function createMarketplaceOperations({
   mode,
   currentPendingInstall,
   installModelKey,
+  requestConfirmation,
   navigateFromSmartApps,
 }: MarketplaceOperationsInput) {
   const { busy, copyInstallation, pendingDelete, pluginInstallation } = pageState
@@ -153,7 +155,7 @@ export function createMarketplaceOperations({
     )
     const isCurrentInstall = pageView.beginInstall()
     if (current?.state === 'running') {
-      const shouldStop = window.confirm(
+      const shouldStop = await requestConfirmation(
         t('workbench.smart_apps_update_stop_confirm', '更新需要先停止正在运行的工作台，是否继续？')
       )
       if (!shouldStop || !(await stopInstalledApp(current, false))) return

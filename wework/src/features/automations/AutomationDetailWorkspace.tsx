@@ -1,20 +1,7 @@
-import { useRef, useState } from 'react'
-import { useFocusRequest } from '@wegent/collaboration/dom-events'
-import {
-  Check,
-  ChevronDown,
-  CirclePause,
-  CirclePlay,
-  Info,
-  Loader2,
-  MoreHorizontal,
-  Play,
-  Settings,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { MenuSelect, TimeMenu, WeekdayMenu, type MenuOption } from '@/components/common/MenuSelect'
+import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/SettingsGroup'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
-import { WorkdayOnlyField } from '@wegent/collaboration/project-manage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import {
@@ -25,14 +12,6 @@ import {
   WEWORK_MIN_EXECUTOR_VERSION,
 } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
-import {
-  MenuSelect,
-  PopupMenu,
-  TimeMenu,
-  WeekdayMenu,
-  type MenuOption,
-} from '@/components/common/MenuSelect'
-import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/SettingsGroup'
 import type {
   DeviceInfo,
   RuntimeProjectWork,
@@ -46,15 +25,27 @@ import type {
   AutomationRun,
   AutomationSource,
 } from '@/types/automation'
+import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { WorkdayOnlyField } from '@wegent/collaboration/project-manage'
+import { CirclePause, CirclePlay, Info, Loader2, Play, Settings, Trash2, X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import {
+  automationTaskKey,
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
-  automationTaskKey,
   scheduleFromAutomationDraft,
   type AutomationDraft,
   type CronPreset,
   type CustomFrequency,
 } from './automationDraft'
+
+function RunningAutomationIcon({ className }: { className?: string }) {
+  return <Loader2 className={[className, 'animate-spin'].filter(Boolean).join(' ')} />
+}
 
 interface AutomationDetailWorkspaceProps {
   draft: AutomationDraft
@@ -118,7 +109,6 @@ export function AutomationDetailWorkspace({
   validationError,
 }: AutomationDetailWorkspaceProps) {
   const { t } = useTranslation('common')
-  const [actionsOpen, setActionsOpen] = useState(false)
   const [frequencySettingsOpen, setFrequencySettingsOpen] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
@@ -211,7 +201,8 @@ export function AutomationDetailWorkspace({
                 : t('todo.automation_status_paused', '已暂停')
               : t('todo.automation_status_new', '新建')}
           </span>
-          <input
+          <ControlInput
+            appearance={compact ? 'outline' : 'plain'}
             ref={nameRef}
             aria-label={t('todo.automation_name', '名称')}
             aria-invalid={Boolean(validationError && !draft.name.trim())}
@@ -220,8 +211,8 @@ export function AutomationDetailWorkspace({
             onChange={event => onChange('name', event.target.value)}
             className={
               compact
-                ? 'mt-2 min-h-9 w-full rounded-lg border border-solid border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-tertiary focus:border-text-tertiary'
-                : 'mt-2 w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary'
+                ? 'mt-2 w-full border-solid placeholder:text-text-tertiary focus:border-text-tertiary'
+                : 'mt-2 w-full text-heading-md font-medium tracking-[-0.02em] placeholder:text-text-tertiary'
             }
             placeholder={t('todo.automation_name', '名称')}
             autoFocus={!automation}
@@ -231,16 +222,28 @@ export function AutomationDetailWorkspace({
           <div className="relative flex shrink-0 items-center gap-1">
             {automation ? (
               <>
-                <button
-                  type="button"
-                  data-testid={`automation-detail-actions-${automation.id}`}
-                  onClick={() => setActionsOpen(open => !open)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface"
-                  aria-label={t('todo.automation_actions', '自动化操作')}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-                <button
+                <ActionMenu
+                  ariaLabel={t('todo.automation_actions', '自动化操作')}
+                  testId={`automation-detail-actions-${automation.id}`}
+                  items={[
+                    {
+                      testId: 'automation-run-now-button',
+                      label: t('todo.automation_run_now', '立即运行'),
+                      icon: running ? RunningAutomationIcon : Play,
+                      disabled: running,
+                      onSelect: onRun,
+                    },
+                    {
+                      testId: 'automation-detail-delete',
+                      label: t('workbench.delete', '删除'),
+                      icon: Trash2,
+                      danger: true,
+                      onSelect: onDelete,
+                    },
+                  ]}
+                />
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`automation-detail-toggle-${automation.id}`}
                   onClick={onToggle}
@@ -256,42 +259,11 @@ export function AutomationDetailWorkspace({
                   ) : (
                     <CirclePlay className="h-4 w-4" />
                   )}
-                </button>
-                {actionsOpen ? (
-                  <div className="absolute right-16 top-9 z-popover w-36 rounded-xl border border-border bg-background p-1 shadow-lg">
-                    <button
-                      type="button"
-                      data-testid="automation-run-now-button"
-                      onClick={() => {
-                        setActionsOpen(false)
-                        onRun()
-                      }}
-                      disabled={running}
-                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm hover:bg-surface disabled:opacity-50"
-                    >
-                      {running ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                      {t('todo.automation_run_now', '立即运行')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActionsOpen(false)
-                        onDelete()
-                      }}
-                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-sm text-destructive hover:bg-destructive/5 wework:text-red-600 wework:hover:bg-red-500/5"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      {t('workbench.delete', '删除')}
-                    </button>
-                  </div>
-                ) : null}
+                </ControlButton>
               </>
             ) : null}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="automation-detail-close"
               onClick={onClose}
@@ -299,13 +271,13 @@ export function AutomationDetailWorkspace({
               aria-label={t('workbench.close', '关闭')}
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
         )}
       </header>
 
       <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? 'pb-4' : 'px-6 pb-28 pt-3'}`}>
-        <textarea
+        <ControlTextarea
           ref={promptRef}
           aria-label={t(
             calendarMode ? 'standIn.workspace.calendar_event' : 'todo.automation_prompt',
@@ -352,6 +324,7 @@ export function AutomationDetailWorkspace({
               <SettingsRow label={t('todo.automation_run_in', '运行于')}>
                 <InlineSelect
                   dataTestId="automation-conversation-mode"
+                  accessibleLabel={t('todo.automation_run_in', '运行于')}
                   value={draft.conversationMode}
                   onChange={value => {
                     const mode = value as AutomationConversationMode
@@ -415,6 +388,7 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('todo.automation_location', '运行位置')}>
                     <InlineSelect
                       dataTestId="automation-source-select"
+                      accessibleLabel={t('todo.automation_location', '运行位置')}
                       value={draft.source}
                       disabled={Boolean(automation)}
                       onChange={value => onSourceChange(value as AutomationSource)}
@@ -431,6 +405,7 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('workbench.device', '设备')}>
                     <InlineSelect
                       dataTestId="automation-device-select"
+                      accessibleLabel={t('workbench.device', '设备')}
                       value={draft.deviceId}
                       onChange={value => {
                         onChange('deviceId', value)
@@ -460,6 +435,7 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('workbench.project', '项目')}>
                     <InlineSelect
                       dataTestId="automation-project-select"
+                      accessibleLabel={t('workbench.project', '项目')}
                       value={selectedProject?.key ?? ''}
                       onChange={value => {
                         const project = projectOptions.find(option => option.key === value)
@@ -477,6 +453,7 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('workbench.model', '模型')}>
                     <InlineSelect
                       dataTestId="automation-model-select"
+                      accessibleLabel={t('workbench.model', '模型')}
                       value={selectedModelValue}
                       onChange={value => {
                         if (!catalogModel && selectedModel && value === selectedModelValue) return
@@ -498,6 +475,7 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('todo.reasoning', '推理')}>
                     <InlineSelect
                       dataTestId="automation-reasoning-select"
+                      accessibleLabel={t('todo.reasoning', '推理')}
                       value={reasoning}
                       onChange={value =>
                         onChange('modelOptions', { ...draft.modelOptions, reasoningEffort: value })
@@ -520,7 +498,8 @@ export function AutomationDetailWorkspace({
           title={t('todo.automation_frequency', '频率')}
           action={
             draft.scheduleType !== 'one_time' ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="automation-frequency-settings"
                 aria-label={t('todo.automation_frequency_settings')}
@@ -529,7 +508,7 @@ export function AutomationDetailWorkspace({
                 className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-surface md:h-7 md:w-7"
               >
                 <Settings className="h-4 w-4" />
-              </button>
+              </ControlButton>
             ) : undefined
           }
         />
@@ -550,7 +529,8 @@ export function AutomationDetailWorkspace({
           className={`flex w-full min-w-0 justify-end gap-2 border-t border-border py-3 ${compact ? 'shrink-0 bg-background' : 'absolute bottom-0 right-0 bg-background/95 px-6 backdrop-blur'}`}
         >
           {dialogMode && automation && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`automation-detail-toggle-${automation.id}`}
               disabled={saving}
@@ -558,18 +538,21 @@ export function AutomationDetailWorkspace({
               className="h-8 rounded-lg px-3 text-sm hover:bg-surface"
             >
               {t(automation.enabled ? 'todo.automation_pause' : 'todo.automation_resume')}
-            </button>
+            </ControlButton>
           )}
           {!automation ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               onClick={onClose}
               className="h-8 rounded-lg px-3 text-sm hover:bg-surface"
             >
               {t('workbench.cancel', '取消')}
-            </button>
+            </ControlButton>
           ) : null}
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="automation-save-button"
             onClick={onSave}
@@ -578,7 +561,7 @@ export function AutomationDetailWorkspace({
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {t('workbench.save', '保存')}
-          </button>
+          </ControlButton>
         </footer>
       ) : null}
     </section>
@@ -673,6 +656,7 @@ function FrequencySettings({
       <SettingsRow label={t('todo.automation_repeat', '重复')}>
         <MenuSelect
           testId="automation-repeat-menu"
+          accessibleLabel={t('todo.automation_repeat', '重复')}
           value={repeatValue}
           options={repeatOptions}
           onChange={setRepeat}
@@ -680,13 +664,14 @@ function FrequencySettings({
       </SettingsRow>
       {draft.scheduleType === 'one_time' ? (
         <SettingsRow label={t('todo.automation_execute_at', '执行时间')}>
-          <input
+          <ControlInput
+            appearance="plain"
             data-testid="automation-execute-at-input"
             type="datetime-local"
             step="1"
             value={draft.executeAt}
             onChange={event => onChange('executeAt', event.target.value)}
-            className="bg-transparent text-right text-sm outline-none"
+            className="text-right"
           />
         </SettingsRow>
       ) : null}
@@ -695,6 +680,7 @@ function FrequencySettings({
           <SettingsRow label={t('todo.automation_repeat', '重复')}>
             <MenuSelect
               testId="automation-custom-frequency-menu"
+              accessibleLabel={t('todo.automation_repeat', '重复')}
               value={draft.customFrequency}
               options={customFrequencyOptions}
               onChange={value => onChange('customFrequency', value as CustomFrequency)}
@@ -703,24 +689,26 @@ function FrequencySettings({
           </SettingsRow>
           {draft.customFrequency === 'cron' ? (
             <SettingsRow label={t('todo.automation_cron_expression')}>
-              <input
+              <ControlInput
+                appearance="plain"
                 data-testid="automation-cron-expression"
                 aria-label={t('todo.automation_cron_expression')}
                 value={draft.cronExpression}
                 onChange={event => onChange('cronExpression', event.target.value)}
-                className="w-40 bg-transparent text-right text-sm outline-none"
+                className="w-40 text-right"
               />
             </SettingsRow>
           ) : (
             <SettingsRow label={t('todo.automation_every', '每隔')}>
               <span className="flex items-center gap-2 text-sm">
-                <input
+                <ControlInput
+                  appearance="plain"
                   data-testid="automation-custom-interval"
                   type="number"
                   min="1"
                   value={draft.customInterval}
                   onChange={event => onChange('customInterval', event.target.value)}
-                  className="w-10 bg-transparent text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="w-10 text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
                 <span className="text-text-secondary">{intervalUnitLabel}</span>
               </span>
@@ -771,7 +759,8 @@ function FrequencySettings({
           label={t('todo.automation_timezone')}
           description={t('todo.automation_timezone_hint')}
         >
-          <input
+          <ControlInput
+            appearance="plain"
             data-testid="automation-timezone-input"
             aria-label={t('todo.automation_timezone')}
             value={draft.timezone}
@@ -779,13 +768,14 @@ function FrequencySettings({
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full bg-transparent text-right text-sm outline-none"
+            className="w-full text-right"
           />
         </SettingsRow>
       ) : null}
       <SettingsRow label={t('todo.automation_notifications', '通知')}>
         <MenuSelect
           testId="automation-notification-menu"
+          accessibleLabel={t('todo.automation_notifications', '通知')}
           value={draft.notificationPolicy}
           options={[
             { value: 'all_runs', label: t('todo.automation_all_runs', '所有运行') },
@@ -806,12 +796,14 @@ function FrequencySettings({
 
 function InlineSelect({
   dataTestId,
+  accessibleLabel,
   value,
   disabled,
   onChange,
   options,
 }: {
   dataTestId: string
+  accessibleLabel: string
   value: string
   disabled?: boolean
   onChange: (value: string) => void
@@ -820,6 +812,7 @@ function InlineSelect({
   return (
     <MenuSelect
       testId={dataTestId}
+      accessibleLabel={accessibleLabel}
       value={value}
       options={options}
       onChange={onChange}
@@ -840,52 +833,37 @@ function AutomationTaskSelect({
   const { t } = useTranslation('common')
   const selected = options.find(option => option.key === value)
   return (
-    <PopupMenu
+    <SearchableSelect
       testId="automation-target-task-select"
-      menuWidth={352}
-      trigger={
-        <span className="inline-flex h-8 max-w-72 items-center justify-end gap-1.5 rounded-full bg-surface px-2 text-sm font-medium">
-          <span className="truncate">
-            {selected?.label ?? t('todo.automation_select_pinned_task', '选择一个已固定任务')}
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
+      value={value}
+      onChange={onChange}
+      options={options.map(option => ({
+        value: option.key,
+        label: option.label,
+        disabled: option.disabled,
+        testId: 'automation-target-task-select-option-' + option.key,
+      }))}
+      accessibleLabel={t('todo.automation_target_task', '目标任务')}
+      searchPlaceholder={t('todo.search_tasks', '搜索任务')}
+      emptyLabel={t(
+        'todo.automation_pin_local_task_first',
+        '请先置顶一个可用设备上的任务，再使用已安排任务'
+      )}
+      density="dense"
+      appearance="plain"
+      className="max-w-72"
+      contentClassName="w-[352px]"
+      header={
+        <div className="px-3 pb-2 pt-1 text-sm font-medium text-text-tertiary">
+          {t('todo.automation_target_task', '目标任务')}
+        </div>
+      }
+      triggerContent={
+        <span className="truncate">
+          {selected?.label ?? t('todo.automation_select_pinned_task', '选择一个已固定任务')}
         </span>
       }
-    >
-      {close => (
-        <div className="w-full min-w-0">
-          <div className="px-3 pb-2 pt-1 text-sm font-medium text-text-tertiary">
-            {t('todo.automation_target_task', '目标任务')}
-          </div>
-          {options.length ? (
-            options.map(option => (
-              <button
-                key={option.key}
-                type="button"
-                data-testid={`automation-target-task-select-option-${option.key}`}
-                disabled={option.disabled}
-                onClick={() => {
-                  if (option.disabled) return
-                  onChange(option.key)
-                  close()
-                }}
-                className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {option.key === value ? <Check className="h-4 w-4 shrink-0" /> : null}
-              </button>
-            ))
-          ) : (
-            <p className="whitespace-normal px-3 pb-2 text-sm font-medium leading-6 text-text-primary">
-              {t(
-                'todo.automation_pin_local_task_first',
-                '请先置顶一个可用设备上的任务，再使用已安排任务'
-              )}
-            </p>
-          )}
-        </div>
-      )}
-    </PopupMenu>
+    />
   )
 }
 
@@ -935,14 +913,15 @@ function RunHistory({
                 </span>
               ) : null}
               {run.taskId && run.deviceId && onOpenRun && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`automation-run-open-${run.id}`}
                   onClick={() => onOpenRun(run)}
                   className="min-h-8 shrink-0 rounded-md px-2 text-sm underline hover:bg-surface"
                 >
                   {t('standIn.workspace.open_work')}
-                </button>
+                </ControlButton>
               )}
             </div>
           ))
