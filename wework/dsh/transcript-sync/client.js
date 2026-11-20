@@ -105,7 +105,7 @@ window.__ModuleLoader__.load({
       return store
     }
 
-    function SyncSettingsSection({ service, store }) {
+    function SyncSettingsSection({ service, store, controls: { Button, Checkbox } }) {
       const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
       const label = service.localization.translate({
         en: 'Synchronize conversations and settings across devices',
@@ -139,13 +139,12 @@ window.__ModuleLoader__.load({
               gap: '12px',
             },
           },
-          createElement('input', {
+          createElement(Checkbox, {
             checked: snapshot.enabled,
+            'aria-label': label,
             'data-testid': 'transcript-sync-enabled-checkbox',
             disabled: snapshot.pending,
-            onChange: event => void store.setEnabled(event.target.checked),
-            style: { marginTop: '2px' },
-            type: 'checkbox',
+            onCheckedChange: checked => void store.setEnabled(checked === true),
           }),
           createElement(
             'span',
@@ -231,20 +230,14 @@ window.__ModuleLoader__.load({
             : null,
           snapshot.enabled
             ? createElement(
-                'button',
+                Button,
                 {
                   'data-testid': 'transcript-sync-retry-button',
                   disabled: snapshot.statusRefreshing,
                   onClick: () => void store.retry(),
-                  style: {
-                    alignSelf: 'flex-start',
-                    background: 'transparent',
-                    border: '1px solid rgb(var(--color-border))',
-                    borderRadius: '6px',
-                    color: 'rgb(var(--color-text-primary))',
-                    cursor: snapshot.statusRefreshing ? 'default' : 'pointer',
-                    padding: '6px 10px',
-                  },
+                  className: 'self-start',
+                  variant: 'outline',
+                  size: 'sm',
                   type: 'button',
                 },
                 service.localization.translate({ en: 'Retry now', 'zh-CN': '立即重试' })
@@ -338,6 +331,7 @@ window.__ModuleLoader__.load({
           experimental: true,
           id: 'wework-transcript-sync',
           label: ctx.wework.localization.translate({ en: 'Cloud sync', 'zh-CN': '云同步' }),
+          module: 'plugins/wework-ui-transcript-sync-settings.js',
           order: 90,
           page: 'connections',
         }

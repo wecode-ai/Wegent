@@ -172,6 +172,10 @@ export default defineConfig({
           __dirname,
           'dsh/ui-core-settings/src/settings-page.tsx'
         ),
+        'wework-ui-transcript-sync-settings': path.resolve(
+          __dirname,
+          'dsh/transcript-sync/src/settings-section.tsx'
+        ),
         'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
         'wework-ui-home-developer': path.resolve(__dirname, 'dsh/ui-home-developer/src/home.tsx'),
         'wework-ui-home-focus': path.resolve(__dirname, 'dsh/ui-home-focus/src/home.tsx'),

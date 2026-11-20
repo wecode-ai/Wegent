@@ -18,17 +18,17 @@ window.__ModuleLoader__.load({
       return body.result
     }
 
-    function CreatePluginAction({ createButtonClassName, onCreate, t }) {
+    function CreatePluginAction({ controls: { Button }, onCreate, t }) {
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
       return createElement(
         React.Fragment,
         null,
         createElement(
-          'button',
+          Button,
           {
             type: 'button',
-            className: createButtonClassName,
+            variant: 'primary',
             disabled: busy || !onCreate,
             'data-testid': 'wework-plugin-developer-create-button',
             onClick: async () => {
@@ -109,19 +109,15 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function actionButton({
-      children,
-      className = '',
-      disabled,
-      onClick,
-      testId,
-      ariaExpanded,
-      ariaHaspopup,
-    }) {
+    function actionButton(
+      Button,
+      { children, className = '', disabled, onClick, testId, ariaExpanded, ariaHaspopup }
+    ) {
       return createElement(
-        'button',
+        Button,
         {
           type: 'button',
+          variant: 'unstyled',
           disabled,
           'data-testid': testId,
           'aria-expanded': ariaExpanded,
@@ -133,8 +129,11 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function sectionButton({ children, collapsedLabel, expanded, expandedLabel, onClick, testId }) {
-      return actionButton({
+    function sectionButton(
+      Button,
+      { children, collapsedLabel, expanded, expandedLabel, onClick, testId }
+    ) {
+      return actionButton(Button, {
         children: createElement(
           React.Fragment,
           null,
@@ -190,8 +189,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function eventFilterButton({ active, children, onClick, testId }) {
-      return actionButton({
+    function eventFilterButton(Button, { active, children, onClick, testId }) {
+      return actionButton(Button, {
         children,
         className: active
           ? 'bg-muted text-text-primary'
@@ -322,7 +321,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function PluginDebugPanel({ scope, t, visible }) {
+    function PluginDebugPanel({ controls: { Button }, scope, t, visible }) {
       const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
       const [eventFilter, setEventFilter] = useState('all')
       const [moreOpen, setMoreOpen] = useState(false)
@@ -455,7 +454,7 @@ window.__ModuleLoader__.load({
                 {
                   className: 'relative shrink-0',
                 },
-                actionButton({
+                actionButton(Button, {
                   children: t('workbench.plugin_development_more', 'More'),
                   ariaExpanded: moreOpen,
                   ariaHaspopup: 'menu',
@@ -490,14 +489,14 @@ window.__ModuleLoader__.load({
                             createElement(
                               'div',
                               { className: 'flex gap-1' },
-                              actionButton({
+                              actionButton(Button, {
                                 children: t('workbench.cancel', 'Cancel'),
                                 className:
                                   'flex-1 justify-center text-text-secondary hover:bg-muted hover:text-text-primary',
                                 onClick: () => setStopConfirmationOpen(false),
                                 testId: 'wework-plugin-development-sidebar-stop-cancel',
                               }),
-                              actionButton({
+                              actionButton(Button, {
                                 children: t(
                                   'workbench.plugin_development_stop_confirm',
                                   'Stop debugging'
@@ -514,7 +513,7 @@ window.__ModuleLoader__.load({
                               })
                             )
                           )
-                        : actionButton({
+                        : actionButton(Button, {
                             children: t('workbench.plugin_development_stop', 'Stop debugging'),
                             className:
                               'w-full justify-start text-destructive hover:bg-destructive/10',
@@ -588,7 +587,7 @@ window.__ModuleLoader__.load({
                     `${t('workbench.plugin_development_instance_id', 'Instance ID')} ${compactIdentifier(currentSession?.id)}`
                   )
                 ),
-                actionButton({
+                actionButton(Button, {
                   children:
                     busy === 'start'
                       ? t('workbench.plugin_development_starting', 'Starting…')
@@ -724,19 +723,19 @@ window.__ModuleLoader__.load({
                   createElement(
                     'div',
                     { className: 'flex items-center gap-1' },
-                    eventFilterButton({
+                    eventFilterButton(Button, {
                       active: eventFilter === 'all',
                       children: t('workbench.plugin_development_filter_all', 'All'),
                       onClick: () => setEventFilter('all'),
                       testId: 'wework-plugin-development-filter-all',
                     }),
-                    eventFilterButton({
+                    eventFilterButton(Button, {
                       active: eventFilter === 'hmr',
                       children: 'HMR',
                       onClick: () => setEventFilter('hmr'),
                       testId: 'wework-plugin-development-filter-hmr',
                     }),
-                    eventFilterButton({
+                    eventFilterButton(Button, {
                       active: eventFilter === 'error',
                       children: t('workbench.plugin_development_filter_errors', 'Errors'),
                       onClick: () => setEventFilter('error'),
@@ -771,7 +770,7 @@ window.__ModuleLoader__.load({
                     'mt-3 w-full max-w-3xl overflow-hidden rounded-xl border border-border/60',
                   'data-testid': 'wework-plugin-development-diagnostics',
                 },
-                sectionButton({
+                sectionButton(Button, {
                   children: t('workbench.plugin_development_tools', 'Diagnostic tools'),
                   collapsedLabel: t('workbench.plugin_development_expand', 'Expand'),
                   expanded: diagnosticsOpen,
@@ -783,7 +782,7 @@ window.__ModuleLoader__.load({
                   ? createElement(
                       'div',
                       { className: 'border-t border-border/60' },
-                      actionButton({
+                      actionButton(Button, {
                         children: createElement(
                           'span',
                           { className: 'min-w-0 text-left' },
@@ -808,7 +807,7 @@ window.__ModuleLoader__.load({
                         testId: 'wework-plugin-development-sidebar-restart',
                       }),
                       createElement('div', { className: 'mx-3 h-px bg-border/60' }),
-                      actionButton({
+                      actionButton(Button, {
                         children: createElement(
                           'span',
                           { className: 'min-w-0 text-left' },
@@ -833,7 +832,7 @@ window.__ModuleLoader__.load({
                         testId: 'wework-plugin-development-sidebar-devtools',
                       }),
                       createElement('div', { className: 'mx-3 h-px bg-border/60' }),
-                      actionButton({
+                      actionButton(Button, {
                         children: createElement(
                           'span',
                           { className: 'min-w-0 text-left' },

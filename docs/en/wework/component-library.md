@@ -64,7 +64,7 @@ Keep one focus and dismissal owner per popup. Remove old Escape, Tab loops, back
 
 ## Coverage and verification
 
-Migration is still in progress. The current examples do not prove every production interface has migrated. `components:audit` reports native interactive tags and handwritten widget roles in production TSX, excluding native elements required by SDK render composition and hidden browser file inputs. Review its findings alongside production usage, type checking, behavior tests and real previews.
+Migration is still in progress. The current examples do not prove every production interface has migrated. `components:audit` reports native JSX controls and handwritten widget roles in production source, as well as native controls that built-in DSH clients create with React `createElement`. JSX elements supplied for SDK render composition and hidden browser file inputs are excluded. Review its findings alongside production usage, type checking, behavior tests and real previews.
 
 Update examples, documentation and callers together for public component changes. Preserve existing test IDs. Do not commit temporary screenshots, logs or generated builds. Existing push hooks and CI own full regression runs; follow repository policy for focused local verification.
 

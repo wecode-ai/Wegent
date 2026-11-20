@@ -133,7 +133,9 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
   const descriptor = registrations.find(entry => entry.descriptor)?.descriptor
   assert.equal(descriptor?.page, 'connections')
   assert.equal(descriptor?.experimental, true)
-  const wrapper = pageRegistration.component({})
+  assert.equal(descriptor?.module, 'plugins/wework-ui-transcript-sync-settings.js')
+  const controls = { Button() {}, Checkbox() {} }
+  const wrapper = pageRegistration.component({ controls })
   const statusSnapshots = []
   const unsubscribeStatus = wrapper.props.store.subscribe(snapshot => {
     statusSnapshots.push(snapshot)
@@ -149,6 +151,8 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
     node => node.props?.['data-testid'] === 'transcript-sync-enabled-checkbox'
   )
   assert.ok(checkbox)
+  assert.equal(checkbox.type, controls.Checkbox)
+  assert.equal(checkbox.props['aria-label'], '跨设备同步会话和配置')
   assert.equal(checkbox.props.checked, false)
   assert.equal(checkbox.props.disabled, false)
   const runtimeStatus = findElement(
@@ -165,7 +169,7 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
     null
   )
 
-  checkbox.props.onChange({ target: { checked: true } })
+  checkbox.props.onCheckedChange(true)
   await new Promise(resolve => setImmediate(resolve))
 
   assert.equal(configured.enabled, true)
@@ -179,6 +183,7 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
     node => node.props?.['data-testid'] === 'transcript-sync-retry-button'
   )
   assert.ok(retry)
+  assert.equal(retry.type, controls.Button)
   retry.props.onClick()
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(backendRequests.at(-1).method, 'flush')
@@ -188,7 +193,7 @@ test('loads the default-disabled runtime setting and applies explicit changes', 
     node => node.props?.['data-testid'] === 'transcript-sync-enabled-checkbox'
   )
   assert.equal(enabledCheckbox.props.checked, true)
-  enabledCheckbox.props.onChange({ target: { checked: false } })
+  enabledCheckbox.props.onCheckedChange(false)
   await new Promise(resolve => setImmediate(resolve))
 
   assert.equal(configured.enabled, false)

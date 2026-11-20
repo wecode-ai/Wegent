@@ -100,25 +100,28 @@ test('registers translated plugin development actions through the Wework service
   const createAction = contributions.find(item => item.slot === 'wework.plugins.action')
   assert.ok(createAction)
   assert.equal(createAction.descriptor.labelKey, 'workbench.plugin_development_create')
-  const createButtonClassName = 'host-primary-button'
+  const controls = { Button: 'host-button' }
   const rendered = createAction.component({
-    createButtonClassName,
+    controls,
     onCreate: async () => {},
     t: (_key, fallback) => fallback,
   })
-  assert.equal(rendered.props.children[0].type, 'button')
-  assert.equal(rendered.props.children[0].props.className, createButtonClassName)
+  assert.equal(rendered.props.children[0].type, controls.Button)
+  assert.equal(rendered.props.children[0].props.variant, 'primary')
   assert.match(JSON.stringify(rendered), /wework-plugin-developer-create-button/)
   assert.match(JSON.stringify(rendered), /Create plugin/)
   const debugTab = contributions.find(item => item.slot === 'wework.workspace.sidebar.tab')
   assert.deepEqual([...debugTab.descriptor.when.projectKinds], ['wework-core-dsh-plugin'])
   assert.equal(debugTab.descriptor.when.codexPluginKeys, undefined)
   const debugPanel = debugTab.component({
+    controls,
     scope: { cwd: '/workspace/plugin-development-project' },
     t: (_key, fallback) => fallback,
     visible: true,
   })
   const debugMarkup = JSON.stringify(debugPanel)
+  assert.match(debugMarkup, /"type":"host-button","props":\{"type":"button","variant":"unstyled"/)
+  assert.doesNotMatch(debugMarkup, /"type":"button","props"/)
   assert.match(debugMarkup, /wework-plugin-development-debug-target/)
   assert.match(debugMarkup, /Current project/)
   assert.match(debugMarkup, /Core DSH/)

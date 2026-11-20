@@ -239,7 +239,7 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 
 修复记录：重复按钮配方（原证据行 167）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 268）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 397）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 1159）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 1231）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
 
-入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+入口/调用方：桌面工作台在设置打开时挂载连接设置壳。核心设置插件注册 `/settings/connections`，并在壳内加载设备设置子页。[/settings/connections 注册](../../../wework/dsh/ui-core-settings/client.js)、[桌面工作台](../../../wework/src/components/layout/DesktopWorkbenchLayoutView.tsx)、[核心设置模块](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
 
 依赖/委托：hooks: `useCloudConnection`, `useTranslation`；权限相关标识（非授权结论）：`isConnected`；委托：`Pencil`, `DeviceVersionBadge`, `StatusPill`, `DeviceSurfaceDeviceAction`, `ActionMenu`, `CloudDeviceRestartProgress`, `AlertCircle`, `Terminal`, `RemoteTerminal`, `ConfirmDeleteDeviceDialog`, `CloudDeviceConnectionInfoDialog`, `DeviceCard`, `Code2`, `SettingsPage`, `SettingsPageHeader`, `RemoteTaskAccessSetting`, `DshSettingsSectionSurface`, `CloudConnectionDialog`, `LogOut`, `CloudModelsSection`, `ConnectorConnectionsSection`, `DeviceSection`, `DeviceGitSyncSection`, `AddCloudDeviceDialog`, `WorkbenchCloudDeviceRestarts`, `DesktopTopBar`, `ArrowLeft`, `ExperimentalBadge`, `DshSettingsSurface`, `DshSlotSurface`
 
@@ -323,7 +323,7 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 
 修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
 
-入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+入口/调用方：移动工作台在 `/settings` 及其子路径挂载此页。应用页也在移动布局中通过设置入口直接挂载此页。[移动工作台](../../../wework/src/components/layout/MobileWorkbenchLayout.tsx)、[设置路径判定](../../../wework/src/lib/navigation.ts)、[应用页](../../../wework/dsh/ui-applications/src/SitesPage.tsx)
 
 依赖/委托：hooks: `useTranslation`；委托：`ArrowLeft`, `DshSettingsSurface`, `ConnectionsDeviceSettingsPage`, `QuickPhrasesSettingsPage`, `RuntimeSettingsPage`, `GeneralSettingsPage`, `AppearanceSettingsPage`, `ContextSettingsPage`, `AboutSettingsPage`, `ArchivedConversationsSettingsPage`, `ExperimentalBadge`, `HarnessSettingsPage`, `PluginSettingsPage`, `SlidersHorizontal`, `ChevronRight`, `Palette`, `Terminal`, `UserRound`, `Server`, `MessageSquareText`, `ModelSettingsPage`, `Plug`, `Globe2`, `Archive`, `Package`
 
@@ -491,7 +491,7 @@ macOS arm64 打包 `core-task-flow` 已完整通过。任务关联弹窗在加�
 
 修复记录：重复按钮配方（原证据行 1456）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 2070）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
 
-入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+入口/调用方：`/sites` 的应用页在智能应用标签中通过 `SitesWorkspace` 挂载此组件。默认显示市场，`view=owned` 显示我的应用。[应用页调用方](../../../wework/dsh/ui-applications/src/SitesPage.tsx)、[智能应用标签面板](../../../wework/src/components/sites/SitesWorkspace.tsx)
 
 依赖/委托：hooks: `useTranslation`；权限相关标识（非授权结论）：`accessRole`；委托：`Upload`, `CirclePlus`, `FolderOpen`, `Download`, `ApplicationContextToolbar`, `SmartAppsSectionNav`, `CheckCircle2`, `EmptyState`, `Box`, `PackageCheck`, `SmartAppCard`, `Play`, `ActionMenu`, `SmartAppDetails`, `HarnessAppInstallDialog`, `SmartAppPublishDialog`, `SmartAppShareDialog`, `SmartAppDevelopmentDialog`, `SmartAppPluginDialog`, `SmartAppRemoveLocalDialog`, `VisibilityIcon`, `Puzzle`, `DialogSurface`, `Boxes`, `ShieldCheck`, `PackageOpen`, `CalendarDays`, `ReactMarkdown`, `TargetPicker`, `SmartAppFilePicker`
 

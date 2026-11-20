@@ -26,6 +26,15 @@ const roles = new Set([
   'treeitem',
 ])
 const findings = []
+const nativeControls = new Set([
+  'button',
+  'select',
+  'textarea',
+  'input',
+  'details',
+  'summary',
+  'dialog',
+])
 let files = 0
 
 function inspect(file) {
@@ -35,7 +44,11 @@ function inspect(file) {
     text,
     ts.ScriptTarget.Latest,
     true,
-    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    file.endsWith('.js')
+      ? ts.ScriptKind.JS
+      : file.endsWith('.tsx')
+        ? ts.ScriptKind.TSX
+        : ts.ScriptKind.TS
   )
   const sdk = new Set(['DialogSurface'])
   const initializers = new Map()
@@ -139,6 +152,15 @@ function inspect(file) {
     }
     if (ts.isCallExpression(node)) {
       const name = node.expression.getText(source)
+      const tag = node.arguments[0]
+      if (
+        /^(?:React\.)?createElement$/.test(name) &&
+        tag &&
+        ts.isStringLiteral(tag) &&
+        nativeControls.has(tag.text)
+      ) {
+        report(node, `native:${tag.text}`)
+      }
       if (
         /^(?:(?:window|globalThis)\.)?(?:confirm|prompt)$/.test(name) &&
         (!ts.isIdentifier(node.expression) || !locallyBound(node, name))
@@ -160,11 +182,7 @@ function inspect(file) {
           (string('type') === 'file' &&
             (attribute('hidden') || string('className')?.split(/\s+/).includes('hidden'))))
       if (!suppliedToSdk(element)) {
-        if (
-          ['button', 'select', 'textarea', 'input', 'details', 'summary', 'dialog'].includes(tag) &&
-          !browserField
-        )
-          report(node, `native:${tag}`)
+        if (nativeControls.has(tag) && !browserField) report(node, `native:${tag}`)
         const roleValues = new Set()
         const role = attribute('role')?.initializer
         const examined = new Set()
@@ -195,13 +213,16 @@ function walk(dir) {
 }
 for (const area of ['wework/src', 'packages/collaboration/src']) walk(path.join(root, area))
 for (const extension of fs.readdirSync(path.join(root, 'wework/dsh'), { withFileTypes: true })) {
+  if (!extension.isDirectory()) continue
   const source = path.join(root, 'wework/dsh', extension.name, 'src')
-  if (extension.isDirectory() && fs.existsSync(source)) walk(source)
+  const client = path.join(root, 'wework/dsh', extension.name, 'client.js')
+  if (fs.existsSync(source)) walk(source)
+  if (fs.existsSync(client)) inspect(client)
 }
 if (process.argv.includes('--json')) console.log(JSON.stringify({ files, findings }, null, 2))
 else {
   console.log(
-    `Inspected ${files} production TypeScript files; ${findings.length} controls still need review.`
+    `Inspected ${files} production source files; ${findings.length} controls still need review.`
   )
   for (const issue of findings) console.log(`${issue.file}:${issue.line} ${issue.kind}`)
 }

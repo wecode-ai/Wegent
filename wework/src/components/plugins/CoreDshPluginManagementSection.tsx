@@ -24,7 +24,7 @@ import {
 import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { IconButton } from '@wegent/collaboration/controls/IconButton'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { Button as ControlButton, buttonVariants } from '@wegent/collaboration/markdown/Button'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw } from 'lucide-react'
 import { type FormEvent, useMemo, useState, useSyncExternalStore } from 'react'
 
@@ -114,7 +114,7 @@ export function CoreDshPluginManagementSection({
               className="shrink-0"
               entryId="wework-plugin-developer.create"
               props={{
-                createButtonClassName: buttonVariants({ variant: 'primary' }),
+                controls: { Button: ControlButton },
                 onCreate: onCreatePlugin,
                 t,
               }}
