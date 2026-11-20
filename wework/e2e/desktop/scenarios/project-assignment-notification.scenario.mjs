@@ -464,6 +464,11 @@ async function verifyManualCommentFlow(control, request, projectId, owner, uiTim
   assert.equal(reassigned.status, 'completed')
   await changeIssueStatus(control, request, manualIssue.id, 'in_progress', uiTimeoutMs)
   await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+  // The visible card is still covered while the modal Issue drawer closes.
+  await control.command('waitFor', '[data-testid="collaboration-issue-detail"]', {
+    visible: false,
+    timeoutMs: uiTimeoutMs,
+  })
   const card = scoped(`[data-testid="cloud-todo-card-${manualIssue.id}"]`)
   await control.command('waitFor', card, { visible: true })
   await control.command('drag', card, {
