@@ -14,13 +14,25 @@ export function chooseDesktopControlOption(element: HTMLElement, selection: stri
 export function selectDesktopControlOption(
   element: HTMLSelectElement,
   selection: string,
-  mode: DesktopControlSelectMode = 'value'
+  mode: DesktopControlSelectMode = 'value',
+  includeOptionsOnError = false
 ): string {
   const option = Array.from(element.options).find(candidate =>
     mode === 'label' ? candidate.label.trim() === selection.trim() : candidate.value === selection
   )
   if (!option) {
-    throw new Error(`Unable to find select option by ${mode} "${selection}"`)
+    const diagnostics = includeOptionsOnError
+      ? `; select=${JSON.stringify({
+          selectedValue: element.value,
+          selectedLabel: element.selectedOptions[0]?.label.trim() ?? null,
+          options: Array.from(element.options, candidate => ({
+            value: candidate.value,
+            label: candidate.label.trim(),
+            disabled: candidate.disabled,
+          })),
+        })}`
+      : ''
+    throw new Error(`Unable to find select option by ${mode} "${selection}"${diagnostics}`)
   }
 
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set

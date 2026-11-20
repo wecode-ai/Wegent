@@ -87,11 +87,12 @@ def project_collaboration_manager_activity(
     ):
         raise HTTPException(403, "Manager Runtime is not owned by the caller")
     previous_task = collaboration_manager_task_id(db, dispatch, previous)
-    expected_task = resumed_manager_task_id(previous_task, values.round_id)
+    legacy_task = resumed_manager_task_id(previous_task, values.round_id)
     assignments = previous.metadata_json.get("dispatch_assignments") or []
-    if values.runtime_task_id != expected_task or not _round_finished(
-        db, project_id, item.id, assignments
-    ):
+    if values.runtime_task_id not in {
+        previous_task,
+        legacy_task,
+    } or not _round_finished(db, project_id, item.id, assignments):
         raise HTTPException(409, "Manager resume does not match a finished round")
     identity = f"manager-resume:{values.dispatch_id}:{values.round_id}"
     message_id = hashlib.sha256(identity.encode()).hexdigest()
@@ -109,7 +110,7 @@ def project_collaboration_manager_activity(
     if existing is not None:
         return existing, False, profiles
     activity = _new_manager_activity(
-        project_id, item.id, manager, values, message_id, expected_task
+        project_id, item.id, manager, values, message_id, values.runtime_task_id
     )
     db.add(activity)
     db.flush()
@@ -127,6 +128,7 @@ def project_collaboration_manager_activity(
             }
         ],
         user_id=dispatch.assigner_user_id,
+        manager=manager,
     )
     db.commit()
     publish_loop_item_changed(

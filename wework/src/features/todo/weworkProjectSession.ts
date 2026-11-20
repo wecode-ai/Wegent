@@ -230,21 +230,31 @@ export function createWeworkProjectSession({
           String(binding.taskUserId) === String(taskOwnerUserId)
       )
       if (!owned.length) throw new Error(current.t('todo.linked_task_unavailable'))
-      const backendDeviceId =
-        project.project_store === 'backend'
-          ? (await current.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId
-          : address.deviceId
-      if (!isCurrent()) return
-      const available = await requireIssueTaskAvailable(
-        owned.find(binding => binding.deviceId === backendDeviceId),
-        taskOwnerUserId,
-        current.standInApi,
-        key => current.t(key)
+      let binding = owned.find(
+        binding =>
+          project.project_store === 'backend' &&
+          binding.deviceId === address.deviceId &&
+          binding.dispatchId &&
+          !binding.humanAssignmentId
       )
-      if (!isCurrent()) return
+      if (!binding) {
+        const backendDeviceId =
+          project.project_store === 'backend'
+            ? (await current.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId
+            : address.deviceId
+        if (!isCurrent()) return
+        const available = await requireIssueTaskAvailable(
+          owned.find(binding => binding.deviceId === backendDeviceId),
+          taskOwnerUserId,
+          current.standInApi,
+          key => current.t(key)
+        )
+        if (!isCurrent()) return
+        binding = { ...available, deviceId: backendDeviceId }
+      }
       const resolved = workspaceExecutionAddress(
-        { ...available, deviceId: backendDeviceId },
-        input?.runtimeWork,
+        binding,
+        current.runtimeWork,
         issue.id,
         project.project_store
       )

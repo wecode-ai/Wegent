@@ -151,6 +151,8 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         if resolve {
+            let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user}"));
+            let _git_settings = git_settings.lock().await;
             let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
             let _guard = gate.lock().await;
             let id = payload["proposalId"]

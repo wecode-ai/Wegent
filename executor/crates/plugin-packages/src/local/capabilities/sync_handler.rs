@@ -206,7 +206,10 @@ where
                 ("plugin_count", plugin_specs.len().to_string()),
                 ("changed", changes.changed.to_string()),
                 ("requires_restart", changes.requires_restart.to_string()),
-                ("detection_ms", changes.detection_ms.to_string()),
+                (
+                    "detection_ms",
+                    changes.detection_time.as_millis().to_string(),
+                ),
                 ("inspected_plugins", changes.inspected_plugins.to_string()),
                 ("hashed_files", changes.hashed_files.to_string()),
                 ("hashed_bytes", changes.hashed_bytes.to_string()),

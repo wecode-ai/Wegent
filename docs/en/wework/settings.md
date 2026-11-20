@@ -31,6 +31,8 @@ In a Codex conversation, select **Full access** in the permission menu. Choose h
 - **Review risky commands with AI** lets Codex decide whether to approve.
 - **Run risky commands automatically** opens a confirmation with all three choices. You can change your selection there. Eligible risky commands can run automatically once enabled.
 
+Wework remembers your last choice and uses it for Full access in new standalone conversations.
+
 Under **Settings → General → General**, choose the Wework feature mode:
 
 - **Focus mode** hides the Code hosting and Worktrees entries and disables Wework's built-in Git

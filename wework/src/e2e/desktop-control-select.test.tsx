@@ -74,6 +74,15 @@ describe('selectDesktopControlOption', () => {
     )
   })
 
+  test('captures the mounted options when an opted-in selection is missing', () => {
+    const select = createSelect()
+    select.options[1].disabled = true
+
+    expect(() => selectDesktopControlOption(select, 'missing', 'value', true)).toThrow(
+      'Unable to find select option by value "missing"; select={"selectedValue":"","selectedLabel":"None","options":[{"value":"","label":"None","disabled":false},{"value":"local:project-space-id","label":"Task Follow-up Board","disabled":true}]}'
+    )
+  })
+
   test('updates React controlled state before a following save click', async () => {
     const container = document.createElement('div')
     document.body.append(container)

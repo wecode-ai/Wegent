@@ -65,14 +65,12 @@ export function DesktopSidebarStandaloneDialog({
 export function DesktopSidebarArchiveDialogs({
   t,
   priorityArchiveItems,
-  isArchivingPriority,
   closePriorityArchiveDialog,
   runPriorityArchive,
   priorityForceArchiveItems,
   closePriorityForceArchiveDialog,
   archiveSectionMode,
   archiveSectionDialogCount,
-  isArchiveSectionSubmitting,
   archiveSectionDialogTestId,
   closeArchiveSectionDialog,
   confirmArchiveSectionConversations,
@@ -95,7 +93,6 @@ export function DesktopSidebarArchiveDialogs({
         )}
         confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={isArchivingPriority}
         testId="runtime-priority-archive-dialog"
         onClose={closePriorityArchiveDialog}
         onConfirm={() => void runPriorityArchive(priorityArchiveItems ?? [])}
@@ -106,7 +103,6 @@ export function DesktopSidebarArchiveDialogs({
         description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
         confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={isArchivingPriority}
         testId="runtime-priority-force-archive-dialog"
         onClose={closePriorityForceArchiveDialog}
         onConfirm={() => void runPriorityArchive(priorityForceArchiveItems ?? [], { force: true })}
@@ -135,7 +131,6 @@ export function DesktopSidebarArchiveDialogs({
         )}
         confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={isArchiveSectionSubmitting}
         testId={archiveSectionDialogTestId}
         onClose={closeArchiveSectionDialog}
         onConfirm={confirmArchiveSectionConversations}
@@ -146,7 +141,6 @@ export function DesktopSidebarArchiveDialogs({
         description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
         confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
         cancelLabel={t('workbench.cancel', '取消')}
-        submitting={isArchiveSectionSubmitting}
         testId={forceArchiveSectionDialogTestId}
         onClose={closeForceArchiveSectionDialog}
         onConfirm={confirmForceArchiveSectionConversations}

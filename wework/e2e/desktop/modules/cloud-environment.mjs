@@ -607,7 +607,7 @@ class RealCloudEnvironment {
         WEGENT_RS_ROUTES_FILE: join(repoDir, 'backend-rs', 'config', 'routes.toml'),
         WEGENT_BACKEND_RS_ENV_FILE: join(repoDir, 'backend', '.env.example'),
         BREEZE_LOG_DIR: rustLogDirectory,
-        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug`,
+        RUST_LOG: `${this.backendEnv.RUST_LOG ?? 'info'},brz_http_gateway::proxy=debug,hyper::proto::h1::conn=debug,wegent_backend_rs::socketio::terminal_attach=info`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
@@ -1467,7 +1467,7 @@ class RealCloudEnvironment {
     })
   }
 
-  revokeTerminalSession(sessionId) {
+  async revokeTerminalSession(sessionId) {
     assert.match(
       sessionId,
       /^[A-Za-z0-9:_-]+$/u,
@@ -1490,7 +1490,11 @@ class RealCloudEnvironment {
     )
     assert.ok(
       Number.isInteger(subscriberCount) && subscriberCount >= 1,
-      'The Backend did not observe the terminal-session revocation'
+      'No Backend was subscribed to terminal-session revocations'
+    )
+    await waitForLogPattern(
+      join(resultDir, 'backend-rs-logs', 'info.log'),
+      new RegExp(`terminal session revocation applied session_id="${sessionId}"`)
     )
   }
 

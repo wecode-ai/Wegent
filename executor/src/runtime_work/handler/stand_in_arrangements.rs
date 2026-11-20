@@ -34,12 +34,7 @@ impl RuntimeWorkRpcHandler {
         store: &LocalTaskStore,
     ) -> Result<Vec<Value>, AppIpcError> {
         let mut users = HashSet::new();
-        for run in self
-            .automation_store
-            .list_runs(None)
-            .iter()
-            .filter(|run| active(run))
-        {
+        for run in &self.automation_store.list_matching_runs(active) {
             if let Some(automation) = self.automation_store.get(&run.automation_id) {
                 if memory_review(&automation)
                     && run.status == AutomationRunStatus::Pending
@@ -129,12 +124,7 @@ impl RuntimeWorkRpcHandler {
         self.execute_arrangement_actions(store, user, settings)
             .await?;
         let mut facts = Vec::new();
-        for run in self
-            .automation_store
-            .list_runs(None)
-            .into_iter()
-            .filter(active)
-        {
+        for run in self.automation_store.list_matching_runs(active) {
             if run.trigger != "manual"
                 && self
                     .automation_store
@@ -313,15 +303,13 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .filter(|action| action["kind"] == "run_arrangement")
         {
-            let Some(run) = self
-                .automation_store
-                .list_runs(None)
-                .into_iter()
-                .find(|run| {
+            let Some(run) = action["arguments"]["runId"]
+                .as_str()
+                .and_then(|id| self.automation_store.get_run(id))
+                .filter(|run| {
                     run.coordination
                         .as_ref()
                         .is_some_and(|binding| binding.user_id == user)
-                        && run.id == action["arguments"]["runId"]
                 })
             else {
                 action["status"] = json!("cancelled");
@@ -400,7 +388,7 @@ impl RuntimeWorkRpcHandler {
         payload["executionRequest"]["standInSchedule"] = json!({"id":automation.id,"version":automation.version,"runId":run.id,"scheduledFor":run.scheduled_for,"userId":binding.user_id,"roleId":binding.role_id,"settingsVersion":settings["version"],"manual":run.trigger=="manual","claimedOneTime":matches!(automation.schedule, crate::runtime_work::automations::AutomationSchedule::OneTime { .. }),"continuation":matches!(automation.conversation_mode,ConversationMode::ContinueThread)});
         let response = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await?,
-            ConversationMode::ContinueThread => self.send_message(payload).await?,
+            ConversationMode::ContinueThread => self.send_message_from_event(payload).await?,
         };
         if response["accepted"] == false || response["success"] == false {
             return Err(arrangement_error("The scheduled command was rejected"));

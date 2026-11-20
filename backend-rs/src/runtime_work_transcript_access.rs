@@ -699,6 +699,27 @@ pub(crate) async fn comment_member_assignment<M: Mysql>(
     Ok(Some((dispatch.id, assignment)))
 }
 
+pub(crate) async fn comment_manager_dispatch<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    issue_id: &str,
+    agent_id: &str,
+    metadata: &Value,
+) -> Result<Option<(i64, String)>, FastApiError> {
+    let Some(dispatch) =
+        collaboration_dispatch_for_activity(mysql, project_id, issue_id, metadata).await?
+    else {
+        return Ok(None);
+    };
+    if agent_id.is_empty() || dispatch.runtime_origin_context()["manager_agent_id"] != agent_id {
+        return Ok(None);
+    }
+    Ok(dispatch
+        .runtime_device_id
+        .filter(|id| !id.is_empty())
+        .map(|id| (dispatch.id, id)))
+}
+
 /// `_manager_assignment`: the recorded manager card carrying one assignment.
 async fn manager_assignment<M: Mysql>(
     mysql: &M,

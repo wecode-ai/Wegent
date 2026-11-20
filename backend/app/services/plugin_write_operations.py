@@ -8,7 +8,6 @@ from contextlib import AbstractContextManager
 from functools import partial
 from typing import Any, TypeVar
 
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
@@ -88,32 +87,30 @@ def run_plugin_transaction(
                 return operation(db)
             except Exception as error:
                 db.rollback()
-                deadlock = (
-                    retry_conflicts
-                    and isinstance(error, OperationalError)
-                    and is_mysql_deadlock(error)
-                )
-                if time.monotonic() >= deadline:
+                if is_mysql_deadlock(error):
+                    # MySQL aborted the whole transaction. Rebuild from a fresh
+                    # session using the same contention budget as a failed CAS.
+                    failure = PluginWriteError("plugin_write_conflict")
+                elif isinstance(error, PluginWriteError):
+                    failure = error
+                else:
                     raise
-                if deadlock:
-                    attempt += 1
-                    delay = min(0.25, 0.01 * attempt)
-                elif (
-                    isinstance(error, PluginWriteError)
-                    and retry_busy
-                    and error.code == "plugin_write_busy"
-                ):
+                if time.monotonic() >= deadline:
+                    if failure is error:
+                        raise
+                    raise failure from error
+                if retry_busy and failure.code == "plugin_write_busy":
                     delay = busy_backoff
                     busy_backoff = min(0.25, busy_backoff * 2)
-                elif (
-                    isinstance(error, PluginWriteError)
-                    and error.code == "plugin_write_conflict"
-                    and (retry_conflicts or attempt + 1 < attempts)
+                elif failure.code == "plugin_write_conflict" and (
+                    retry_conflicts or attempt + 1 < attempts
                 ):
                     attempt += 1
                     delay = min(0.25, 0.01 * attempt)
                 else:
-                    raise
-                last_error = error
+                    if failure is error:
+                        raise
+                    raise failure from error
+                last_error = failure
         time.sleep(min(delay, max(0, deadline - time.monotonic())))
     raise AssertionError("Plugin transaction retry exhausted without a result")

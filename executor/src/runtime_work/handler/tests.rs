@@ -1304,6 +1304,7 @@ fn keeps_payload_backend_credentials_over_the_snapshot() {
             backend_url: "https://backend.example.com".to_owned(),
             socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
+            authenticated_user_id: None,
             runtime_auth_token: String::new(),
         })));
     let handler =
@@ -5684,6 +5685,7 @@ fn local_project_execution_never_inherits_backend_credentials() {
             backend_url: "https://backend.example.com".into(),
             socket_url: String::new(),
             auth_token: "cloud-token".into(),
+            authenticated_user_id: None,
             runtime_auth_token: "runtime-token".into(),
         }))),
     );

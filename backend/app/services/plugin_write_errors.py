@@ -4,11 +4,6 @@ from fastapi import HTTPException
 from sqlalchemy.exc import OperationalError
 
 
-def is_mysql_deadlock(error: OperationalError) -> bool:
-    """Identify a transaction selected as the MySQL deadlock victim."""
-    return bool(error.orig.args and error.orig.args[0] == 1213)
-
-
 class PluginWriteError(HTTPException):
     """A plugin transaction must be rolled back before the caller retries."""
 
@@ -17,3 +12,11 @@ class PluginWriteError(HTTPException):
         super().__init__(
             status_code=503, detail=code, headers={"Cache-Control": "no-store"}
         )
+
+
+def is_mysql_deadlock(error: Exception) -> bool:
+    return (
+        isinstance(error, OperationalError)
+        and bool(error.orig.args)
+        and error.orig.args[0] == 1213
+    )

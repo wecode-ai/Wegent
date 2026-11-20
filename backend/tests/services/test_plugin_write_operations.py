@@ -285,17 +285,9 @@ def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
     assert all(db.closed and db.rollback.call_count == 1 for db in sessions)
 
 
-@pytest.mark.parametrize(
-    ("code", "retry_conflicts", "retried"),
-    [(1213, True, True), (1205, True, False), (1213, False, False)],
-)
-def test_snapshot_retries_only_opted_in_mysql_deadlocks(
-    monkeypatch, code, retry_conflicts, retried
-):
+def test_mysql_deadlock_rebuilds_snapshot_after_the_failed_session_closes(monkeypatch):
     sessions = []
-    failure = OperationalError(
-        "UPDATE plugin_sync_state", {}, Exception(code, "db error")
-    )
+    deadlock = OperationalError("UPDATE kinds", {}, Exception(1213, "Deadlock"))
 
     @contextmanager
     def session():
@@ -306,34 +298,17 @@ def test_snapshot_retries_only_opted_in_mysql_deadlocks(
         finally:
             db.closed = True
 
-    def operation(_db):
+    def snapshot(db):
         if len(sessions) == 1:
-            raise failure
-        return "committed"
-
-    def backoff(_delay):
-        assert all(db.closed for db in sessions)
+            raise deadlock
+        assert sessions[0].closed
+        assert db is not sessions[0]
+        return {"generation": 9}
 
     monkeypatch.setattr(operations, "configure_plugin_session", Mock())
-    monkeypatch.setattr(
-        operations,
-        "time",
-        SimpleNamespace(monotonic=lambda: 0, sleep=backoff),
-    )
-    if retried:
-        assert (
-            operations.run_plugin_transaction(
-                operation, session, retry_conflicts=retry_conflicts
-            )
-            == "committed"
-        )
-        assert len(sessions) == 2
-    else:
-        with pytest.raises(OperationalError) as caught:
-            operations.run_plugin_transaction(
-                operation, session, retry_conflicts=retry_conflicts
-            )
-        assert caught.value is failure
-        assert len(sessions) == 1
+    assert operations.run_plugin_transaction(
+        snapshot, session, retry_conflicts=True
+    ) == {"generation": 9}
+    assert len(sessions) == 2
     sessions[0].rollback.assert_called_once()
-    assert all(db.closed for db in sessions)
+    sessions[1].rollback.assert_not_called()

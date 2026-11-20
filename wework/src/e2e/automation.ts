@@ -682,7 +682,7 @@ export function seedDesktopE2ELocalModels(
       continue
     }
     saveLocalModelConfig({
-      catalogReady: localModelsCatalogReady,
+      catalogReady: localModelsCatalogReady || undefined,
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
@@ -3987,7 +3987,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (!(element instanceof HTMLSelectElement)) {
           throw new Error(`Selector "${command.selector}" is not a select element`)
         }
-        return selectDesktopControlOption(element, command.value ?? '', command.by)
+        return selectDesktopControlOption(
+          element,
+          command.value ?? '',
+          command.by,
+          command.includeOptionsOnError
+        )
       })
     }
     case 'submit': {

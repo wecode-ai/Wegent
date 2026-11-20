@@ -979,7 +979,8 @@ describe('localExecutor', () => {
       socketBaseUrl: 'wss://api.example.com',
       authToken: 'token',
       runtimeAuthToken: 'runtime-token',
-      deviceType: 'remote',
+      authenticatedUserId: 7,
+      deviceType: 'app',
     })
     resetLocalExecutorStateForTests()
     mockStartup()
@@ -990,7 +991,8 @@ describe('localExecutor', () => {
       socket_url: 'wss://api.example.com',
       auth_token: 'token',
       runtime_auth_token: 'runtime-token',
-      device_type: 'remote',
+      authenticated_user_id: 7,
+      device_type: 'app',
     })
     expect(requestDshExecutorMock).toHaveBeenCalledWith('executor.backend.configure', {})
   })

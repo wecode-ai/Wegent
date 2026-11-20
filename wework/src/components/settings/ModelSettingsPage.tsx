@@ -1,5 +1,6 @@
 import { ProviderSettingsSection } from './ProviderSettingsSection'
 import { CodexOfficialModelsSection } from './CodexOfficialModelsSection'
+import { LocalCodexTransportSettings } from './LocalCodexTransportSettings'
 import { LocalCodexModelRow } from './LocalCodexModelRow'
 import { CloudModelsSection, DisconnectedCloudModelsSection } from './CloudModelsSection'
 import { AlertCircle, ChevronDown, Loader2, RefreshCw, ShieldCheck, Upload } from 'lucide-react'
@@ -599,6 +600,7 @@ export function ModelSettingsPage({
                 void handleToggleLocalCodexSubscription(checked)
               }}
             />
+            {subscriptionLoaded && subscriptionEnabled && <LocalCodexTransportSettings />}
             <DisconnectedCloudCodexSyncSection
               status={localAuthStatus}
               accounts={localCodexAccounts}
@@ -666,6 +668,7 @@ export function ModelSettingsPage({
               void handleToggleLocalCodexSubscription(checked)
             }}
           />
+          {subscriptionLoaded && subscriptionEnabled && <LocalCodexTransportSettings />}
           {loading ? (
             <div className="py-8 text-center text-sm text-text-secondary">
               {t('common.loading', '加载中...')}

@@ -63,9 +63,18 @@ export async function verifyPluginLocalConfirmation({
         return { error }
       }
     )
+    // The lease observer can see contention from another request on this plugin.
+    await until(
+      async () => {
+        assert.equal(settled, false, 'Local application settled before entering confirmation')
+        const progress = await invoke({ progressOnly: true, progressId })
+        return progress.result?.confirming
+      },
+      confirming => confirming === true,
+      'The targeted operation did not enter confirmation while holding the write lease',
+      timeoutMs
+    )
     await held.waitFor('contended')
-    const progress = await invoke({ progressOnly: true, progressId })
-    assert.equal(progress.result?.confirming, true)
     const request = await until(
       () =>
         apiProxy.requests

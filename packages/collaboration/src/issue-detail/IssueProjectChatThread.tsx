@@ -18,6 +18,10 @@ import type { CollaborationAttachment, CollaborationExecution } from '../types'
 import type { CollaborationAgent, CollaborationMember } from '../types'
 import { IssueActivityThread, type IssueActivityThreadModel } from './IssueActivityThread'
 
+function isExecutionMessage(message: ProjectChatMessage) {
+  return message.sender.type === 'agent' && message.metadata.execution_dispatch !== 'comment_only'
+}
+
 function ActivityMessage({
   singleExecution,
   persistedStatus,
@@ -77,7 +81,7 @@ export function IssueProjectChatThread({
   const mentionCandidates = useIssueMentionCandidates(members ?? [], agents ?? [], translate)
   const rootId = thread.root.messageId
   const displayReplies = thread.displayReplies ?? thread.replies
-  const runs = [thread.root, ...displayReplies].filter(message => message.sender.type === 'agent')
+  const runs = [thread.root, ...displayReplies].filter(isExecutionMessage)
   function renderMessage(message: ProjectChatMessage, eventOnly = false) {
     const execution = executions.find(run => run.id === Number(message.metadata.execution_id))
     const target = messageRuntimeExecutionTarget(message, execution)
@@ -99,7 +103,7 @@ export function IssueProjectChatThread({
           mine={false}
           compact
           plain
-          showInlineExecutionStatus={!eventOnly}
+          showInlineExecutionStatus={!eventOnly && isExecutionMessage(message)}
           agentRole={dispatchRole}
           eventOnly={eventOnly}
           taskSummary={taskSummaryForMessage?.(message)}

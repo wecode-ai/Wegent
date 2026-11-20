@@ -22,6 +22,23 @@ from app.core import socketio as socketio_core
 from app.core import socketio_redis
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_e2e_ack_ingress_wraps_only_diagnostic_server(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    if enabled:
+        monkeypatch.setenv("WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS", "true")
+    else:
+        monkeypatch.delenv("WEWORK_E2E_SOCKET_ACK_DIAGNOSTICS", raising=False)
+
+    server = socketio_core.create_socketio_server()
+
+    expected_type = (
+        socketio_core.ObservedSocketIOServer if enabled else socketio.AsyncServer
+    )
+    assert type(server) is expected_type
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_e2e_ack_diagnostics_preserve_callback_without_payload(
@@ -42,6 +59,58 @@ async def test_e2e_ack_diagnostics_preserve_callback_without_payload(
     assert "private-device-session" not in caplog.text
     assert "private-response" not in caplog.text
     assert ("Socket.IO E2E ACK stage=trigger" in caplog.text) is enabled
+
+
+@pytest.mark.asyncio
+async def test_e2e_ack_ingress_diagnostics_preserve_callback_without_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = socketio_redis.ObservedRedisManager(
+        "redis://localhost", redis_options={}, ack_diagnostics=True
+    )
+    server = socketio_core.ObservedSocketIOServer(
+        async_mode="asgi", client_manager=manager
+    )
+    eio_sid = "private-engine-session"
+    namespace = "/local-executor"
+    sid = await server.manager.connect(eio_sid, namespace)
+    callback = Mock()
+    callback_id = server.manager._generate_ack_id(sid, callback)
+    payload = {"token": "private-response"}
+    encoded = socketio.packet.Packet(
+        packet_type=socketio.packet.ACK,
+        namespace=namespace,
+        id=callback_id,
+        data=[payload],
+    ).encode()
+
+    with caplog.at_level(logging.INFO, logger=socketio_core.__name__):
+        await server._handle_eio_message(eio_sid, encoded)
+
+    callback.assert_called_once_with(payload)
+    assert "private-engine-session" not in caplog.text
+    assert "private-response" not in caplog.text
+    assert "Socket.IO E2E ACK stage=packet-in" in caplog.text
+    assert "Socket.IO E2E ACK stage=decoded" in caplog.text
+    assert f"callback_id={callback_id}" in caplog.text
+    assert f"packet_bytes={len(encoded)}" in caplog.text
+    assert "packet_type=ACK" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_e2e_ack_ingress_diagnostics_hide_malformed_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = socketio_core.ObservedSocketIOServer(async_mode="asgi")
+    malformed = '3/local-executor,7[{"token":"private-response"}'
+
+    with caplog.at_level(logging.INFO, logger=socketio_core.__name__):
+        with pytest.raises(ValueError):
+            await server._handle_eio_message("private-engine-session", malformed)
+
+    assert "Socket.IO E2E ACK stage=packet-decode-error" in caplog.text
+    assert "private-engine-session" not in caplog.text
+    assert "private-response" not in caplog.text
 
 
 @pytest.mark.parametrize("requested_interval,expected_interval", [(30, 15), (1, 1)])

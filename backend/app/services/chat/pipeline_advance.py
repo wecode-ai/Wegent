@@ -78,11 +78,19 @@ async def advance_pipeline_stage_from_auto_completion(
             if not acquired:
                 raise RuntimeError("Pipeline handoff is already in progress")
             member = f"{intent.task_id}:{intent.completed_subtask_id}"
-            async with cache_manager._client_context() as redis:
-                await redis.zadd(
-                    _RECOVERY_QUEUE, {member: time.time() + _RECOVERY_DELAY_SECONDS}
-                )
-            return await _resume_auto_advance(intent)
+            await _schedule_recovery(member)
+            try:
+                return await _resume_auto_advance(intent)
+            except Exception:
+                # An attempt may use its entire recovery interval while dispatching.
+                # Give the caller a fresh interval before background recovery.
+                try:
+                    await _schedule_recovery(member)
+                except Exception:
+                    logger.exception(
+                        "Could not reschedule pipeline recovery for %s", member
+                    )
+                raise
     except Exception as exc:
         raise TerminalPersistenceError(
             f"Could not advance pipeline after subtask {intent.completed_subtask_id}"
@@ -123,10 +131,18 @@ def _pending_recovery_members(after_id: int, limit: int) -> list[tuple[int, str]
         ]
 
 
-async def _due_recoveries(limit: int) -> list[str | bytes]:
-    now = time.time()
+async def _schedule_recovery(member: str) -> None:
     async with cache_manager._client_context() as redis:
-        return await redis.eval(
+        await redis.zadd(
+            _RECOVERY_QUEUE, {member: time.time() + _RECOVERY_DELAY_SECONDS}
+        )
+
+
+async def _due_recoveries(limit: int) -> tuple[list[str | bytes], float]:
+    now = time.time()
+    reserved_until = now + _RECOVERY_DELAY_SECONDS
+    async with cache_manager._client_context() as redis:
+        members = await redis.eval(
             "local due = redis.call('ZRANGEBYSCORE', KEYS[1], "
             "'-inf', ARGV[1], 'LIMIT', 0, ARGV[3]); "
             "for _, member in ipairs(due) do "
@@ -135,9 +151,10 @@ async def _due_recoveries(limit: int) -> list[str | bytes]:
             1,
             _RECOVERY_QUEUE,
             now,
-            now + _RECOVERY_DELAY_SECONDS,
+            reserved_until,
             limit,
         )
+    return members, reserved_until
 
 
 async def _index_recoveries(after_id: int) -> int:
@@ -164,8 +181,11 @@ async def _recover_pipeline_handoffs() -> None:
                 continue
             try:
                 cursor = await _index_recoveries(cursor)
-                for member in await _due_recoveries(available):
-                    job = asyncio.create_task(_recover_pipeline_handoff(member))
+                members, reserved_until = await _due_recoveries(available)
+                for member in members:
+                    job = asyncio.create_task(
+                        _recover_pipeline_handoff(member, reserved_until)
+                    )
                     jobs.add(job)
                     job.add_done_callback(jobs.discard)
             except Exception:
@@ -176,7 +196,7 @@ async def _recover_pipeline_handoffs() -> None:
         await asyncio.gather(*jobs, return_exceptions=True)
 
 
-async def _recover_pipeline_handoff(member: str | bytes) -> None:
+async def _recover_pipeline_handoff(member: str | bytes, reserved_until: float) -> None:
     try:
         task_id, subtask_id = map(
             int, member.split(b":" if isinstance(member, bytes) else ":")
@@ -186,6 +206,9 @@ async def _recover_pipeline_handoff(member: str | bytes) -> None:
         ) as acquired:
             if not acquired:
                 return
+            async with cache_manager._client_context() as redis:
+                if await redis.zscore(_RECOVERY_QUEUE, member) != reserved_until:
+                    return
             pending = await run_in_threadpool_with_cleanup(
                 _read_pending_handoff, task_id, subtask_id
             )

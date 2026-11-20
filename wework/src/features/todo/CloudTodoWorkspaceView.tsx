@@ -155,6 +155,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
     setBatchConfirmItems,
     setBatchConfirmRetryItemKeys,
     runtimeBatchArchiveItems,
+    batchArchiveError,
     setRuntimeBatchArchiveItems,
     applyProjectSelection,
     selectProject,
@@ -202,6 +203,11 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
             className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             data-testid="cloud-todo-main"
           >
+            {isMyTasksBoard && batchArchiveError && (
+              <p className="shrink-0 px-4 py-2 text-sm text-destructive" role="alert">
+                {batchArchiveError}
+              </p>
+            )}
             {!embedded && !selectedProject && (
               <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
             )}
@@ -761,11 +767,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
         {runtimeBatchArchiveItems && (
           <Modal
             title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
-            onClose={() => {
-              if (archiveBusy) return
-              setRuntimeBatchArchiveItems(null)
-              setArchiveError(null)
-            }}
+            onClose={() => setRuntimeBatchArchiveItems(null)}
           >
             <div className="px-5 pb-5 pt-4">
               <p className="text-sm leading-5 text-text-secondary">
@@ -775,20 +777,12 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                   { count: runtimeBatchArchiveItems.length }
                 )}
               </p>
-              {archiveError ? (
-                <p className="mt-3 text-xs text-destructive" role="alert">
-                  {archiveError}
-                </p>
-              ) : null}
+
               <div className="mt-6 flex justify-end gap-2">
                 <button
                   type="button"
                   data-testid="cloud-my-tasks-archive-completed-cancel"
-                  disabled={archiveBusy}
-                  onClick={() => {
-                    setRuntimeBatchArchiveItems(null)
-                    setArchiveError(null)
-                  }}
+                  onClick={() => setRuntimeBatchArchiveItems(null)}
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   {t('common.cancel', '取消')}
@@ -796,13 +790,10 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
                 <button
                   type="button"
                   data-testid="cloud-my-tasks-archive-completed-confirm"
-                  disabled={archiveBusy}
                   onClick={() => void archiveCompletedItems(runtimeBatchArchiveItems)}
                   className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
                 >
-                  {archiveBusy
-                    ? t('todo.archiving', '归档中…')
-                    : t('todo.confirm_archive', '确认归档')}
+                  {t('todo.confirm_archive', '确认归档')}
                 </button>
               </div>
             </div>

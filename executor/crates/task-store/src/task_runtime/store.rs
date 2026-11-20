@@ -190,6 +190,7 @@ impl LocalTaskStore {
         if schema_is_current(&connection)?
             && default_work_item_project_is_current(&connection)?
             && stand_in_history_index::schema_is_current(&connection)?
+            && schema::runtime_query_indexes_are_current(&connection)?
         {
             return Ok(Self {
                 connection: Arc::new(Mutex::new(connection)),

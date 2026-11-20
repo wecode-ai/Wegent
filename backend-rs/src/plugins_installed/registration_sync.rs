@@ -66,33 +66,46 @@ pub(super) async fn prepare_plugins_for_registered_device_until(
     device_id: &str,
     deadline: Instant,
 ) -> PluginPreparation {
-    // Catalog repair and pending device rows share the selected installation
-    // leases and commit their parent revisions in one short transaction.
-    let lease = match async {
-        ensure_registration_state(state, user_id, deadline).await?;
-        super::write_coordination::PluginWriteLease::acquire_installed_until(
-            &state.mysql,
-            state.redis.as_ref(),
-            user_id,
-            None,
-            deadline,
-        )
-        .await
-    }
-    .await
-    {
-        Ok(mut lease) => {
-            lease.deadline = lease.deadline.min(deadline);
-            lease
-        }
+    let outcome = super::plugin_sync_protocol::retry_plugin_receipt(deadline, || {
+        prepare_registration_plugins(state, user_id, device_id, deadline)
+    })
+    .await;
+    match outcome {
+        Ok(_) => PluginPreparation::Ready,
         Err(error) if super::write_coordination::is_plugin_write_error(&error) => {
-            return PluginPreparation::Deferred;
+            tracing::warn!(
+                %error,
+                user_id,
+                device_id,
+                "Plugin coordination deferred after registration; syncing Skills/MCP only"
+            );
+            PluginPreparation::Deferred
         }
         Err(error) => {
-            tracing::error!(%error, user_id, "Plugin write lease acquisition failed");
-            return PluginPreparation::Failed;
+            tracing::error!(%error, user_id, device_id, "Registration plugin preparation failed");
+            PluginPreparation::Failed
         }
-    };
+    }
+}
+
+async fn prepare_registration_plugins(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    deadline: Instant,
+) -> brz_mysql::MysqlResult<()> {
+    // Catalog repair and pending device rows share the selected installation
+    // leases and commit their parent revisions in one short transaction.
+    ensure_registration_state(state, user_id, deadline).await?;
+    let mut lease = super::write_coordination::PluginWriteLease::acquire_installed_until(
+        &state.mysql,
+        state.redis.as_ref(),
+        user_id,
+        None,
+        deadline,
+    )
+    .await?;
+    lease.deadline = lease.deadline.min(deadline);
     let outcome = tokio::time::timeout_at(
         deadline,
         state.mysql.with_transaction_options(
@@ -138,21 +151,7 @@ pub(super) async fn prepare_plugins_for_registered_device_until(
         ))
     });
     lease.release().await;
-    match outcome {
-        Ok(_) => PluginPreparation::Ready,
-        Err(error) if super::write_coordination::is_plugin_write_error(&error) => {
-            tracing::warn!(
-                user_id,
-                device_id,
-                "Plugin coordination deferred after registration; syncing Skills/MCP only"
-            );
-            PluginPreparation::Deferred
-        }
-        Err(error) => {
-            tracing::error!(%error, user_id, device_id, "Registration plugin preparation failed");
-            PluginPreparation::Failed
-        }
-    }
+    outcome
 }
 
 /// Source `_record_registration_sync_result`: persist the round trip in a
