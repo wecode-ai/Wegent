@@ -29,6 +29,7 @@ describe("parseChatError", () => {
     ["model_unavailable", "model_unavailable"],
     ["server_overloaded", "server_overloaded"],
     ["serverOverloaded", "server_overloaded"],
+    ["device_callback_too_large", "payload_too_large"],
   ])(
     "uses backend error type %s before keyword matching",
     (errorType, normalizedType) => {

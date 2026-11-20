@@ -159,3 +159,9 @@ def test_dispatch_aliases_use_a_bounded_business_code(code: str) -> None:
     error = RuntimeError("opaque failure")
     error.code = code  # type: ignore[attr-defined]
     assert classify_error(error) == "dispatch_error"
+
+
+def test_device_callback_limit_uses_payload_too_large() -> None:
+    error = RuntimeError("Task output exceeded the device callback limit")
+    error.code = "device_callback_too_large"  # type: ignore[attr-defined]
+    assert classify_error(error) == "payload_too_large"

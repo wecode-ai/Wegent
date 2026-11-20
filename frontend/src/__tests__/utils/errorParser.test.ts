@@ -165,6 +165,18 @@ describe('errorParser', () => {
         expect(result.type).toBe('payload_too_large')
         expect(result.retryable).toBe(false)
       })
+
+      it('should map an oversized device callback to payload_too_large', () => {
+        const result = parseError(
+          'Task output exceeded the device callback limit',
+          'device_callback_too_large'
+        )
+        expect(result).toMatchObject({
+          type: 'payload_too_large',
+          category: 'input',
+          retryPolicy: 'after_change',
+        })
+      })
     })
 
     describe('network errors', () => {

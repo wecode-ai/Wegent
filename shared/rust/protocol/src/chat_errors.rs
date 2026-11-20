@@ -87,7 +87,9 @@ fn known_error(code: &str) -> Option<ChatErrorInfo> {
         "forbidden" | "authentication_error" => ("forbidden", "access", "after_change"),
         "permission_denied" => ("permission_denied", "access", "after_change"),
         "authentication_expired" => ("authentication_expired", "access", "after_change"),
-        "payload_too_large" => ("payload_too_large", "input", "after_change"),
+        "payload_too_large" | "device_callback_too_large" => {
+            ("payload_too_large", "input", "after_change")
+        }
         "invalid_parameter" => ("invalid_parameter", "input", "after_change"),
         "content_filter" => ("content_filter", "policy", "after_change"),
         "image_too_large" => ("image_too_large", "input", "after_change"),
@@ -401,6 +403,10 @@ mod tests {
         assert_eq!(
             classify_chat_error(Some("server_overloaded"), Some("disconnected")),
             known_error("server_overloaded").unwrap(),
+        );
+        assert_eq!(
+            classify_chat_error(Some("device_callback_too_large"), None),
+            known_error("payload_too_large").unwrap(),
         );
         assert_eq!(
             classify_chat_error(Some("llm_error"), Some("timeout")),

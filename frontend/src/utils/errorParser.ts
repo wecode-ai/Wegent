@@ -71,6 +71,9 @@ function backendErrorType(code?: string): ErrorType | undefined {
   if (normalized === 'llm_error') {
     return 'model_unavailable'
   }
+  if (normalized === 'device_callback_too_large') {
+    return 'payload_too_large'
+  }
   return normalized && Object.prototype.hasOwnProperty.call(ERROR_DEFINITIONS, normalized)
     ? (normalized as ErrorType)
     : undefined

@@ -333,6 +333,7 @@ _PROVIDER_CODE_ALIASES: dict[str, ChatErrorCode] = {
     "rate_limit_exceeded": ChatErrorCode.RATE_LIMIT,
     "server_overloaded_retryable": ChatErrorCode.SERVER_OVERLOADED,
     "authentication_error": ChatErrorCode.FORBIDDEN,
+    "device_callback_too_large": ChatErrorCode.PAYLOAD_TOO_LARGE,
 }
 
 

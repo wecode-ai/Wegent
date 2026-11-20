@@ -134,7 +134,8 @@ export async function verifyStandInStartupRecovery({
       'Explicit retry must start the original failed Issue conversation'
     )
     assert.ok(completed.task.threadId)
-    // A native turn start clears the preparation diagnostic from runtimeHandle.
+    // Starting the native retry clears the preparation diagnostic while the
+    // diagnostic itself remains covered by the restart assertions above.
     assert.equal(completed.task.runtimeHandle.startupFailure ?? null, null)
     const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
     assert.equal(bindings.length, 1)

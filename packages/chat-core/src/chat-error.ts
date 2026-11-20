@@ -85,6 +85,7 @@ const BACKEND_TYPE_MAP: Record<string, ChatErrorType> = {
   llm_unsupported: "llm_unsupported",
   forbidden: "forbidden",
   payload_too_large: "payload_too_large",
+  device_callback_too_large: "payload_too_large",
   invalid_parameter: "invalid_parameter",
   content_filter: "content_filter",
   provider_error: "provider_error",
