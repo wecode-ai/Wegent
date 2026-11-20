@@ -127,6 +127,10 @@ Conversation references retain completed visible assistant replies. A later tool
 
 After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
 
+<a id="image-preview"></a>
+
+In a desktop task, click an image thumbnail in the composer or transcript to open the preview. Use the header to zoom, download, open a local image in its default app, or move the image to the right-hand Files panel and continue editing in the same task. For local images, the **Open with** menu lists installed editors and can reveal the file in the file manager. In tasks where you can send messages, use the bottom toolbar to mark up the image or pin comments. Markup supports pen, text, shapes, selection and movement, erasing, undo and redo. You can add pinned comments alongside markup and add instructions before sending. When editing markup on a composer thumbnail, choose **Save** in the preview or Files panel to replace the draft attachment. Send the draft when ready. In comment mode, choose **Save comment** beside each pin, then **Send** in the bottom toolbar. The sent message includes each comment and its image-relative coordinates. With **Erase**, brush over an area before sending. **Remove BG** or selecting a **Resize** ratio sends an edit request immediately. The task model handles the request and the original image and unsent draft are preserved.
+
 ### Voice input
 
 Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also open **bottom-left account menu → Settings → Personal → General** and prepare the model in **Voice input**, below the basic preferences. This section appears when the official voice plugin has loaded and does not require Experimental features. Opening the page does not download a model or start recording.

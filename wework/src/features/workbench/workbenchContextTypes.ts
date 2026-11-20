@@ -290,6 +290,13 @@ export interface WorkbenchContextValue {
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
     addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
+    replaceImageAttachmentForScope: (
+      scopeKey: string,
+      attachmentId: number,
+      file: File,
+      comments: NonNullable<Attachment['image_markup_comments']>,
+      signal: AbortSignal
+    ) => Promise<Attachment | null>
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
     dismissAttachmentError: (filename: string) => void

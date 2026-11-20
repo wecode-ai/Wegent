@@ -941,6 +941,10 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'pasted_zip_attachment',
+        'image_preview_resize',
+        'side_chat_image_preview_resize',
+        'image_preview_comment',
+        'image_preview_markup_save',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
         'workspace_selection_streaming',
@@ -4457,6 +4461,53 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (
+      this.scenario === 'image_preview_resize' ||
+      this.scenario === 'side_chat_image_preview_resize' ||
+      this.scenario === 'image_preview_comment' ||
+      this.scenario === 'image_preview_markup_save'
+    ) {
+      const turn = body.input?.findLast?.(item => item.role === 'user')
+      const parts = turn?.content ?? []
+      const editText = parts
+        .filter(part => part.type === 'input_text')
+        .map(part => part.text)
+        .join('\n')
+      const isComment = this.scenario === 'image_preview_comment'
+      const isSavedMarkup = this.scenario === 'image_preview_markup_save'
+      if (isSavedMarkup) {
+        assert.match(editText, /Preserve this unsent image-edit draft/)
+        assert.match(editText, /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the saved mark/)
+        assert.match(
+          editText,
+          /[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Review the mark saved in Files/
+        )
+      } else if (isComment) {
+        assert.match(editText, /(?:Image|图像) 1[:：]/)
+        assert.match(
+          editText,
+          /1\.\s*[(（]x[:：]\s*50%[,，]\s*y[:：]\s*50%[)）]\s*Inspect this area/
+        )
+      } else {
+        assert.match(editText, /aspect ratio 16:9/)
+      }
+      assert.equal(parts.filter(part => part.type === 'input_image').length, 1)
+      if (!isSavedMarkup) assert.doesNotMatch(editText, /Preserve this unsent image-edit draft/)
+      this.recordScenarioRequest(this.scenario, modelRequest)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          isSavedMarkup
+            ? 'Saved markup received'
+            : isComment
+              ? 'Image comment received'
+              : 'Image resize received'
+        ),
         responseCompleted(responseId),
       ])
       return

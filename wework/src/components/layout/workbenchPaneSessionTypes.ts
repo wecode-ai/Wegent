@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   ModelSelectionConfig,
   RequestUserInputResponse,
   RuntimeGoal,
@@ -22,6 +23,7 @@ export interface SendRequestUserInputResponseOptions {
 }
 
 export interface RuntimePaneSendOptions {
+  standaloneAttachments?: Attachment[]
   // Capture before asynchronous submission preparation to protect unpublished edits.
   draftEditVersion?: number
   guideWhenBusy?: boolean
