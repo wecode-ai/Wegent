@@ -757,6 +757,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_CLOUD_UI_RESUMED',
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(cloudUiFollowUpRequests, 1)
       const localResumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -781,6 +782,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('clickWhenEnabled', `${WORKBENCH} [data-testid="send-message-button"]`)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: 'WEWORK_CONTROL_REMOTE_UI_RESUMED',
+        timeoutMs: modelResponseTimeoutMs,
       })
       if (failure) throw failure
       const resumed = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
