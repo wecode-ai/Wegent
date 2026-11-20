@@ -9,9 +9,9 @@
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
-import type { SummaryModelRef } from '@/types/knowledge'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { retrieverApis } from '@/apis/retrievers'
 import { modelApis } from '@/apis/models'
@@ -68,29 +68,32 @@ jest.mock('@/features/knowledge/code-wiki/GenerationStrategySelect', () => ({
   GenerationStrategySelect: () => null,
 }))
 
-jest.mock('@/components/model-select/ModelRefSelector', () => ({
-  ModelRefSelector: ({
-    error,
-    dataTestId,
-    onChange,
-  }: {
-    error?: string
-    dataTestId: string
-    onChange: (value: SummaryModelRef) => void
-  }) => (
-    <div data-testid="model-ref-selector">
-      {error}
-      {dataTestId === 'code-wiki-execution-model-select' && (
-        <button
-          type="button"
-          onClick={() => onChange({ name: 'wiki-model', type: 'public', namespace: 'default' })}
-        >
-          Choose Wiki model
-        </button>
-      )}
-    </div>
-  ),
-}))
+const mockUseActualModelSelector = jest.fn(() => false)
+jest.mock('@/components/model-select/ModelRefSelector', () => {
+  const { ModelRefSelector: ActualModelRefSelector } = jest.requireActual<
+    typeof import('@/components/model-select/ModelRefSelector')
+  >('@/components/model-select/ModelRefSelector')
+  return {
+    ModelRefSelector: (props: ComponentProps<typeof ActualModelRefSelector>) =>
+      mockUseActualModelSelector() ? (
+        <ActualModelRefSelector {...props} />
+      ) : (
+        <div data-testid="model-ref-selector">
+          {props.error}
+          {props.dataTestId === 'code-wiki-execution-model-select' && (
+            <button
+              type="button"
+              onClick={() =>
+                props.onChange({ name: 'wiki-model', type: 'public', namespace: 'default' })
+              }
+            >
+              Choose Wiki model
+            </button>
+          )}
+        </div>
+      ),
+  }
+})
 
 // The code option is behind a staged rollout. These tests are about what choosing it
 // does, so they turn it on; the test below is about the rollout itself.
@@ -120,6 +123,8 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
 
   beforeEach(() => {
     mockRuntimeConfig.mockReturnValue({ enableCodeWiki: true })
+    mockUseActualModelSelector.mockReturnValue(false)
+    jest.mocked(modelApis.getUnifiedModels).mockResolvedValue({ data: [] })
     mockedGetKnowledgeBaseRetrievalProfile.mockReset()
     mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(() => new Promise(() => undefined))
   })
@@ -291,12 +296,20 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
   it('swaps the opening-view field for repository fields when code is chosen', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
+    const syncTab = screen.getByTestId('knowledge-data-sync-section-trigger')
+    expect(screen.queryByTestId('knowledge-dingtalk-auto-sync')).not.toBeInTheDocument()
+    fireEvent.click(syncTab)
+    expect(screen.getByTestId('knowledge-dingtalk-auto-sync')).toBeVisible()
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
 
     // A code wiki has no notebook/classic choice: it has a reader of its own.
     expect(screen.queryByTestId('switch-kb-type')).not.toBeInTheDocument()
     expect(screen.getByTestId('repository-selector')).toBeInTheDocument()
-    expect(screen.getByTestId('code-wiki-language')).toBeInTheDocument()
+    expect(syncTab).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-wiki-language')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
+    expect(screen.getByTestId('code-wiki-language')).toBeVisible()
   })
 
   it('offers both ways to name a repository', () => {
@@ -350,9 +363,50 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     // Named rather than just absent: without the model error the repository check
     // above would produce the same silence, and this would pass for the wrong reason.
     await screen.findByText('knowledge:codeWiki.create.modelRequired')
-    expect(screen.getByTestId('kb-name-input').closest('section')?.hidden).toBe(false)
+    expect(screen.getByTestId('knowledge-generation-section-trigger')).toHaveAttribute(
+      'aria-current',
+      'true'
+    )
     expect(screen.getByDisplayValue('https://github.com/wecode-ai/Wegent.git')).toBeInTheDocument()
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('uses the default Wiki model without requiring a visit to generation settings', async () => {
+    mockUseActualModelSelector.mockReturnValue(true)
+    jest.mocked(modelApis.getUnifiedModels).mockResolvedValue({
+      data: [
+        {
+          name: 'default-model',
+          displayName: 'Default model',
+          namespace: 'default',
+          type: 'public',
+        },
+      ],
+    })
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
+    fireEvent.change(screen.getByTestId('code-wiki-source-url'), {
+      target: { value: 'https://github.com/wecode-ai/Wegent' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('code-wiki-execution-model-select')).toHaveTextContent(
+        'Default model'
+      )
+    )
+    expect(screen.getByTestId('code-wiki-execution-model-select')).not.toBeVisible()
+    expect(screen.queryByTestId('code-wiki-language')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          execution_model_ref: expect.objectContaining({ name: 'default-model' }),
+        })
+      )
+    )
   })
 
   it('submits the current repository while an earlier probe is returning', async () => {
@@ -379,7 +433,9 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       )
       render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
       fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+      fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
       fireEvent.click(screen.getByRole('button', { name: 'Choose Wiki model' }))
+      fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
       fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
       const repository = screen.getByTestId('code-wiki-source-url')
       fireEvent.change(repository, { target: { value: olderUrl } })
@@ -406,7 +462,9 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
     fireEvent.click(screen.getByRole('button', { name: 'Choose Wiki model' }))
+    fireEvent.click(screen.getByTestId('knowledge-basic-section-trigger'))
     fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
     fireEvent.change(screen.getByTestId('code-wiki-source-url'), { target: { value: url } })
     fireEvent.click(screen.getByTestId('create-kb-kind-document'))
@@ -424,6 +482,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+    fireEvent.click(screen.getByTestId('knowledge-generation-section-trigger'))
 
     expect(screen.getByText('knowledge:codeWiki.create.modelDescription')).toBeInTheDocument()
   })

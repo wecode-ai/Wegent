@@ -72,6 +72,8 @@ interface KnowledgeBaseFormProps {
     exemptCalls: number
   }
   onCallLimitsChange: (limits: { maxCalls: number; exemptCalls: number }) => void
+  /** Creation uses the model default even before the generation section is visited. */
+  generationModelSetting?: ReactNode
   generationSection?: ReactNode
   documentSyncSetting?: ReactNode
   retrievalModeSection?: ReactNode
@@ -92,16 +94,28 @@ interface KnowledgeBaseFormProps {
   onGuidedQuestionsChange?: (questions: string[]) => void
 }
 
-const sections = [
-  ['basic', 'knowledge-basic', 'basic'],
-  ['access', 'knowledge-access', 'accessAndDownload'],
-  ['models', 'knowledge-summary', 'summaryAndMultimodal'],
-  ['retrieval', 'knowledge-advanced', 'retrieval'],
-  ['usage', 'knowledge-guided-questions', 'guidanceAndLimits'],
-  ['generation', 'knowledge-generation', 'generationAndSchedule'],
+const sectionGroups = [
+  { label: 'foundation', items: [['basic', 'knowledge-basic', 'basic']] },
+  {
+    label: 'content',
+    items: [
+      ['models', 'knowledge-summary', 'contentProcessing'],
+      ['retrieval', 'knowledge-advanced', 'retrieval'],
+      ['sync', 'knowledge-data-sync', 'dataSync'],
+      ['generation', 'knowledge-generation', 'generation'],
+    ],
+  },
+  {
+    label: 'management',
+    items: [
+      ['usage', 'knowledge-guided-questions', 'qaSettings'],
+      ['access', 'knowledge-access', 'accessSettings'],
+    ],
+  },
 ] as const
 
-type Section = (typeof sections)[number][0]
+type SectionItem = (typeof sectionGroups)[number]['items'][number]
+type Section = SectionItem[0]
 
 export function useKnowledgeBaseFormNavigation() {
   const [selection, setSelection] = useState<{ section: Section; focus?: string }>({
@@ -150,6 +164,7 @@ export function KnowledgeBaseForm({
   bindModel,
   callLimits,
   onCallLimitsChange,
+  generationModelSetting,
   generationSection,
   documentSyncSetting,
   retrievalModeSection,
@@ -357,6 +372,9 @@ export function KnowledgeBaseForm({
     ),
     models: (
       <>
+        <h4 className="text-sm font-medium text-text-primary">
+          {t('document.formSections.documentSummary')}
+        </h4>
         <SimpleConfigRow
           label={t('document.summary.enableLabel')}
           description={t('document.summary.enableDescription')}
@@ -386,17 +404,22 @@ export function KnowledgeBaseForm({
         )}
 
         {(modelsOpened || selection.section === 'models') && multimodalFeatureEnabled && (
-          <MultimodalConfigSection
-            enabled={multimodalAnalysisEnabled}
-            modelRef={multimodalAnalysisModelRef}
-            modelError={multimodalAnalysisModelError}
-            videoPrompt={multimodalAnalysisVideoPrompt}
-            imagePrompt={multimodalAnalysisImagePrompt}
-            onEnabledChange={onMultimodalAnalysisEnabledChange}
-            onModelChange={onMultimodalAnalysisModelChange}
-            onVideoPromptChange={onMultimodalVideoPromptChange}
-            onImagePromptChange={onMultimodalImagePromptChange}
-          />
+          <>
+            <h4 className="border-t border-border pt-4 text-sm font-medium text-text-primary">
+              {t('document.formSections.multimodalAnalysis')}
+            </h4>
+            <MultimodalConfigSection
+              enabled={multimodalAnalysisEnabled}
+              modelRef={multimodalAnalysisModelRef}
+              modelError={multimodalAnalysisModelError}
+              videoPrompt={multimodalAnalysisVideoPrompt}
+              imagePrompt={multimodalAnalysisImagePrompt}
+              onEnabledChange={onMultimodalAnalysisEnabledChange}
+              onModelChange={onMultimodalAnalysisModelChange}
+              onVideoPromptChange={onMultimodalVideoPromptChange}
+              onImagePromptChange={onMultimodalImagePromptChange}
+            />
+          </>
         )}
       </>
     ),
@@ -423,7 +446,6 @@ export function KnowledgeBaseForm({
             </div>
           </SimpleConfigRow>
         )}
-        {documentSyncSetting}
       </>
     ),
     usage: (
@@ -524,8 +546,21 @@ export function KnowledgeBaseForm({
         </SimpleConfigRow>
       </>
     ),
-    generation: generationSection,
+    sync: documentSyncSetting,
+    generation: generationSection && (
+      <>
+        {generationModelSetting}
+        {(generationOpened || selection.section === 'generation') && generationSection}
+      </>
+    ),
   }
+
+  const visibleGroups = sectionGroups.map(({ label, items }) => ({
+    label,
+    items: (items as readonly SectionItem[]).filter(
+      ([section]) => (section !== 'sync' && section !== 'generation') || content[section]
+    ),
+  }))
 
   return (
     <fieldset
@@ -535,32 +570,44 @@ export function KnowledgeBaseForm({
       <nav
         ref={sidebar}
         aria-label={t('document.formSections.navigation')}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border pb-2 md:w-44 md:flex-col md:overflow-x-hidden md:overflow-y-auto md:border-b-0 md:border-r md:pb-0 md:pr-3"
+        className="max-h-[32dvh] shrink-0 space-y-2 overflow-y-auto border-b border-border pb-2 md:max-h-none md:w-44 md:space-y-3 md:border-b-0 md:border-r md:pb-0 md:pr-3"
       >
-        {sections
-          .filter(([section]) => section !== 'generation' || generationSection)
-          .map(([section, testId, label]) => {
-            const selected = selection.section === section
-            return (
-              <button
-                key={section}
-                type="button"
-                aria-expanded={selected}
-                aria-current={selected ? 'true' : undefined}
-                aria-controls={panelId}
-                data-testid={`${testId}-section-trigger`}
-                onClick={() => selectSection(section)}
-                className={cn(
-                  'min-h-11 shrink-0 whitespace-nowrap rounded-md px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:whitespace-normal',
-                  selected
-                    ? 'bg-primary/10 font-medium text-primary'
-                    : 'text-text-secondary hover:bg-hover'
-                )}
-              >
-                {t(`document.formSections.${label}`)}
-              </button>
-            )
-          })}
+        {visibleGroups.map(({ label, items }) => (
+          <div
+            key={label}
+            role="group"
+            aria-label={t(`document.formSectionGroups.${label}`)}
+            className="border-t border-border pt-2 first:border-0 first:pt-0 md:pt-3"
+          >
+            <p aria-hidden="true" className="px-3 pb-1 text-xs text-text-muted">
+              {t(`document.formSectionGroups.${label}`)}
+            </p>
+            <div className="flex flex-wrap gap-1 md:flex-col">
+              {items.map(([section, testId, title]) => {
+                const selected = selection.section === section
+                return (
+                  <button
+                    key={section}
+                    type="button"
+                    aria-expanded={selected}
+                    aria-current={selected ? 'true' : undefined}
+                    aria-controls={panelId}
+                    data-testid={`${testId}-section-trigger`}
+                    onClick={() => selectSection(section)}
+                    className={cn(
+                      'min-h-11 shrink-0 whitespace-nowrap rounded-md px-3 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:whitespace-normal',
+                      selected
+                        ? 'bg-primary/10 font-medium text-primary'
+                        : 'text-text-secondary hover:bg-hover'
+                    )}
+                  >
+                    {t(`document.formSections.${title}`)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
       <div
         ref={panel}
@@ -568,29 +615,34 @@ export function KnowledgeBaseForm({
         tabIndex={-1}
         className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-3 [scrollbar-gutter:stable]"
       >
-        {sections.map(([section, , label]) => {
-          const selected = selection.section === section
-          // Keep the repository picker draft and the summary default selection.
-          const keepMounted =
-            section === 'basic' ||
-            section === 'models' ||
-            (section === 'generation' && generationOpened && !!generationSection)
-          if (!selected && !keepMounted) return null
-          return (
-            <section
-              key={section}
-              hidden={!selected}
-              aria-label={t(`document.formSections.${label}`)}
-            >
-              <fieldset
-                disabled={editableSection !== undefined && editableSection !== section}
-                className="min-w-0"
+        {visibleGroups
+          .flatMap(group => group.items)
+          .map(([section, , label]) => {
+            const selected = selection.section === section
+            // Required model defaults can be resolved before their settings are visited.
+            const keepMounted =
+              section === 'basic' ||
+              section === 'models' ||
+              (section === 'generation' && (generationOpened || generationModelSetting))
+            if (!selected && !keepMounted) return null
+            return (
+              <section
+                key={section}
+                hidden={!selected}
+                aria-label={t(`document.formSections.${label}`)}
               >
-                <SimpleConfigGroup>{content[section]}</SimpleConfigGroup>
-              </fieldset>
-            </section>
-          )
-        })}
+                <h3 className="mb-3 text-base font-semibold text-text-primary">
+                  {t(`document.formSections.${label}`)}
+                </h3>
+                <fieldset
+                  disabled={editableSection !== undefined && editableSection !== section}
+                  className="min-w-0"
+                >
+                  <SimpleConfigGroup>{content[section]}</SimpleConfigGroup>
+                </fieldset>
+              </section>
+            )
+          })}
       </div>
     </fieldset>
   )

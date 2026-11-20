@@ -776,14 +776,22 @@
       "expanded": "点击收起",
       "readOnly": "只读"
     },
+    "formSectionGroups": {
+      "foundation": "基础设置",
+      "content": "内容配置",
+      "management": "使用管理"
+    },
     "formSections": {
       "basic": "基本信息",
       "navigation": "知识库设置",
-      "accessAndDownload": "访问与下载",
-      "summaryAndMultimodal": "摘要与多模态",
-      "retrieval": "检索",
-      "guidanceAndLimits": "引导与额度",
-      "generationAndSchedule": "生成与定时更新",
+      "accessSettings": "访问设置",
+      "contentProcessing": "内容处理",
+      "retrieval": "检索设置",
+      "dataSync": "数据同步",
+      "qaSettings": "问答设置",
+      "generation": "生成更新",
+      "documentSummary": "文档摘要",
+      "multimodalAnalysis": "多模态分析",
       "access": "访问设置",
       "summary": "摘要设置",
       "guidedQuestions": "引导问题"
@@ -1363,6 +1371,7 @@
       "language": "生成语言",
       "languageZh": "中文",
       "languageEn": "English",
+      "languageDefault": "系统默认",
       "alreadyBuilt": "已有 {{count}} 人为此仓库建过 wiki，可以向其索要分享",
       "ownedBy": "归属 {{owner}}，可向其索要分享",
       "showGenerationTask": "显示生成任务",

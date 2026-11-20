@@ -31,6 +31,7 @@ import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
+  CodeWikiLanguageSetting,
   CodeWikiSourceFields,
   useCodeWikiRepository,
   type CodeWikiSourceDraft,
@@ -347,7 +348,7 @@ export function CreateKnowledgeBaseDialog({
 
     if (kind === 'code' && !executionModelRef) {
       setExecutionModelError(t('knowledge:codeWiki.create.modelRequired'))
-      selectSection('basic', '[data-testid="code-wiki-execution-model-select"]')
+      selectSection('generation', '[data-testid="code-wiki-execution-model-select"]')
       return
     }
 
@@ -607,9 +608,38 @@ export function CreateKnowledgeBaseDialog({
               </SimpleConfigRow>
             )
           }
+          generationModelSetting={
+            kind === 'code' && (
+              <SimpleConfigRow
+                label={t('knowledge:codeWiki.create.modelLabel')}
+                description={t('knowledge:codeWiki.create.modelDescription')}
+                align="start"
+              >
+                <ModelRefSelector
+                  value={executionModelRef}
+                  onChange={value => {
+                    setExecutionModelRef(value)
+                    // Otherwise the "pick a model" error stays beside a field
+                    // that now has one, until the next submit clears it.
+                    setExecutionModelError('')
+                  }}
+                  error={executionModelError}
+                  placeholder={t('knowledge:codeWiki.create.modelPlaceholder')}
+                  knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+                  bindModel={bindModel}
+                  preferenceScope="wiki"
+                  dataTestId="code-wiki-execution-model-select"
+                />
+              </SimpleConfigRow>
+            )
+          }
           generationSection={
             kind === 'code' ? (
               <>
+                <CodeWikiLanguageSetting
+                  language={source.language}
+                  onLanguageChange={language => setSource(current => ({ ...current, language }))}
+                />
                 <SimpleConfigRow
                   label={t('knowledge:codeWiki.strategy.label')}
                   description={t('knowledge:codeWiki.strategy.createDescription')}
@@ -621,6 +651,7 @@ export function CreateKnowledgeBaseDialog({
                     testId="code-wiki-generation-strategy"
                   />
                 </SimpleConfigRow>
+                <GenerationTaskRow checked={showGenerationTask} onChange={setShowGenerationTask} />
                 <SimpleConfigRow
                   label={t('knowledge:codeWiki.create.scheduledUpdate')}
                   description={t('knowledge:codeWiki.create.scheduledUpdateHint')}
@@ -737,7 +768,6 @@ export function CreateKnowledgeBaseDialog({
                     )}
                   </div>
                 </SimpleConfigRow>
-                <GenerationTaskRow checked={showGenerationTask} onChange={setShowGenerationTask} />
               </>
             ) : undefined
           }
@@ -762,27 +792,6 @@ export function CreateKnowledgeBaseDialog({
                     repository={repository}
                     onChange={setSource}
                   />
-                  <SimpleConfigRow
-                    label={t('knowledge:codeWiki.create.modelLabel')}
-                    description={t('knowledge:codeWiki.create.modelDescription')}
-                    align="start"
-                  >
-                    <ModelRefSelector
-                      value={executionModelRef}
-                      onChange={value => {
-                        setExecutionModelRef(value)
-                        // Otherwise the "pick a model" error stays beside a field
-                        // that now has one, until the next submit clears it.
-                        setExecutionModelError('')
-                      }}
-                      error={executionModelError}
-                      placeholder={t('knowledge:codeWiki.create.modelPlaceholder')}
-                      knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-                      bindModel={bindModel}
-                      preferenceScope="wiki"
-                      dataTestId="code-wiki-execution-model-select"
-                    />
-                  </SimpleConfigRow>
                 </>
               ) : (
                 /* KB Type selector - subtle style */

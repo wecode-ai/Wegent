@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { CodeWikiLanguageSetting } from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { ScheduledUpdateSettings } from '@/features/knowledge/code-wiki/ScheduledUpdateSettings'
@@ -494,29 +495,6 @@ export function EditKnowledgeBaseDialog({
                           </p>
                         </SimpleConfigRow>
                       )}
-                      <SimpleConfigRow
-                        label={tKnowledge('codeWiki.create.modelLabel')}
-                        description={tKnowledge('codeWiki.create.modelDescription')}
-                        align="start"
-                      >
-                        <ModelRefSelector
-                          value={executionModelRef}
-                          onChange={value => {
-                            setExecutionModelRef(value)
-                            setExecutionModelTouched(true)
-                          }}
-                          placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
-                          // Passed unconditionally: with autoSelect off it no longer
-                          // risks the cache overriding what the wiki already has, and
-                          // it is what lets a pick made here be remembered.
-                          knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-                          preferenceScope="wiki"
-                          // Nothing is filled in for a wiki that has no model: an empty
-                          // box is the truth there, and only a real pick may change it.
-                          autoSelect={false}
-                          dataTestId="code-wiki-execution-model-select"
-                        />
-                      </SimpleConfigRow>
                     </>
                   ) : (
                     <SimpleConfigRow
@@ -554,19 +532,49 @@ export function EditKnowledgeBaseDialog({
                   isCodeWiki ? (
                     <>
                       {!scheduleError && (
-                        <SimpleConfigRow
-                          label={tKnowledge('codeWiki.strategy.label')}
-                          description={tKnowledge('codeWiki.strategy.settingsDescription')}
-                        >
-                          <GenerationStrategySelect
-                            value={generationStrategy}
-                            onChange={strategy => {
-                              setGenerationStrategy(strategy)
-                              setGenerationStrategyTouched(true)
-                            }}
-                            testId="code-wiki-generation-strategy"
+                        <>
+                          <SimpleConfigRow
+                            label={tKnowledge('codeWiki.create.modelLabel')}
+                            description={tKnowledge('codeWiki.create.modelDescription')}
+                            align="start"
+                          >
+                            <ModelRefSelector
+                              value={executionModelRef}
+                              onChange={value => {
+                                setExecutionModelRef(value)
+                                setExecutionModelTouched(true)
+                              }}
+                              placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
+                              // Passed unconditionally: with autoSelect off it no longer
+                              // risks the cache overriding what the wiki already has, and
+                              // it is what lets a pick made here be remembered.
+                              knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+                              preferenceScope="wiki"
+                              // Nothing is filled in for a wiki that has no model: an empty
+                              // box is the truth there, and only a real pick may change it.
+                              autoSelect={false}
+                              dataTestId="code-wiki-execution-model-select"
+                            />
+                          </SimpleConfigRow>
+                          <CodeWikiLanguageSetting language={fullKnowledgeBase.language} />
+                          <SimpleConfigRow
+                            label={tKnowledge('codeWiki.strategy.label')}
+                            description={tKnowledge('codeWiki.strategy.settingsDescription')}
+                          >
+                            <GenerationStrategySelect
+                              value={generationStrategy}
+                              onChange={strategy => {
+                                setGenerationStrategy(strategy)
+                                setGenerationStrategyTouched(true)
+                              }}
+                              testId="code-wiki-generation-strategy"
+                            />
+                          </SimpleConfigRow>
+                          <GenerationTaskRow
+                            checked={showGenerationTask}
+                            onChange={setShowGenerationTask}
                           />
-                        </SimpleConfigRow>
+                        </>
                       )}
                       <SimpleConfigRow
                         label={tKnowledge('codeWiki.create.scheduledUpdate')}
@@ -601,12 +609,6 @@ export function EditKnowledgeBaseDialog({
                               : 'codeWiki.scheduledUpdate.pendingConfigure'
                           )}
                         </p>
-                      )}
-                      {!scheduleError && (
-                        <GenerationTaskRow
-                          checked={showGenerationTask}
-                          onChange={setShowGenerationTask}
-                        />
                       )}
                     </>
                   ) : undefined

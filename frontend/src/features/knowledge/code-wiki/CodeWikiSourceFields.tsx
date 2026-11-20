@@ -246,13 +246,24 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
           )}
         </div>
       </SimpleConfigRow>
+    </>
+  )
+}
 
-      <SimpleConfigRow label={t('codeWiki.create.language')}>
-        <Select
-          value={value.language}
-          onValueChange={language => onChange(current => ({ ...current, language }))}
-        >
-          <SelectTrigger className="bg-base" data-testid="code-wiki-language">
+export function CodeWikiLanguageSetting({
+  language,
+  onLanguageChange,
+}: {
+  language?: string
+  onLanguageChange?: (language: string) => void
+}) {
+  const { t } = useTranslation('knowledge')
+
+  return (
+    <SimpleConfigRow label={t('codeWiki.create.language')}>
+      {onLanguageChange ? (
+        <Select value={language} onValueChange={onLanguageChange}>
+          <SelectTrigger className="min-h-11 bg-base" data-testid="code-wiki-language">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -260,8 +271,16 @@ export function CodeWikiSourceFields({ value, repository, onChange }: CodeWikiSo
             <SelectItem value="en">{t('codeWiki.create.languageEn')}</SelectItem>
           </SelectContent>
         </Select>
-      </SimpleConfigRow>
-    </>
+      ) : (
+        <p className="text-sm text-text-primary">
+          {language === 'zh'
+            ? t('codeWiki.create.languageZh')
+            : language === 'en'
+              ? t('codeWiki.create.languageEn')
+              : language || t('codeWiki.create.languageDefault')}
+        </p>
+      )}
+    </SimpleConfigRow>
   )
 }
 
