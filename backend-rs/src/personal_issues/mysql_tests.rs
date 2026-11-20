@@ -96,9 +96,9 @@ async fn seed(mysql: &MysqlService) {
         .await
         .unwrap();
     mysql.execute("INSERT INTO users VALUES (7,'Owner',true),(8,'Participant',true),(9,'Outsider',true),(10,'Inactive',false)",()).await.unwrap();
-    mysql.execute("CREATE TABLE kinds (id BIGINT PRIMARY KEY,user_id INT,name TEXT,kind VARCHAR(50),namespace VARCHAR(100),is_active BOOL,json JSON)",()).await.unwrap();
+    mysql.execute("CREATE TABLE kinds (id BIGINT PRIMARY KEY,user_id INT,name TEXT,kind VARCHAR(50),namespace VARCHAR(100),is_active BOOL,json JSON,created_at DATETIME,updated_at DATETIME)",()).await.unwrap();
     mysql.execute("CREATE TABLE resource_members (id BIGINT PRIMARY KEY AUTO_INCREMENT,resource_type VARCHAR(50),resource_id BIGINT,entity_type VARCHAR(50),entity_id VARCHAR(100),status VARCHAR(50),role VARCHAR(50)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",()).await.unwrap();
-    mysql.execute("INSERT INTO kinds VALUES (2001,7,'Project space','CollaborationWorkspace','default',true,JSON_OBJECT())",()).await.unwrap();
+    mysql.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (2001,7,'Project space','CollaborationWorkspace','default',true,JSON_OBJECT())",()).await.unwrap();
     mysql.execute("INSERT INTO loop_items (id,resource_type,status,name,title,description,metadata,version,next_item_number,created_by_user_id) VALUES ('1001','project','active','Project','Project','',JSON_OBJECT('membership_mode','inherit','task_provider','backend'),1,1,7)",()).await.unwrap();
     mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES ('CloudProject',1001,'workspace','2001','approved','Owner')",()).await.unwrap();
 }
@@ -123,6 +123,18 @@ async fn verify(mysql: MysqlService) {
     let invited = update_issue(&state, user(7), &private.id, invite)
         .await
         .unwrap();
+    let (recipient, event): (i64, Json<Value>) = mysql
+        .fetch_one(
+            "SELECT user_id,metadata FROM loop_items WHERE resource_type='stand_in_issue_event'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recipient, 8);
+    assert_eq!(
+        event.0,
+        json!({"personalIssueId":private.id,"assignmentId":invited.metadata.0.assignment_id})
+    );
     assert_eq!(
         get_issue(&state, user(8), &private.id)
             .await
@@ -171,6 +183,8 @@ async fn verify(mysql: MysqlService) {
         list_comments(&state, user(7), &private.id).await.unwrap()[0].author_id,
         8
     );
+    let assignment = invited.metadata.0.assignment_id.as_deref().unwrap();
+    let device = verify_assistant_reservation(&state, &private.id, assignment).await;
     let current = get_issue(&state, user(7), &private.id).await.unwrap();
     let revoked = update_issue(
         &state,
@@ -180,6 +194,18 @@ async fn verify(mysql: MysqlService) {
     )
     .await
     .unwrap();
+    assert_eq!(
+        assistant::reply(
+            &state,
+            user(8),
+            &private.id,
+            assistant_reply(assignment, device)
+        )
+        .await
+        .unwrap_err()
+        .status(),
+        StatusCode::NOT_FOUND
+    );
     assert_eq!(
         get_issue(&state, user(8), &private.id)
             .await
@@ -432,8 +458,97 @@ async fn cp13_cp14_independent_issues_preserve_owner_invitation_and_transaction_
     outcome.unwrap();
 }
 
+fn assistant_address(assignment: &str, device: &str) -> Value {
+    json!({"assignment_id":assignment,"device_id":device,"task_id":"stand-in-issue-runtime"})
+}
+
+fn assistant_reply(assignment: &str, device: &str) -> assistant::Reply {
+    serde_json::from_value(json!({
+        "assignment":assistant_address(assignment, device),
+        "message_id":"completed-turn","body":"Verified by the reviewer",
+    }))
+    .unwrap()
+}
+
+async fn verify_assistant_reservation(
+    state: &AppState,
+    id: &str,
+    assignment: &str,
+) -> &'static str {
+    state.mysql.execute(
+        "INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (9001,8,'mac-a','Device','default',true,JSON_OBJECT('spec',JSON_OBJECT('deviceType','app','deviceId','mac-a'))),(9002,8,'mac-b','Device','default',true,JSON_OBJECT('spec',JSON_OBJECT('deviceType','app','deviceId','mac-b'))),(9003,7,'owner-mac','Device','default',true,JSON_OBJECT('spec',JSON_OBJECT('deviceType','app','deviceId','owner-mac')))",
+        (),
+    ).await.unwrap();
+    let claim = |device| {
+        serde_json::from_value(json!({
+            "assignment":assistant_address(assignment, device),
+            "role_id":"review","role_name":"Release reviewer",
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        assistant::claim(state, user(7), id, claim("owner-mac"))
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        assistant::claim(state, user(8), id, claim("owner-mac"))
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let (a, b) = tokio::join!(
+        assistant::claim(state, user(8), id, claim("mac-a")),
+        assistant::claim(state, user(8), id, claim("mac-b")),
+    );
+    let a_claimed = a.unwrap()["claimed"] == true;
+    assert_ne!(a_claimed, b.unwrap()["claimed"] == true);
+    let (active, other) = if a_claimed {
+        ("mac-a", "mac-b")
+    } else {
+        ("mac-b", "mac-a")
+    };
+    assert_eq!(
+        assistant::claim(state, user(8), id, claim(active))
+            .await
+            .unwrap()["claimed"],
+        true
+    );
+    assert_eq!(
+        assistant::reply(state, user(8), id, assistant_reply(assignment, other))
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let first = assistant::reply(state, user(8), id, assistant_reply(assignment, active))
+        .await
+        .unwrap();
+    let retry = assistant::reply(state, user(8), id, assistant_reply(assignment, active))
+        .await
+        .unwrap();
+    assert_eq!(first, retry);
+    let replies = list_comments(state, user(7), id).await.unwrap();
+    assert_eq!(replies.len(), 2);
+    let reply = replies
+        .iter()
+        .find(|reply| reply.assistant_name.is_some())
+        .unwrap();
+    assert_eq!(reply.assistant_name.as_deref(), Some("Release reviewer"));
+    assert_eq!(reply.author_id, 8);
+    assert!(
+        serde_json::to_value(get_issue(state, user(7), id).await.unwrap()).unwrap()["metadata"]
+            .get("assistant_binding")
+            .is_none()
+    );
+    active
+}
+
 async fn verify_resource_invitations(state: &AppState) {
-    state.mysql.execute("INSERT INTO kinds VALUES (3001,7,'Coding Agent','Team','default',true,JSON_OBJECT()),(3002,9,'Private Agent','Team','default',true,JSON_OBJECT()),(4001,7,'Team','CollaborationGroup','workspaces/2001',true,JSON_OBJECT('spec',JSON_OBJECT('leader',JSON_OBJECT('kind','human','id','8'),'members',JSON_ARRAY())))",()).await.unwrap();
+    state.mysql.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (3001,7,'Coding Agent','Team','default',true,JSON_OBJECT()),(3002,9,'Private Agent','Team','default',true,JSON_OBJECT()),(4001,7,'Team','CollaborationGroup','workspaces/2001',true,JSON_OBJECT('spec',JSON_OBJECT('leader',JSON_OBJECT('kind','human','id','8'),'members',JSON_ARRAY())))",()).await.unwrap();
     state.mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES ('CollaborationGroup',4001,'workspace','2001','approved','Developer')",()).await.unwrap();
     let mut body = input("Typed invitation", None, vec![]);
     body.resource_participants = vec![

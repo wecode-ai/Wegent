@@ -1,8 +1,8 @@
 import { ChevronDown } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { SearchableSelect } from '@wegent/collaboration'
-import type { CloudProject } from '@/api/deliveries'
-import { useTranslation } from '@/hooks/useTranslation'
+import { SearchableSelect } from '../controls/SearchableSelect'
+import type { CollaborationProject } from '../types'
+import { usePersonalIssueTranslation } from './personalIssueMessages'
 
 export function IssueProjectSelect({
   projects,
@@ -14,7 +14,7 @@ export function IssueProjectSelect({
   scopeHint,
   onChange,
 }: {
-  projects: CloudProject[]
+  projects: CollaborationProject[]
   value: string
   disabled?: boolean
   className?: string
@@ -23,7 +23,7 @@ export function IssueProjectSelect({
   scopeHint?: ReactNode
   onChange(value: string): void
 }) {
-  const { t } = useTranslation('common')
+  const t = usePersonalIssueTranslation()
   const empty = placeholder ?? t('issue_creation.independent_option')
   const selected = projects.find(project => String(project.id) === value)
   return (

@@ -9,11 +9,8 @@ import {
 } from '@/components/chat/assistantMarkdownLinks'
 import { mimeTypeForFileName } from '@wegent/chat-core/workspace-file-types'
 
-export interface TaskIssueConversationFile {
-  id: string
-  name: string
-  load(): Promise<File>
-}
+import type { TaskIssueConversationFile } from '@wegent/collaboration/platform'
+export type { TaskIssueConversationFile } from '@wegent/collaboration/platform'
 
 export function taskIssueConversationFiles(
   messages: WorkbenchMessage[],

@@ -572,6 +572,20 @@ export function createWebSharedWorkspaceApi(
         )
         return response.items
       },
+      async page(input) {
+        const query = new URLSearchParams({ limit: String(input?.limit ?? 30) })
+        if (input?.cursor) query.set('cursor', input.cursor)
+        if (input?.scope) query.set('scope', input.scope)
+        if (input?.order) query.set('order', input.order)
+        if (input?.includeCompleted != null) {
+          query.set('include_completed', String(input.includeCompleted))
+        }
+        const response = await client.get<{
+          items: WorkspaceMyWorkItem[]
+          next_cursor?: string | null
+        }>(`/v1/cloud-work-items/my-work?${query}`)
+        return { items: response.items, nextCursor: response.next_cursor ?? null }
+      },
     },
     issues: {
       async list(projectId, filters) {

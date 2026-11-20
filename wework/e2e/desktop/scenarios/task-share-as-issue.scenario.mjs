@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { verifyIssueCreationColumns } from '../modules/independent-issue-draft.mjs'
@@ -30,6 +31,9 @@ const imageData = readFileSync(
   new URL('../../../resources/icons/32x32.png', import.meta.url)
 ).toString('base64')
 const reply = 'The model error occurs when the response payload is empty.'
+const reviewPrompt = 'E2E_ASSIGNED_INDEPENDENT_ISSUE_REVIEW'
+const reviewReply = 'The reproduction was confirmed by the assigned reviewer.'
+const reviewerName = 'Issue reviewer'
 const activePane = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const selector = id => `[data-testid="${id}"]`
 
@@ -43,6 +47,7 @@ export function createDesktopScenario({
   restartDesktopApp,
 }) {
   let cloud, colleague, colleagueToken, outsiderToken, project, restrictedProject
+  let projectAssignee, projectAssigneeToken
   async function request(
     path,
     {
@@ -83,11 +88,11 @@ export function createDesktopScenario({
   const click = (control, target) =>
     control.command('clickWhenEnabled', target, { timeoutMs: uiTimeoutMs })
 
-  async function inviteColleague(control) {
+  async function inviteColleague(control, person = colleague) {
     await control.command('fill', selector('independent-issue-search-people'), {
-      value: colleague.user_name,
+      value: person.user_name,
     })
-    await click(control, selector(`independent-issue-invite-${colleague.id}`))
+    await click(control, selector(`independent-issue-invite-${person.id}`))
   }
 
   async function selectProject(control, target) {
@@ -117,6 +122,7 @@ export function createDesktopScenario({
       }
       ;[colleague, colleagueToken] = await createUser('share-colleague')
       ;[, outsiderToken] = await createUser('share-outsider')
+      ;[projectAssignee, projectAssigneeToken] = await createUser('share-project-assignee')
       project = await request('/v1/cloud-projects', {
         body: {
           name: 'Model Support',
@@ -140,13 +146,26 @@ export function createDesktopScenario({
           status: 201,
         })
       }
+      await request(`/v1/cloud-projects/${project.id}/members`, {
+        body: { user_id: projectAssignee.id, role: 'Developer' },
+        status: 201,
+      })
     },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
-      if (!JSON.stringify(body).includes(prompt)) return false
+      const input = JSON.stringify(body)
+      if (input.includes(reviewPrompt)) {
+        const id = 'independent-issue-review'
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([responseCreated(id), assistantMessage(reviewReply), responseCompleted(id)])
+        )
+        return true
+      }
+      if (!input.includes(prompt)) return false
       const id = 'task-share-response'
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       const events = requestContainsToolOutput(body)
@@ -484,7 +503,14 @@ export function createDesktopScenario({
       await selectProject(control, project)
       await wait(control, selector('issue-project-scope'), { visible: true })
       await wait(control, selector('independent-issue-search-people'), { visible: true })
+      await inviteColleague(control, projectAssignee)
+      await click(control, selector(`issue-participant-assignee-human:${projectAssignee.id}`))
       await selectAttachment(control, 'project-notes.txt', 'Project reproduction')
+      const recipientColumn = await metrics(selector('issue-participants'))
+      const searchField = await metrics(selector('independent-issue-search-people'))
+      const sharedContent = await metrics(selector('task-issue-share-content'))
+      assert.ok(searchField.right <= recipientColumn.right)
+      assert.ok(recipientColumn.right < sharedContent.left)
       await captureScreenshot(control, '05-task-share-project-audience.png')
       await click(control, save)
       const viewIssue = selector('task-share-view-project-issue')
@@ -497,6 +523,22 @@ export function createDesktopScenario({
       const shared = projectItems.items.find(item => item.title === 'Project model error follow-up')
       assert.ok(shared, 'A project member must see the issue on its board')
       assert.equal(shared.description, 'Review this with the project team.')
+      const assignedIssue = await request(`/v1/loop-items/${shared.id}`, {
+        token: projectAssigneeToken,
+      })
+      const assignmentId = assignedIssue.human_task_binding?.assignmentId
+      assert.ok(assignmentId, 'The project assignee must have the normal Issue assignment binding')
+      const assigneeIntake = await request('/v1/stand-in-issue-events', {
+        token: projectAssigneeToken,
+      })
+      assert.deepEqual(
+        assigneeIntake.events
+          .filter(({ payload }) => payload.itemId === shared.id)
+          .map(({ payload }) => payload),
+        [{ assignmentId, itemId: shared.id, projectId: String(project.id) }]
+      )
+      const inviteeIntake = await request('/v1/stand-in-issue-events', { token: colleagueToken })
+      assert.ok(inviteeIntake.events.every(({ payload }) => payload.itemId !== shared.id))
       const projectFiles = await request(`/v1/loop-items/${shared.id}/attachments`, {
         token: colleagueToken,
       })
@@ -614,6 +656,45 @@ export function createDesktopScenario({
       await switchPersonalPluginAccount(control, { ...cloud, authToken: colleagueToken })
       const badge = selector('workspace-tab-issue-assignment-count')
       await wait(control, badge, { text: '0' })
+      const userId = colleague.id
+      const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
+      const model = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
+      assert.ok(model, 'The assignee must have the real E2E runner model registration')
+      const settings = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId },
+        uiTimeoutMs
+      )
+      Object.assign(settings.roles[0], {
+        enabled: true,
+        name: reviewerName,
+        prompt: reviewPrompt,
+        model,
+        collaboration: {
+          ...settings.roles[0].collaboration,
+          enabled: true,
+          includeIndependentIssues: true,
+          allProjects: false,
+          projects: [],
+          policy: {
+            automatic: true,
+            askBeforeAct: false,
+            immediate: true,
+            sessionStrategy: 'independent',
+          },
+        },
+      })
+      const saved = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.save',
+        { userId, settings },
+        uiTimeoutMs
+      )
+      assert.ok(
+        saved.roles[0].independentIssuesEnabledAfter,
+        'Enable the assistant rule before assigning'
+      )
       await request(`/v1/personal-issues/${issue.id}`, {
         method: 'PATCH',
         body: {
@@ -632,6 +713,25 @@ export function createDesktopScenario({
       await click(control, selector('workspace-tab-select-fixed-board'))
       await click(control, selector('collaboration-primary-issues-assigned'))
       await wait(control, 'body', { text: revoked.title })
+      const deadline = Date.now() + Math.min(modelResponseTimeoutMs, 45000)
+      let published = []
+      do {
+        const comments = await request(`/v1/personal-issues/${issue.id}/comments`)
+        published = comments.filter(comment => comment.body === reviewReply)
+        if (published.length) break
+        await new Promise(resolve => setTimeout(resolve, 250))
+      } while (Date.now() < deadline)
+      assert.equal(
+        published.length,
+        1,
+        'The assignee’s preconfigured assistant must publish one result'
+      )
+      assert.equal(published[0].assistant_name, reviewerName)
+      assert.equal(published[0].author_id, userId)
+      await click(control, selector(`independent-issue-${issue.id}`))
+      await wait(control, `${dialog} article`, { text: reviewReply, visible: true })
+      await wait(control, `${dialog} article`, { text: reviewerName, visible: true })
+      await captureScreenshot(control, '12-assigned-independent-issue-assistant-reply.png')
     },
   }
 }

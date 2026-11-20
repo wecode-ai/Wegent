@@ -2,43 +2,47 @@ import {
   CollapsiblePanel,
   CollapsibleRoot,
   CollapsibleTrigger,
-} from '@wegent/collaboration/controls/Collapsible'
+} from '../controls/Collapsible'
 import {
   SelectContent,
   SelectItem,
   SelectRoot,
   SelectTrigger,
-} from '@wegent/collaboration/controls/SelectParts'
-import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
-import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
-import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
-import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
-import { useCallback, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
+} from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
+import { useCallback, useId, useState, useSyncExternalStore, type ReactNode, type ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import { createIndependentIssueDraft } from './independentIssueDraft'
 import { Folder } from 'lucide-react'
-import { type SharedWorkspaceApi } from '@wegent/collaboration'
-import { usePanelData } from '@wegent/collaboration/platform'
-import { DialogForm } from '@/components/common/DialogForm'
-import { useTranslation } from '@/hooks/useTranslation'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationProject } from '../types'
+import { usePanelData } from './usePanelData'
+import { DialogForm } from '../controls/DialogForm'
+import { usePersonalIssueTranslation } from './personalIssueMessages'
 import {
   type IndependentIssue,
   type IndependentIssueInput,
+  type IssueCreationInput,
   type PersonalIssuesApi,
-} from '@/api/personalIssues'
-import type { TaskIssueShareDraft } from './TaskIssueShare'
-import { TaskIssueShareFiles } from './TaskIssueShareFiles'
+  type TaskIssueShareDraft,
+} from './personalIssuesApi'
 import { TaskIssueShareExcerpts } from './TaskIssueShareExcerpts'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
 import { IssueProjectSelect } from './IssueProjectSelect'
 import { participantKey, resourceInvitations, type IssueParticipant } from './issueParticipants'
 
-export interface IssueCreationInput extends IndependentIssueInput {
-  project_id?: string
-  project_status?: string
-}
+export type IssueShareFiles = ComponentType<{
+  files: File[]
+  conversationFiles: TaskIssueShareDraft['conversationFiles']
+  selectedConversationFileIds: string[]
+  selectedExcerptCount: number
+  children: ReactNode
+  onSelectConversationFiles(ids: string[]): void
+  onChange(files: File[]): void
+}>
 const control =
   'wework-native-select min-h-11 min-w-0 w-full rounded-md border-0 bg-muted/40 px-2 py-1 text-sm text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8'
 
@@ -54,8 +58,10 @@ export function IndependentIssueEditor({
   onSave,
   onCancel,
   onDirtyChange,
+  ShareFiles,
+  renderExecutionSettings,
 }: {
-  api: PersonalIssuesApi
+  api: PersonalIssuesApi<CollaborationProject>
   collaborationApi?: SharedWorkspaceApi
   allowProjectSelection?: boolean
   issue: IndependentIssue | null
@@ -66,8 +72,10 @@ export function IndependentIssueEditor({
   onSave(input: IssueCreationInput, files: File[], conversationFileIds: string[]): Promise<void>
   onCancel(): void
   onDirtyChange?(dirty: boolean): void
+  ShareFiles?: IssueShareFiles
+  renderExecutionSettings?(projectId: string, busy: boolean): ReactNode
 }) {
-  const { t } = useTranslation('common')
+  const t = usePersonalIssueTranslation()
   const formId = useId()
   const [selectedExcerpts, setSelectedExcerpts] = useState<string[]>([])
   const [olderExcerpts, setOlderExcerpts] = useState<TaskIssueShareDraft['excerpts']>([])
@@ -340,8 +348,8 @@ export function IndependentIssueEditor({
                 />
               </label>
             )}
-            {shareDraft && (
-              <TaskIssueShareFiles
+            {shareDraft && ShareFiles && (
+              <ShareFiles
                 files={shareFiles}
                 conversationFiles={shareDraft.conversationFiles}
                 selectedConversationFileIds={conversationFileIds}
@@ -363,7 +371,7 @@ export function IndependentIssueEditor({
                     onSelect={setSelectedExcerpts}
                   />
                 )}
-              </TaskIssueShareFiles>
+              </ShareFiles>
             )}
             <label className="grid gap-1">
               <span className="text-sm text-text-secondary">{t('taskIssueShare.todo')}</span>
@@ -470,7 +478,7 @@ export function IndependentIssueEditor({
                 </div>
               </CollapsiblePanel>
             </CollapsibleRoot>
-            {!shareDraft && (
+            {!shareDraft && renderExecutionSettings && (
               <CollapsibleRoot className="group min-w-0 border-t border-border pt-2">
                 <CollapsibleTrigger
                   data-testid="independent-issue-execution-settings"
@@ -487,16 +495,7 @@ export function IndependentIssueEditor({
                           : 'workbench.runner_personal_default'
                       )}
                     </span>
-                    {projectId && collaborationApi ? (
-                      <IssueProjectEnvironmentPicker
-                        key={projectId}
-                        api={collaborationApi}
-                        projectId={projectId}
-                        disabled={busy}
-                      />
-                    ) : (
-                      <DefaultRunnerSetting compact confirmChanges />
-                    )}
+                    {renderExecutionSettings(projectId, busy)}
                     <p className="text-xs text-text-secondary">
                       {t(
                         projectId

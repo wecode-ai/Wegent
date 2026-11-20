@@ -1262,6 +1262,12 @@ path = "/api/v1/personal-issues/:issue_id/comments"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/personal-issues/:issue_id/project"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/assistant-binding"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/assistant-replies"
 
 [[routes]]
 methods = ["GET", "POST"]

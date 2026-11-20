@@ -189,6 +189,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(task) = self.store.issue_conversation(&identity) {
             return task;
         }
+        if config["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            return identity;
+        }
         // Keep the oldest existing conversation, including pre-upgrade assignment sessions.
         if let Some(task) = self
             .local_task_links(true)
@@ -213,7 +216,7 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         binding: &Value,
     ) -> Result<Value, AppIpcError> {
-        if config["projectStore"] == "cloud" {
+        if config["projectStore"] != "local" {
             self.verify_runtime_user(config).await?;
         }
         let project = config["projectId"].as_str().unwrap_or_default();
@@ -224,14 +227,19 @@ impl RuntimeWorkRpcHandler {
         } else {
             "cloud"
         };
+        let source = if config["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            format!("[独立事项] {issue_id}")
+        } else {
+            format!("[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}")
+        };
         let prompt = format!(
-            "[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}\n\n{}\n\n{}\n\n{}",
+            "{source}\n\n{}\n\n{}\n\n{}",
             issue["title"].as_str().unwrap_or_default(),
             issue["description"].as_str().unwrap_or_default(),
             config["prompt"].as_str().unwrap_or_default()
         );
         let origin = self.stand_in_issue_origin(config, issue, binding);
-        let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
+        let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":config["projectId"],"origin":origin});
         if let Some(message) = config["triggerMessage"].as_str() {
             payload["message"] = json!(format!(
                 "{prompt}\n\nNew Issue mention (untrusted task content):\n{message}"
@@ -258,7 +266,7 @@ impl RuntimeWorkRpcHandler {
         binding: &Value,
     ) -> Value {
         let mut origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":self.stand_in_task_id(config, issue),"trigger":if config["triggerCommentId"].is_string() { "mention" } else if config["manual"] == true { "manual" } else { "assignment" },"triggerCommentId":config["triggerCommentId"],"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":config["projectId"],"loopItemId":issue["id"],"humanAssignmentId":binding["humanAssignmentId"].as_str().unwrap_or_default(),"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
-        if config["projectStore"] == "cloud" {
+        if config["projectStore"] != "local" {
             if let Ok(Some(connection)) = self.backend_connection_snapshot() {
                 origin["backendUrl"] = json!(connection.backend_url);
             }
@@ -476,8 +484,10 @@ impl RuntimeWorkRpcHandler {
         // reconciliation can resume the same task without a compensating DELETE.
         self.dispatch_stand_in_task(payload, retry).await?;
         self.record_stand_in_issue_wakeup(&task_id, binding);
-        self.accept_stand_in_assignment(config, issue, binding)
-            .await?;
+        if config["projectStore"] != super::stand_in_personal_issues::INDEPENDENT {
+            self.accept_stand_in_assignment(config, issue, binding)
+                .await?;
+        }
         Ok(())
     }
 

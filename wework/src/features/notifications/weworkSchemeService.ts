@@ -1,7 +1,8 @@
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import type { TFunction } from 'i18next'
-import { ApiError, createHttpClient } from '@/api/http'
+import { createHttpClient } from '@/api/http'
+import { resolveMovedPersonalIssue } from '@wegent/collaboration/platform'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
 import { createDeliveryApi } from '@/api/deliveries'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -156,16 +157,12 @@ export function createWeworkSchemeService() {
         redirectOnUnauthorized: false,
       })
       const issueId = destination.issueId
-      const movedIssue = await createPersonalIssuesApi(client)
+      const movedProjectId = await createPersonalIssuesApi(client)
         .get(issueId)
         .then(
           () => null,
-          async reason => {
-            if (!(reason instanceof ApiError) || reason.status !== 404) return null
-            return createDeliveryApi(client)
-              .getLoopItem(issueId)
-              .catch(() => null)
-          }
+          reason =>
+            resolveMovedPersonalIssue(reason, () => createDeliveryApi(client).getLoopItem(issueId))
         )
       if (
         !input ||
@@ -176,10 +173,10 @@ export function createWeworkSchemeService() {
         return false
       // A superseded native request is consumed so it cannot replay on the next drain.
       if (order !== navigationOrder) return true
-      if (movedIssue?.cloud_project_id && movedIssue.can_view_detail !== false) {
+      if (movedProjectId) {
         destination = {
           kind: 'board',
-          projectId: String(movedIssue.cloud_project_id),
+          projectId: movedProjectId,
           itemId: issueId,
         }
       }

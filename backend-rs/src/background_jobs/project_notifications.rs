@@ -395,27 +395,9 @@ pub(crate) async fn deliver(state: &AppState, pending: Pending) {
         }
     }
     if pending.channels.im {
-        let mut links = Vec::new();
-        if let Some(url) = notification["url"].as_str().filter(|url| !url.is_empty()) {
-            links.push(("在 Wework 中打开".into(), url.into()));
-        }
-        if let (Some(project), Some(issue)) = (
-            notification["payload"]["projectId"].as_str(),
-            notification["payload"]["itemId"].as_str(),
-        ) {
-            let base = crate::config::env_or_dotenv("FRONTEND_URL")
-                .unwrap_or_else(|| "http://localhost:3000".into());
-            let encode = crate::board_snapshot::external_provider::url_encode_path;
-            links.push((
-                "查看任务".into(),
-                format!(
-                    "{}/collaboration/{}/issues/{}",
-                    base.trim_end_matches('/'),
-                    encode(project),
-                    encode(issue)
-                ),
-            ));
-        }
+        let base = crate::config::env_or_dotenv("FRONTEND_URL")
+            .unwrap_or_else(|| "http://localhost:3000".into());
+        let links = im_links(notification, &base);
         if let Err(error) = send_im(
             state,
             user,
@@ -430,6 +412,57 @@ pub(crate) async fn deliver(state: &AppState, pending: Pending) {
             tracing::error!(notification_id=%notification["id"],%error,"Wework IM notification delivery failed");
         }
     }
+}
+
+fn im_links(notification: &Value, base: &str) -> Vec<(String, String)> {
+    let payload = &notification["payload"];
+    let encode = crate::board_snapshot::external_provider::url_encode_path;
+    let web_path = if let Some(issue) = payload["personalIssueId"].as_str() {
+        let scope = if payload["assigned"] == true {
+            "assigned"
+        } else {
+            "participating"
+        };
+        Some(format!(
+            "/collaboration/{scope}?personalIssueId={}",
+            encode(issue)
+        ))
+    } else {
+        payload["projectId"]
+            .as_str()
+            .zip(payload["itemId"].as_str())
+            .map(|(project, issue)| {
+                format!(
+                    "/collaboration/{}/issues/{}",
+                    encode(project),
+                    encode(issue)
+                )
+            })
+    };
+    let app_link = notification["url"]
+        .as_str()
+        .filter(|url| !url.is_empty())
+        .map(|url| ("在 Wework 中打开".into(), url.into()));
+    let shared = notification["kind"] == "issue_shared";
+    let mut links = Vec::new();
+    if !shared {
+        links.extend(app_link.clone());
+    }
+    if let Some(path) = web_path {
+        let label = if shared {
+            "在网页中查看事项"
+        } else {
+            "查看任务"
+        };
+        links.push((
+            label.into(),
+            format!("{}{path}", base.trim_end_matches('/')),
+        ));
+    }
+    if shared {
+        links.extend(app_link);
+    }
+    links
 }
 
 pub(super) fn push_facts(payload: &Value) -> Vec<(String, String)> {
@@ -476,6 +509,39 @@ mod tests {
         let id = uuid();
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");
+    }
+
+    #[test]
+    fn share_messages_open_web_collaboration_for_the_recipient() {
+        for (payload, path) in [
+            (
+                json!({"personalIssueId":"share-1","assigned":true}),
+                "/collaboration/assigned?personalIssueId=share-1",
+            ),
+            (
+                json!({"personalIssueId":"share-1","assigned":false}),
+                "/collaboration/participating?personalIssueId=share-1",
+            ),
+            (
+                json!({"projectId":"123","itemId":"share-1"}),
+                "/collaboration/123/issues/share-1",
+            ),
+        ] {
+            let notification = json!({"kind":"issue_shared","payload":payload,"url":"wework://personal-issues/share-1"});
+            assert_eq!(
+                im_links(&notification, "https://wegent.example/"),
+                vec![
+                    (
+                        "在网页中查看事项".into(),
+                        format!("https://wegent.example{path}")
+                    ),
+                    (
+                        "在 Wework 中打开".into(),
+                        "wework://personal-issues/share-1".into()
+                    )
+                ]
+            );
+        }
     }
     #[test]
     fn human_work_identity_matches_the_source_uuid5_and_uses_collaboration_preferences() {

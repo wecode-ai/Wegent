@@ -829,7 +829,11 @@ function CollaborationPlatformAppContent({
       style={renderShell ? { height: '100%', minHeight: 0 } : undefined}
     >
       {renderShell ? (
-        renderShell({ main, sidebar })
+        renderShell({
+          main,
+          sidebar,
+          mobileNavigation: { open: mobileNavigationOpen, setOpen: setMobileNavigationOpen },
+        })
       ) : (
         <>
           {sidebar}

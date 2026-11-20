@@ -454,6 +454,9 @@ mod session_policy_tests {
 fn valid_collaboration(source: &Value) -> bool {
     source["enabled"].is_boolean()
         && source["allProjects"].is_boolean()
+        && source
+            .get("includeIndependentIssues")
+            .is_none_or(Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
         && source["tags"].as_array().is_some_and(|tags| {
@@ -717,6 +720,21 @@ pub(super) fn stamp_project_enabled(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"]
         && identity["collaboration"]["enabled"] == previous["collaboration"]["enabled"];
     let enabled_at = json!(now());
+    if identity["enabled"] == true
+        && identity["collaboration"]["enabled"] == true
+        && identity["collaboration"]["includeIndependentIssues"] == true
+    {
+        identity["independentIssuesEnabledAfter"] = if preserve
+            && previous["collaboration"]["includeIndependentIssues"] == true
+            && previous["independentIssuesEnabledAfter"].is_string()
+        {
+            previous["independentIssuesEnabledAfter"].clone()
+        } else {
+            enabled_at.clone()
+        };
+    } else if let Some(fields) = identity.as_object_mut() {
+        fields.remove("independentIssuesEnabledAfter");
+    }
     // Explicit projects keep their own boundary when the catch-all scope changes.
     let mut projects = Vec::new();
     for source in [identity as &Value, previous] {

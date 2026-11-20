@@ -1,8 +1,8 @@
-import { Button } from '@wegent/collaboration/markdown/Button'
+import { Button } from '../markdown/Button'
 import { Fragment, useState } from 'react'
 import { Check, ChevronDown, ChevronUp, Ellipsis, Loader2 } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { TaskIssueShareDraft } from './TaskIssueShare'
+import { usePersonalIssueTranslation } from './personalIssueMessages'
+import type { TaskIssueShareDraft } from './personalIssuesApi'
 
 export function TaskIssueShareExcerpts({
   excerpts,
@@ -17,7 +17,7 @@ export function TaskIssueShareExcerpts({
   onSelect(ids: string[]): void
   loadEarlier?(): Promise<void>
 }) {
-  const { t } = useTranslation('common')
+  const t = usePersonalIssueTranslation()
   const [showAll, setShowAll] = useState(false)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)

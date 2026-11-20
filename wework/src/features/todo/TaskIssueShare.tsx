@@ -1,7 +1,7 @@
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { useCallback, useRef, useState } from 'react'
-import { usePanelData } from '@wegent/collaboration/platform'
-import type { SharedIssueSource, SharedIssueTarget } from '@/api/personalIssues'
+import { usePanelData, type TaskIssueShareDraft } from '@wegent/collaboration/platform'
+import type { SharedIssueTarget } from '@/api/personalIssues'
 import { Link2, Share2 } from 'lucide-react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import {
@@ -17,25 +17,12 @@ import { weworkIssueScheme, weworkPersonalIssueScheme } from '@/features/notific
 import { IndependentIssueDialog } from './IndependentIssueDialog'
 import { useAttachmentDownload } from '@/components/chat/AttachmentDownloadContext'
 import type { ReadWorkspaceFileChunk } from '@/lib/workspace-file-bytes'
-import {
-  taskIssueConversationFiles,
-  type TaskIssueConversationFile,
-} from './taskIssueConversationFiles'
+import { taskIssueConversationFiles } from './taskIssueConversationFiles'
 import { useCloudIssueApis } from './useCloudIssueApis'
 import type { RuntimeTranscriptResponse } from '@/types/api'
 import { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
 
-export type TaskIssueShareDraft = {
-  title: string
-  requestId: string
-  source: SharedIssueSource
-  conversationFiles: TaskIssueConversationFile[]
-  excerpts: Pick<WorkbenchMessage, 'id' | 'role' | 'content'>[]
-  historyUnavailable?: boolean
-  history?: {
-    earlier(cursor?: string): Promise<ShareHistoryPage>
-  }
-}
+export type { TaskIssueShareDraft } from '@wegent/collaboration/platform'
 
 function shareExcerpts(messages: WorkbenchMessage[]): TaskIssueShareDraft['excerpts'] {
   return messages.flatMap(message => {

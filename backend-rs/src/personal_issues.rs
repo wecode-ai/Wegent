@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 
 mod assignment_count;
+mod assistant;
 mod participants;
 pub(crate) mod share;
 use participants::{ResourceInvitation, ResourceParticipant};
@@ -25,6 +26,9 @@ struct Metadata {
     archived: bool,
     due_at: Option<String>,
     assigned_at: Option<String>,
+    assignment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assistant_binding: Option<assistant::Binding>,
     share: Option<share::Share>,
 }
 
@@ -51,6 +55,9 @@ fn serialize_metadata<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     let mut public = serde_json::to_value(&value.0).map_err(serde::ser::Error::custom)?;
+    if let Some(metadata) = public.as_object_mut() {
+        metadata.remove("assistant_binding");
+    }
     if let Some(resources) = public["resource_participants"].as_array_mut() {
         for resource in resources {
             if let Some(resource) = resource.as_object_mut() {
@@ -169,6 +176,8 @@ impl Input {
             archived: self.archived,
             due_at: self.due_at.clone(),
             assigned_at: None,
+            assignment_id: None,
+            assistant_binding: None,
             share: None,
         }
     }
@@ -310,12 +319,7 @@ async fn create_issue_record(
     metadata.share = share.map(|share| share::Share {
         files: share.files.clone(),
     });
-    metadata.assigned_at = body.assignee_id.map(|_| {
-        chrono::Utc::now()
-            .naive_utc()
-            .format("%Y-%m-%d %H:%M:%S%.6f")
-            .to_string()
-    });
+    set_assignment_identity(&mut metadata, body.assignee_id);
     let created = state
         .mysql
         .with_transaction(async |tx| {
@@ -351,6 +355,9 @@ async fn create_issue_record(
                 ),
             )
             .await?;
+            if share.is_none_or(|share| share.project.is_none()) {
+                enqueue_personal_assignment(tx, id, user_id, &body, &metadata).await?;
+            }
             let mut notices = Vec::new();
             if let Some(share) = share {
                 share::insert_source(tx, &required, id, user_id, &share.source).await?;
@@ -360,17 +367,23 @@ async fn create_issue_record(
                         // Roll back the new issue and the private source reference.
                         return Err(share::association_error(outcome));
                     }
+                    if let Some(assignee) = body.assignee_id.filter(|id| *id != user_id) {
+                        enqueue_shared_project_assignment(tx, id, user_id, assignee).await?;
+                    }
                     json!({"projectId": target.project_id, "itemId": id})
                 } else {
                     json!({"personalIssueId": id})
                 };
                 for recipient in metadata
-                    .direct_participants
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
+                    .participants
+                    .iter()
+                    .copied()
                     .filter(|id| *id != user_id)
                 {
+                    let mut recipient_payload = payload.clone();
+                    if recipient_payload["personalIssueId"].is_string() {
+                        recipient_payload["assigned"] = json!(body.assignee_id == Some(recipient));
+                    }
                     notices.push(
                         notifications::create_on(
                             tx,
@@ -379,8 +392,8 @@ async fn create_issue_record(
                             i64::from(user_id),
                             "issue_shared",
                             body.title.trim(),
-                            "有同事与你分享了一个协作事项。",
-                            payload.clone(),
+                            "有同事与你分享了一个协作事项。你也可以在 Wework 的「协作」中查看和处理。",
+                            recipient_payload,
                         )
                         .await?,
                     );
@@ -396,6 +409,74 @@ async fn create_issue_record(
     }
     if let Some(assignee) = body.assignee_id {
         assignment_count::invalidate(state, assignee).await;
+    }
+    Ok(())
+}
+
+fn set_assignment_identity(metadata: &mut Metadata, assignee: Option<i32>) {
+    metadata.assigned_at =
+        assignee.map(|_| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
+    metadata.assignment_id = assignee.map(|_| share::random_id());
+}
+
+async fn enqueue_personal_assignment(
+    tx: &mut impl MysqlTransaction,
+    issue_id: &str,
+    actor: i32,
+    issue: &Input,
+    metadata: &Metadata,
+) -> brz_mysql::MysqlResult<()> {
+    if let (Some(assignee), Some(assignment)) = (issue.assignee_id, &metadata.assignment_id)
+        && assignee != actor
+        && !issue.archived
+        && issue.status != "completed"
+    {
+        crate::stand_in_issue_events::enqueue_personal_assignment_on(
+            tx,
+            i64::from(assignee),
+            issue_id,
+            assignment,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn enqueue_shared_project_assignment(
+    tx: &mut impl MysqlTransaction,
+    issue_id: &str,
+    actor: i32,
+    assignee: i32,
+) -> brz_mysql::MysqlResult<()> {
+    use crate::background_jobs::project::{assignments, store};
+
+    let issue = store::locked(tx, "task", issue_id)
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    let (name,): (String,) = tx
+        .fetch_one("SELECT user_name FROM users WHERE id=?", (assignee,))
+        .await?;
+    let (assignment, created) = assignments::record(
+        tx,
+        &issue,
+        "human",
+        &assignee.to_string(),
+        &name,
+        i64::from(actor),
+        true,
+        "manual",
+        &Value::Null,
+    )
+    .await?;
+    if created {
+        crate::stand_in_issue_events::enqueue_assignment_on(
+            tx,
+            i64::from(assignee),
+            &issue.cloud_project_id,
+            issue_id,
+            &assignment,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -482,7 +563,14 @@ async fn update_issue(
         metadata.participants.sort_unstable();
         metadata.participants.dedup();
         if !valid_people(tx, &metadata.participants).await? { return Ok(Admission::InvalidPeople); }
-        metadata.assigned_at = if body.assignee_id == row.assignee_id { row.metadata.0.assigned_at } else { body.assignee_id.map(|_| chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string()) };
+        if body.assignee_id == row.assignee_id {
+            metadata.assigned_at = row.metadata.0.assigned_at;
+            metadata.assignment_id = row.metadata.0.assignment_id;
+            metadata.assistant_binding = row.metadata.0.assistant_binding;
+        } else {
+            set_assignment_identity(&mut metadata, body.assignee_id);
+            enqueue_personal_assignment(tx, issue_id, user.0.id, &body, &metadata).await?;
+        }
         tx.execute("UPDATE loop_items SET title=?,description=?,status=?,priority=?,assignee_user_id=?,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", (body.title.trim(),body.description.as_str(),body.status.as_str(),body.priority.as_str(),body.assignee_id,Json(metadata),issue_id)).await?;
         if row.assignee_id != body.assignee_id || row.status != body.status || row.metadata.0.archived != body.archived {
             affected = [row.assignee_id, body.assignee_id.filter(|id| Some(*id) != row.assignee_id)];
@@ -539,6 +627,8 @@ struct Comment {
     author_id: i32,
     body: String,
     created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assistant_name: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -555,7 +645,7 @@ async fn list_comments(
     let comments = state.mysql.with_transaction(async |tx| {
         let Some(row) = locked(tx, issue_id).await? else { return Ok(None); };
         if !row.can_read(user.0.id) { return Ok(None); }
-        let comments: Vec<Comment> = tx.fetch_all("SELECT id,created_by_user_id AS author_id,description AS body,CAST(created_at AS CHAR) AS created_at FROM loop_items WHERE loop_item_id=? AND resource_type='comment' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) ORDER BY created_at,id", (issue_id,)).await?;
+        let comments: Vec<Comment> = tx.fetch_all("SELECT id,created_by_user_id AS author_id,description AS body,CAST(created_at AS CHAR) AS created_at,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.assistant_name')) AS CHAR) AS assistant_name FROM loop_items WHERE loop_item_id=? AND resource_type='comment' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) ORDER BY created_at,id", (issue_id,)).await?;
         Ok(Some(comments))
     }).await.map_err(internal)?;
     comments.ok_or_else(missing)
@@ -581,59 +671,7 @@ async fn comment(
             if !row.can_read(user.0.id) {
                 return Ok(false);
             }
-            let required = crate::loop_node_storage::required_columns(tx).await?;
-            let sql = crate::loop_node_storage::insert_sql(
-                &[
-                    "id",
-                    "resource_type",
-                    "loop_item_id",
-                    "user_id",
-                    "created_by_user_id",
-                    "updated_by_user_id",
-                    "status",
-                    "description",
-                    "metadata",
-                    "version",
-                    "sort_order",
-                    "next_item_number",
-                    "created_at",
-                    "updated_at",
-                ],
-                &[
-                    "?",
-                    "'comment'",
-                    "?",
-                    "?",
-                    "?",
-                    "?",
-                    "'active'",
-                    "?",
-                    "'{}'",
-                    "1",
-                    "0",
-                    "1",
-                    "UTC_TIMESTAMP(6)",
-                    "UTC_TIMESTAMP(6)",
-                ],
-                &required,
-            );
-            tx.execute(
-                sql,
-                (
-                    id.as_str(),
-                    issue_id,
-                    user.0.id,
-                    user.0.id,
-                    user.0.id,
-                    body.body.trim(),
-                ),
-            )
-            .await?;
-            tx.execute(
-                "UPDATE loop_items SET updated_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?",
-                (issue_id,),
-            )
-            .await?;
+            write_comment(tx, &id, issue_id, user.0.id, body.body.trim(), json!({})).await?;
             Ok(true)
         })
         .await
@@ -642,6 +680,71 @@ async fn comment(
         return Err(missing());
     }
     Ok(json!({"id":id}))
+}
+
+async fn write_comment(
+    tx: &mut impl MysqlTransaction,
+    id: &str,
+    issue_id: &str,
+    author_id: i32,
+    body: &str,
+    metadata: Value,
+) -> brz_mysql::MysqlResult<()> {
+    let required = crate::loop_node_storage::required_columns(tx).await?;
+    let sql = crate::loop_node_storage::insert_sql(
+        &[
+            "id",
+            "resource_type",
+            "loop_item_id",
+            "user_id",
+            "created_by_user_id",
+            "updated_by_user_id",
+            "status",
+            "description",
+            "metadata",
+            "version",
+            "sort_order",
+            "next_item_number",
+            "created_at",
+            "updated_at",
+        ],
+        &[
+            "?",
+            "'comment'",
+            "?",
+            "?",
+            "?",
+            "?",
+            "'active'",
+            "?",
+            "?",
+            "1",
+            "0",
+            "1",
+            "UTC_TIMESTAMP(6)",
+            "UTC_TIMESTAMP(6)",
+        ],
+        &required,
+    );
+    tx.execute(
+        sql,
+        (
+            id,
+            issue_id,
+            author_id,
+            author_id,
+            author_id,
+            body,
+            Json(metadata),
+        ),
+    )
+    .await?;
+    tx.execute(
+        "UPDATE loop_items SET updated_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?",
+        (issue_id,),
+    )
+    .await?;
+    Ok(())
 }
 
 #[derive(Deserialize)]

@@ -188,7 +188,12 @@ impl RuntimeWorkRpcHandler {
                 continue;
             };
             let origin = &link.runtime_handle["origin"];
-            if origin["projectStore"] == "cloud" {
+            if origin["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+                // The inventory is a hint. Current assignment authority is checked at action time.
+                if super::stand_in_personal_issues::personal_issue_role(role, user).is_none() {
+                    continue;
+                }
+            } else if origin["projectStore"] == "cloud" {
                 let project = origin["cloudProjectId"].as_str().unwrap_or_default();
                 if !crate::task_runtime::personal_stand_in::role_project_matches(
                     role, project, "cloud",
@@ -324,11 +329,19 @@ impl RuntimeWorkRpcHandler {
 
     fn intake_uses_cloud(&self, event: &Value) -> bool {
         match event["kind"].as_str() {
-            Some("assignment") => event["projectStore"] == "cloud",
+            Some("assignment") => matches!(
+                event["projectStore"].as_str(),
+                Some("cloud" | super::stand_in_personal_issues::INDEPENDENT)
+            ),
             Some("work_state" | "followup") => event["taskId"]
                 .as_str()
                 .and_then(|id| self.local_task_link(id))
-                .is_some_and(|link| link.runtime_handle["origin"]["projectStore"] == "cloud"),
+                .is_some_and(|link| {
+                    matches!(
+                        link.runtime_handle["origin"]["projectStore"].as_str(),
+                        Some("cloud" | super::stand_in_personal_issues::INDEPENDENT)
+                    )
+                }),
             _ => false,
         }
     }
@@ -846,11 +859,20 @@ impl RuntimeWorkRpcHandler {
         if event["kind"] == "assignment" {
             let project = event["projectId"].as_str().unwrap_or_default();
             let storage = event["projectStore"].as_str().unwrap_or_default();
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, storage)
-                || crate::task_runtime::personal_stand_in::project_policy(role, project, storage)
-                    ["automatic"]
-                    != true
-            {
+            let connected = if storage == super::stand_in_personal_issues::INDEPENDENT {
+                super::stand_in_personal_issues::personal_issue_role(
+                    role,
+                    role["userId"].as_i64().unwrap_or_default(),
+                )
+                .is_some()
+            } else {
+                crate::task_runtime::personal_stand_in::role_project_matches(role, project, storage)
+                    && crate::task_runtime::personal_stand_in::project_policy(
+                        role, project, storage,
+                    )["automatic"]
+                        == true
+            };
+            if !connected {
                 return Err(AppIpcError::new(
                     "source_removed",
                     "Project is no longer automatic or connected",
@@ -942,24 +964,34 @@ impl RuntimeWorkRpcHandler {
         } else {
             let project = origin["cloudProjectId"].as_str().unwrap_or_default();
             let kind = origin["projectStore"].as_str().unwrap_or_default();
-            if !crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind) {
-                return Err(AppIpcError::new(
-                    "permission_denied",
-                    "Work project is no longer connected",
-                ));
+            let independent = kind == super::stand_in_personal_issues::INDEPENDENT;
+            let config = if independent {
+                super::stand_in_personal_issues::personal_issue_role(role, user)
+            } else {
+                crate::task_runtime::personal_stand_in::role_project_matches(role, project, kind)
+                    .then(|| {
+                        crate::task_runtime::personal_stand_in::project_role(
+                            role, user, project, kind,
+                        )
+                    })
             }
+            .ok_or_else(|| {
+                AppIpcError::new("permission_denied", "Work source is no longer connected")
+            })?;
             let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let mut issue = self.read_stand_in_issue(store, user, origin).await?;
             if kind == "local" {
                 issue["tags"] = issue["metadata"]["tags"].clone();
             }
-            let config =
-                crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
-            if super::personal_stand_in::matching_personal_roles(
-                std::slice::from_ref(&config),
-                &issue,
-            )
-            .is_empty()
+            if (independent
+                && !super::stand_in_personal_issues::personal_assignment_after_enable(
+                    &issue, &config,
+                ))
+                || super::personal_stand_in::matching_personal_roles(
+                    std::slice::from_ref(&config),
+                    &issue,
+                )
+                .is_empty()
             {
                 return Err(AppIpcError::new(
                     "permission_denied",
@@ -976,10 +1008,7 @@ impl RuntimeWorkRpcHandler {
                     "Issue is no longer assigned to you",
                 ));
             }
-            if crate::task_runtime::personal_stand_in::project_policy(role, project, kind)
-                ["automatic"]
-                == false
-            {
+            if config["handlingPolicy"]["automatic"] == false {
                 return Err(AppIpcError::new(
                     "permission_denied",
                     "Automatic project handling is disabled",
@@ -1073,8 +1102,24 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
             let event = &events[0];
-            let project = required(event, "projectId")?;
             let kind = required(event, "projectStore")?;
+            if kind == super::stand_in_personal_issues::INDEPENDENT {
+                let mut config = super::stand_in_personal_issues::personal_issue_role(role, user)
+                    .ok_or_else(|| {
+                    AppIpcError::new(
+                        "source_removed",
+                        "Independent Issues are no longer connected",
+                    )
+                })?;
+                config["intakeRouted"] = json!(true);
+                let (issue, binding) = self
+                    .read_assignment_intake(store, user, role, event)
+                    .await?;
+                self.execute_stand_in_task(&config, &issue, &binding)
+                    .await?;
+                return Ok(json!({"success":true}));
+            }
+            let project = required(event, "projectId")?;
             let mut config =
                 crate::task_runtime::personal_stand_in::project_role(role, user, project, kind);
             config["intakeRouted"] = json!(true);
