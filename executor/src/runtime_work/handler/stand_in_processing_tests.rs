@@ -589,7 +589,7 @@ fn coordinator_is_persistent_but_absent_from_normal_task_lists() {
         ..Default::default()
     });
     assert!(handler.local_task_link(&task_id(7)).is_some());
-    assert!(handler.collect_cached_links(false).is_empty());
+    assert!(handler.collect_cached_links(false, |_| true).0.is_empty());
     let mut link = handler.local_task_link(&task_id(7)).unwrap();
     link.status = "failed".into();
     link.runtime_handle["lastError"] = json!("Model disconnected");

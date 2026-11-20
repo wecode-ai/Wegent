@@ -27,6 +27,33 @@ fn invalid(message: &str) -> AppIpcError {
     AppIpcError::new("invalid_event_subscription", message)
 }
 
+fn connection_event_provider_catalog(
+    catalog: Value,
+    provider_id: Option<&str>,
+) -> Result<Value, AppIpcError> {
+    let providers = catalog["items"].as_array().ok_or_else(|| {
+        AppIpcError::new("unavailable", "Invalid connection event provider catalog")
+    })?;
+    if let Some(provider_id) = provider_id {
+        let provider = providers
+            .iter()
+            .find(|provider| provider["id"].as_str() == Some(provider_id))
+            .ok_or_else(|| AppIpcError::new("not_found", "Connection event provider not found"))?;
+        return Ok(json!({"items": [provider]}));
+    }
+
+    let items: Vec<_> = providers
+        .iter()
+        .map(|provider| {
+            json!({"id": provider["id"], "displayName": provider["displayName"],
+                "resourceKinds": provider["resourceKinds"],
+                "availability": {"status": provider["availability"]["status"]}})
+        })
+        .collect();
+    // Codex exposes MCP metadata to the transcript, while the model sees structuredContent.
+    Ok(json!({"items": items, "_meta": {"connectionEventProviderCatalog": catalog}}))
+}
+
 fn validate_filter(filter: &Value) -> Result<(), AppIpcError> {
     wegent_protocol::connection_events::validate_filter(filter).map_err(invalid)
 }
@@ -179,21 +206,30 @@ impl RuntimeWorkRpcHandler {
         task: &str,
         keys: &[String],
     ) -> Result<(), AppIpcError> {
+        self.load_resource_event_facts(task, keys).map(|_| ())
+    }
+
+    fn load_resource_event_facts(
+        &self,
+        task: &str,
+        keys: &[String],
+    ) -> Result<std::collections::BTreeMap<String, (Value, Value)>, AppIpcError> {
         if keys.is_empty() {
-            return Ok(());
+            return Ok(Default::default());
         }
+        let requested = keys.iter().map(String::as_str).collect::<HashSet<_>>();
         let known = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::TaskEvents(task),
-            |state| Ok(resource_delivery::event_facts(state, task)),
+            |state| Ok(resource_delivery::event_facts(state, task, &requested)),
         )?;
-        if keys.iter().any(|key| !known.contains_key(key)) {
+        if known.len() != requested.len() {
             return Err(AppIpcError::new(
                 "bad_request",
                 "Resource event does not belong to this conversation's authorized observations",
             ));
         }
-        Ok(())
+        Ok(known)
     }
 
     fn event_subscription_path(&self) -> PathBuf {
@@ -237,7 +273,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             event_store::Scope::Task(task)
         };
-        let projected = event_store::update_and_read(
+        let mut projected = event_store::update_and_read(
             &self.event_subscription_path(),
             scope,
             |state| {
@@ -264,18 +300,15 @@ impl RuntimeWorkRpcHandler {
             },
             event_store::Scope::TaskProjection(task),
         )?;
-        let subscriptions = projected["operations"]
-            .as_object()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let Value::Object(operations) = projected["operations"].take() else {
+            unreachable!("event subscription projection always contains operations");
+        };
+        let subscriptions = Value::Array(operations.into_values().collect());
         if let Some(task) = record["task_id"].as_str() {
             let mut changed = false;
-            self.store.update_task(task, |link| {
-                let next = json!(subscriptions);
-                if link.runtime_handle["connectionEventSubscriptions"] != next {
-                    link.runtime_handle["connectionEventSubscriptions"] = next;
+            self.store.update_task_without_snapshot(task, |link| {
+                if link.runtime_handle["connectionEventSubscriptions"] != subscriptions {
+                    link.runtime_handle["connectionEventSubscriptions"] = subscriptions;
                     changed = true;
                 }
             });
@@ -293,7 +326,8 @@ impl RuntimeWorkRpcHandler {
         args: Value,
     ) -> Result<Value, AppIpcError> {
         if operation == "list_connection_event_providers" {
-            return self.connection_call("catalog", None, json!({})).await;
+            let catalog = self.connection_call("catalog", None, json!({})).await?;
+            return connection_event_provider_catalog(catalog, args["provider_id"].as_str());
         }
         if operation == "list_connection_event_resources" {
             let input = json!({"kind":args["kind"],"query":args["query"],"cursor":args["cursor"]});

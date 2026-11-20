@@ -154,6 +154,7 @@ pub(crate) fn conversation_address(id: &str) -> Result<(String, String), AppIpcE
 }
 
 pub(crate) async fn call(context: &ControlContext, name: &str, mut arguments: Value) -> Value {
+    let mut operation = name.to_owned();
     let result = async {
         catalog::validate_tool_arguments(name, &arguments)?;
         if ControlContext::from_request(&context.request).is_none() {
@@ -162,7 +163,6 @@ pub(crate) async fn call(context: &ControlContext, name: &str, mut arguments: Va
                 "Personal Wework control is unavailable to delegated runs",
             ));
         }
-        let mut operation = name.to_owned();
         if name == "list_capabilities" {
             return Ok(json!({"capabilities": capabilities()}));
         }
@@ -202,7 +202,13 @@ pub(crate) async fn call(context: &ControlContext, name: &str, mut arguments: Va
                     .is_some_and(|status| {
                         matches!(status, "pending" | "needs_attention" | "rejected")
                     });
-            let mut result = json!({"content": [{"type": "text", "text": value.to_string()}], "structuredContent": value, "isError": failed});
+            let content = if operation == "list_connection_event_providers" && !failed {
+                json!([])
+            } else {
+                json!([{"type": "text", "text": value.to_string()}])
+            };
+            let mut result =
+                json!({"content": content, "structuredContent": value, "isError": failed});
             if let Some(metadata) = metadata {
                 result["_meta"] = metadata;
             }

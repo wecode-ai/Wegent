@@ -71,6 +71,7 @@ test('a slow poll is aborted and frees its worker while independent polls finish
   try {
     const timedOut = assert.rejects(bus.request('example', 'slow'), {
       code: 'request_timeout',
+      retryAfterMs: 30_000,
     })
     await slow.promise
     const failed = assert.rejects(bus.request('example', 'failed'), /current poll only/)

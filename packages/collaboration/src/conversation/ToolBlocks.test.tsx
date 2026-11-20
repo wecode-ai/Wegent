@@ -9,10 +9,7 @@ import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import type { ToolBlock } from './blocks/types'
 import { getBlockLabel } from './blocks/toolBlockLabels'
-import {
-  MarkdownServicesProvider,
-  browserMarkdownServices,
-} from '../markdown/MarkdownServices'
+import { MarkdownServicesProvider, browserMarkdownServices } from '../markdown/MarkdownServices'
 
 let container: HTMLDivElement
 let root: Root
@@ -29,12 +26,10 @@ afterEach(() => {
 function render(children: ReactNode) {
   act(() =>
     root.render(
-      <ConversationTranslationProvider
-        translate={createCollaborationTranslator('en')}
-      >
+      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
         {children}
-      </ConversationTranslationProvider>,
-    ),
+      </ConversationTranslationProvider>
+    )
   )
 }
 function block(id: string): ToolBlock {
@@ -51,18 +46,61 @@ function block(id: string): ToolBlock {
 }
 
 describe('shared tool output without a desktop host', () => {
+  it.each([false, true])('expands one provider catalog on demand (legacy response: %s)', legacy => {
+    const catalog = {
+      items: [
+        {
+          id: 'github',
+          availability: { status: 'ready' },
+          eventTypes: ['git.event'],
+        },
+        { id: 'gitlab', availability: { status: 'plugin_disabled' } },
+      ],
+    }
+    render(
+      <ToolBlockItem
+        block={{
+          ...block('event-providers'),
+          toolName: 'wework_control.list_connection_event_providers',
+          toolInput: {},
+          toolOutput: {
+            content: legacy ? [{ type: 'text', text: JSON.stringify(catalog) }] : [],
+            structuredContent: legacy
+              ? catalog
+              : {
+                  items: catalog.items.map(({ id, availability }) => ({
+                    id,
+                    availability,
+                  })),
+                },
+            _meta: legacy ? null : { connectionEventProviderCatalog: catalog },
+          },
+        }}
+        forceExpanded
+      />
+    )
+
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="connection-event-provider-result-toggle"]'
+    )!
+    const output = () => container.querySelector('[data-testid="generic-tool-output"]')
+    expect(container.textContent).toContain('2 total, 1 ready')
+    expect(output()).toBeNull()
+    act(() => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(JSON.parse(output()!.textContent!)).toEqual(catalog)
+    act(() => toggle.click())
+    expect(output()).toBeNull()
+  })
+
   it.each([
     ['done', 'Ran pwd'],
     ['streaming', 'Running pwd'],
     ['error', 'Command failed: pwd'],
   ] as const)('localizes command labels for %s tools', (status, expected) => {
     const tool = { ...block('localized-command'), status }
-    expect(getBlockLabel(tool, createCollaborationTranslator('en')).label).toBe(
-      expected,
-    )
-    expect(
-      getBlockLabel(tool, createCollaborationTranslator('zh-CN')).label,
-    ).toMatch(/运行/)
+    expect(getBlockLabel(tool, createCollaborationTranslator('en')).label).toBe(expected)
+    expect(getBlockLabel(tool, createCollaborationTranslator('zh-CN')).label).toMatch(/运行/)
   })
 
   it('localizes file reads and file fallbacks through the conversation catalog', () => {
@@ -82,7 +120,7 @@ describe('shared tool output without a desktop host', () => {
 
   it.each(['done', 'error', 'pending'] as const)(
     'shows native AI review evidence for %s decisions',
-    (status) => {
+    status => {
       render(
         <ToolBlocksDisplay
           blocks={[
@@ -97,41 +135,31 @@ describe('shared tool output without a desktop host', () => {
           ]}
           isStreaming={status === 'pending'}
           forceExpanded
-        />,
+        />
       )
-      expect(
-        container.querySelector('[data-testid="auto-approval-review"]'),
-      ).not.toBeNull()
-      expect(container.textContent).toContain(
-        'Check the authorized destination',
-      )
+      expect(container.querySelector('[data-testid="auto-approval-review"]')).not.toBeNull()
+      expect(container.textContent).toContain('Check the authorized destination')
       expect(container.textContent).toContain(
         status === 'done'
           ? 'AI review approved'
           : status === 'error'
             ? 'Not executed: AI review denied or incomplete'
-            : 'AI is reviewing the action',
+            : 'AI is reviewing the action'
       )
-    },
+    }
   )
 
-  it.each([1, 2])('preserves count-aware summaries for %s tools', (count) => {
+  it.each([1, 2])('preserves count-aware summaries for %s tools', count => {
     render(
       <ToolBlocksDisplay
-        blocks={Array.from({ length: count }, (_, index) =>
-          block(`call-${index}`),
-        )}
+        blocks={Array.from({ length: count }, (_, index) => block(`call-${index}`))}
         isStreaming={false}
-      />,
+      />
     )
-    const summary = container.querySelector(
-      '[data-testid="processing-summary-header"]',
-    )
-    expect(summary?.textContent).toContain(
-      count === 1 ? 'Called 1 tool' : 'Called 2 tools',
-    )
+    const summary = container.querySelector('[data-testid="processing-summary-header"]')
+    expect(summary?.textContent).toContain(count === 1 ? 'Called 1 tool' : 'Called 2 tools')
     const toggle = container.querySelector<HTMLButtonElement>(
-      '[data-testid="processing-summary-toggle"]',
+      '[data-testid="processing-summary-toggle"]'
     )!
     act(() => toggle.click())
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
@@ -140,9 +168,7 @@ describe('shared tool output without a desktop host', () => {
   it('uses the host URL service and shared locale for search sources', async () => {
     const openExternalUrl = vi.fn()
     render(
-      <MarkdownServicesProvider
-        value={{ ...browserMarkdownServices, openExternalUrl }}
-      >
+      <MarkdownServicesProvider value={{ ...browserMarkdownServices, openExternalUrl }}>
         <WebSearchSourcesChip
           sources={[
             {
@@ -154,23 +180,22 @@ describe('shared tool output without a desktop host', () => {
             },
           ]}
         />
-      </MarkdownServicesProvider>,
+      </MarkdownServicesProvider>
     )
-    expect(
-      container.querySelector('[data-testid="web-search-sources-chip"]')
-        ?.textContent,
-    ).toBe('Sources')
+    expect(container.querySelector('[data-testid="web-search-sources-chip"]')?.textContent).toBe(
+      'Sources'
+    )
     vi.useFakeTimers()
     try {
       await act(async () => {
         const trigger = container.querySelector<HTMLButtonElement>(
-          '[data-testid="web-search-sources-chip"]',
+          '[data-testid="web-search-sources-chip"]'
         )!
         trigger.dispatchEvent(
           new PointerEvent('pointerenter', {
             bubbles: true,
             pointerType: 'mouse',
-          }),
+          })
         )
       })
       await act(async () => {
@@ -180,12 +205,10 @@ describe('shared tool output without a desktop host', () => {
       vi.useRealTimers()
     }
     const link = document.querySelector<HTMLAnchorElement>(
-      '[data-testid="web-search-source-popup-row"]',
+      '[data-testid="web-search-source-popup-row"]'
     )!
     await act(async () => link.click())
-    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(
-      'https://example.com/docs',
-    )
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith('https://example.com/docs')
   })
   it('does not expose a working ignore button without a runtime handler', () => {
     const request: ToolBlock = {
@@ -206,7 +229,7 @@ describe('shared tool output without a desktop host', () => {
     }
     render(<ToolBlocksDisplay blocks={[request]} isStreaming forceExpanded />)
     const ignore = container.querySelector<HTMLButtonElement>(
-      '[data-testid="request-user-input-ignore-button"]',
+      '[data-testid="request-user-input-ignore-button"]'
     )
     expect(ignore).not.toBeNull()
     expect(ignore?.disabled).toBe(true)
@@ -219,16 +242,10 @@ describe('shared tool output without a desktop host', () => {
       toolOutput: { rationale: 'Private data is outside the task' },
     }
     const show = () =>
-      render(
-        <ToolBlocksDisplay
-          blocks={[review]}
-          isStreaming={false}
-          forceExpanded
-        />,
-      )
+      render(<ToolBlocksDisplay blocks={[review]} isStreaming={false} forceExpanded />)
     show()
     const details = container.querySelector<HTMLElement>(
-      '[data-testid="auto-approval-review-details"]',
+      '[data-testid="auto-approval-review-details"]'
     )!
     expect(details.getAttribute('aria-expanded')).toBe('false')
     act(() => details.click())
@@ -236,14 +253,11 @@ describe('shared tool output without a desktop host', () => {
     show()
     expect(
       container
-        .querySelector<HTMLElement>(
-          '[data-testid="auto-approval-review-details"]',
-        )
-        ?.getAttribute('aria-expanded'),
+        .querySelector<HTMLElement>('[data-testid="auto-approval-review-details"]')
+        ?.getAttribute('aria-expanded')
     ).toBe('true')
     expect(
-      container.querySelector('[data-testid="auto-approval-review-evidence"]')
-        ?.textContent,
+      container.querySelector('[data-testid="auto-approval-review-evidence"]')?.textContent
     ).toContain('Private data is outside the task')
   })
 })
@@ -267,30 +281,21 @@ describe('automatic retry presentation', () => {
       },
     }
     render(
-      <ToolBlocksDisplay
-        blocks={[block('completed-command'), retry]}
-        isStreaming
-        forceExpanded
-      />,
+      <ToolBlocksDisplay blocks={[block('completed-command'), retry]} isStreaming forceExpanded />
     )
     expect(
-      container.querySelector('[data-testid="processing-summary-header"]')
-        ?.textContent,
+      container.querySelector('[data-testid="processing-summary-header"]')?.textContent
     ).toContain(expected + ' (2/5)')
     expect(
-      container.querySelector(
-        '[data-testid="runtime-reconnecting-open-proxy-settings"]',
-      ),
+      container.querySelector('[data-testid="runtime-reconnecting-open-proxy-settings"]')
     ).toBeNull()
-    expect(
-      container.querySelector('[data-testid="assistant-error-card"]'),
-    ).toBeNull()
+    expect(container.querySelector('[data-testid="assistant-error-card"]')).toBeNull()
     render(
       <ToolBlocksDisplay
         blocks={[block('completed-command'), { ...retry, status: 'done' }]}
         isStreaming
         forceExpanded
-      />,
+      />
     )
     expect(container.textContent).not.toContain('(2/5)')
   })
@@ -310,11 +315,10 @@ describe('automatic retry presentation', () => {
           },
         ]}
         isStreaming
-      />,
+      />
     )
     expect(
-      container.querySelector('[data-testid="processing-summary-header"]')
-        ?.textContent,
+      container.querySelector('[data-testid="processing-summary-header"]')?.textContent
     ).toContain('Reconnecting… (3/5)')
     expect(container.textContent).not.toContain('Reconnecting... 3/5')
   })
@@ -334,14 +338,11 @@ describe('automatic retry presentation', () => {
         },
       }
       render(<ToolBlockItem block={retry} />)
-      const status = () =>
-        container.querySelector('[data-testid="runtime-overload-wait-status"]')
+      const status = () => container.querySelector('[data-testid="runtime-overload-wait-status"]')
       expect(status()?.textContent).toContain('10s')
       expect(status()?.textContent).toContain('(2/4)')
       expect(
-        container.querySelector(
-          '[data-testid="runtime-reconnecting-open-proxy-settings"]',
-        ),
+        container.querySelector('[data-testid="runtime-reconnecting-open-proxy-settings"]')
       ).toBeNull()
       act(() => vi.advanceTimersByTime(10_000))
       expect(status()?.textContent).toContain('Retrying the same model')

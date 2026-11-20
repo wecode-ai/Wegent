@@ -125,6 +125,7 @@ Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也�
 | 桌面端一步配置连接与模型、模型搜索、单模型测试、手机版单独配置、模型能力和 Catalog  | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
 | 附件、绘图、计划模式、Goal、排队、任务视图、个人定时任务                            | [输入区与任务控制](./tasks.md#task-controls)                        |
 | 对话内操作、选择结果、补充表单或跳转功能                                            | [向 Codex 描述需要完成的操作](./tasks.md#conversation-interactions) |
+| 工具调用、连接事件来源摘要和完整结果                                              | [查看处理过程](./tasks.md#processing-activity)                      |
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
 | 文件路径菜单、IDE、终端、消息操作、Diff 审核、标签页                                | [工作台操作](./workbench.md#workspace-controls)                     |
 

@@ -238,6 +238,20 @@ impl LocalTaskStore {
         self.get_binding(&binding_id)
     }
 
+    pub fn bound_runtime_task_ids(
+        &self,
+        device_id: &str,
+    ) -> Result<HashSet<String>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT task_id FROM loop_items
+             WHERE resource_type = 'execution' AND device_id = ?1 AND task_id IS NOT NULL
+               AND unlinked_at IS NULL AND loop_item_id IS NOT NULL",
+        )?;
+        let rows = statement.query_map([device_id], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn project_bound_task_status(
         &self,
         device_id: &str,

@@ -74,6 +74,9 @@ export function hasBlockDetail(block: ToolBlock): boolean {
 
 function GenericToolBlockDetail({ block }: { block: ToolBlock }) {
   const { t } = useConversationTranslation()
+  const providerCatalog = getConnectionEventProviderCatalog(block)
+  if (providerCatalog) return <ConnectionEventProviderDetail {...providerCatalog} />
+
   const inputText = stringifyToolValue(block.toolInput)
   const outputText = stringifyToolValue(block.toolOutput)
   const isJavaScript = isNodeReplToolName(block.toolName)
@@ -114,6 +117,61 @@ function GenericToolBlockDetail({ block }: { block: ToolBlock }) {
           <p className="text-xs text-text-muted">{t('tool_activity.tool_no_output')}</p>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+function getConnectionEventProviderCatalog(
+  block: ToolBlock
+): { catalog: unknown; providers: unknown[] } | null {
+  const name = 'list_connection_event_providers'
+  const isCatalog =
+    block.toolName === `wework_control.${name}` ||
+    (block.toolName === 'wework_control.invoke_capability' && block.toolInput?.name === name)
+  if (!isCatalog || block.status !== 'done' || !isRecord(block.toolOutput)) return null
+
+  const summary = block.toolOutput.structuredContent
+  if (!isRecord(summary) || !Array.isArray(summary.items)) return null
+
+  const metadata = block.toolOutput._meta
+  const fullCatalog = isRecord(metadata) ? metadata.connectionEventProviderCatalog : undefined
+  return { catalog: fullCatalog ?? summary, providers: summary.items }
+}
+
+function ConnectionEventProviderDetail({
+  catalog,
+  providers,
+}: NonNullable<ReturnType<typeof getConnectionEventProviderCatalog>>) {
+  const { t } = useConversationTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const ready = providers.filter(
+    provider =>
+      isRecord(provider) &&
+      isRecord(provider.availability) &&
+      provider.availability.status === 'ready'
+  ).length
+
+  return (
+    <div className="min-w-0 space-y-2 pl-5 text-sm text-text-secondary">
+      <div className="flex flex-wrap items-center gap-x-3">
+        <span>{t('tool_activity.event_provider_summary', { total: providers.length, ready })}</span>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="min-h-11 rounded text-text-secondary hover:text-text-primary hover:underline keyboard:focus-visible:outline keyboard:focus-visible:outline-2 md:min-h-7"
+          data-testid="connection-event-provider-result-toggle"
+          onClick={() => setExpanded(value => !value)}
+        >
+          {t(expanded ? 'tool_activity.hide_full_result' : 'tool_activity.show_full_result')}
+        </button>
+      </div>
+      {expanded && (
+        <ToolDetailSection
+          label={t('tool_activity.tool_output')}
+          content={stringifyToolValue(catalog)}
+          testId="generic-tool-output"
+        />
+      )}
     </div>
   )
 }

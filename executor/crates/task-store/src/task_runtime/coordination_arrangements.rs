@@ -10,9 +10,14 @@ const ROUTE: &str = "stand_in_arrangement_route";
 impl LocalTaskStore {
     pub fn unfinished_arrangement_users(&self) -> Result<Vec<i64>, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT DISTINCT json_extract(metadata,'$.userId') FROM loop_items WHERE resource_type=?1 AND json_extract(metadata,'$.kind')='run_arrangement' AND json_extract(metadata,'$.status') IN ('pending','sending')")?;
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT json_extract(metadata,'$.userId') FROM loop_items
+             WHERE resource_type='stand_in_action' AND json_valid(metadata)
+               AND json_extract(metadata,'$.kind')='run_arrangement'
+               AND json_extract(metadata,'$.status') IN ('pending','sending')",
+        )?;
         let users = statement
-            .query_map([ACTION], |row| row.get::<_, i64>(0))?
+            .query_map([], |row| row.get::<_, i64>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(users)
     }

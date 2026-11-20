@@ -27,8 +27,58 @@ export function changeRequestState(platform, url, data, sha) {
   }
 }
 
+function projectStatus(platform, source, next, target, data, sha, helpers) {
+  const { fingerprint, stableValue, objectVersion } = helpers
+  const { url } = target
+  const previousState = next.resourceStates?.[url]
+  next.resourceStates ??= {}
+  next.resourceStates[url] = changeRequestState(platform, url, data, sha)
+  const projected = next.resourceStates[url]
+  const sampleCurrentStatus = source.observeCurrentStatus === true
+  if (
+    sampleCurrentStatus ||
+    (previousState &&
+      fingerprint(stableValue(previousState.data)) !== fingerprint(stableValue(projected.data)))
+  ) {
+    // Each fresh read is eligible for consumers activated since the previous poll.
+    if (sampleCurrentStatus) next.statusSample = (next.statusSample ?? 0) + 1
+    const version = objectVersion(
+      platform,
+      source,
+      target.repository,
+      sampleCurrentStatus ? 'change_request_status_observation' : 'change_request_state',
+      sampleCurrentStatus
+        ? [projected.observedAt, next.statusSample, projected.data]
+        : projected.data,
+      target.number
+    )
+    return {
+      id: `${version.objectId}:${version.version}`,
+      ...version,
+      eventType: 'git.event',
+      at: projected.observedAt,
+      topicId: url,
+      text: `${url}: change request status updated`,
+      external: {
+        platform,
+        eventType: 'tracked.status',
+        entityKind: 'change_request',
+        objectKind: 'change_request_state',
+        headSha: sha,
+        url,
+        payload: {
+          ...projected.data,
+          conclusion: String(
+            projected.data.statusCheckRollup?.state ?? projected.data.head_pipeline?.status ?? ''
+          ).toLowerCase(),
+        },
+      },
+    }
+  }
+}
+
 export function createTrackedCollector(helpers) {
-  return async function collectTracked(ctx, platform, source, next) {
+  return async function collectTracked(ctx, platform, source, next, { statusWait, force } = {}) {
     const {
       parseProfile,
       invalid,
@@ -39,7 +89,7 @@ export function createTrackedCollector(helpers) {
       canonicalCommentId,
     } = helpers
     const targets = Object.values(next.tracked)
-    const target = targets[next.trackIndex ?? 0]
+    const target = targets[statusWait ? 0 : (next.trackIndex ?? 0)]
     if (!target) {
       if (next.openChanges?.phase === 'compare') {
         next.tracked = Object.fromEntries(
@@ -92,12 +142,47 @@ export function createTrackedCollector(helpers) {
           stableValue,
         }
       )
-    const step = next.trackStep ?? 0
+    // The status read and the checks read have separate collection deadlines.
+    // Expire a failed checks phase so it cannot indefinitely delay fresh status.
+    const currentStatus = next.resourceStates?.[target.url]
+    const readChecks =
+      statusWait &&
+      !force &&
+      next.pendingStatusChecks === true &&
+      Date.now() < Date.parse(currentStatus?.observedAt) + 45_000
+    if (statusWait && !readChecks) {
+      const { data } = await ctx.git.read({
+        ...target,
+        ...parseProfile(source.profile),
+        profile: source.profile,
+        operation: 'change_request_status',
+        repositoryId: source.id,
+      })
+      const sha = data.headRefOid
+      if (data.url !== target.url || !/^[0-9a-f]{40}$/i.test(sha ?? ''))
+        throw invalid('Observed change request identity or revision changed during collection')
+      const event = projectStatus(platform, source, next, target, data, sha, helpers)
+      if (target.sha !== sha || next.pendingStatusChecks !== false) next.page = 1
+      target.sha = sha
+      delete target.baseline
+      next.pendingStatusChecks =
+        data.state === 'OPEN' &&
+        !['SUCCESS', 'FAILURE', 'ERROR'].includes(data.statusCheckRollup?.state)
+      next.nextCheckAt = Date.now() + (next.pendingStatusChecks ? 0 : 60_000)
+      return {
+        events: [event],
+        nextCheckpoint: next,
+        resourceStates: Object.values(next.resourceStates),
+        hasMore: false,
+      }
+    }
+    const step = statusWait ? 2 : (next.trackStep ?? 0)
     const steps = target.entityKind === 'change_request' ? 4 : 2
     const operation =
       step === 0 ? 'object' : step === 1 ? 'comments' : step === 2 ? 'checks' : 'api'
-    const extra =
-      step === 3
+    const extra = statusWait
+      ? { repositoryId: source.id }
+      : step === 3
         ? {
             path:
               platform === 'github'
@@ -118,6 +203,12 @@ export function createTrackedCollector(helpers) {
       })
     } catch (error) {
       if (!['git_not_found', 'git_permission_denied'].includes(error?.code)) throw error
+      if (statusWait) {
+        // The aggregate status is still available when detailed checks are not.
+        next.pendingStatusChecks = false
+        next.page = 1
+        next.nextCheckAt = Date.parse(currentStatus.observedAt) + 60_000
+      }
       if (step === 0) {
         if (target.entityKind === 'change_request' && source.monitoredObjects) {
           next.resourceStates ??= {}
@@ -135,11 +226,11 @@ export function createTrackedCollector(helpers) {
         next.trackIndex = (next.trackIndex ?? 0) + 1
         next.trackStep = 0
         next.page = 1
-      } else advanceTracked(next, steps)
+      } else if (!statusWait) advanceTracked(next, steps)
       return {
         events: [],
         nextCheckpoint: next,
-        hasMore: true,
+        hasMore: !statusWait,
         resourceStates: Object.values(next.resourceStates ?? {}),
       }
     }
@@ -166,54 +257,8 @@ export function createTrackedCollector(helpers) {
         const sha = data.headRefOid ?? data.sha ?? data.diff_refs?.head_sha
         if (url !== target.url || (sha && sha !== next.tracked[target.url].sha))
           throw invalid('Observed change request identity or revision changed during collection')
-        const previousState = next.resourceStates?.[target.url]
-        next.resourceStates ??= {}
-        next.resourceStates[target.url] = changeRequestState(platform, target.url, data, sha)
-        const projected = next.resourceStates[target.url]
-        const sampleCurrentStatus = source.observeCurrentStatus === true
-        if (
-          sampleCurrentStatus ||
-          (previousState &&
-            fingerprint(stableValue(previousState.data)) !==
-              fingerprint(stableValue(projected.data)))
-        ) {
-          // Each fresh read is eligible for consumers activated since the previous poll.
-          if (sampleCurrentStatus) next.statusSample = (next.statusSample ?? 0) + 1
-          const version = objectVersion(
-            platform,
-            source,
-            target.repository,
-            sampleCurrentStatus ? 'change_request_status_observation' : 'change_request_state',
-            sampleCurrentStatus
-              ? [projected.observedAt, next.statusSample, projected.data]
-              : projected.data,
-            target.number
-          )
-          stateEvents.push({
-            id: `${version.objectId}:${version.version}`,
-            ...version,
-            eventType: 'git.event',
-            at: projected.observedAt,
-            topicId: target.url,
-            text: `${target.url}: change request status updated`,
-            external: {
-              platform,
-              eventType: 'tracked.status',
-              entityKind: 'change_request',
-              objectKind: 'change_request_state',
-              headSha: sha,
-              url: target.url,
-              payload: {
-                ...projected.data,
-                conclusion: String(
-                  projected.data.statusCheckRollup?.state ??
-                    projected.data.head_pipeline?.status ??
-                    ''
-                ).toLowerCase(),
-              },
-            },
-          })
-        }
+        const event = projectStatus(platform, source, next, target, data, sha, helpers)
+        if (event) stateEvents.push(event)
       }
     }
     const rows = Array.isArray(response.data)
@@ -281,12 +326,16 @@ export function createTrackedCollector(helpers) {
         },
       })
     }
-    if (rows.length === 100) next.page = (next.page ?? 1) + 1
+    if (statusWait) {
+      next.pendingStatusChecks = false
+      next.nextCheckAt = Date.parse(currentStatus.observedAt) + (rows.length === 100 ? 0 : 60_000)
+      next.page = rows.length === 100 ? (next.page ?? 1) + 1 : 1
+    } else if (rows.length === 100) next.page = (next.page ?? 1) + 1
     else advanceTracked(next, steps)
     return {
       events,
       nextCheckpoint: next,
-      hasMore: true,
+      hasMore: !statusWait,
       resourceStates: Object.values(next.resourceStates ?? {}),
     }
   }

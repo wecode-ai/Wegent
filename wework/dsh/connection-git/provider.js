@@ -342,6 +342,13 @@ export function createProvider(platform) {
           )
         )
           throw invalid('Monitoring checkpoint contains an unselected object')
+        if (
+          platform === 'github' &&
+          source.observeCurrentStatus === true &&
+          selection.monitoredObjects.length === 1 &&
+          selection.monitoredObjects[0].entityKind === 'change_request'
+        )
+          return collectTracked(ctx, platform, source, next, { statusWait: true, force })
         if ((next.trackIndex ?? 0) === 0 && (next.trackStep ?? 0) === 0 && (next.page ?? 1) === 1) {
           const repository = await ctx.git.read({
             ...parseProfile(source.profile),
