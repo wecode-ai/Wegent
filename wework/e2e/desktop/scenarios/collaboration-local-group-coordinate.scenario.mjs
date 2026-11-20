@@ -220,8 +220,10 @@ async function createCoordinateGroup(control, timeoutMs) {
     REVIEWER,
     timeoutMs
   )
-  await control.command('click', `[data-testid="${leaderMemberTestId}"]`)
+  // The first selected member becomes leader. Start with the collector so the
+  // test still exercises promoting the intended coordinator below.
   await control.command('click', `[data-testid="${collectorTestId}"]`)
+  await control.command('click', `[data-testid="${leaderMemberTestId}"]`)
   await control.command('click', `[data-testid="${reviewerTestId}"]`)
   const candidates = JSON.parse(await control.command('snapshot', 'body'))
   const humanTestIds = candidates.testIds.filter(testId =>
