@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
@@ -135,7 +136,11 @@ export function createDesktopScenario({
       const id = 'task-share-response'
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       const events = requestContainsToolOutput(body)
-        ? [assistantMessage(`${reply}\n\n[${generatedFilename}](./${generatedFilename})`)]
+        ? [
+            assistantMessage(
+              `${reply}\n\nCheck the response status and compare it with the empty payload.\n\nSave the minimal reproduction as an attachment.\n\n[${generatedFilename}](./${generatedFilename})`
+            ),
+          ]
         : selectedToolCall(
             'share-generate-file',
             selectShellToolCommand(
@@ -214,11 +219,67 @@ export function createDesktopScenario({
       const excerpt = `[data-e2e-anchor-id="share-selected-reply"] ${selector('task-issue-share-excerpt')}`
       await click(control, excerpt)
       await wait(control, `${excerpt}:checked`)
+      const userExcerpt = `${dialog} ${selector('task-issue-share-excerpt')}:not(${excerpt})`
+      await click(control, userExcerpt)
+      await wait(control, `${userExcerpt}:checked`)
+      await wait(control, `${excerpt}:checked`)
+      const replyRow = `${dialog} div:has(> label[data-e2e-anchor-id="share-selected-reply"])`
+      const expandReply = `${replyRow} > button[aria-expanded]`
+      const replyContent = `${replyRow} [data-testid^="task-issue-share-excerpt-content-"]`
+      const replyMetrics = async () =>
+        JSON.parse(await control.command('getElementMetrics', replyContent))[0]
+      const collapsedHeight = (await replyMetrics()).height
+      await click(control, expandReply)
+      await wait(control, `${expandReply}[aria-expanded="true"]`)
+      assert.ok(
+        (await replyMetrics()).height > collapsedHeight,
+        'Expanding reveals the full excerpt'
+      )
+      await captureScreenshot(control, '03a-task-share-expanded-multiple.png')
+      await click(control, expandReply)
+      await wait(control, `${expandReply}[aria-expanded="false"]`)
+      assert.equal((await replyMetrics()).height, collapsedHeight)
+      await click(control, selector('task-issue-share-excerpt-mode-single'))
+      await wait(control, `${userExcerpt}[type="radio"]:checked`)
+      await wait(control, `${excerpt}[type="radio"]:not(:checked)`)
+      await click(control, excerpt)
+      await wait(control, `${excerpt}[type="radio"]:checked`)
+      await wait(control, `${userExcerpt}:not(:checked)`)
+      await captureScreenshot(control, '03b-task-share-single-excerpt.png')
+      await click(control, selector('task-issue-share-clear-excerpts'))
+      await wait(control, `${excerpt}:not(:checked)`)
+      await click(control, selector('task-issue-share-excerpt-mode-multiple'))
+      await wait(control, `${excerpt}[type="checkbox"]:not(:checked)`)
+      await click(control, excerpt)
+      await wait(control, `${excerpt}:checked`)
+      await control.command('selectFile', selector('task-issue-share-file-input'), {
+        filename: 'preview-example.png',
+        mimeType: 'image/png',
+        value: readFileSync(
+          new URL('../../../resources/icons/128x128.png', import.meta.url)
+        ).toString('base64'),
+      })
+      await click(control, selector('task-issue-share-preview-local-file-0'))
+      await wait(control, `${selector('cloud-file-preview-image')}[alt="preview-example.png"]`, {
+        visible: true,
+      })
+      await captureScreenshot(control, '03c-task-share-image-preview.png')
+      await click(control, selector('cloud-file-preview-close'))
+      await wait(control, selector('cloud-file-preview-dialog'), { visible: false })
+      await click(control, selector('task-issue-share-remove-file-0'))
       await selectAttachment(control, 'draft.txt', 'Do not share this draft')
       await click(control, selector('task-issue-share-remove-file-0'))
       await wait(control, selector('task-issue-share-conversation-files'), {
         text: generatedFilename,
       })
+      await click(control, selector('task-issue-share-preview-conversation-file-0'))
+      await wait(control, selector('cloud-file-preview-text'), { text: generatedContent })
+      await captureScreenshot(control, '03d-task-share-file-preview.png')
+      await click(control, selector('cloud-file-preview-close'))
+      await wait(control, selector('cloud-file-preview-dialog'), { visible: false })
+      await wait(control, `${selector('task-issue-share-conversation-file-0')}:not(:checked)`)
+      await wait(control, `${excerpt}:checked`)
+      assert.equal(await control.command('getValue', title), 'Model error follow-up')
       await click(control, selector('task-issue-share-conversation-file-0'))
       await captureScreenshot(control, '03-task-share-selected-content.png')
       await click(control, save)
@@ -250,6 +311,25 @@ export function createDesktopScenario({
       const source = await request(sourcePath)
       assert.ok(source.device_id && source.task_id)
       await request(sourcePath, { token: colleagueToken, status: 404 })
+      const oversizedShare = new FormData()
+      oversizedShare.set(
+        'metadata',
+        JSON.stringify({
+          request_id: crypto.randomUUID(),
+          source: { device_id: source.device_id, task_id: source.task_id, title: source.title },
+          issue: { title: 'Share outside attachment count limit' },
+        })
+      )
+      for (let index = 0; index < 101; index++) {
+        oversizedShare.append('file', new Blob(), `empty-${index}.txt`)
+      }
+      const rejected = await fetch(`${cloud.backendUrl}/api/v1/personal-issues/share`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+        body: oversizedShare,
+      })
+      assert.equal(rejected.status, 422)
+      assert.match((await rejected.json()).detail, /at most 100 attachments/)
       const inbox = await request('/v1/wework-notifications?category=collaboration', {
         token: colleagueToken,
       })

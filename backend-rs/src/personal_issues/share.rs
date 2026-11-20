@@ -6,6 +6,8 @@ use std::collections::HashSet;
 
 const LIVE_ITEM: &str = "item.resource_type='task' AND (item.deleted_at IS NULL OR item.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))";
 const SOURCE_TYPE: &str = "issue_share_source";
+// Bound storage operations per request as well as aggregate payload size.
+const MAX_SHARED_ATTACHMENTS: usize = 100;
 pub(super) use crate::background_jobs::project::notifications::uuid as random_id;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,11 +358,11 @@ async fn stage_files(
     state: &AppState,
     multipart: &Multipart,
 ) -> Result<Vec<SharedAttachment>, FastApiError> {
-    let files: Vec<_> = multipart.get_all("file").collect();
-    let max_size = crate::attachments::upload::document::max_file_size() as usize;
-    if files.iter().map(|file| file.bytes.len()).sum::<usize>() > max_size {
-        return Err(invalid("Shared attachments exceed the upload limit"));
-    }
+    let files: Vec<_> = multipart
+        .get_all("file")
+        .take(MAX_SHARED_ATTACHMENTS + 1)
+        .collect();
+    validate_attachment_limits(files.len(), files.iter().map(|file| file.bytes.len()).sum())?;
     let mut staged = Vec::new();
     for file in files {
         let filename = file.filename.as_deref().filter(|name| {
@@ -388,6 +390,18 @@ async fn stage_files(
         }
     }
     Ok(staged)
+}
+
+fn validate_attachment_limits(count: usize, total_bytes: usize) -> Result<(), FastApiError> {
+    if count > MAX_SHARED_ATTACHMENTS {
+        return Err(invalid(
+            "A shared Issue can include at most 100 attachments",
+        ));
+    }
+    if total_bytes > crate::attachments::upload::document::max_file_size() as usize {
+        return Err(invalid("Shared attachments exceed the upload limit"));
+    }
+    Ok(())
 }
 
 async fn delete_files(state: &AppState, files: &[SharedAttachment]) -> bool {
@@ -479,5 +493,13 @@ mod tests {
         let request = "60029fa1-2f7f-4429-bb06-65f839fa196e";
         assert_ne!(share_id(3, request).unwrap(), share_id(4, request).unwrap());
         assert!(share_id(3, "../../issue").is_err());
+    }
+
+    #[test]
+    fn sharing_limits_storage_operations_even_for_empty_attachments() {
+        let max_bytes = crate::attachments::upload::document::max_file_size() as usize;
+        assert!(validate_attachment_limits(MAX_SHARED_ATTACHMENTS, max_bytes).is_ok());
+        assert!(validate_attachment_limits(MAX_SHARED_ATTACHMENTS + 1, 0).is_err());
+        assert!(validate_attachment_limits(1, max_bytes + 1).is_err());
     }
 }

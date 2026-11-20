@@ -56,7 +56,8 @@ In a desktop task, select **Share as issue** above the composer. It opens the sa
 
 - Leave participants and the project blank and select **Create Issue** to keep the issue private. Select colleagues and choose **Create and share** to notify them.
 - Choose a project to place the issue on its board under the project's default issue visibility.
-- Select files and excerpts directly from the conversation. Status, priority, assignee and due date are under **More settings**. The issue keeps a snapshot of the submitted content.
+- Preview conversation files and select up to 100 attachments. Choose one or multiple conversation excerpts and expand longer ones to read them in full.
+- Status, priority, assignee and due date are under **More settings**. The issue keeps a snapshot of the submitted content.
 
 <a id="conversation-interactions"></a>
 

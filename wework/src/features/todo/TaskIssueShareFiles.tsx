@@ -1,7 +1,9 @@
 import { Paperclip, X } from 'lucide-react'
 import type { TaskIssueConversationFile } from './taskIssueConversationFiles'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
+import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
 
 export function TaskIssueShareFiles({
   sourceTitle,
@@ -20,6 +22,23 @@ export function TaskIssueShareFiles({
 }) {
   const { t } = useTranslation('common')
   const input = useRef<HTMLInputElement>(null)
+  const [preview, setPreview] = useState<Pick<TaskIssueConversationFile, 'name' | 'load'> | null>(
+    null
+  )
+  const previewButton = (
+    file: Pick<TaskIssueConversationFile, 'name' | 'load'>,
+    testId: string
+  ) => (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-label={t('taskIssueShare.previewFile', { name: file.name })}
+      onClick={() => setPreview(file)}
+      className="mr-1 min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
+    >
+      {t('taskIssueShare.preview')}
+    </button>
+  )
   return (
     <section
       className="grid gap-2 border-t border-border pt-3"
@@ -71,8 +90,11 @@ export function TaskIssueShareFiles({
           {conversationFiles.map((file, index) => {
             const checked = selectedConversationFileIds.includes(file.id)
             return (
-              <li key={file.id} className="border-b border-border last:border-b-0">
-                <label className="flex min-h-11 cursor-pointer items-center gap-2 px-2 text-sm hover:bg-muted md:min-h-8">
+              <li
+                key={file.id}
+                className="flex items-center border-b border-border last:border-b-0"
+              >
+                <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 text-sm hover:bg-muted md:min-h-8">
                   <input
                     type="checkbox"
                     data-testid={`task-issue-share-conversation-file-${index}`}
@@ -90,6 +112,7 @@ export function TaskIssueShareFiles({
                     {file.name}
                   </span>
                 </label>
+                {previewButton(file, `task-issue-share-preview-conversation-file-${index}`)}
               </li>
             )
           })}
@@ -102,6 +125,10 @@ export function TaskIssueShareFiles({
               <span className="min-w-0 flex-1 truncate text-sm" title={file.name}>
                 {file.name}
               </span>
+              {previewButton(
+                { name: file.name, load: async () => file },
+                `task-issue-share-preview-local-file-${index}`
+              )}
               <button
                 type="button"
                 data-testid={`task-issue-share-remove-file-${index}`}
@@ -114,6 +141,17 @@ export function TaskIssueShareFiles({
             </li>
           ))}
         </ul>
+      )}
+      {preview && (
+        <CloudFilePreviewDialog
+          filename={preview.name}
+          contentType={null}
+          loadFile={preview.load}
+          onDownload={async () => {
+            await saveBlobToDownloads(await preview.load(), preview.name)
+          }}
+          onClose={() => setPreview(null)}
+        />
       )}
     </section>
   )
