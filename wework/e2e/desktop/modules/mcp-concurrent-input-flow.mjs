@@ -213,6 +213,12 @@ async function verifyConcurrentCases(control) {
         action === 'timeout' ? 'expired' : action === 'cancel' ? 'cancelled' : 'answered'
       if (ordinaryFirst) {
         await control.command('click', ordinaryOption)
+        await waitForEvidence(
+          async () =>
+            (await readMatchingElicitation(control, taskId, ordinary)).interactionStatus ===
+            'answered',
+          'The executor did not persist the ordinary answer before reload'
+        )
         assert.equal(
           await readMcpResult(action),
           undefined,

@@ -452,3 +452,161 @@ async fn llm_proxy_slow_headers_and_streaming_http_e2e() {
         wall_start.elapsed()
     );
 }
+
+/// Cloud subscriptions authenticate with a personal device key at both boundaries.
+#[tokio::test]
+#[ignore = "requires disposable MySQL and Redis; invoked by Backend Rust CI"]
+async fn runtime_model_personal_keys_use_current_owner_and_permissions() {
+    use sha2::{Digest, Sha256};
+
+    let database = super::fixture::Fixture::new().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let provider_url = format!("http://{}", listener.local_addr().unwrap());
+    let provider = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        assert_eq!(
+            model_request(&mut stream).await,
+            "post /v1/headers/responses http/1.1"
+        );
+        let body = [FIRST_EVENT, LAST_EVENT].concat();
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
+    });
+    seed_models(&database.mysql, &provider_url).await;
+    for sql in [
+        "CREATE TABLE api_keys (id INT PRIMARY KEY, user_id INT, key_hash VARCHAR(64),
+            key_prefix VARCHAR(32), name VARCHAR(100), key_type VARCHAR(20),
+            description TEXT, expires_at DATETIME, last_used_at DATETIME,
+            is_active TINYINT DEFAULT 1, created_at DATETIME, updated_at DATETIME)",
+        "CREATE TABLE namespace (id INT PRIMARY KEY, name VARCHAR(100), is_active TINYINT DEFAULT 1)",
+        "CREATE TABLE resource_members (resource_type VARCHAR(50), resource_id BIGINT,
+            entity_type VARCHAR(50), entity_id VARCHAR(100), status VARCHAR(50))",
+        "UPDATE kinds SET json=JSON_SET(json,'$.spec.isWeworkAvailable',CAST('true' AS JSON))
+            WHERE user_id=7",
+        "INSERT INTO users (id,user_name,git_info,preferences,created_at,updated_at)
+            VALUES (8,'another-model-owner',JSON_OBJECT(),'{}',NOW(),NOW())",
+        "INSERT INTO kinds SELECT id+10,8,kind,name,namespace,json,is_active,created_at,updated_at
+            FROM kinds WHERE user_id=7",
+    ] {
+        database.mysql.execute(sql, ()).await.unwrap();
+    }
+    let key = "wg-cloud-subscription-model-test";
+    let key_hash = format!("{:x}", Sha256::digest(key.as_bytes()));
+    database.mysql.execute(
+        "INSERT INTO api_keys (id,user_id,key_hash,name,key_type,expires_at,created_at,updated_at)
+            VALUES (1,7,?,'cloud-device','personal',DATE_ADD(NOW(),INTERVAL 1 DAY),NOW(),NOW())",
+        (key_hash,),
+    ).await.unwrap();
+    database
+        .mysql
+        .execute(
+            "UPDATE users SET user_name='renamed-model-owner' WHERE id=7",
+            (),
+        )
+        .await
+        .unwrap();
+    database
+        .mysql
+        .execute("UPDATE users SET user_name='llm-proxy-e2e' WHERE id=8", ())
+        .await
+        .unwrap();
+    let app = HttpApp::start(database.mysql.clone()).await;
+    let catalog_url = format!(
+        "{}/api/models/unified?scope=all&include_config=false&model_category_type=llm&client_origin=wework",
+        app.url.strip_suffix(PATH).unwrap()
+    );
+    let client = brz_http::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let catalog = client
+        .get(&catalog_url)
+        .unwrap()
+        .header("authorization", format!("Bearer {key}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(catalog.status().as_u16(), 200);
+    let catalog: Value = serde_json::from_slice(&catalog.bytes().await.unwrap()).unwrap();
+    let models = catalog["data"].as_array().unwrap();
+    assert_eq!(models.len(), 2);
+    assert!(models.iter().all(|model| model["resourceUserId"] == 7));
+    assert!(!catalog.to_string().contains(PROVIDER_KEY));
+
+    let inference_request = |owner: i32| {
+        client
+            .post(&app.url)
+            .unwrap()
+            .header("authorization", format!("Bearer {key}"))
+            .header("x-wegent-model-type", "user")
+            .header("x-wegent-model-namespace", "default")
+            .header("x-wegent-model-user-id", owner.to_string())
+            .header("content-type", "application/json")
+            .body(
+                json!({"model":"slow-headers","input":"llm-proxy-timeout-e2e","stream":true})
+                    .to_string(),
+            )
+    };
+    let response = inference_request(7).send().await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        [FIRST_EVENT, LAST_EVENT].concat()
+    );
+    tokio::time::timeout(Duration::from_secs(2), provider)
+        .await
+        .expect("authorized inference must reach the provider")
+        .unwrap();
+
+    let forbidden = inference_request(8).send().await.unwrap();
+    assert_eq!(forbidden.status().as_u16(), 403);
+
+    for (label, mutation) in [
+        ("revoked key", "UPDATE api_keys SET is_active=0 WHERE id=1"),
+        (
+            "expired key",
+            "UPDATE api_keys SET is_active=1,expires_at=DATE_SUB(NOW(),INTERVAL 1 DAY) WHERE id=1",
+        ),
+        (
+            "service key",
+            "UPDATE api_keys SET expires_at=DATE_ADD(NOW(),INTERVAL 1 DAY),key_type='service' WHERE id=1",
+        ),
+        (
+            "inactive owner",
+            "UPDATE api_keys SET key_type='personal' WHERE id=1",
+        ),
+    ] {
+        database.mysql.execute(mutation, ()).await.unwrap();
+        if label == "inactive owner" {
+            database
+                .mysql
+                .execute("UPDATE users SET is_active=0 WHERE id=7", ())
+                .await
+                .unwrap();
+        }
+        let catalog = client
+            .get(&catalog_url)
+            .unwrap()
+            .header("authorization", format!("Bearer {key}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            catalog.status().as_u16(),
+            401,
+            "{label}: catalog must reject"
+        );
+        let inference = inference_request(7).send().await.unwrap();
+        assert_eq!(
+            inference.status().as_u16(),
+            401,
+            "{label}: inference must reject"
+        );
+    }
+    app.stop().await;
+    database.close().await;
+}

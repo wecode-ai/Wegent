@@ -41,9 +41,8 @@ import {
   firstRoundPlan,
 } from '../modules/collaboration-cloud-story-checks.mjs'
 import {
-  answerResumedManagerFromIssue,
   createCollaborationIssueReplies,
-  managerResumeQuestion,
+  MANAGER_RESUME_QUESTION,
   updateStatusArguments,
 } from '../modules/collaboration-manager-resume-input.mjs'
 
@@ -67,9 +66,13 @@ const SECOND_MEMBER_REPLY = `${MARKER} 请同时核对证据的时间范围。`
 const SECOND_MEMBER_REPLY_RESULT = '已单独核对时间范围，采样和结果来自同一窗口。'
 const MEMBER_PROGRESS = '准备好了待复核的执行证据。'
 const INITIAL_MANAGER_OUTPUT = '第一轮两个任务已交给 Executor 并发执行，等待全部结果。'
+const MANAGER_ROOT_COMMENT = '负责人已收到两份交付，正在核对一致性。'
 const MANAGER_REQUEST_CONTEXT = 'You are the manager for one project Issue.'
 const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人评估并显式提交待确认。`
+const MANAGER_DECISION = '确认保持存量用户现状，限定本仓并新增隐私项。'
 const CALLS = {
+  rootComment: `${MARKER}-root-comment`,
+  businessQuestion: `${MARKER}-business-question`,
   firstPlan: `${MARKER}-plan-1`,
   updateStatus: `${MARKER}-update-status`,
   deliveryRequirements: `${MARKER}-delivery-requirements`,
@@ -328,6 +331,7 @@ export async function createDesktopScenario({
   let reviewerAgentId = ''
   let managerRuns = 0
   let managerReplyRequests = 0
+  let managerRootCommentPosted = false
   const guidedReplies = createGuidedReplies({
     marker: MARKER,
     firstQuestion: MEMBER_REPLY,
@@ -521,11 +525,47 @@ export async function createDesktopScenario({
       if (parentStage === 'first-round-dispatched') {
         assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
         assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
-        const question = managerResumeQuestion(body)
-        if (question) {
-          writeEvents(response, responseId, question)
+        if (!managerRootCommentPosted) {
+          if (!requestContainsToolOutput(body, CALLS.rootComment)) {
+            const selection = managerToolEvents(body, 'add_board_item_comment', CALLS.rootComment, {
+              space_id: String(project.id),
+              item_id: rootIssue.id,
+              body: MANAGER_ROOT_COMMENT,
+            })
+            writeEvents(response, responseId, selection.events)
+            return true
+          }
+          managerRootCommentPosted = true
+        }
+        if (requestContainsToolOutput(body, CALLS.businessQuestion)) {
+          parentStage = 'awaiting-issue-reply'
+          writeEvents(response, responseId, [
+            assistantMessage('已在本轮开始评论下提出待确认事项。'),
+          ])
           return true
         }
+        const start = await waitForValue(
+          listComments,
+          rows => rows.filter(row => row.author === LEADER && row.body === '开始处理').at(1),
+          '负责人续轮应收到可回复的开始评论',
+          modelResponseTimeoutMs
+        )
+        const selection = managerToolEvents(
+          body,
+          'add_board_item_comment',
+          CALLS.businessQuestion,
+          {
+            space_id: String(project.id),
+            item_id: rootIssue.id,
+            body: MANAGER_RESUME_QUESTION,
+            reply_to_comment_id: start.id,
+          }
+        )
+        writeEvents(response, responseId, selection.events)
+        return true
+      }
+      if (parentStage === 'awaiting-issue-reply') {
+        assert.ok(requestText.includes(MANAGER_DECISION), '必须收到同楼层的用户回复才能继续')
         const selection = managerToolEvents(
           body,
           'update_issue_status',
@@ -660,10 +700,27 @@ export async function createDesktopScenario({
         phase: 'running',
         timeoutMs: uiTimeoutMs,
       })
-      await waitForActivityText(
+      const assignmentText = `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`
+      await waitForActivityText(control, assignmentText, modelResponseTimeoutMs)
+      const assignmentEventId = await waitForTestIdByText(
         control,
-        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
-        modelResponseTimeoutMs
+        CONTENT,
+        'cloud-task-manager-event-',
+        assignmentText,
+        uiTimeoutMs
+      )
+      const assignmentEvent = `[data-testid="${assignmentEventId}"]`
+      const assignmentCard = `[data-testid^="cloud-task-activity-card-"]:has(> [data-activity-sequence] > ${assignmentEvent})`
+      await control.command('scrollIntoView', scoped(`${assignmentEvent} time`))
+      await control.command(
+        'waitFor',
+        scoped(
+          `${assignmentCard}:not(:has(> .task-detail-thread-actions > time)) > [data-activity-sequence] > ${assignmentEvent} time`
+        ),
+        {
+          visible: true,
+          timeoutMs: uiTimeoutMs,
+        }
       )
       const assignedIssue = await request(`/api/v1/loop-items/${rootIssue.id}`)
       const assignment = assignedIssue.assignment_history.find(
@@ -706,16 +763,22 @@ export async function createDesktopScenario({
         '成员的正式交付应绑定到同一 Issue 和分配',
         modelResponseTimeoutMs
       )
-      await waitForActivityText(control, MEMBER_PROGRESS, modelResponseTimeoutMs)
-      await waitForActivityText(control, INITIAL_MANAGER_OUTPUT, modelResponseTimeoutMs)
-      const comments = await request(
-        `/api/v1/cloud-projects/${project.id}/loop-items/${rootIssue.id}/activity-comments`
+      const comments = await waitForValue(
+        listComments,
+        rows =>
+          rows.find(row => row.body === INITIAL_MANAGER_OUTPUT) &&
+          rows.find(row => row.body === `${FIRST_TASK} 已完成：证据完整。`) &&
+          rows,
+        '项目评论应收到负责人和成员的最终输出',
+        modelResponseTimeoutMs
       )
-      assert.deepEqual(
-        comments.filter(comment => comment.body === MEMBER_PROGRESS).map(comment => comment.author),
-        [COLLECTOR],
-        '成员正文应作为一条独立 Issue 评论显示，并使用实际发言的智能体署名'
+      const memberStarts = comments.filter(
+        row => row.author === COLLECTOR && row.body === '开始处理'
       )
+      assert.equal(memberStarts.length, 1, '成员一轮只发布一条开始评论')
+      const memberFinal = comments.find(row => row.body === `${FIRST_TASK} 已完成：证据完整。`)
+      assert.equal(memberFinal.reply_to_comment_id, memberStarts[0].id, '最终输出应引用开始评论')
+      assert.ok(!comments.some(row => row.body.includes(MEMBER_PROGRESS)), '例行过程不发布成评论')
       await assertManagerComment(
         cloudEnvironment,
         project.id,
@@ -735,9 +798,6 @@ export async function createDesktopScenario({
         CONTENT
       )
 
-      const beforeManagerResume = JSON.parse(
-        await control.command('snapshot', scoped('[data-testid="cloud-task-activity-list"]'))
-      )
       releaseSecondChild()
       await waitForCompletedMemberTasks(
         control,
@@ -746,23 +806,25 @@ export async function createDesktopScenario({
         2,
         modelResponseTimeoutMs
       )
-      await answerResumedManagerFromIssue({
-        control,
-        scope: CONTENT,
-        leader,
-        request,
-        issueId: rootIssue.id,
-        managerTaskId: `${runningDispatch.runtimeTaskId}-manager-initial`,
-        previousManagerEvents: beforeManagerResume.testIds.filter(id =>
-          id.startsWith('cloud-task-manager-event-')
-        ),
-        waitForValue,
-        timeoutMs: modelResponseTimeoutMs,
+      const decisionQuestion = await waitForValue(
+        listComments,
+        rows => rows.find(row => row.body === MANAGER_RESUME_QUESTION && row.reply_to_comment_id),
+        '负责人应在本轮开始评论下提问',
+        modelResponseTimeoutMs
+      )
+      const rootComment = (await listComments()).find(row => row.body === MANAGER_ROOT_COMMENT)
+      assert.equal(rootComment?.author, LEADER, '顶层评论应署名为负责人智能体')
+      assert.equal(rootComment.publication_source, 'ai')
+      assert.equal(rootComment.reply_to_comment_id, null)
+      await waitForActivityText(control, MANAGER_ROOT_COMMENT, uiTimeoutMs)
+      const decisionCard = `cloud-task-activity-card-${decisionQuestion.root_comment_id}`
+      await control.command('waitFor', scoped(`[data-testid="${decisionCard}"]`), {
+        text: MANAGER_RESUME_QUESTION,
+        timeoutMs: uiTimeoutMs,
       })
+      await replyToActivity(control, decisionCard, MANAGER_DECISION)
       await waitForIssueStatus(control, scoped, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
-      await waitForActivityText(control, '已完成任务规划', uiTimeoutMs)
-      await waitForActivityText(control, '已完成本轮评估', uiTimeoutMs)
       await waitForCondition(
         () => parentStage,
         value => value === 'complete',
@@ -793,7 +855,12 @@ export async function createDesktopScenario({
           const related = response.items.filter(candidate =>
             issueExecution(candidate, rootIssue.id)
           )
-          return related.length === 1 && related.every(terminalExecution) ? related : null
+          const groupDispatches = related.filter(
+            candidate => candidate.executorType === 'collaboration_group_dispatch'
+          )
+          return groupDispatches.length === 1 && related.every(terminalExecution)
+            ? groupDispatches
+            : null
         },
         'The real remote Executor did not finish the single root group dispatch',
         modelResponseTimeoutMs
@@ -918,24 +985,31 @@ export async function createDesktopScenario({
       })
       await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
       await control.command('waitFor', memberPanel, { visible: false, timeoutMs: uiTimeoutMs })
-      const publicComment = await waitForTestIdByText(
-        control,
-        CONTENT,
-        'cloud-task-activity-card-',
-        MEMBER_PROGRESS,
-        uiTimeoutMs
+      assert.equal(memberMessageId, memberStarts[0].id, '执行入口应位于开始处理评论')
+      const [recordedDispatch] = await cloudEnvironment.queryDatabase(
+        "SELECT JSON_UNQUOTE(JSON_EXTRACT(execution_payload, '$.origin_context.dispatch_id')) AS dispatch_id FROM loop_item_executions WHERE id = %s",
+        [dispatch.id]
       )
-      const secondPublicComment = await waitForValue(
-        listComments,
-        rows => rows.find(row => row.body === `${FIRST_TASK} 已完成：证据完整。`),
-        '成员最终答复没有发布成评论',
-        modelResponseTimeoutMs
+      const otherDiscussion = await request(
+        `/api/v1/cloud-projects/${project.id}/loop-items/${rootIssue.id}/activity-comments`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            body: '请在这条独立讨论里核对采样时间。',
+            collaboration: {
+              dispatch_id: recordedDispatch.dispatch_id,
+              device_id: runtimeDeviceId(dispatch),
+              task_id: memberTaskId,
+              message_id: `${MARKER}-independent-discussion`,
+            },
+          }),
+        }
       )
       await guidedReplies.verify({
         control,
         reply: (card, text) => replyToActivity(control, card, text),
-        firstCard: publicComment,
-        secondCard: `cloud-task-activity-card-${secondPublicComment.id}`,
+        firstCard: `cloud-task-activity-card-${memberStarts[0].id}`,
+        secondCard: `cloud-task-activity-card-${otherDiscussion.id}`,
         executorLog: cloudEnvironment.remoteDockerExecutorRuntimeLogPath,
         memberTaskId,
         listComments,

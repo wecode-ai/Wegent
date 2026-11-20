@@ -48,10 +48,39 @@ POST /api/v1/responses
 | `model` | string | Yes | Agent identifier. Format: `namespace#team_name` or `namespace#team_name#model_id` |
 | `input` | string \| array | Yes | User input prompt or conversation history |
 | `stream` | boolean | No | Enable streaming output (default: `false`) |
+| `background` | boolean | No | Execute in the background and immediately return a queued response; when `true`, no SSE is returned (default: `false`) |
+| `execution` | object | No | Execution configuration; traditional executor devices use `type: "wegent"` |
+| `execution.device_id` | string | No | Select a traditional executor device when `execution.type="wegent"`; when omitted, retain default execution or the existing task device binding |
 | `previous_response_id` | string | No | Previous response ID for follow-up conversations |
 | `reasoning` | object | No | Model reasoning configuration with `effort` and optional `summary` fields |
 | `tools` | array | No | Wegent custom tools configuration |
 | `omit_mcp_binary_output` | boolean | No | Replace media payloads (base64 images, audio, and video) in MCP tool output with a summary placeholder (default: `false`, raw output is returned) |
+
+#### Traditional Executor Devices
+
+Set `execution.type="wegent"` and `execution.device_id` to send an agent task to a traditional executor device. `model` still uses the `namespace#team_name` format, and the task retains the agent's Bot, model, MCP tools, and skill configuration. The device ID only selects where execution runs.
+
+The device must be active and owned by the caller; dispatch also checks that it is online. This configuration accepts traditional `local`, `cloud`, or `remote` executor devices. Wework App devices continue to use the existing `execution.type="wework"` conversation API. An explicit device that is missing, inaccessible, or offline does not cause automatic dispatch to another execution target. Existing device tool approval policies remain in effect.
+
+Use `stream:true` and `background:false` to receive SSE in the same HTTP request without polling:
+
+```bash
+curl -N -X POST "https://your-domain/api/v1/responses" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "default#my-coding-agent",
+    "input": "Run pwd and explain the result",
+    "stream": true,
+    "background": false,
+    "execution": {
+      "type": "wegent",
+      "device_id": "your-executor-device-id"
+    }
+  }'
+```
+
+SSE uses the existing events listed below, including `response.created`, `response.output_text.delta`, and `response.completed` or `response.failed`. `stream:false` or `background:true` returns a `queued` response, whose result can still be retrieved with `GET /api/v1/responses/{response_id}`. Omitting `execution` preserves existing execution behavior.
 
 #### MCP binary output
 
@@ -233,7 +262,7 @@ When a request includes `previous_response_id` and does not provide a new `knowl
 
 #### Response Behavior
 
-The response behavior depends on the Team's Shell type:
+Response behavior depends on the Team's Shell type, device binding, and `background`. `background:true` takes precedence over `stream:true` and returns a queued response.
 
 | Shell Type | Streaming Support | Response Mode |
 |------------|-------------------|---------------|
@@ -244,7 +273,7 @@ The response behavior depends on the Team's Shell type:
 - Without a bound device, blocks until the LLM completes and returns the completed response
 - With a bound device, returns immediately with status `queued`
 
-**stream=true (Chat and non-Chat Shells):**
+**stream=true, background=false (Chat and non-Chat Shells):**
 - Returns SSE stream with OpenAI v1/responses compatible events
 - Single and batch device or executor callbacks deliver text and terminal events
 - Video models reject streaming requests with HTTP 400
@@ -384,7 +413,9 @@ curl -X DELETE "https://your-domain/api/v1/responses/resp_123" \
 
 ## Streaming Events
 
-When `stream=true` is set, Chat and non-Chat Shells can return Server-Sent Events (SSE) in OpenAI v1/responses format. Video models do not support streaming requests.
+When `stream=true` and `background=false` are set, Chat and non-Chat Shells can return Server-Sent Events (SSE) in OpenAI v1/responses format, including tasks bound to traditional executor devices. Video models do not support streaming requests.
+
+Device tasks subscribe to callbacks before execution is dispatched, and terminal events use the results already persisted by device callbacks. Disconnecting the HTTP client releases the stream subscription while device execution continues; the response ID can be used to retrieve the result later. Streaming connections do not replay historical events, so reconnecting does not resend text deltas from the disconnected interval.
 
 ### Event Types
 
@@ -439,7 +470,7 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 
 | Status | Description |
 |--------|-------------|
-| `queued` | Task is queued for execution (non-Chat Shell) |
+| `queued` | Task is queued for execution (non-streaming device or executor requests, and background requests) |
 | `in_progress` | Task is currently running |
 | `completed` | Task completed successfully |
 | `failed` | Task failed with error |
@@ -500,7 +531,19 @@ To continue a conversation, use `previous_response_id`:
 
 This appends to the same task, maintaining conversation context.
 
-If the task is bound to a device, follow-up requests continue on that device. An offline device returns HTTP 503.
+If the task is bound to a traditional executor device, follow-up requests inherit that device binding; `execution.device_id` does not need to be sent again. An explicitly supplied device must resolve to the same bound device and cannot move an existing device conversation to another device. Each dispatch rechecks device permissions and online state, and rejects execution if these checks fail.
+
+To continue with streaming, also set `stream:true` and `background:false`:
+
+```json
+{
+  "model": "default#my-coding-agent",
+  "input": "Continue explaining the project in the current directory",
+  "previous_response_id": "resp_123",
+  "stream": true,
+  "background": false
+}
+```
 
 ---
 
@@ -509,5 +552,5 @@ If the task is bound to a device, follow-up requests continue on that device. An
 - By default, API calls use "clean mode" without server-side enhancements
 - Bot/Ghost MCP tools configured in the CRD are always available
 - Use `wegent_chat_bot` tool to enable full server-side capabilities
-- Streaming is only supported for Chat Shell type Teams
+- Streaming output supports Chat Shell and traditional executor tasks; `background:true` returns a queued response
 - Raw `mcp_call` output is returned by default; set `omit_mcp_binary_output` to `true` to replace media payloads such as base64 images with a summary placeholder like `<image/jpeg payload omitted: 2048 bytes>`. Non-media output is returned unchanged and model calls still use the complete original content

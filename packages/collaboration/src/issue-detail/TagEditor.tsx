@@ -1,8 +1,18 @@
-import { useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import { X } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  createComboboxController,
+} from '@ui-sdk/react/combobox'
+import { controlInput, controlOption, controlPopup } from '../controls/recipes'
+import { useCollaborationPortalTheme } from '../theme'
+import { Button as ControlButton } from '../markdown/Button'
 import { createTagDraft, type TagDraftStore } from './tagDraft'
 import { isTagNameTooLong } from '../tagging'
-import { useOutsideClick } from '../composer/useOutsideClick'
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(' ')
 }
@@ -16,7 +26,7 @@ interface TagEditorProps {
   removeLabel?: (tag: string) => string
   lengthErrorLabel: string
   tagLimit?: { max: number; errorLabel: string }
-  // Existing project tags offered as autocomplete candidates.
+  // Existing project tags offered as combobox candidates.
   suggestions?: string[]
   // Prefix for data-testid values so multiple editors never collide.
   testIdPrefix: string
@@ -30,7 +40,7 @@ export function TagEditor({
   draftStore,
   disabled = false,
   placeholder = '添加标签',
-  removeLabel = tag => `移除标签 ${tag}`,
+  removeLabel = (tag) => `移除标签 ${tag}`,
   lengthErrorLabel,
   tagLimit,
   suggestions = [],
@@ -41,23 +51,28 @@ export function TagEditor({
   const draft = useSyncExternalStore(source.subscribeEditor, source.getSnapshot, source.getSnapshot)
   const setDraft = source.set
   const [open, setOpen] = useState(false)
-  const [highlight, setHighlight] = useState(0)
+  const [combobox] = useState(() => createComboboxController<string, true>())
+  const portalTheme = useCollaborationPortalTheme()
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLSpanElement>(null)
   const composingRef = useRef(false)
-
   const normalizedDraft = draft.trim().toLowerCase()
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ''))
   const exceedsLimit = (tag: string) =>
     Boolean(tagLimit && new Set([...tags, tag]).size > tagLimit.max)
-  const tooMany = Boolean(draft.trim()) && exceedsLimit(draft.trim().replace(/,/g, ''))
-  const errorLabel = tooLong ? lengthErrorLabel : tooMany ? tagLimit?.errorLabel : null
+  const tooMany =
+    Boolean(draft.trim()) && exceedsLimit(draft.trim().replace(/,/g, ''))
+  const errorLabel = tooLong
+    ? lengthErrorLabel
+    : tooMany
+      ? tagLimit?.errorLabel
+      : null
   const candidates = suggestions.filter(
-    suggestion =>
+    (suggestion) =>
       !tags.includes(suggestion) &&
       !exceedsLimit(suggestion) &&
       !isTagNameTooLong(suggestion) &&
-      (!normalizedDraft || suggestion.toLowerCase().includes(normalizedDraft))
+      (!normalizedDraft || suggestion.toLowerCase().includes(normalizedDraft)),
   )
   const showSuggestions = open && candidates.length > 0
 
@@ -65,7 +80,6 @@ export function TagEditor({
     if (isTagNameTooLong(tag) || exceedsLimit(tag)) return
     if (!tags.includes(tag)) onChange([...tags, tag])
     setDraft('')
-    setHighlight(0)
   }
 
   function commit(raw: string) {
@@ -77,36 +91,17 @@ export function TagEditor({
     if (tag) add(tag)
   }
 
-  useOutsideClick(containerRef, !disabled && Boolean(draft.trim()), () => {
-    // Native composition must publish its final text before blur commits it.
-    if (composingRef.current) return
-    commit(draft)
-    setOpen(false)
-  })
-
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
-    if (event.key === 'ArrowDown' && showSuggestions) {
-      event.preventDefault()
-      setHighlight(current => (current + 1) % candidates.length)
-      return
-    }
-    if (event.key === 'ArrowUp' && showSuggestions) {
-      event.preventDefault()
-      setHighlight(current => (current - 1 + candidates.length) % candidates.length)
-      return
-    }
-    if (event.key === 'Escape' && (showSuggestions || draft.trim())) {
-      event.stopPropagation()
+    if (event.key === 'Enter' || event.key === ',') {
+      if (
+        event.key === 'Enter' &&
+        showSuggestions &&
+        combobox.getHighlighted() !== null
+      )
+        return
       event.preventDefault()
       commit(draft)
-      setOpen(false)
-      return
-    }
-    if (event.key === 'Enter' || event.key === ',') {
-      event.preventDefault()
-      if (showSuggestions && candidates[highlight]) add(candidates[highlight])
-      else commit(draft)
       return
     }
     if (event.key === 'Backspace' && !draft && tags.length > 0) {
@@ -115,95 +110,111 @@ export function TagEditor({
   }
 
   return (
-    <span
-      ref={containerRef}
-      className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md focus-within:ring-2 focus-within:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
-      onClick={() => inputRef.current?.focus()}
+    <Combobox
+      controller={combobox}
+      multiple
+      value={tags}
+      query={draft}
+      open={showSuggestions}
+      disabled={disabled}
+      filter={false}
+      autoHighlight
+      onValueChange={(next) => {
+        const added = next.find((tag) => !tags.includes(tag))
+        if (added) add(added)
+        setOpen(false)
+      }}
+      onQueryChange={(value, details) => {
+        if (value.endsWith(',') && !composingRef.current) commit(value)
+        else setDraft(value)
+        if (details.reason === 'input-change') setOpen(true)
+      }}
+      onOpenChange={(next, details) => {
+        setOpen(next)
+        if (!next && details.reason === 'escape-key') commit(draft)
+      }}
     >
-      {tags.map(tag => (
-        <span
-          key={tag}
-          data-testid={`${testIdPrefix}-tag-${tag}`}
-          className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
-        >
-          <span className="min-w-0 break-words whitespace-normal">{tag}</span>
-          {!disabled && (
-            <button
-              type="button"
-              aria-label={removeLabel(tag)}
-              data-testid={`${testIdPrefix}-tag-remove-${tag}`}
-              onClick={() => onChange(tags.filter(candidate => candidate !== tag))}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-secondary transition hover:bg-hover hover:text-text-primary md:h-6 md:w-6"
-            >
-              <X className="h-2.5 w-2.5" />
-            </button>
-          )}
-        </span>
-      ))}
-      {!disabled && (
-        <input
-          ref={inputRef}
-          data-testid={`${testIdPrefix}-input`}
-          aria-label={placeholder}
-          aria-invalid={Boolean(errorLabel)}
-          aria-describedby={errorLabel ? `${testIdPrefix}-error` : undefined}
-          value={draft}
-          disabled={disabled}
-          onChange={event => {
-            const value = event.target.value
-            if (value.endsWith(',')) commit(value)
-            else {
-              setDraft(value)
-              setHighlight(0)
-              setOpen(true)
-            }
-          }}
-          onFocus={() => setOpen(true)}
-          onCompositionStart={() => {
-            composingRef.current = true
-          }}
-          onCompositionEnd={() => {
-            composingRef.current = false
-          }}
-          onKeyDown={handleKeyDown}
-          onBlur={() => {
-            setOpen(false)
-            commit(draft)
-          }}
-          placeholder={tags.length === 0 ? placeholder : ''}
-          className={cn(
-            'h-11 min-w-16 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:h-7'
-          )}
-        />
-      )}
-      {errorLabel && (
-        <span id={`${testIdPrefix}-error`} role="alert" className="w-full text-xs text-error">
-          {errorLabel}
-        </span>
-      )}
-      {showSuggestions && (
-        <span
-          data-testid={`${testIdPrefix}-suggestions`}
-          className="task-detail-tag-suggestions absolute left-0 top-full z-20 mt-1 block max-h-48 min-w-36 overflow-y-auto rounded-xl border border-border bg-background py-1 shadow-lg"
-          onMouseDown={event => event.preventDefault()}
-        >
-          {candidates.map((candidate, index) => (
-            <button
-              key={candidate}
-              type="button"
-              data-testid={`${testIdPrefix}-suggestion-${candidate}`}
-              onClick={() => add(candidate)}
-              onMouseEnter={() => setHighlight(index)}
-              className={cn(
-                'flex min-h-11 w-full items-center px-3 py-1.5 text-left text-sm text-text-primary transition md:min-h-6',
-                index === highlight ? 'bg-muted' : 'hover:bg-muted'
-              )}
-            >
-              {candidate}
-            </button>
-          ))}
-        </span>
-      )}
-    </span>
+      <span
+        ref={containerRef}
+        className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md focus-within:ring-2 focus-within:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
+        onClick={() => inputRef.current?.focus()}
+      >
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            data-testid={`${testIdPrefix}-tag-${tag}`}
+            className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
+          >
+            <span className="min-w-0 break-words whitespace-normal">{tag}</span>
+            {!disabled && (
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                aria-label={removeLabel(tag)}
+                data-testid={`${testIdPrefix}-tag-remove-${tag}`}
+                onClick={() =>
+                  onChange(tags.filter((candidate) => candidate !== tag))
+                }
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-secondary transition hover:bg-hover hover:text-text-primary md:h-6 md:w-6"
+              >
+                <X className="h-2.5 w-2.5" />
+              </ControlButton>
+            )}
+          </span>
+        ))}
+        {!disabled && (
+          <ComboboxInput
+            ref={inputRef}
+            data-testid={`${testIdPrefix}-input`}
+            aria-label={placeholder}
+            aria-invalid={Boolean(errorLabel)}
+            aria-describedby={errorLabel ? `${testIdPrefix}-error` : undefined}
+            onFocus={() => setOpen(true)}
+            onCompositionStart={() => {
+              composingRef.current = true
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false
+            }}
+            onKeyDown={handleKeyDown}
+            onBlur={() => {
+              setOpen(false)
+              commit(draft)
+            }}
+            placeholder={placeholder}
+            className={cn(controlInput, 'min-w-16 flex-1')}
+          />
+        )}
+        {errorLabel && (
+          <span
+            id={`${testIdPrefix}-error`}
+            role="alert"
+            className="w-full text-xs text-error"
+          >
+            {errorLabel}
+          </span>
+        )}
+        {showSuggestions && (
+          <ComboboxContent
+            {...portalTheme}
+            className={cn(portalTheme.className, controlPopup, 'min-w-36')}
+            data-testid={`${testIdPrefix}-suggestions`}
+          >
+            <ComboboxList>
+              {candidates.map((candidate) => (
+                <ComboboxItem
+                  key={candidate}
+                  value={candidate}
+                  data-testid={`${testIdPrefix}-suggestion-${candidate}`}
+                  className={controlOption}
+                >
+                  {candidate}
+                </ComboboxItem>
+              ))}
+            </ComboboxList>
+          </ComboboxContent>
+        )}
+      </span>
+    </Combobox>
   )
 }

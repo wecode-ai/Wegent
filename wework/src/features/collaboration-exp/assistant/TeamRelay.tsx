@@ -1,5 +1,6 @@
-import { ArrowRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight } from 'lucide-react'
 import type { ExperienceTeamRelayNode } from '../model'
 import './TeamRelay.css'
 
@@ -80,7 +81,8 @@ export function TeamRelay({
               : t('teamRelay.state.unknown')}
           </small>
         </span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={manageTestId ?? `${testId}-manage`}
           aria-expanded={expanded}
@@ -91,14 +93,15 @@ export function TeamRelay({
         >
           {t('assistant.manage')}
           <ArrowRight size={13} aria-hidden="true" />
-        </button>
+        </ControlButton>
       </div>
       {nodes.length ? (
         <ul className="assistant-team-members">
           {members.map(({ node, name, statusDetail }) => {
             return (
               <li key={node.id ?? '@primary'}>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${testId}-node-${node.id ?? '@primary'}`}
                   data-state={ready ? node.state : 'unknown'}
@@ -127,13 +130,14 @@ export function TeamRelay({
                     <small title={statusDetail}>{statusDetail}</small>
                   </span>
                   <ArrowRight size={14} className="assistant-presence-arrow" aria-hidden="true" />
-                </button>
+                </ControlButton>
               </li>
             )
           })}
           {nodes.length > 4 && (
             <li className="assistant-team-more">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`${testId}-more`}
                 onClick={() => onManage()}
@@ -141,7 +145,7 @@ export function TeamRelay({
                 className="min-h-11 w-full text-xs text-text-secondary hover:bg-muted"
               >
                 {t('teamRelay.allMembers', { count: nodes.length })}
-              </button>
+              </ControlButton>
             </li>
           )}
         </ul>

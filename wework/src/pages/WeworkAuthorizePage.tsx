@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
-import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
 import { useAuth } from '@/features/auth/useAuth'
+import { useTranslation } from '@/hooks/useTranslation'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { createWeworkAuthorizationResource } from './weworkAuthorizationResource'
 
 export function WeworkAuthorizePage() {
@@ -80,14 +81,16 @@ export function WeworkAuthorizePage() {
                 {t('workbench.wework_authorize_failed_title', '授权失败')}
               </h1>
               <p className="mt-2 text-sm text-text-secondary">{state.message}</p>
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 onClick={() => window.close()}
-                className="mt-4 rounded-lg bg-text-primary px-4 py-2 text-sm font-medium text-background hover:bg-text-primary/90"
+                className="mt-4"
                 data-testid="wework-authorize-close"
               >
                 {t('workbench.wework_authorize_close_window', '关闭窗口')}
-              </button>
+              </ControlButton>
             </div>
           </>
         )}

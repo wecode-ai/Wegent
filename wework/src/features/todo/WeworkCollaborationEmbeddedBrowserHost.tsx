@@ -1,8 +1,11 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
-import { useCallback, useId, useMemo, useSyncExternalStore } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { createCollaborationBrowserSource } from './collaborationBrowserSource'
+import { useCallback, useId } from 'react'
+
 import { WorkspaceBrowserPanel } from '@/components/layout/workspace-panels/WorkspaceBrowserPanelContainer'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useMemo, useSyncExternalStore } from 'react'
+import { createCollaborationBrowserSource } from './collaborationBrowserSource'
 
 export function WeworkCollaborationEmbeddedBrowserHost({
   workspaceActive,
@@ -30,7 +33,8 @@ export function WeworkCollaborationEmbeddedBrowserHost({
     >
       <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-border px-4">
         <span className="text-sm font-medium text-text-primary">{t('workbench.browser')}</span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
           data-testid="collaboration-embedded-browser-close"
@@ -38,7 +42,7 @@ export function WeworkCollaborationEmbeddedBrowserHost({
           onClick={close}
         >
           <X aria-hidden="true" className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </header>
       <div className="min-h-0 flex-1">
         <WorkspaceBrowserPanel

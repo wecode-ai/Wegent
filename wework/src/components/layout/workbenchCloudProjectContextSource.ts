@@ -382,12 +382,12 @@ export function createWorkbenchCloudProjectContextSource(
     const project = task() ? snapshot.boundCloudProject : snapshot.pendingCloudProject
     const item = task() ? snapshot.boundCloudItem : snapshot.pendingTodoItem
     const api = project ? projectApi(project) : undefined
-    const keys = [project, item, api, input.t]
+    const scope = workbenchCloudMentionScope(project, item)
+    const keys = [scope, api, input.t]
     if (mentionKeys && keys.every((value, index) => value === mentionKeys![index])) return
     mentionKeys = keys
     const revision = ++mentionRevision
-    if (!project || !api) return
-    const scope = workbenchCloudMentionScope(project, item)!
+    if (!project || !api || !scope) return
     void loadWorkbenchCloudMentions(project, item, api, input.t)
       .then(candidates => {
         if (listeners.size && revision === mentionRevision)

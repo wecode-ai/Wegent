@@ -7,12 +7,12 @@ use crate::plugin_account_auth::{
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
+pub(super) const DEPENDENCY_UNAVAILABLE: &str = "native_plugin_dependency_unavailable";
+
 pub(super) fn failure(error: connections::AuthFailure) -> MysqlError {
     match error {
         connections::AuthFailure::Refusal(code) => fail(code),
-        connections::AuthFailure::Internal => MysqlError::InvalidQuery {
-            reason: "native_plugin_dependency_unavailable".into(),
-        },
+        connections::AuthFailure::Internal => fail(DEPENDENCY_UNAVAILABLE),
     }
 }
 

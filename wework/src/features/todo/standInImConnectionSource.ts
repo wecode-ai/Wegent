@@ -50,9 +50,9 @@ export function createStandInImConnectionSource(
   }
   const notify = () => observers.forEach(observer => observer.notify())
   const patch = (values: Partial<typeof ui>) => {
-    const before = ui.menuOpen || ui.channel !== null
+    const before = ui.channel !== null
     ui = { ...ui, ...values }
-    const after = ui.menuOpen || ui.channel !== null
+    const after = ui.channel !== null
     if (before !== after) observers.forEach(observer => observer.onOpenChange?.(after))
     notify()
   }
@@ -89,7 +89,7 @@ export function createStandInImConnectionSource(
     subscribe(notifyListener: () => void, onOpenChange?: (open: boolean) => void) {
       const observer = { notify: notifyListener, onOpenChange }
       observers.add(observer)
-      onOpenChange?.(ui.menuOpen || ui.channel !== null)
+      onOpenChange?.(ui.channel !== null)
       if (!detach && resource) detach = resource.subscribe(notify)
       return () => {
         observers.delete(observer)

@@ -1,101 +1,12 @@
-import { FileTree, useFileTree } from '@pierre/trees/react'
-import { Search } from 'lucide-react'
-import type { CSSProperties } from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
+import { Folder, FolderOpen, Search } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { createFileTreeData, resolveFileTreePath } from '../layout/workspace-panels/fileTreeData'
+import { useFileTreeExpansion } from '../layout/workspace-panels/useFileTreeExpansion'
+import { WorkspaceFileIcon } from '../layout/workspace-panels/WorkspaceFileIcon'
 import { getDiffFileStatus, type DiffFileSection } from './parseUnifiedDiff'
-
-const PIERRE_FILE_TREE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-bg-muted-override: rgb(var(--color-muted));
-    --trees-fg-override: rgb(var(--color-text-secondary));
-    --trees-fg-muted-override: rgb(var(--color-text-muted));
-    --trees-border-color-override: rgb(var(--color-border));
-    --trees-selected-bg-override: rgb(var(--color-bg-surface));
-    --trees-selected-fg-override: rgb(var(--color-text-primary));
-    --trees-selected-focused-border-color-override: rgb(var(--color-primary));
-    --trees-focus-ring-color-override: rgb(var(--color-primary) / 0.35);
-    --trees-focus-ring-width-override: 1px;
-    --trees-focus-ring-offset-override: 0px;
-    --trees-gap-override: 2px;
-    --trees-level-gap-override: 6px;
-    --trees-item-padding-x-override: 4px;
-    --trees-item-margin-x-override: 0px;
-    --trees-padding-inline-override: 4px;
-    --trees-indent-guide-bg-override: rgb(var(--color-border));
-    --trees-scrollbar-thumb-override: rgb(var(--color-text-muted));
-    --trees-search-bg-override: rgb(var(--color-bg-base));
-    --trees-search-fg-override: rgb(var(--color-text-primary));
-    --trees-status-added-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-status-modified-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-status-renamed-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-status-untracked-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-status-deleted-override: rgb(var(--color-review-tree-removed, var(--color-diff-removed)));
-    --trees-git-added-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-git-modified-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-git-renamed-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-git-untracked-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
-    --trees-git-deleted-color-override: rgb(var(--color-review-tree-removed, var(--color-diff-removed)));
-    --trees-file-icon-color: rgb(var(--color-text-muted));
-    --trees-file-icon-color-default: rgb(var(--color-text-muted));
-    --trees-icon-blue: rgb(var(--color-text-muted));
-    --trees-icon-cyan: rgb(var(--color-text-muted));
-    --trees-icon-green: rgb(var(--color-text-muted));
-    --trees-icon-indigo: rgb(var(--color-text-muted));
-    --trees-icon-mauve: rgb(var(--color-text-muted));
-    --trees-icon-orange: rgb(var(--color-text-muted));
-    --trees-icon-pink: rgb(var(--color-text-muted));
-    --trees-icon-purple: rgb(var(--color-text-muted));
-    --trees-icon-red: rgb(var(--color-text-muted));
-    --trees-icon-teal: rgb(var(--color-text-muted));
-    --trees-icon-vermilion: rgb(var(--color-text-muted));
-    --trees-icon-yellow: rgb(var(--color-text-muted));
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    color: rgb(var(--color-text-secondary));
-    background: transparent !important;
-  }
-  button[data-type='item'] {
-    box-sizing: border-box;
-    border-radius: 6px;
-    color: rgb(var(--color-text-secondary));
-    background: transparent;
-    background-clip: padding-box;
-  }
-  button[data-type='item']:hover {
-    color: rgb(var(--color-text-primary));
-    background: rgb(var(--color-muted));
-    box-shadow:
-      0 0 0 1px rgb(var(--color-bg-base)),
-      0 1px 2px rgb(0 0 0 / 0.04);
-  }
-  button[data-type='item'][data-item-selected] {
-    color: rgb(var(--color-text-primary));
-    background: rgb(var(--color-muted)) !important;
-    box-shadow:
-      0 0 0 1px rgb(var(--color-bg-base)),
-      0 1px 2px rgb(0 0 0 / 0.04);
-  }
-  button[data-type='item'][data-item-selected='true']:has(+ [data-item-selected='true']),
-  button[data-type='item'][data-item-selected='true'] + [data-item-selected='true'] {
-    border-radius: 6px !important;
-  }
-  button[data-type='item'][data-item-focused='true']::before,
-  button[data-type='item']:focus-visible::before {
-    outline: none;
-    box-shadow: inset 0 0 0 1px var(--trees-focus-ring-color);
-  }
-  button[data-type='item'][data-item-focused='true'][data-item-selected='true']::before,
-  button[data-type='item'][data-item-selected='true']:focus-visible::before {
-    box-shadow: inset 0 0 0 1px var(--trees-selected-focused-border-color);
-  }
-  input {
-    background: rgb(var(--color-bg-base));
-    color: rgb(var(--color-text-primary));
-    border-color: rgb(var(--color-border));
-  }
-`
 
 export function ReviewFileTree({
   visible,
@@ -131,20 +42,20 @@ export function ReviewFileTree({
       aria-label={t('file_changes.file_list_label')}
     >
       <div className="px-3 pb-1.5 pt-2">
-        <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5">
-          <Search className="h-3.5 w-3.5 text-text-muted" />
-          <input
+        <div className="relative flex items-center gap-1.5">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
+          <ControlInput
             data-testid="file-changes-review-file-search-input"
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t('file_changes.file_search_placeholder')}
             aria-label={t('file_changes.file_search_placeholder')}
-            className="min-w-0 flex-1 bg-transparent text-xs leading-4 outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 pl-9"
           />
         </div>
       </div>
       <div className="scrollbar-soft min-h-0 flex-1 overflow-hidden pl-1 pr-2 pb-3">
-        <PierreReviewFileTree
+        <SdkReviewFileTree
           key={paths.join('\n')}
           paths={paths}
           query={query}
@@ -160,7 +71,7 @@ export function ReviewFileTree({
   )
 }
 
-function PierreReviewFileTree({
+function SdkReviewFileTree({
   paths,
   query,
   gitStatus,
@@ -173,56 +84,71 @@ function PierreReviewFileTree({
   selectedPath?: string
   onSelectPath: (path: string) => void
 }) {
-  const { model } = useFileTree({
-    density: 'compact',
-    flattenEmptyDirectories: true,
-    gitStatus,
-    icons: { set: 'complete', colored: false },
-    initialExpansion: 'open',
-    initialSelectedPaths: selectedPath ? [selectedPath] : [],
-    itemHeight: 28,
-    onSelectionChange: selectedPaths => {
-      const nextPath = selectedPaths[0]
-      if (nextPath) onSelectPath(nextPath)
-    },
-    paths,
-    search: false,
-    unsafeCSS: PIERRE_FILE_TREE_CSS,
-  })
-
-  const committedBinding = useRef<{ model: typeof model; query: string; selectedPath?: string }>(
-    null
+  const { t } = useTranslation('chat')
+  const data = useMemo(() => createFileTreeData(paths, query), [paths, query])
+  const { values: expanded, setValues: setExpanded } = useFileTreeExpansion(
+    data,
+    query,
+    data.directoryPaths
   )
-  const bindTree = useCallback(
-    (host: HTMLDivElement | null) => {
-      if (!host) return
-      const previous = committedBinding.current
-      if (previous?.model !== model || previous.query !== query) {
-        model.setSearch(query.trim() || null)
-      }
-      if (selectedPath && (previous?.model !== model || previous.selectedPath !== selectedPath)) {
-        model.getItem(selectedPath)?.select()
-        model.scrollToPath(selectedPath, { focus: false, offset: 'nearest' })
-      }
-      committedBinding.current = { model, query, selectedPath }
-    },
-    [model, query, selectedPath]
+  const statusByPath = useMemo(
+    () => new Map(gitStatus.map(item => [item.path, item.status])),
+    [gitStatus]
   )
-
+  const selected = resolveFileTreePath(data, selectedPath)
   return (
-    <div ref={bindTree} className="contents">
-      <FileTree
-        data-testid="pierre-file-tree"
-        model={model}
-        className="block h-full min-h-0 w-full"
-        style={
-          {
-            '--trees-border-color-override': 'rgb(var(--color-border))',
-            '--trees-fg-override': 'rgb(var(--color-text-secondary))',
-            '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
-          } as CSSProperties
-        }
-      />
-    </div>
+    <VirtualTree
+      data-testid="pierre-file-tree"
+      aria-label={t('file_changes.file_list_label')}
+      items={data.items}
+      value={selected}
+      current={selected}
+      activation="automatic"
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      viewportClassName="h-full w-full"
+      scrollToValue={selected}
+      onValueChange={path => {
+        if (path && !path.endsWith('/')) onSelectPath(path)
+      }}
+      renderLabel={(item, state) => {
+        const status = statusByPath.get(item.value)
+        return (
+          <>
+            {state.branch ? (
+              state.expanded ? (
+                <FolderOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <Folder className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )
+            ) : (
+              <WorkspaceFileIcon
+                path={item.value}
+                testId={`review-file-tree-icon-${item.value}`}
+                colored={false}
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {status && (
+              <span
+                data-git-status={status}
+                style={{
+                  color:
+                    status === 'deleted'
+                      ? 'rgb(var(--color-review-tree-removed,var(--color-diff-removed)))'
+                      : 'rgb(var(--color-review-tree-added,var(--color-diff-added)))',
+                }}
+                aria-label={t(
+                  `file_changes.${{ added: 'created_file', deleted: 'deleted_file', modified: 'edited_file', renamed: 'renamed_file' }[status]}`,
+                  { filename: item.label }
+                )}
+              >
+                {{ added: 'A', deleted: 'D', modified: 'M', renamed: 'R' }[status]}
+              </span>
+            )}
+          </>
+        )
+      }}
+    />
   )
 }

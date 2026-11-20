@@ -259,16 +259,7 @@ async function withTimeout(promise, timeoutMs, message) {
   ]).finally(() => clearTimeout(timer))
 }
 
-async function assertNoticeCenteredInBrowserPanel(control) {
-  const [noticeMetrics] = JSON.parse(
-    await control.command('getElementMetrics', TRANSIENT_NOTICE_SELECTOR)
-  )
-  const [panelMetrics] = JSON.parse(
-    await control.command(
-      'getElementMetrics',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
-    )
-  )
+function assertNoticeCenteredInBrowserPanel(noticeMetrics, panelMetrics) {
   const noticeCenter = noticeMetrics.left + noticeMetrics.width / 2
   const panelCenter = panelMetrics.left + panelMetrics.width / 2
 
@@ -286,6 +277,21 @@ async function assertNoticeCenteredInBrowserPanel(control) {
       panelMetrics,
     })}`
   )
+}
+
+async function clearBrowserData(control, clickSelector, timeoutMs) {
+  const [notice] = JSON.parse(
+    await control.command('getElementMetrics', TRANSIENT_NOTICE_SELECTOR, {
+      text: BROWSER_CLEAR_STARTED_TEXT,
+      timeoutMs,
+      value: JSON.stringify({ clickSelector }),
+    })
+  )
+  await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+    text: BROWSER_CLEAR_COMPLETED_TEXT,
+    timeoutMs: 35_000,
+  })
+  return notice
 }
 
 async function waitForControlValue(control, selector, expected, timeoutMs, message) {
@@ -1289,15 +1295,7 @@ export function createDesktopScenario({
         enabled: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', BROWSER_CLEAR_COOKIES_SELECTOR)
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_STARTED_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_COMPLETED_TEXT,
-        timeoutMs: 35_000,
-      })
+      await clearBrowserData(control, BROWSER_CLEAR_COOKIES_SELECTOR, uiTimeoutMs)
       await bridgeCall({ action: 'open', url: cookieVerificationUrl, timeoutMs: 8_000 })
       await bridgeCall({
         action: 'waitFor',
@@ -1334,16 +1332,18 @@ export function createDesktopScenario({
         enabled: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', BROWSER_CLEAR_CACHE_SELECTOR)
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_STARTED_TEXT,
-        timeoutMs: uiTimeoutMs,
-      })
-      await assertNoticeCenteredInBrowserPanel(control)
-      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
-        text: BROWSER_CLEAR_COMPLETED_TEXT,
-        timeoutMs: 35_000,
-      })
+      const [panelMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
+        )
+      )
+      const noticeMetrics = await clearBrowserData(
+        control,
+        BROWSER_CLEAR_CACHE_SELECTOR,
+        uiTimeoutMs
+      )
+      assertNoticeCenteredInBrowserPanel(noticeMetrics, panelMetrics)
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
       await waitForElementCount(
         control,

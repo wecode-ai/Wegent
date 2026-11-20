@@ -1,16 +1,12 @@
-import { useDocumentEvent } from '@wegent/collaboration/dom-events'
-import { GitBranch, Info, Link2 } from 'lucide-react'
-import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
-import { buildConversationOutputs } from '@/features/dsh-runtime/conversationOutputs'
 import type {
   ConversationOutputsHostService,
   ConversationSummaryResource,
   EnvironmentHostService,
 } from '@/features/dsh-runtime/conversationHostServices'
 import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import { buildConversationOutputs } from '@/features/dsh-runtime/conversationOutputs'
 import type { ConversationSummarySurfaceServices } from '@/features/dsh-runtime/conversationSummarySurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,6 +15,13 @@ import { cn } from '@/lib/utils'
 import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import { GitBranch, Info, Link2 } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 import { EnvironmentSummaryOverview } from './EnvironmentSummaryOverview'
 import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
@@ -51,10 +54,6 @@ interface EnvironmentInfoPopoverProps {
   onConfigureSupervisor?: () => void
   onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
 }
-
-const FLOATING_POPOVER_WIDTH = 300
-const FLOATING_POPOVER_GAP = 8
-const FLOATING_POPOVER_MARGIN = 16
 
 function commandStringArgument(args: unknown, key: string): string {
   if (typeof args !== 'object' || args === null) return ''
@@ -107,39 +106,12 @@ export function EnvironmentInfoPopover({
   onRunSupervisorNow,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
-  const rootRef = useRef<HTMLDivElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
+  const theme = useCollaborationPortalTheme()
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
-
-  function handleToggleOpen() {
-    const nextOpen = !open
-    if (nextOpen && !docked) setFloatingPopoverStyle(getFloatingPopoverPosition())
-    onOpenChange(nextOpen)
-    if (nextOpen) void onRefresh?.()
+  function changeOpen(next: boolean) {
+    onOpenChange(next)
+    if (next) void onRefresh?.()
   }
-
-  useDocumentEvent(
-    'pointerdown',
-    event => {
-      const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target))
-        onOpenChange(false)
-    },
-    { enabled: open && !docked }
-  )
-
-  function getFloatingPopoverPosition(): CSSProperties | undefined {
-    const anchor = rootRef.current?.getBoundingClientRect()
-    if (!anchor) return undefined
-
-    const maxLeft = window.innerWidth - FLOATING_POPOVER_WIDTH - FLOATING_POPOVER_MARGIN
-    return {
-      left: `${Math.max(FLOATING_POPOVER_MARGIN, Math.min(anchor.right - FLOATING_POPOVER_WIDTH, maxLeft))}px`,
-      top: `${anchor.bottom + FLOATING_POPOVER_GAP}px`,
-    }
-  }
-
   const environmentService: EnvironmentHostService = {
     read: () => ({ devices, info }),
   }
@@ -181,113 +153,139 @@ export function EnvironmentInfoPopover({
     },
   }
 
-  const popoverPortalContainer = docked
-    ? popoverContainer
-    : typeof document !== 'undefined'
-      ? document.body
-      : null
+  const content = (
+    <>
+      <EnvironmentSummaryOverview devices={devices} info={info} />
+      <DshContributionSlotSurface
+        attachedClassName="contents"
+        props={{
+          context: {
+            'conversation.available': true,
+            'conversation.title': branchNameSource,
+            'workspace.isGitRepository': gitRepositoryContextValue(info, isGitRepository),
+          },
+          docked,
+          onClose: () => onOpenChange(false),
+          services,
+        }}
+        slot={WEWORK_DSH_SLOTS.conversationSummary}
+      />
+
+      {(onManageTodo || onDeliver || (supervisor && onConfigureSupervisor)) && (
+        <div className="mt-3 space-y-3">
+          {(onManageTodo || onDeliver) && (
+            <section className="border-t border-border pt-3">
+              {onManageTodo && (
+                <ControlButton
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="environment-todo-binding-button"
+                  onClick={onManageTodo}
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                >
+                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                    <Link2 className="h-[18px] w-[18px]" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{todoLabel || '关联项目空间'}</span>
+                </ControlButton>
+              )}
+              {onDeliver && (
+                <ControlButton
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="environment-delivery-button"
+                  onClick={onDeliver}
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                >
+                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                    <GitBranch className="h-[18px] w-[18px]" />
+                  </span>
+                  <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
+                </ControlButton>
+              )}
+            </section>
+          )}
+          {supervisor && onConfigureSupervisor && (
+            <section
+              data-testid="environment-supervisor-section"
+              className="border-t border-border pt-3"
+            >
+              <TaskSupervisorStatusButton
+                supervisor={supervisor}
+                onClick={onConfigureSupervisor}
+                onRunNow={onRunSupervisorNow}
+              />
+            </section>
+          )}
+        </div>
+      )}
+      {footer && <div className="mt-3 border-t border-border pt-3">{footer}</div>}
+    </>
+  )
+
+  const trigger = (
+    <ControlButton
+      variant="ghost"
+      size="sm"
+      type="button"
+      data-testid="environment-info-button"
+      onClick={docked ? () => changeOpen(!open) : undefined}
+      className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
+      aria-expanded={open}
+      aria-label={taskSummaryToggleLabel}
+    >
+      <Info />
+    </ControlButton>
+  )
 
   return (
-    <div ref={rootRef}>
-      <Tooltip
-        label={taskSummaryToggleLabel}
-        side="bottom"
-        align="end"
-        testId="environment-info-button-tooltip"
+    <div>
+      <Popover
+        open={open && !docked}
+        onOpenChange={(next, details) => {
+          if (docked) details.cancel()
+          else changeOpen(next)
+        }}
       >
-        <button
-          type="button"
-          data-testid="environment-info-button"
-          onClick={handleToggleOpen}
-          className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
-          aria-expanded={open}
-          aria-label={taskSummaryToggleLabel}
+        <Tooltip
+          label={taskSummaryToggleLabel}
+          side="bottom"
+          align="end"
+          testId="environment-info-button-tooltip"
         >
-          <Info />
-        </button>
-      </Tooltip>
+          {docked ? trigger : <PopoverTrigger render={trigger} />}
+        </Tooltip>
 
-      {open &&
-        popoverPortalContainer &&
-        createPortal(
-          <div
-            ref={popoverRef}
+        {docked ? (
+          open &&
+          popoverContainer &&
+          createPortal(
+            <div
+              data-environment-info-popover
+              data-testid="environment-info-popover"
+              className="pointer-events-auto ml-2 mt-3 w-75 rounded-xl border border-border bg-background p-5 text-text-primary shadow-lg"
+            >
+              {content}
+            </div>,
+            popoverContainer
+          )
+        ) : (
+          <PopoverContent
+            {...theme}
+            aria-label={taskSummaryToggleLabel}
+            align="end"
+            sideOffset={8}
+            collisionPadding={16}
             data-environment-info-popover
             data-testid="environment-info-popover"
-            style={docked ? undefined : floatingPopoverStyle}
-            className={cn(
-              'pointer-events-auto w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-md backdrop-blur-3xl backdrop-saturate-150',
-              docked ? 'ml-2 mt-3' : 'fixed z-system'
-            )}
+            className={cn(theme.className, controlPopup, 'w-75 p-5')}
           >
-            <EnvironmentSummaryOverview devices={devices} info={info} />
-            <DshContributionSlotSurface
-              attachedClassName="contents"
-              props={{
-                context: {
-                  'conversation.available': true,
-                  'conversation.title': branchNameSource,
-                  'workspace.isGitRepository': gitRepositoryContextValue(info, isGitRepository),
-                },
-                docked,
-                onClose: () => onOpenChange(false),
-                services,
-              }}
-              slot={WEWORK_DSH_SLOTS.conversationSummary}
-            />
-
-            {(onManageTodo || onDeliver || (supervisor && onConfigureSupervisor)) && (
-              <div className="mt-3 space-y-3">
-                {(onManageTodo || onDeliver) && (
-                  <section className="border-t border-border pt-3">
-                    {onManageTodo && (
-                      <button
-                        type="button"
-                        data-testid="environment-todo-binding-button"
-                        onClick={onManageTodo}
-                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                      >
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                          <Link2 className="h-[18px] w-[18px]" />
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">
-                          {todoLabel || '关联项目空间'}
-                        </span>
-                      </button>
-                    )}
-                    {onDeliver && (
-                      <button
-                        type="button"
-                        data-testid="environment-delivery-button"
-                        onClick={onDeliver}
-                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                      >
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                          <GitBranch className="h-[18px] w-[18px]" />
-                        </span>
-                        <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
-                      </button>
-                    )}
-                  </section>
-                )}
-                {supervisor && onConfigureSupervisor && (
-                  <section
-                    data-testid="environment-supervisor-section"
-                    className="border-t border-border pt-3"
-                  >
-                    <TaskSupervisorStatusButton
-                      supervisor={supervisor}
-                      onClick={onConfigureSupervisor}
-                      onRunNow={onRunSupervisorNow}
-                    />
-                  </section>
-                )}
-              </div>
-            )}
-            {footer && <div className="mt-3 border-t border-border pt-3">{footer}</div>}
-          </div>,
-          popoverPortalContainer
+            {content}
+          </PopoverContent>
         )}
+      </Popover>
     </div>
   )
 }

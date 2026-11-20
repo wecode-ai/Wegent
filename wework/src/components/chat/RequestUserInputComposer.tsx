@@ -1,13 +1,14 @@
-import { useId, useRef, useState, type ReactNode } from 'react'
-import { useFocusRequest } from '@wegent/collaboration/dom-events'
-import { ChevronDown } from 'lucide-react'
-import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
   canDiscussQuestion,
   questionDiscussionKey,
 } from '@/features/notifications/questionDiscussion'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { RuntimeTaskAddress } from '@/types/api'
+import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown } from 'lucide-react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 
 /** Keep unanswered business questions recoverable beside the ordinary composer. */
 export function RequestUserInputComposer({
@@ -63,7 +64,8 @@ export function RequestUserInputComposer({
         </div>
       )}
       {payload && hidden && canCollapse && (
-        <button
+        <ControlButton
+          variant="unstyled"
           ref={expand}
           type="button"
           data-testid="request-user-input-expand"
@@ -77,7 +79,7 @@ export function RequestUserInputComposer({
           </span>
           <span className="shrink-0">{t('question_discussion.expand_reply')}</span>
           <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
-        </button>
+        </ControlButton>
       )}
       {(!payload || hidden) && children}
     </>

@@ -1,9 +1,9 @@
+import type { SearchableSelectOption } from '../controls/SearchableSelect'
 import type { CollaborationTranslate } from '../i18n'
-import type { CollaborationIssue, CollaborationProject, CollaborationStatus } from '../types'
 import type { ProjectBoardColumn } from '../project-board/ProjectBoardBody'
-import type { ProjectBoardGroupBy } from '../project-board/useProjectBoardState'
-import { collectProjectTags } from '../project-board/projectTags'
 import { defaultBoardViewId, savedBoardColumns } from '../project-board/projectBoardViews'
+import { collectProjectTags } from '../project-board/projectTags'
+import type { ProjectBoardGroupBy } from '../project-board/useProjectBoardState'
 import {
   createStandardCloudBoardColumns,
   matchesStandardCloudBoardColumn,
@@ -11,7 +11,7 @@ import {
   standardCloudBoardMutationUpdate,
 } from '../project-board/useStandardCloudBoardController'
 import { hasTooManyTags } from '../tagging'
-import type { IssueDetailSearchableSelectOption } from './IssueDetailControls'
+import type { CollaborationIssue, CollaborationProject, CollaborationStatus } from '../types'
 import type { SharedIssueDetailPort } from './createSharedIssueDetailPort'
 import { persistIssueDetailFields } from './persistIssueDetailFields'
 
@@ -23,7 +23,7 @@ export interface IssueCommentBoardContext {
 }
 
 export interface CommentIssueActions {
-  moves: IssueDetailSearchableSelectOption[]
+  moves: SearchableSelectOption[]
   assigneeMoves?: string[]
   boardName: string
   currentColumns: string[]

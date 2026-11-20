@@ -1,3 +1,5 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { useFocusRequest, useDOMEvent } from '@wegent/collaboration/dom-events'
 import { useRef } from 'react'
 import {
@@ -114,26 +116,28 @@ export function SmartAppCard({
       className="flex min-h-52 flex-col rounded-2xl border border-border/45 bg-background p-5 transition-colors hover:border-border/70 hover:bg-surface/20"
     >
       {onDetails ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="flex items-start gap-4 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
           onClick={onDetails}
         >
           {identity}
-        </button>
+        </ControlButton>
       ) : (
         <div className="flex items-start gap-4">{identity}</div>
       )}
       <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
         {visibility.onClick ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={visibility.testId}
             className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/50 bg-background px-2 text-text-primary hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
             onClick={visibility.onClick}
           >
             {visibilityContent}
-          </button>
+          </ControlButton>
         ) : (
           <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/50 px-2 text-text-primary">
             {visibilityContent}
@@ -212,17 +216,16 @@ export function SmartAppDetails({
   })
 
   return (
-    <div
-      className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4"
-      onClick={onClose}
-    >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="smart-app-details-title"
-        data-testid="smart-app-details"
-        className="plugin-dialog-surface flex max-h-[min(760px,92dvh)] w-full max-w-[720px] flex-col overflow-hidden rounded-b-none sm:rounded-b-[20px]"
-        onClick={event => event.stopPropagation()}
+    <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4">
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            aria-labelledby="smart-app-details-title"
+            data-testid="smart-app-details"
+            className="plugin-dialog-surface flex max-h-[min(760px,92dvh)] w-full max-w-[720px] flex-col overflow-hidden rounded-b-none sm:rounded-b-[20px]"
+          />
+        }
       >
         <header
           className="plugin-dialog-divider flex shrink-0 items-start gap-4 border-b px-5 py-4 sm:px-6 sm:py-5"
@@ -249,7 +252,8 @@ export function SmartAppDetails({
               · v{item.version}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             ref={closeRef}
             type="button"
             aria-label={t('common.close', '关闭')}
@@ -258,7 +262,7 @@ export function SmartAppDetails({
             onClick={onClose}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         <div
           className="scrollbar-soft min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"
@@ -384,7 +388,7 @@ export function SmartAppDetails({
               : t('workbench.smart_apps_download_install', '下载并安装')}
           </Button>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

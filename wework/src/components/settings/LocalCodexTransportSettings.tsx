@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from 'react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { Button } from '@wegent/collaboration/markdown/Button'
 import {
   getLocalCodexTransport,
   saveLocalCodexTransport,
@@ -54,28 +55,28 @@ export function LocalCodexTransportSettings() {
           )}
         </>
       }
-      control={
-        snapshot.status === 'error' ? (
-          <button
-            type="button"
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
-            data-testid="local-codex-transport-retry"
-            onClick={() => void resource.reload()}
-          >
-            {t('common.retry')}
-          </button>
-        ) : (
-          <SettingsSegmentedControl
-            label={label}
-            value={snapshot.data ?? ''}
-            options={transportOptions}
-            disabled={snapshot.status !== 'ready' || saving}
-            onChange={transport => {
-              if (transport) void changeTransport(transport)
-            }}
-          />
-        )
-      }
-    />
+    >
+      {snapshot.status === 'error' ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="local-codex-transport-retry"
+          onClick={() => void resource.reload()}
+        >
+          {t('common.retry')}
+        </Button>
+      ) : (
+        <SettingsSegmentedControl
+          label={label}
+          value={snapshot.data ?? ''}
+          options={transportOptions}
+          disabled={snapshot.status !== 'ready' || saving}
+          onChange={transport => {
+            if (transport) void changeTransport(transport)
+          }}
+        />
+      )}
+    </SettingsRow>
   )
 }

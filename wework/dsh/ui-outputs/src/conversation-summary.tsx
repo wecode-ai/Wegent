@@ -1,13 +1,14 @@
-import { FileText, Globe2, Image, Paperclip, ScrollText } from 'lucide-react'
-import type { ComponentType } from 'react'
 import {
   WEWORK_HOST_SERVICES,
-  type ConversationOutputsHostService,
   type ConversationOutputKind,
+  type ConversationOutputsHostService,
   type ConversationOutputSourceKind,
 } from '@/features/dsh-runtime/conversationHostServices'
 import type { ConversationSummarySurfaceProps } from '@/features/dsh-runtime/conversationSummarySurface'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { FileText, Globe2, Image, Paperclip, ScrollText } from 'lucide-react'
+import type { ComponentType } from 'react'
 
 const OUTPUT_ICONS: Record<ConversationOutputKind, ComponentType<{ className?: string }>> = {
   file: FileText,
@@ -40,7 +41,8 @@ export default function OutputsConversationSummary({ services }: ConversationSum
           {summary.outputs.map(output => {
             const Icon = OUTPUT_ICONS[output.kind]
             return (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={output.id}
                 type="button"
                 data-testid={`conversation-output-item-${output.id}`}
@@ -50,7 +52,7 @@ export default function OutputsConversationSummary({ services }: ConversationSum
               >
                 <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="min-w-0 flex-1 truncate">{output.title}</span>
-              </button>
+              </ControlButton>
             )
           })}
         </div>
@@ -78,7 +80,8 @@ export default function OutputsConversationSummary({ services }: ConversationSum
                 </>
               )
               return source.resource ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={source.id}
                   type="button"
                   data-testid={`conversation-source-item-${source.id}`}
@@ -87,7 +90,7 @@ export default function OutputsConversationSummary({ services }: ConversationSum
                   title={source.title}
                 >
                   {content}
-                </button>
+                </ControlButton>
               ) : (
                 <div
                   key={source.id}

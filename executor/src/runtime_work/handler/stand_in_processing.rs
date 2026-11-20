@@ -9,6 +9,15 @@ use crate::task_runtime::personal_stand_in::{
 const MAX_INTAKE_WORKERS: usize = 8;
 const INTAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
+fn stand_in_work_signature(link: &RuntimeTaskLink) -> Value {
+    json!([
+        link.turn_status,
+        link.interaction_status,
+        link.completed_at,
+        link.status
+    ])
+}
+
 struct IntakeWorker {
     revision: String,
     result: tokio::task::JoinHandle<Result<Vec<Value>, AppIpcError>>,
@@ -434,6 +443,15 @@ impl RuntimeWorkRpcHandler {
             .flatten()
     }
 
+    fn has_stand_in_work_change(&self, user: i64, state: &Value) -> bool {
+        self.store.any_unarchived_task(|link| {
+            stand_in_owns_work(link, user)
+                && state["observed"]
+                    .get(&link.local_task_id)
+                    .map_or(true, |previous| *previous != stand_in_work_signature(link))
+        })
+    }
+
     fn observe_stand_in_work(
         &self,
         store: &LocalTaskStore,
@@ -448,12 +466,7 @@ impl RuntimeWorkRpcHandler {
                 (
                     link.local_task_id.clone(),
                     link.created_at,
-                    json!([
-                        link.turn_status,
-                        link.interaction_status,
-                        link.completed_at,
-                        link.status
-                    ]),
+                    stand_in_work_signature(link),
                     link.runtime_handle["origin"]["standInId"].clone(),
                 )
             },

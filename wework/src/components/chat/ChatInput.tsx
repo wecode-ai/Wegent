@@ -1,24 +1,22 @@
-import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
-import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
-import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
-import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
-import { ComposerErrorBanner } from '@wegent/collaboration/composer'
-import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
-import { QuotaWaitStatus } from './QuotaWaitStatus'
-import {
-  forwardRef,
-  useContext,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
-import { createPortal } from 'react-dom'
+import type { CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
-import { useTranslation } from '@/hooks/useTranslation'
+import type { QuickPhrase } from '@/desktop/appPreferences'
+import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
+import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
+import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
+import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  buildConversationMentionCandidates,
+  type ConversationMentionCandidate,
+} from '@/lib/conversation-mentions'
+import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type {
   Attachment,
   DeviceInfo,
@@ -41,31 +39,34 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
-import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import type { CloudProject } from '@/api/deliveries'
-import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
-import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { ComposerErrorBanner } from '@wegent/collaboration/composer'
+import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
+import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
+import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import {
-  buildConversationMentionCandidates,
-  type ConversationMentionCandidate,
-} from '@/lib/conversation-mentions'
+  forwardRef,
+  useContext,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
+import { QuotaWaitStatus } from './QuotaWaitStatus'
 import { CompactChatComposer } from './composer/CompactChatComposer'
+import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
+import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ConversationEventContext } from './composer/ConversationEventContext'
-import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
-import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
-import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
-import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
-import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
-import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { QuickPhrase } from '@/desktop/appPreferences'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
+import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -977,12 +978,15 @@ function QueueResumeDialog({
       data-testid="paused-queue-send-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="paused-queue-send-dialog-title"
-        data-testid="paused-queue-send-dialog"
-        className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+      <DialogSurface
+        onClose={onCancel}
+        render={
+          <div
+            aria-labelledby="paused-queue-send-dialog-title"
+            data-testid="paused-queue-send-dialog"
+            className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <h2
           id="paused-queue-send-dialog-title"
@@ -1025,7 +1029,7 @@ function QueueResumeDialog({
             {t('queue.send_with_paused_preserve')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
@@ -1051,13 +1055,16 @@ function ModelSwitchWarningDialog({
       data-testid="model-switch-warning-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="model-switch-warning-dialog-title"
-        aria-describedby="model-switch-warning-dialog-description"
-        data-testid="model-switch-warning-dialog"
-        className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
+      <DialogSurface
+        onClose={onCancel}
+        render={
+          <div
+            aria-labelledby="model-switch-warning-dialog-title"
+            aria-describedby="model-switch-warning-dialog-description"
+            data-testid="model-switch-warning-dialog"
+            className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
+          />
+        }
       >
         <h2 id="model-switch-warning-dialog-title" className="heading-small text-text-primary">
           {continueInNewConversation
@@ -1119,7 +1126,7 @@ function ModelSwitchWarningDialog({
               : t('workbench.model_switch_warning_confirm', 'Switch model')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

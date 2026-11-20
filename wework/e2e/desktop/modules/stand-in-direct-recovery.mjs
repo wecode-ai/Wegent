@@ -426,7 +426,7 @@ export function createDirectRecoveryVerification(options) {
         await control.command('clickWhenEnabled', '[data-testid="stand-in-preview-open"]')
         const restored = await storyUntil(
           () => rpc(control, 'runtime.tasks.get', { taskId: direct.taskId }),
-          value => value.task?.status !== 'archived',
+          value => value.task != null && value.task.status !== 'archived',
           options.modelResponseTimeoutMs,
           'Explicit source restoration must use the existing native unarchive operation'
         )

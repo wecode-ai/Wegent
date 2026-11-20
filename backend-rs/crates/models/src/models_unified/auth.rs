@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Bearer JWT authentication, ported from `app/core/security.py` and
-//! `app/core/jwt_compat.py`.
+//! Bearer authentication for model catalogs. User sessions use the verification
+//! ported from `app/core/security.py` and `app/core/jwt_compat.py`. Unattended
+//! model requests resolve personal API keys through the shared key verifier.
 //!
 //! The endpoint is served under the source's FastAPI security dependency:
 //! a request without a bearer credential yields 401 "Not authenticated", a
@@ -14,6 +15,7 @@ use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response, StatusCode};
 
 use super::mysql::UserRow;
 use wegent_backend_config::AuthConfig;
+use wegent_identity::runtime_model_auth::RuntimeModelIdentity;
 
 pub struct AuthenticatedUser(pub UserRow);
 
@@ -34,20 +36,25 @@ impl brz_http_server::Authenticator<AuthenticatedUser> for wegent_identity::auth
             .header("authorization")
             .and_then(|v| std::str::from_utf8(v).ok());
         let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-        authenticate(&headers.view(), &self.state().mysql, &self.state().auth)
-            .await
-            .map_err(|error| match error {
-                AuthError::MissingCredentials => {
-                    brz_http_server::AuthFailure::missing_credentials("Bearer")
-                }
-                AuthError::InvalidCredentials => {
-                    brz_http_server::AuthFailure::invalid_credentials("Bearer")
-                }
-                AuthError::UserNotActive => {
-                    brz_http_server::AuthFailure::invalid_credentials(MODELS_USER_INACTIVE)
-                }
-                AuthError::Internal(_) => brz_http_server::AuthFailure::Internal,
-            })
+        authenticate(
+            &headers.view(),
+            &self.state().mysql,
+            &self.state().auth,
+            self.state().runtime_model_keys.as_ref(),
+        )
+        .await
+        .map_err(|error| match error {
+            AuthError::MissingCredentials => {
+                brz_http_server::AuthFailure::missing_credentials("Bearer")
+            }
+            AuthError::InvalidCredentials => {
+                brz_http_server::AuthFailure::invalid_credentials("Bearer")
+            }
+            AuthError::UserNotActive => {
+                brz_http_server::AuthFailure::invalid_credentials(MODELS_USER_INACTIVE)
+            }
+            AuthError::Internal(_) => brz_http_server::AuthFailure::Internal,
+        })
     }
 
     fn api_log_id<'a>(
@@ -130,19 +137,40 @@ pub async fn authenticate<M: brz_mysql::Mysql>(
     headers: &impl crate::headers::Headers,
     mysql: &M,
     config: &AuthConfig,
+    keys: &dyn wegent_identity::runtime_model_auth::PersonalModelKeyReader,
 ) -> Result<AuthenticatedUser, AuthError> {
     let token = bearer_token(headers)?;
-    let username = wegent_identity::auth::decode_session_claims(config, &token)
-        .and_then(|claims| claims.username())
-        .ok_or(AuthError::InvalidCredentials)?;
-    let user = mysql
-        .fetch_optional::<_, _, UserRow>(
-            "SELECT id, user_name, email, git_info, is_active, role, auth_source, \
+    let identity =
+        wegent_identity::runtime_model_auth::verify_runtime_model_token(config, keys, &token)
+            .await
+            .map_err(|error| match error {
+                wegent_identity::auth::AuthFailure::Dependency => {
+                    AuthError::Internal("Model authentication dependency failed".to_string())
+                }
+                wegent_identity::auth::AuthFailure::UserNotActivated => AuthError::UserNotActive,
+                _ => AuthError::InvalidCredentials,
+            })?;
+    let user = match identity {
+        RuntimeModelIdentity::Session(username) => {
+            mysql
+                .fetch_optional::<_, _, UserRow>(
+                    "SELECT id, user_name, email, git_info, is_active, role, auth_source, \
              preferences FROM users WHERE user_name = ? LIMIT 1",
-            (username.as_str(),),
-        )
-        .await
-        .map_err(|error| AuthError::Internal(format!("database error: {error}")))?;
+                    (username.as_str(),),
+                )
+                .await
+        }
+        RuntimeModelIdentity::PersonalKey(user_id) => {
+            mysql
+                .fetch_optional::<_, _, UserRow>(
+                    "SELECT id, user_name, email, git_info, is_active, role, auth_source, \
+                 preferences FROM users WHERE id = ? LIMIT 1",
+                    (user_id,),
+                )
+                .await
+        }
+    }
+    .map_err(|error| AuthError::Internal(format!("database error: {error}")))?;
     let user = user.ok_or(AuthError::InvalidCredentials)?;
     if !user.is_active {
         return Err(AuthError::UserNotActive);
@@ -169,6 +197,25 @@ fn bearer_token(headers: &impl crate::headers::Headers) -> Result<String, AuthEr
         return Err(AuthError::MissingCredentials);
     }
     Ok(token.to_string())
+}
+
+#[cfg(test)]
+struct RejectedKeys;
+
+#[cfg(test)]
+impl wegent_identity::runtime_model_auth::PersonalModelKeyReader for RejectedKeys {
+    fn owner_id<'a>(
+        &'a self,
+        _token: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<i32, wegent_identity::auth::AuthFailure>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async { Err(wegent_identity::auth::AuthFailure::InvalidCredentials) })
+    }
 }
 
 #[cfg(test)]
@@ -243,7 +290,7 @@ mod tests {
             ("empty header", Some("")),
         ] {
             let headers = OwnedHeaders::from_pairs([("authorization", value)]);
-            let error = authenticate(&headers.view(), &mysql, &config())
+            let error = authenticate(&headers.view(), &mysql, &config(), &super::RejectedKeys)
                 .await
                 .err()
                 .unwrap_or_else(|| panic!("{label} must be rejected"));
@@ -265,7 +312,7 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         for value in ["Bearer ", "Bearer"] {
             let headers = OwnedHeaders::from_pairs([("authorization", Some(value))]);
-            let error = authenticate(&headers.view(), &mysql, &config())
+            let error = authenticate(&headers.view(), &mysql, &config(), &super::RejectedKeys)
                 .await
                 .err()
                 .unwrap_or_else(|| panic!("{value:?} must be rejected"));
@@ -326,9 +373,14 @@ mod python_compatibility {
             )]);
             let mysql = crate::sql_test_support::KindQueryCapture::default();
             assert!(
-                super::authenticate(&headers.view(), &mysql, &config("HS256"))
-                    .await
-                    .is_err()
+                super::authenticate(
+                    &headers.view(),
+                    &mysql,
+                    &config("HS256"),
+                    &super::RejectedKeys
+                )
+                .await
+                .is_err()
             );
             assert_eq!(!mysql.queries().is_empty(), expected, "{name}");
         }
@@ -350,10 +402,15 @@ mod python_compatibility {
             ("unsupported", 0),
         ] {
             let mysql = crate::sql_test_support::KindQueryCapture::default();
-            let error = super::authenticate(&headers.view(), &mysql, &config(algorithm))
-                .await
-                .err()
-                .expect("the test user does not exist");
+            let error = super::authenticate(
+                &headers.view(),
+                &mysql,
+                &config(algorithm),
+                &super::RejectedKeys,
+            )
+            .await
+            .err()
+            .expect("the test user does not exist");
             assert!(matches!(error, super::AuthError::InvalidCredentials));
             assert_eq!(mysql.queries().len(), expected_queries, "{algorithm}");
         }

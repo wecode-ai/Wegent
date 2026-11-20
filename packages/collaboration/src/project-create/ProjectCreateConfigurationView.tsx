@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
 import { useOwnedFocusTarget } from '../dom-events'
 import { ArrowLeft } from 'lucide-react'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
+import { useRef, type ReactNode } from 'react'
+import { InlinePanel } from '../controls/InlinePanel'
+import { Button as ControlButton } from '../markdown/Button'
 
 /** A configuration step within the existing project dialog, preserving its draft. */
 export function ProjectCreateConfigurationView({
@@ -25,36 +26,32 @@ export function ProjectCreateConfigurationView({
   focusTarget?: string | null
   focusLabel?: string
 }) {
-  const ref = useDialogKeyboard<HTMLElement>(
-    onBack,
-    active,
-    '[contenteditable="true"], input:not([disabled]), select:not([disabled]), button:not([disabled])',
-    false,
-    restoreFocus
-  )
+  const ref = useRef<HTMLElement>(null)
   useOwnedFocusTarget(ref, focusTarget, active)
   return (
-    <section
+    <InlinePanel
       ref={ref}
+      onEscape={onBack}
+      active={active}
+      initialFocus={focusTarget === undefined ? undefined : null}
+      restoreFocus={restoreFocus}
       aria-label={focusLabel}
       className="collaboration-project-create-configuration"
       data-testid={testId}
-      tabIndex={-1}
-      hidden={!active}
-      style={active ? undefined : { display: 'none' }}
     >
       <div className="collaboration-project-create-configuration-body">{children}</div>
       <footer className="collaboration-project-create-footer">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-project-create-configuration-back"
           onClick={onBack}
         >
           <ArrowLeft size={16} aria-hidden="true" />
           {backLabel}
-        </button>
+        </ControlButton>
         {footer}
       </footer>
-    </section>
+    </InlinePanel>
   )
 }

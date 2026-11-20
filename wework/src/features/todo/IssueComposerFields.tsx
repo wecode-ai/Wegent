@@ -1,3 +1,7 @@
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { RefObject } from 'react'
 import { ChevronDown, CircleUserRound, Flag, Folder, Paperclip, Tag, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProject, CloudProjectMember } from '@/api/deliveries'
@@ -42,111 +46,112 @@ export function IssueComposerFields({
 }) {
   const { t } = useTranslation()
   const { boardKey, status, priority, tags, assigneeUserId } = draft
+  const projectOptions = [
+    ...(!projects.some(project => project.project_store + ':' + project.id === boardKey) && boardKey
+      ? [
+          {
+            value: boardKey,
+            label:
+              selectedWorkItemProject?.name ?? t('workbench.default_work_item_board', '我的任务'),
+          },
+        ]
+      : []),
+    ...projects.map(project => ({
+      value: project.project_store + ':' + project.id,
+      label: project.name,
+    })),
+  ]
+  const priorityOptions = [
+    { value: 'none', label: t('todo.priority_none', '无优先级') },
+    { value: 'low', label: t('todo.priority_low', '低') },
+    { value: 'medium', label: t('todo.priority_medium', '普通') },
+    { value: 'high', label: t('todo.priority_high', '高') },
+    { value: 'urgent', label: t('todo.priority_urgent', '紧急') },
+  ] as const
   return (
     <div className="mt-4 flex flex-wrap items-center gap-2">
-      <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-        <Folder className="h-4 w-4 shrink-0 text-text-muted" />
-        <span className="max-w-48 truncate font-medium text-text-primary">
-          {selectedWorkItemProject?.name ?? t('workbench.default_work_item_board', '我的任务')}
-        </span>
-        <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" />
-        <select
-          data-testid="workspace-issue-project"
-          aria-label={t('todo.issue_project_label', '项目空间')}
-          value={boardKey}
-          disabled={busy || projects.length === 0}
-          onChange={event => selectBoard(event.target.value)}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-        >
-          {!projects.some(
-            project => `${project.project_store}:${String(project.id)}` === boardKey
-          ) && boardKey ? (
-            <option value={boardKey}>
+      <SelectField
+        testId="workspace-issue-project"
+        accessibleLabel={t('todo.issue_project_label', '项目空间')}
+        value={boardKey}
+        options={projectOptions}
+        onChange={selectBoard}
+        disabled={busy || projects.length === 0}
+        triggerContent={
+          <span className="flex min-w-0 items-center gap-2">
+            <Folder className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+            <span className="truncate">
               {selectedWorkItemProject?.name ?? t('workbench.default_work_item_board', '我的任务')}
-            </option>
-          ) : null}
-          {projects.map(project => (
-            <option
-              key={`${project.project_store}:${String(project.id)}`}
-              value={`${project.project_store}:${String(project.id)}`}
-            >
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-        <span className="h-2 w-2 rounded-full bg-text-muted wework:bg-zinc-400" />
-        <span className="font-medium text-text-primary">
-          {statusOptions.find(option => option.id === status)?.name ?? status}
-        </span>
-        <ChevronDown className="h-3 w-3 text-text-muted" />
-        <select
-          data-testid="workspace-issue-status"
-          aria-label={t('todo.status', '状态')}
-          value={status}
-          disabled={busy}
-          onChange={event => setField('status', event.target.value as CloudLoopItem['status'])}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-        >
-          {statusOptions.map(option => (
-            <option key={option.id} value={option.id}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-        <Flag className="h-3.5 w-3.5 text-text-muted" />
-        <span className="font-medium text-text-primary">
-          {priority === 'none'
-            ? t('todo.priority_none', '无优先级')
-            : priority === 'low'
-              ? t('todo.priority_low', '低')
-              : priority === 'medium'
-                ? t('todo.priority_medium', '普通')
-                : priority === 'high'
-                  ? t('todo.priority_high', '高')
-                  : t('todo.priority_urgent', '紧急')}
-        </span>
-        <ChevronDown className="h-3 w-3 text-text-muted" />
-        <select
-          data-testid="workspace-issue-priority"
-          aria-label={t('todo.priority', '优先级')}
-          value={priority}
-          disabled={busy}
-          onChange={event => setField('priority', event.target.value as CloudLoopItem['priority'])}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-        >
-          <option value="none">{t('todo.priority_none', '无优先级')}</option>
-          <option value="low">{t('todo.priority_low', '低')}</option>
-          <option value="medium">{t('todo.priority_medium', '普通')}</option>
-          <option value="high">{t('todo.priority_high', '高')}</option>
-          <option value="urgent">{t('todo.priority_urgent', '紧急')}</option>
-        </select>
-      </label>
-      <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-        <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-        <span className="max-w-32 truncate font-medium text-text-primary">
-          {selectedAssigneeName ?? t('todo.unassigned', '未指派')}
-        </span>
-        <ChevronDown className="h-3 w-3 text-text-muted" />
-        <select
-          data-testid="workspace-issue-assignee"
-          aria-label={t('todo.assignee', '负责人')}
-          value={assigneeUserId ?? ''}
-          disabled={busy || selectedProjectMembers.length === 0}
-          onChange={event => setField('assigneeUserId', Number(event.target.value) || null)}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-        >
-          <option value="">{t('todo.unassigned', '未指派')}</option>
-          {selectedProjectMembers.map(member => (
-            <option key={member.user_id} value={member.user_id}>
-              {member.user_name}
-            </option>
-          ))}
-        </select>
-      </label>
+            </span>
+          </span>
+        }
+        className="max-w-48"
+      />
+      <SelectField
+        testId="workspace-issue-status"
+        accessibleLabel={t('todo.status', '状态')}
+        value={status}
+        options={statusOptions.map(option => ({
+          value: option.id,
+          label: option.name,
+        }))}
+        disabled={busy}
+        onChange={value => setField('status', value as CloudLoopItem['status'])}
+        triggerContent={
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-text-muted" />
+            <span className="truncate">
+              {statusOptions.find(option => option.id === status)?.name ?? status}
+            </span>
+          </span>
+        }
+      />
+      <SelectField<CloudLoopItem['priority']>
+        testId="workspace-issue-priority"
+        accessibleLabel={t('todo.priority', '优先级')}
+        value={priority}
+        options={priorityOptions}
+        disabled={busy}
+        onChange={value => setField('priority', value)}
+        triggerContent={
+          <span className="flex min-w-0 items-center gap-2">
+            <Flag className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+            <span className="truncate">
+              {priorityOptions.find(option => option.value === priority)?.label}
+            </span>
+          </span>
+        }
+      />
+      <SearchableSelect
+        testId="workspace-issue-assignee"
+        searchPlaceholder={t('todo.search_assignee')}
+        emptyLabel={t('todo.no_matching_assignee')}
+        accessibleLabel={t('todo.assignee', '负责人')}
+        value={String(assigneeUserId ?? '')}
+        options={[
+          { value: '', label: t('todo.unassigned', '未指派') },
+          ...selectedProjectMembers.map(member => ({
+            value: String(member.user_id),
+            label: member.user_name,
+          })),
+        ]}
+        disabled={busy || selectedProjectMembers.length === 0}
+        onChange={value => setField('assigneeUserId', Number(value) || null)}
+        triggerContent={
+          <>
+            <span className="flex min-w-0 items-center gap-2">
+              <CircleUserRound
+                className="h-4 w-4 shrink-0 text-text-secondary"
+                aria-hidden="true"
+              />
+              <span className="max-w-32 truncate">
+                {selectedAssigneeName ?? t('todo.unassigned', '未指派')}
+              </span>
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+          </>
+        }
+      />
       {tags.map(tag => (
         <span
           key={tag}
@@ -154,7 +159,8 @@ export function IssueComposerFields({
           className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 text-sm font-normal text-text-primary"
         >
           # {tag}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             aria-label={t('todo.remove_tag', '移除标签 {{tag}}', { tag })}
             onClick={() =>
@@ -163,12 +169,12 @@ export function IssueComposerFields({
             className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
           >
             <X className="h-3 w-3" />
-          </button>
+          </ControlButton>
         </span>
       ))}
       <label className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-sm font-normal text-text-secondary focus-within:bg-muted">
         <Tag className="h-3.5 w-3.5 text-text-muted" />
-        <input
+        <ControlInput
           data-testid="workspace-issue-tag-input"
           value={tagDraft}
           disabled={busy}
@@ -194,7 +200,8 @@ export function IssueComposerFields({
           event.target.value = ''
         }}
       />
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="workspace-issue-attach"
         disabled={busy}
@@ -207,7 +214,7 @@ export function IssueComposerFields({
               count: attachmentCount,
             })
           : t('todo.add_attachment', '添加附件')}
-      </button>
+      </ControlButton>
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
+import { Button as ControlButton } from '../markdown/Button'
 import {
   ChevronDown,
   CornerDownLeft,
@@ -472,7 +473,8 @@ function RequestUserInputForm({
     <>
       {additionalActions}
       {canSkip && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="request-user-input-skip-button"
           disabled={
@@ -483,10 +485,11 @@ function RequestUserInputForm({
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-50 md:h-8"
         >
           {t('request_user_input.skip')}
-        </button>
+        </ControlButton>
       )}
       {(!compact || canIgnore) && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="request-user-input-ignore-button"
           disabled={isDisabled || !canIgnore}
@@ -501,9 +504,11 @@ function RequestUserInputForm({
           <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
             ESC
           </kbd>
-        </button>
+        </ControlButton>
       )}
-      <button
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid="request-user-input-submit-button"
         disabled={isDisabled || !ready || questions.length === 0 || !onSubmit}
@@ -514,21 +519,22 @@ function RequestUserInputForm({
         <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/15">
           <CornerDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-      </button>
+      </ControlButton>
     </>
   )
 
   return (
     <>
       {skipped && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="request-user-input-skipped"
           onClick={() => setSkippedQuestionIds(null)}
           className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
         >
           {t('request_user_input.skipped_reply')}
-        </button>
+        </ControlButton>
       )}
       <form
         hidden={skipped}
@@ -593,7 +599,8 @@ function RequestUserInputForm({
                         (!isImplementationPlanRequest ||
                           selectedQuestionId === question.id)
                       return (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           key={`${question.id}-${option.label}-${index}`}
                           type="button"
                           data-testid={`request-user-input-option-${question.id}-${index}`}
@@ -630,7 +637,7 @@ function RequestUserInputForm({
                               </span>
                             ) : null}
                           </span>
-                        </button>
+                        </ControlButton>
                       )
                     })}
                   </div>

@@ -1,26 +1,27 @@
-import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
-import { Archive, ArrowLeftRight, MessageSquareWarning, X } from 'lucide-react'
 import { SubagentEnvironmentSummary } from '@/components/chat/SubagentConversationPanel'
-import { cn } from '@/lib/utils'
-import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
-import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
-import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
   WORKBENCH_SPLIT_ACTIONS_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { Tooltip } from '@/components/ui/tooltip'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
-import { DesktopWindowControls } from './DesktopWindowControls'
-import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { ConversationHeaderTitle } from './ConversationHeaderTitle'
+import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
 import {
   openFeedbackDialog,
   withLatestFeedbackDialogContext,
 } from '@/features/feedback/feedbackDialogStore'
+import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Archive, ArrowLeftRight, MessageSquareWarning, X } from 'lucide-react'
+import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
+import { ConversationHeaderTitle } from './ConversationHeaderTitle'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
+import { DesktopWindowControls } from './DesktopWindowControls'
 import { MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS } from './desktopWorkbenchMainHelpers'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import type { useDesktopWorkbenchPaneModel } from './useDesktopWorkbenchPaneModel'
+import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
 export function createDesktopWorkbenchPaneChrome(
   model: ReturnType<typeof useDesktopWorkbenchPaneModel>
 ) {
@@ -244,7 +245,8 @@ export function createDesktopWorkbenchPaneChrome(
   )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <Tooltip label={t('workbench.task_fork_button')} side="bottom" align="end">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="fork-runtime-task-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -252,7 +254,7 @@ export function createDesktopWorkbenchPaneChrome(
         onClick={() => setForkDialogOpen(true)}
       >
         <ArrowLeftRight />
-      </button>
+      </ControlButton>
     </Tooltip>
   ) : undefined
   const feedbackButton = isDesktop ? (
@@ -262,7 +264,8 @@ export function createDesktopWorkbenchPaneChrome(
       align="end"
       testId="task-feedback-button-tooltip"
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="task-feedback-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -277,13 +280,14 @@ export function createDesktopWorkbenchPaneChrome(
         }
       >
         <MessageSquareWarning />
-      </button>
+      </ControlButton>
     </Tooltip>
   ) : undefined
   const closeHarnessButton =
     activeLocalHarnessSession?.harnessId === 'opencode' ? (
       <Tooltip label={t('workbench.archive_harness', '归档编码会话')} side="bottom" align="end">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={
             activeLocalHarnessSession.isPrimary
@@ -297,11 +301,12 @@ export function createDesktopWorkbenchPaneChrome(
           }}
         >
           <Archive />
-        </button>
+        </ControlButton>
       </Tooltip>
     ) : activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
       <Tooltip label={t('workbench.close_harness', '关闭编码工具')} side="bottom" align="end">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="central-harness-close-button"
           className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -311,7 +316,7 @@ export function createDesktopWorkbenchPaneChrome(
           }}
         >
           <X />
-        </button>
+        </ControlButton>
       </Tooltip>
     ) : undefined
   const feedbackInChromeTitlebar = isDesktop

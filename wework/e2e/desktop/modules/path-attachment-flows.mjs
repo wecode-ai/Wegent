@@ -167,7 +167,7 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   assert.equal(
     await control.command(
       'getText',
-      '[data-testid="attachment-badge-list"] > [data-testid="attachment-badge"]:first-child'
+      `[data-testid="attachment-badge-list"] > [data-testid="attachment-badge"]:first-child [title=${JSON.stringify(PASTED_ZIP_FILENAME)}]`
     ),
     PASTED_ZIP_FILENAME,
     'A file added after pasted text must appear before the pasted-text card'
@@ -227,22 +227,29 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
 }
 
 async function verifySystemDragPanelLayout(control) {
-  await control.command('navigate', 'body', { value: '/system-drag' })
-  await control.command('waitFor', '[data-testid="system-drag-panel"]', {
+  // On macOS the inactive panel needs an active owner to return focus after the popout closes.
+  if (process.platform === 'darwin') await control.command('focusMainWindow', 'body')
+  const panelWindow = 'system-drag-panel'
+  const readyCount = control.readyCount
+  await control.command('showSystemDragPanel', 'body')
+  if (!control.controlClientsByWindow.has(panelWindow)) {
+    const ready = await control.awaitReadyAfter(readyCount, DEFAULT_STEP_TIMEOUT_MS)
+    assert.equal(ready.windowLabel, panelWindow)
+  }
+  const panel = { command: (...args) => control.commandForWindow(panelWindow, ...args) }
+  await panel.command('waitFor', '[data-testid="system-drag-panel"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     visible: true,
   })
   const [metrics] = JSON.parse(
-    await control.command('getElementMetrics', '[data-testid="system-drag-panel"]')
+    await panel.command('getElementMetrics', '[data-testid="system-drag-panel"]')
   )
   assert.deepEqual(
     { height: metrics.height, width: metrics.width },
     { height: 60, width: 440 },
     'The system drag panel did not use the compact desktop dimensions'
   )
-  const snapshot = JSON.parse(
-    await control.command('snapshot', '[data-testid="system-drag-panel"]')
-  )
+  const snapshot = JSON.parse(await panel.command('snapshot', '[data-testid="system-drag-panel"]'))
   assert.match(
     snapshot.text,
     /Create new chat|创建新对话/,
@@ -258,17 +265,16 @@ async function verifySystemDragPanelLayout(control) {
     'The system drag panel did not expose a manual close button'
   )
   await captureVerificationScreenshot(
-    control,
+    panel,
     'system-drag-panel.png',
     '[data-testid="system-drag-panel"]'
   )
-  await control.command('showSystemDragPanel', 'body')
   await waitForSystemDragPanelVisibility(
     control,
     true,
     'The native system drag panel did not become visible for manual-close verification'
   )
-  await control.command('click', '[data-testid="system-drag-close-button"]', { visible: true })
+  await panel.command('click', '[data-testid="system-drag-close-button"]', { visible: true })
   await waitForSystemDragPanelVisibility(
     control,
     false,
@@ -280,7 +286,7 @@ async function verifySystemDragPanelLayout(control) {
     true,
     'The native system drag panel did not reopen for Escape verification'
   )
-  await control.command('press', '[data-testid="system-drag-close-button"]', { key: 'Escape' })
+  await panel.command('press', '[data-testid="system-drag-close-button"]', { key: 'Escape' })
   await waitForSystemDragPanelVisibility(
     control,
     false,
@@ -290,11 +296,13 @@ async function verifySystemDragPanelLayout(control) {
   await control.command('waitFor', '[data-testid="new-chat-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const popoutReadyCount = control.readyCount
+  const draft = 'System drag Popout Window verification'
   const focusSnapshot = JSON.parse(
     await control.command('completeSystemDragDrop', 'body', {
       value: JSON.stringify({
         action: 'new-chat',
-        text: 'System drag Popout Window verification',
+        text: draft,
         paths: [],
       }),
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -315,6 +323,20 @@ async function verifySystemDragPanelLayout(control) {
       focusSnapshot.popoutExists && focusSnapshot.popoutVisible,
       true,
       'Completing a system drag did not reveal the Popout Window'
+    )
+    if (!control.controlClientsByWindow.has('popout-window')) {
+      const ready = await control.awaitReadyAfter(popoutReadyCount, WORKBENCH_READY_TIMEOUT_MS)
+      assert.equal(ready.windowLabel, 'popout-window')
+    }
+    await control.commandForWindow(
+      'popout-window',
+      'waitFor',
+      '[data-testid="chat-message-input"]',
+      {
+        visible: true,
+        text: draft,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
     )
     if (process.platform === 'darwin') {
       const dataUrl = await control.command('capturePopoutWindow', 'body', {

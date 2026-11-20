@@ -1,10 +1,6 @@
-import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
-import { ChevronDown, FileOutput, Folder, Loader2, X } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
-import { ActionMenu, type ActionMenuItem, type MenuPosition } from '@/components/common/ActionMenu'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { ActionMenu, type ActionMenuItem, type MenuPosition } from '@/components/common/ActionMenu'
+import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
@@ -13,13 +9,18 @@ import {
   prioritizeWorkspaceOpener,
   type LocalWorkspaceOpenerId,
 } from '@/lib/local-workspace-openers'
+import { normalizeWorkspaceSeparators } from '@/lib/workspace-file-contract'
 import {
   resolveWorkspaceOpener,
   setPreferredWorkspaceOpener,
   usePreferredWorkspaceOpener,
 } from '@/lib/workspace-opener-preferences'
-import { LocalWorkspaceOpenerIcon } from './LocalWorkspaceOpenerMenu'
 import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, FileOutput, Folder, Loader2, X } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { LocalWorkspaceOpenerIcon } from './LocalWorkspaceOpenerMenu'
 import { WorkspaceFileBreadcrumbs } from './WorkspaceFileBreadcrumbs'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
@@ -80,7 +81,8 @@ export function WorkspaceFileRootSelector({
       icon={Folder}
       placement="bottom-end"
       triggerLabel={<span className="min-w-0 truncate">{label(target)}</span>}
-      triggerClassName="flex h-[30px] max-w-52 items-center gap-1.5 rounded-lg border border-border px-2 text-sm text-text-primary hover:bg-muted"
+      density="dense"
+      triggerClassName="flex max-w-52 items-center gap-1.5 rounded-lg border border-border px-2 text-sm text-text-primary hover:bg-muted"
       items={unique.map(candidate => ({
         testId: `workspace-file-root-option-${candidate.path}`,
         label: <span title={candidate.path}>{label(candidate)}</span>,
@@ -334,7 +336,8 @@ export function WorkspaceFileToolbar({
           {children}
           {local && (
             <div className="inline-flex h-[30px] items-center rounded-lg border border-border">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="workspace-file-open-file-button"
                 disabled={opening || openers === null}
@@ -349,7 +352,7 @@ export function WorkspaceFileToolbar({
                   <FileOutput className="h-4 w-4" />
                 )}
                 {t('workbench.workspace_file_open')}
-              </button>
+              </ControlButton>
               {!isDirectory && (
                 <ActionMenu
                   testId="workspace-file-open-file-picker-button"
@@ -357,7 +360,8 @@ export function WorkspaceFileToolbar({
                   ariaLabel={t('workbench.workspace_file_choose_opener')}
                   icon={ChevronDown}
                   placement="bottom-end"
-                  triggerClassName="flex h-7 w-7 items-center justify-center rounded-r-lg text-text-secondary hover:bg-muted"
+                  density="dense"
+                  triggerClassName="flex items-center justify-center rounded-r-lg text-text-secondary hover:bg-muted"
                   items={[
                     ...applicationItems(path),
                     { testId: 'workspace-file-opener-separator', label: '', separator: true },
@@ -393,7 +397,8 @@ export function WorkspaceFileToolbar({
           className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-sm text-destructive wework:text-red-600"
         >
           <span className="min-w-0 flex-1 break-words">{actionError}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-file-action-error-dismiss"
             aria-label={t('common.close')}
@@ -404,7 +409,7 @@ export function WorkspaceFileToolbar({
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       )}
     </>

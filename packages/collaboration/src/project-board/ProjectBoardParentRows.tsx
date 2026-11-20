@@ -1,14 +1,16 @@
+import {ProjectBoardTransfer} from './ProjectBoardTransfer'
+import { ArrowRight, ChevronDown, ChevronRight, GitBranch, Plus } from 'lucide-react'
 import { Fragment, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, GitBranch, ArrowRight, Plus } from 'lucide-react'
+import type { CollaborationTranslate } from '../i18n'
 import {
   KanbanColumnDropzone,
   KanbanColumnEmptyState,
   type KanbanBoardProps,
 } from '../kanban/KanbanBoard'
-import { projectBoardRowDropId } from './projectBoardDnd'
+import { Button as ControlButton } from '../markdown/Button'
 import type { ProjectBoardColumn } from './ProjectBoardBody'
 import type { ProjectBoardParentRow } from './parentBoardGrouping'
-import type { CollaborationTranslate } from '../i18n'
+import { projectBoardRowDropId } from './projectBoardDnd'
 
 export interface ProjectBoardParentRowsProps<T> {
   scopeKey?: string
@@ -31,11 +33,11 @@ export function ProjectBoardParentRows<T>({
   onOpenParent,
   onEnterParent,
   columns,
-  dnd,
-  dndContextProps,
+  onDragStart,
+  onDragCancel,
+  onDrop,
   getItemKey,
   renderItem,
-  renderDragOverlay,
   getColumnWidthClassName,
   renderColumnHeaderActions,
   getColumnDragHint,
@@ -45,11 +47,11 @@ export function ProjectBoardParentRows<T>({
   Pick<
     KanbanBoardProps<ProjectBoardColumn, T>,
     | 'columns'
-    | 'dnd'
-    | 'dndContextProps'
+    | 'onDragStart'
+    | 'onDragCancel'
+    | 'onDrop'
     | 'getItemKey'
     | 'renderItem'
-    | 'renderDragOverlay'
     | 'getColumnWidthClassName'
     | 'renderColumnHeaderActions'
     | 'getColumnDragHint'
@@ -57,7 +59,6 @@ export function ProjectBoardParentRows<T>({
     | 'getColumnEmptyState'
   > & { currentParentId: string | null }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  const { DndContext, DragOverlay } = dnd
   const columnItems = (column: ProjectBoardColumn) => [
     ...new Map(
       rows.flatMap(row => row.items.get(column.key) ?? []).map(item => [getItemKey(item), item])
@@ -70,7 +71,7 @@ export function ProjectBoardParentRows<T>({
       </div>
     ))
   return (
-    <DndContext {...dndContextProps}>
+    <ProjectBoardTransfer onDragStart={onDragStart} onDragCancel={onDragCancel} onDrop={onDrop}>
       <div data-testid="cloud-board-parent-rows" className="h-full overflow-y-auto px-6">
         <div className="min-w-full w-max">
           <div className="sticky top-0 z-20 flex gap-3.5 border-b border-border bg-background py-3">
@@ -114,7 +115,8 @@ export function ProjectBoardParentRows<T>({
               className="border-b border-border pb-3"
             >
               <header className="sticky left-0 flex w-fit max-w-full items-center gap-2 bg-background py-3">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`cloud-board-parent-toggle-${row.key}`}
                   aria-expanded={!collapsed.has(row.key)}
@@ -134,10 +136,11 @@ export function ProjectBoardParentRows<T>({
                   ) : (
                     <ChevronDown className="h-4 w-4" />
                   )}
-                </button>
+                </ControlButton>
                 {row.parent ? (
                   <>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`cloud-board-parent-open-${getParentKey(row.parent)}`}
                       onClick={() => onOpenParent(row.parent!)}
@@ -145,7 +148,7 @@ export function ProjectBoardParentRows<T>({
                       className="max-w-64 truncate rounded-lg px-1 py-1 text-left text-sm font-medium hover:text-focus max-md:min-h-11"
                     >
                       {getParentTitle(row.parent)}
-                    </button>
+                    </ControlButton>
                     {renderParentMetadata?.(row.parent)}
                     <span
                       className="text-xs text-text-muted"
@@ -167,7 +170,8 @@ export function ProjectBoardParentRows<T>({
                         })}
                       </span>
                     ) : null}
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`cloud-board-parent-enter-${getParentKey(row.parent)}`}
                       aria-label={t('todo.parent_board_enter')}
@@ -176,7 +180,7 @@ export function ProjectBoardParentRows<T>({
                       className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted hover:bg-muted max-md:h-11 max-md:w-11"
                     >
                       <ArrowRight className="h-4 w-4" />
-                    </button>
+                    </ControlButton>
                   </>
                 ) : (
                   <span className="text-sm text-text-secondary">
@@ -195,7 +199,6 @@ export function ProjectBoardParentRows<T>({
                   {cells(column => (
                     <div className="flex min-h-28 flex-col rounded-2xl bg-muted p-0.5">
                       <KanbanColumnDropzone
-                        dnd={dnd}
                         dropId={projectBoardRowDropId(row.parentId, column.key)}
                         testId={`cloud-board-parent-cell-${row.parentId ?? 'root'}-${column.key}`}
                         dragHint={getColumnDragHint(column)}
@@ -212,7 +215,7 @@ export function ProjectBoardParentRows<T>({
           ))}
         </div>
       </div>
-      <DragOverlay dropAnimation={null}>{renderDragOverlay()}</DragOverlay>
-    </DndContext>
+
+    </ProjectBoardTransfer>
   )
 }

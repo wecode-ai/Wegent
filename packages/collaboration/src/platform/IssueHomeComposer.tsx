@@ -1,6 +1,6 @@
 import { useMemo, useState, useSyncExternalStore, type Ref, type ReactNode } from 'react'
 import type { Attachment } from '@wegent/chat-core/runtime'
-import { ChevronDown } from 'lucide-react'
+import { ComposerProjectSelector } from '../composer/ComposerProjectSelector'
 import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
 import { ProjectComposerBody, ComposerToolbar, type ComposerInputHandle } from '../composer'
 import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
@@ -181,7 +181,6 @@ export function IssueHomeComposer({
       onChange={id => setOwnerOverride({ projectId, id })}
     />
   )
-  const selectedProject = projects.find(project => project.id === projectId)
   const submit = async (draft: string, standInDeviceId?: string, standInId?: string) => {
     const mentions = parseComposerMentions(draft)
     if (
@@ -227,32 +226,15 @@ export function IssueHomeComposer({
     setDraft({ external: value, value: '' })
   }
   const projectSelector = (
-    <div className="flex min-h-10 items-center justify-center rounded-t-[26px] bg-surface px-4">
-      <label className="relative inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-text-secondary hover:bg-background/70 hover:text-text-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/30">
-        <span className="sr-only">{projectLabel}</span>
-        <span
-          data-testid="collaboration-issue-project-label"
-          className="max-w-48 truncate text-text-primary"
-        >
-          {selectedProject?.name ?? projectLabel}
-        </span>
-        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0" />
-        <select
-          data-testid="collaboration-issue-project"
-          aria-label={projectLabel}
-          value={projectId}
-          disabled={pending}
-          className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0 disabled:cursor-default"
-          onChange={event => onSelectProject(event.target.value)}
-        >
-          {projects.map(project => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
+    <ComposerProjectSelector
+      testId="collaboration-issue-project"
+      labelTestId="collaboration-issue-project-label"
+      label={projectLabel}
+      value={projectId}
+      disabled={pending}
+      onChange={onSelectProject}
+      options={projects.map(project => ({ value: String(project.id), label: project.name }))}
+    />
   )
   if (renderTaskComposer)
     return (

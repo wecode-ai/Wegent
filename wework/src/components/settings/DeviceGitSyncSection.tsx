@@ -1,14 +1,23 @@
-import { AlertTriangle, Cloud, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
-import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { Button } from '@/components/ui/button'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import { gitAccountSettingsUrl } from '@/lib/git-access'
 import type { DeviceInfo } from '@/types/devices'
 import type { DeviceGitAccountSyncResult } from '@/types/gitCredentials'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertTriangle, Cloud, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createSettingsDeviceApi, type CloudSettingsConnection } from './settings-cloud-api'
-import { Button } from '@/components/ui/button'
-import { gitAccountSettingsUrl } from '@/lib/git-access'
-import { openExternalUrl } from '@/lib/external-links'
 
 interface DeviceGitSyncSectionProps {
   devices?: DeviceInfo[]
@@ -254,7 +263,8 @@ function DeviceGitSyncContent({
               )}
             </div>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="git-device-sync-refresh"
             onClick={() => void loadSyncConfiguration()}
@@ -267,7 +277,7 @@ function DeviceGitSyncContent({
               <RefreshCw className="h-4 w-4" />
             )}
             {t('workbench.git_device_sync_refresh', '刷新')}
-          </button>
+          </ControlButton>
         </div>
 
         {!ready ? (
@@ -335,29 +345,36 @@ function DeviceGitSyncContent({
 
             <label className="block text-xs font-medium text-text-primary">
               {t('workbench.git_device_sync_target', '目标设备')}
-              <select
-                data-testid="git-device-sync-select"
-                value={activeSelectedDeviceId}
-                onChange={event => setSelectedDeviceId(event.target.value)}
-                disabled={syncing || inventoryUnavailable || eligibleDevices.length === 0}
-                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary disabled:opacity-50"
+              <SelectRoot
+                value={normalizeSelectValue(activeSelectedDeviceId)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null) return setSelectedDeviceId(selectedValue)
+                }}
+                disabled={syncing || eligibleDevices.length === 0}
               >
-                <option value="">
-                  {inventoryPending
-                    ? t('workbench.git_device_sync_loading')
-                    : inventoryError
-                      ? t('workbench.git_device_sync_load_failed')
-                      : eligibleDevices.length
-                        ? t('workbench.git_device_sync_select_placeholder', '请选择设备')
-                        : t('workbench.git_device_sync_no_devices', '没有可同步的在线设备')}
-                </option>
-                {eligibleDevices.map(device => (
-                  <option key={device.device_id} value={device.device_id}>
-                    {device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')} ·{' '}
-                    {device.device_type}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  data-testid="git-device-sync-select"
+                  data-value={activeSelectedDeviceId}
+                  className="mt-2 w-full"
+                />
+                <SelectContent>
+                  <SelectItem value="">
+                    {eligibleDevices.length
+                      ? t('workbench.git_device_sync_select_placeholder', '请选择设备')
+                      : inventoryPending
+                        ? t('workbench.git_device_sync_loading', '正在读取 Git 账户和设备…')
+                        : inventoryUnavailable
+                          ? t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
+                          : t('workbench.git_device_sync_no_devices', '没有可同步的在线设备')}
+                  </SelectItem>
+                  {eligibleDevices.map(device => (
+                    <SelectItem key={device.device_id} value={String(device.device_id)}>
+                      {device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')}{' '}
+                      · {device.device_type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             </label>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -469,12 +486,15 @@ function DeviceGitSyncContent({
       </section>
 
       {confirmClear ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="git-device-sync-clear-title"
-          data-testid="git-device-sync-clear-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        <DialogSurface
+          onClose={() => setConfirmClear(null)}
+          render={
+            <div
+              aria-labelledby="git-device-sync-clear-title"
+              data-testid="git-device-sync-clear-dialog"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            />
+          }
         >
           <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-xl">
             <h2 id="git-device-sync-clear-title" className="text-sm font-medium text-text-primary">
@@ -487,25 +507,28 @@ function DeviceGitSyncContent({
               )}
             </p>
             <div className="mt-5 flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="git-device-sync-clear-cancel"
                 onClick={() => setConfirmClear(null)}
                 className="h-8 rounded-lg bg-muted px-3 text-sm text-text-primary hover:bg-hover"
               >
                 {t('common.cancel', '取消')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
+                size="sm"
                 type="button"
                 data-testid="git-device-sync-clear-confirm"
                 onClick={() => void performSync(true)}
                 className="h-8 rounded-lg bg-destructive px-3 text-sm text-destructive-contrast hover:bg-destructive wework:bg-red-500 wework:text-white wework:hover:bg-red-600"
               >
                 {t('workbench.git_device_sync_clear_confirm', '确认清理')}
-              </button>
+              </ControlButton>
             </div>
           </div>
-        </div>
+        </DialogSurface>
       ) : null}
     </>
   )

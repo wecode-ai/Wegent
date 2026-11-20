@@ -486,6 +486,20 @@ impl RuntimeWorkStore {
         tasks.into_iter().map(project).collect()
     }
 
+    pub(super) fn any_unarchived_task(
+        &self,
+        matches: impl FnMut(&RuntimeTaskLink) -> bool,
+    ) -> bool {
+        self.refresh_index_from_disk_if_changed();
+        self.index.lock().is_ok_and(|index| {
+            index
+                .tasks
+                .values()
+                .filter(|task| task.status != "archived")
+                .any(matches)
+        })
+    }
+
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
         #[cfg(test)]
         self.full_task_reads.fetch_add(1, Ordering::Relaxed);

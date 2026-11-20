@@ -1,3 +1,7 @@
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
@@ -664,7 +668,8 @@ export function ProjectManageView<
               )}
             >
               {visibilityOptions.map(value => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={value}
                   type="button"
                   aria-pressed={visibility === value}
@@ -677,53 +682,63 @@ export function ProjectManageView<
                   )}
                 >
                   {visibilityLabels[value]}
-                </button>
+                </ControlButton>
               ))}
             </div>
             <p className="mt-2 text-sm text-text-secondary">{visibilityDescriptions[visibility]}</p>
             {visibility === 'public' && (
               <label className="mt-4 flex items-center justify-between gap-3 text-sm">
                 <span>{host.translate('todo.public_access_role', '所有登录用户的角色')}</span>
-                <select
-                  data-testid="cloud-project-public-access-role"
-                  value={publicAccessRole}
+                <SelectRoot
                   disabled={visibilityBusy}
-                  onChange={event =>
-                    void saveAccessSettings({
+                  value={String(publicAccessRole)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return void saveAccessSettings({
                       public_access: {
-                        role: event.target.value as 'Viewer',
+                        role: selectedValue as 'Viewer',
                       },
                     })
-                  }
-                  className="h-8 rounded-lg border border-border bg-background px-2"
+                  }}
                 >
-                  <option value="Viewer">
-                    {host.translate('todo.permission_viewer', '只读成员')}
-                  </option>
-                </select>
+                  <SelectTrigger
+                    data-testid="cloud-project-public-access-role"
+                    className="h-8 rounded-lg border border-border bg-background px-2"
+                  />
+                  <SelectContent>
+                    <SelectItem value="Viewer">
+                      {host.translate('todo.permission_viewer', '只读成员')}
+                    </SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
             )}
             {project.task_provider !== 'dingtalk_aitable' && (
               <label className="mt-4 flex items-center justify-between gap-3 text-sm">
                 <span>{host.translate('todo.default_issue_security', '新任务默认可见范围')}</span>
-                <select
-                  data-testid="cloud-project-default-issue-security"
-                  value={defaultIssueSecurity}
+                <SelectRoot
                   disabled={visibilityBusy}
-                  onChange={event =>
-                    void saveAccessSettings({
-                      default_issue_security: event.target.value as 'open' | 'related',
+                  value={String(defaultIssueSecurity)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return void saveAccessSettings({
+                      default_issue_security: selectedValue as 'open' | 'related',
                     })
-                  }
-                  className="h-8 rounded-lg border border-border bg-background px-2"
+                  }}
                 >
-                  <option value="open">
-                    {host.translate('todo.issue_security_open', '项目可访问者可见')}
-                  </option>
-                  <option value="related">
-                    {host.translate('todo.issue_security_related', '仅相关人员可见')}
-                  </option>
-                </select>
+                  <SelectTrigger
+                    data-testid="cloud-project-default-issue-security"
+                    className="h-8 rounded-lg border border-border bg-background px-2"
+                  />
+                  <SelectContent>
+                    <SelectItem value="open">
+                      {host.translate('todo.issue_security_open', '项目可访问者可见')}
+                    </SelectItem>
+                    <SelectItem value="related">
+                      {host.translate('todo.issue_security_related', '仅相关人员可见')}
+                    </SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
             )}
           </section>
@@ -742,67 +757,70 @@ export function ProjectManageView<
         )}
 
         {(section === 'all' || section === 'overview') && (
-          <details
+          <CollapsibleRoot
             key={project.id}
             className="border-t border-border py-6"
             data-testid="cloud-project-manage-tags"
-            onToggle={event => {
-              if (event.currentTarget.open) setTagCatalogProjectId(project.id)
+            onOpenChange={open => {
+              if (open) setTagCatalogProjectId(project.id)
             }}
           >
-            <summary
+            <CollapsibleTrigger
               className="cursor-pointer text-heading-md font-semibold"
               data-testid="cloud-project-manage-tags-toggle"
             >
               <h2 className="inline text-heading-md font-semibold">
                 {host.translate('todo.project_tags', '标签')}
               </h2>
-            </summary>
-            {tagCatalogProjectId === project.id &&
-              (tagLoadState.loading ? (
-                <p
-                  role="status"
-                  data-testid="cloud-project-manage-tags-loading"
-                  className="mt-3 text-sm text-text-muted"
-                >
-                  {host.translate('common.loading', '正在加载…')}
-                </p>
-              ) : tagLoadState.error ? (
-                <div
-                  role="alert"
-                  data-testid="cloud-project-manage-tags-error"
-                  className="mt-3 text-sm text-text-primary"
-                >
-                  {tagLoadState.error}
-                  <button
-                    type="button"
-                    className="ml-2 underline"
-                    data-testid="cloud-project-manage-tags-retry"
-                    onClick={() => setTagLoadRevision(revision => revision + 1)}
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              {tagCatalogProjectId === project.id &&
+                (tagLoadState.loading ? (
+                  <p
+                    role="status"
+                    data-testid="cloud-project-manage-tags-loading"
+                    className="mt-3 text-sm text-text-muted"
                   >
-                    {host.translate('common.retry', '重试')}
-                  </button>
-                </div>
-              ) : (
-                <ProjectTagsSection
-                  host={host}
-                  className="mt-3"
-                  allTags={allTags}
-                  renamingTag={renamingTag}
-                  renameValue={renameValue}
-                  tagComposerOpen={tagComposerOpen}
-                  newTag={newTag}
-                  tagBusy={tagBusy}
-                  setTagComposerOpen={setTagComposerOpen}
-                  setNewTag={setNewTag}
-                  setRenamingTag={setRenamingTag}
-                  setRenameValue={setRenameValue}
-                  createTag={createTag}
-                  renameTag={renameTag}
-                  deleteTag={deleteTag}
-                />
-              ))}
-          </details>
+                    {host.translate('common.loading', '正在加载…')}
+                  </p>
+                ) : tagLoadState.error ? (
+                  <div
+                    role="alert"
+                    data-testid="cloud-project-manage-tags-error"
+                    className="mt-3 text-sm text-text-primary"
+                  >
+                    {tagLoadState.error}
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      className="ml-2 underline"
+                      data-testid="cloud-project-manage-tags-retry"
+                      onClick={() => setTagLoadRevision(revision => revision + 1)}
+                    >
+                      {host.translate('common.retry', '重试')}
+                    </ControlButton>
+                  </div>
+                ) : (
+                  <ProjectTagsSection
+                    host={host}
+                    className="mt-3"
+                    allTags={allTags}
+                    renamingTag={renamingTag}
+                    renameValue={renameValue}
+                    tagComposerOpen={tagComposerOpen}
+                    newTag={newTag}
+                    tagBusy={tagBusy}
+                    setTagComposerOpen={setTagComposerOpen}
+                    setNewTag={setNewTag}
+                    setRenamingTag={setRenamingTag}
+                    setRenameValue={setRenameValue}
+                    createTag={createTag}
+                    renameTag={renameTag}
+                    deleteTag={deleteTag}
+                  />
+                ))}
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         )}
 
         {(section === 'all' || section === providerSettingsSection) && (
@@ -825,7 +843,7 @@ export function ProjectManageView<
             <div className="mt-4 grid gap-2 rounded-xl bg-muted p-3 sm:grid-cols-[1fr_1fr_auto]">
               <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3">
                 <GitBranch className="h-4 w-4 text-text-muted" />
-                <input
+                <ControlInput
                   data-testid="cloud-project-provider-manage-repository"
                   value={providerRepository}
                   onChange={event => {
@@ -839,7 +857,7 @@ export function ProjectManageView<
               </label>
               <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3">
                 <LockKeyhole className="h-4 w-4 text-text-muted" />
-                <input
+                <ControlInput
                   data-testid="cloud-project-provider-manage-token"
                   type="password"
                   value={providerToken}
@@ -856,7 +874,8 @@ export function ProjectManageView<
                   }
                 />
               </label>
-              <button
+              <ControlButton
+                variant="primary"
                 type="button"
                 data-testid="cloud-project-provider-manage-save"
                 disabled={providerBusy || !providerRepository.trim()}
@@ -866,7 +885,7 @@ export function ProjectManageView<
                 {providerSaved
                   ? host.translate('todo.saved', '已保存')
                   : host.translate('common.save', '保存')}
-              </button>
+              </ControlButton>
             </div>
             {!project.provider_config.credential_configured && (
               <p className="mt-2 text-xs text-text-muted">

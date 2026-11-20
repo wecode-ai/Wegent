@@ -1,11 +1,14 @@
-import { useRef, useState, useSyncExternalStore } from 'react'
-import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
-import { useSiteDialogScope } from './useSiteDialogScope'
-import { createSiteCollaboratorsResource } from './siteCollaboratorsResource'
-import { AlertCircle, Loader2, Trash2, UserPlus, X } from 'lucide-react'
 import type { Site, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createRequestId } from '@/lib/request-id'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Loader2, UserPlus, X } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createSiteCollaboratorsResource } from './siteCollaboratorsResource'
+import { useSiteDialogScope } from './useSiteDialogScope'
 
 interface SiteCollaboratorsDialogProps {
   api: SitesApi
@@ -47,13 +50,6 @@ function SiteCollaboratorsDialogContent({
   const close = () => {
     if (!adding.current && !deleting.current) onClose()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    close,
-    true,
-    '[data-testid="site-collaborators-close"]',
-    true,
-    restoreFocus
-  )
 
   const add = async () => {
     const normalized = subject.trim()
@@ -104,14 +100,17 @@ function SiteCollaboratorsDialogContent({
         if (event.target === event.currentTarget) close()
       }}
     >
-      <section
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="site-collaborators-title"
-        data-testid="site-collaborators-dialog"
-        className="w-full max-w-lg rounded-xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+      <DialogSurface
+        onClose={close}
+        initialFocus={'[data-testid="site-collaborators-close"]'}
+        finalFocus={restoreFocus}
+        render={
+          <section
+            aria-labelledby="site-collaborators-title"
+            data-testid="site-collaborators-dialog"
+            className="w-full max-w-lg rounded-xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -120,7 +119,8 @@ function SiteCollaboratorsDialogContent({
             </h2>
             <p className="mt-1 truncate text-sm text-text-secondary">{site.name}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="site-collaborators-close"
             aria-label={t('close', '关闭')}
@@ -129,11 +129,11 @@ function SiteCollaboratorsDialogContent({
             className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary disabled:opacity-50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
 
         <div className="mt-5 flex gap-2">
-          <input
+          <ControlInput
             data-testid="site-collaborator-subject-input"
             value={subject}
             onChange={event => setSubject(event.target.value)}
@@ -143,9 +143,11 @@ function SiteCollaboratorsDialogContent({
             placeholder={t('collaborator_username_placeholder', '输入用户名')}
             aria-label={t('collaborator_username', '协作者用户名')}
             disabled={saving}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+            className="h-9 min-w-0 flex-1"
           />
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="site-collaborator-add"
             disabled={!subject.trim() || saving}
@@ -158,7 +160,7 @@ function SiteCollaboratorsDialogContent({
               <UserPlus className="h-4 w-4" />
             )}
             {t('add_collaborator', '添加')}
-          </button>
+          </ControlButton>
         </div>
 
         {error ? (
@@ -169,7 +171,9 @@ function SiteCollaboratorsDialogContent({
         ) : null}
 
         {loadFailed && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="site-collaborators-retry"
             onClick={() => {
@@ -179,7 +183,7 @@ function SiteCollaboratorsDialogContent({
             className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
           >
             {t('retry', '重试')}
-          </button>
+          </ControlButton>
         )}
 
         <div className="mt-4 min-h-24 rounded-lg border border-border">
@@ -199,26 +203,20 @@ function SiteCollaboratorsDialogContent({
                   className="flex h-11 items-center justify-between gap-3 px-3"
                 >
                   <span className="truncate text-sm">{item.subject}</span>
-                  <button
+                  <DeleteIconButton
                     type="button"
                     data-testid={`site-collaborator-remove-${item.subject}`}
                     aria-label={t('remove_collaborator', { name: item.subject })}
                     disabled={Boolean(removing)}
                     onClick={() => void remove(item.subject)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-danger disabled:opacity-50"
-                  >
-                    {removing === item.subject ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </button>
+                    pending={removing === item.subject}
+                  />
                 </li>
               ))}
             </ul>
           )}
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

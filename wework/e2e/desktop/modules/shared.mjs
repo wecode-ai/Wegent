@@ -1505,19 +1505,16 @@ async function createSingleRootLocalProject(
     'The project section did not settle into an empty or populated state',
     timeoutMs
   )
-  const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
-    ? '[data-testid="projects-empty-create-button"]'
-    : '[data-testid="projects-create-button"]'
-  const createButtonText = await control.command('clickWhenEnabled', createButtonSelector, {
-    timeoutMs,
-  })
-  if (createButtonSelector.includes('projects-empty-create-button')) {
+  if (sidebarSnapshot.testIds.includes('projects-empty-create-button')) {
     assert.match(
-      createButtonText,
+      sidebarSnapshot.text,
       /New project|新建项目/,
       'The empty project section did not expose a localized creation action'
     )
   }
+  await control.command('clickWhenEnabled', '[data-testid="projects-create-button"]', {
+    timeoutMs,
+  })
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1637,11 +1634,12 @@ async function selectE2EModel(
     )
   } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
     await waitForE2EModelOptionSelected(control, targetSelector)
-    await control.command('press', 'body', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('model-selector-menu'),
-      'The model selector menu did not close after selecting the E2E model'
+    await verifyModelPickerEscape(control, '[data-model-selector-layer="true"]', 'press', () =>
+      waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('model-selector-menu'),
+        'The model selector menu did not close after selecting the E2E model'
+      )
     )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
@@ -1653,6 +1651,34 @@ async function selectE2EModel(
       expectedProviderId,
       'The model selector did not retain the expected provider'
     )
+  }
+}
+
+export async function verifyModelPickerEscape(control, selector, pressAction, waitForClose) {
+  const readLayers = () =>
+    control
+      .command(
+        'getElementMetrics',
+        '[data-model-selector-layer="true"], [data-slot$="-content"][data-open], :focus',
+        {
+          value: JSON.stringify({
+            attributeNames: ['data-testid', 'data-slot', 'role', 'aria-hidden', 'inert', 'id'],
+          }),
+        }
+      )
+      .catch(() => 'unavailable')
+  const before = await readLayers()
+  await control.command(pressAction, selector, { key: 'Escape' })
+  try {
+    await waitForClose()
+  } catch (error) {
+    console.error('[desktop-e2e-model-dismissal]', {
+      selector,
+      pressAction,
+      before,
+      after: await readLayers(),
+    })
+    throw error
   }
 }
 

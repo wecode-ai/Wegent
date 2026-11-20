@@ -1,12 +1,7 @@
-import { useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
-import { Check, Loader2, Save, Terminal } from 'lucide-react'
 import {
   getLocalCodexInstructions,
   saveLocalCodexInstructions,
 } from '@/api/local/codexInstructions'
-import { useTranslation } from '@/hooks/useTranslation'
-import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 import {
   clampContextCompactionThreshold,
   CONTEXT_COMPACTION_THRESHOLD_MAX,
@@ -16,7 +11,15 @@ import {
   updateAppPreferences,
   type AppPreferencesPatch,
 } from '@/desktop/appPreferences'
+import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Loader2, Save, Terminal } from 'lucide-react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { CodexPersonalitySettings } from './CodexPersonalitySettings'
+import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function ContextSettingsPage() {
   const { t } = useTranslation('common')
@@ -168,9 +171,9 @@ export function ContextSettingsPage() {
           data-testid="context-compaction-threshold-row"
           label={t('workbench.context_settings_compaction_threshold')}
           description={t('workbench.context_settings_compaction_threshold_description')}
-          control={
+          children={
             <div className="flex items-center gap-2">
-              <input
+              <ControlInput
                 type="number"
                 min={CONTEXT_COMPACTION_THRESHOLD_MIN}
                 max={CONTEXT_COMPACTION_THRESHOLD_MAX}
@@ -182,7 +185,7 @@ export function ContextSettingsPage() {
                   if (event.key === 'Enter') event.currentTarget.blur()
                 }}
                 disabled={loading || saving}
-                className="w-20 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                className="w-20 text-base [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
               <span className="text-sm text-text-secondary">%</span>
             </div>
@@ -203,19 +206,21 @@ export function ContextSettingsPage() {
                 {t('workbench.context_settings_supervisor_description')}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="context-supervisor-principles-save-button"
               disabled={saving || supervisorPrinciples === savedSupervisorPrinciples}
               onClick={() => void handleSaveSupervisorPrinciples()}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               <span>{t('workbench.context_settings_supervisor_save')}</span>
-            </button>
+            </ControlButton>
           </div>
           <div className="px-4 py-4">
-            <textarea
+            <ControlTextarea
               data-testid="context-supervisor-principles-textarea"
               value={supervisorPrinciples}
               onChange={event => setSupervisorPrinciples(event.target.value)}
@@ -239,12 +244,14 @@ export function ContextSettingsPage() {
               {t('workbench.context_settings_wework_instructions_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="context-wework-instructions-save-button"
             disabled={instructionsLoading || instructionsSaving || !instructionsDirty}
             onClick={() => void handleSaveInstructions()}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="shrink-0"
           >
             {instructionsSaving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -260,7 +267,7 @@ export function ContextSettingsPage() {
                   ? t('workbench.context_settings_wework_instructions_saved')
                   : t('workbench.context_settings_wework_instructions_save')}
             </span>
-          </button>
+          </ControlButton>
         </div>
         <div className="px-4 py-4">
           {instructionsLoading ? (
@@ -269,7 +276,7 @@ export function ContextSettingsPage() {
               {t('common.loading', '加载中...')}
             </div>
           ) : (
-            <textarea
+            <ControlTextarea
               data-testid="context-wework-instructions-textarea"
               value={instructions}
               onChange={event => {

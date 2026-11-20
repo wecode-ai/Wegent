@@ -94,9 +94,17 @@ export async function chooseIssueProperty(control, id, value, query = '') {
   const optionId = `${id}-option-${value || 'empty'}`
   await control.command('waitFor', testId(optionId), { visible: true })
   await control.command('nativePress', search, { key: 'ArrowDown' })
-  assert.equal(await control.command('getActiveElementTestId', 'body'), optionId)
-  await control.command('nativePress', testId(optionId), { key: 'Enter' })
+  const option = testId(optionId)
+  const activeDescendant = await control.command('getAttribute', search, {
+    value: 'aria-activedescendant',
+  })
+  const optionDomId = await control.command('getAttribute', option, { value: 'id' })
+  assert.ok(activeDescendant, 'ArrowDown must highlight a real option')
+  assert.equal(activeDescendant, optionDomId, 'ArrowDown must highlight the requested option')
+  assert.equal(await control.command('getAttribute', option, { value: 'data-active' }), 'true')
+  await control.command('nativePress', search, { key: 'Enter' })
   await control.command('waitFor', testId(`${id}-menu`), { visible: false })
+  assert.equal(await control.command('getAttribute', testId(id), { value: 'data-value' }), value)
   await control.command('waitFor', `${testId(id)}:focus`, { visible: true })
 }
 
@@ -170,7 +178,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
   const trigger = testId('issue-environment-picker-trigger')
   const picker = testId('issue-environment-picker')
   const prefix = 'collaboration-project-execution-environment'
-  await control.command('clickWhenEnabled', trigger)
+  await control.command('nativePress', picker, { key: 'Escape' })
   await control.command('waitFor', picker, { visible: false })
   const previousSize = await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 390, height: 844 }),
@@ -216,6 +224,9 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
       )
     }
     await control.command('nativePress', preparation, { key: 'Escape' })
+    await control.command('waitFor', preparation, { visible: false })
+    await control.command('waitFor', picker, { visible: true })
+    await control.command('nativePress', picker, { key: 'Escape' })
     await control.command('waitFor', picker, { visible: false })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })

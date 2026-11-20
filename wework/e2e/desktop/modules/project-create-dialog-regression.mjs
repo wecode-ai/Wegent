@@ -605,6 +605,8 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
     await assertCollaboratorMenuBounds(control)
     await assertCollaboratorAccessibilityIsolation('open', true)
     await assertCollaboratorSearchLayout()
+    const collaboratorMenuSide = await control.command('getAttribute', MENU, { value: 'data-side' })
+    assert.match(collaboratorMenuSide, /^(top|bottom)$/)
     for (const [category, emptyText] of [
       ['members', '当前分组暂无其他可添加人员。'],
       ['agents', '暂无其他可添加的智能体。'],
@@ -626,6 +628,11 @@ export async function verifyProjectCreateDialogUi(control, scoped) {
         text: '没有匹配项，请换个关键词或切换类别。',
       })
       assert.equal(Number(await control.command('getElementCount', `${panel} button`)), 0)
+      assert.equal(
+        await control.command('getAttribute', MENU, { value: 'data-side' }),
+        collaboratorMenuSide,
+        `The collaborator popup flipped when the ${category} results became empty`
+      )
       if (category === 'members') {
         const status = `${MENU} ${testId('collaboration-project-create-people-search-status')}`
         await control.command('waitFor', status, { text: '没有匹配项，请换个关键词或切换类别。' })

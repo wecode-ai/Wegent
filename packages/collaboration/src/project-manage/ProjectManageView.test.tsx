@@ -5,6 +5,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { updateBoardViewTag } from '../project-board/projectTags'
+import { SelectRoot } from '../controls/SelectParts'
+import { Popover } from '../controls/Popover'
+import { Listbox } from '@ui-sdk/react/listbox'
 
 import type {
   ProjectManageApi,
@@ -39,6 +42,12 @@ function CommittedProjectManageView(props: Parameters<typeof ProjectManageView>[
   useImperativeHandle(committedView, () => tree, [tree])
   return tree
 }
+
+// The host-contract harness inspects element trees without mounting React context providers.
+vi.mock('../theme', async () => ({
+  ...(await vi.importActual<typeof import('../theme')>('../theme')),
+  useCollaborationPortalTheme: () => ({}),
+}))
 
 import { createCollaborationTranslator } from '../i18n'
 import { MemberSearchPicker } from '../controls/MemberSearchPicker'
@@ -109,7 +118,7 @@ function createHost(): ProjectManageHost {
       }
       return value
     },
-    confirm: () => true,
+    confirm: async () => true,
     trackCompleted: vi.fn(),
     trackFailed: vi.fn(),
     renderTooltip: ({ children }) => children,
@@ -155,14 +164,15 @@ type InspectedElement = {
     onChange(...args: unknown[]): unknown
     onClick(...args: unknown[]): unknown
     onKeyDown(...args: unknown[]): unknown
-    onToggle(...args: unknown[]): unknown
+    onOpenChange(...args: unknown[]): unknown
+    onValueChange(...args: unknown[]): unknown
   }
 }
 
-function findByTestId(node: unknown, testId: string): InspectedElement | null {
+function findByTestId(node: unknown, testId: string, ownerType?: unknown): InspectedElement | null {
   if (Array.isArray(node)) {
     for (const child of node) {
-      const match = findByTestId(child, testId)
+      const match = findByTestId(child, testId, ownerType)
       if (match) return match
     }
     return null
@@ -172,25 +182,31 @@ function findByTestId(node: unknown, testId: string): InspectedElement | null {
   if (component.type === ProjectMembersSection) {
     return findByTestId(
       ProjectMembersSection(component.props as Parameters<typeof ProjectMembersSection>[0]),
-      testId
+      testId,
+      ownerType
     )
   }
   if (component.type === MemberSearchPicker) {
     return findByTestId(
       MemberSearchPicker(component.props as Parameters<typeof MemberSearchPicker>[0]),
-      testId
+      testId,
+      ownerType
     )
   }
   if (component.type === ProjectTagsSection) {
     return findByTestId(
       ProjectTagsSection(component.props as Parameters<typeof ProjectTagsSection>[0]),
-      testId
+      testId,
+      ownerType
     )
   }
   const element = node as {
-    props?: { children?: unknown; 'data-testid'?: string }
+    props?: { children?: unknown; render?: unknown; 'data-testid'?: string }
   }
-  if (element.props?.['data-testid'] === testId)
+  if (
+    (ownerType && component.type === ownerType && findByTestId(node, testId)) ||
+    (!ownerType && element.props?.['data-testid'] === testId)
+  )
     return {
       ...element,
       props: new Proxy(
@@ -211,9 +227,11 @@ function findByTestId(node: unknown, testId: string): InspectedElement | null {
         }
       ) as InspectedElement['props'],
     }
+  const rendered = findByTestId(element.props?.render, testId, ownerType)
+  if (rendered) return rendered
   const children = element.props?.children
   for (const child of Array.isArray(children) ? children : [children]) {
-    const match = findByTestId(child, testId)
+    const match = findByTestId(child, testId, ownerType)
     if (match) return match
   }
   return null
@@ -264,9 +282,7 @@ describe('project tag view integration', () => {
         version: values.version + 1,
       }))
       let tree = renderView(api, host, current, onUpdated)
-      findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
-        currentTarget: { open: true },
-      })
+      findByTestId(tree, 'cloud-project-manage-tags')!.props.onOpenChange(true)
       renderView(api, host, current, onUpdated)
       await flushPromises()
       tree = renderView(api, host, current, onUpdated)
@@ -319,9 +335,7 @@ describe('project tag change failures', () => {
       vi.mocked(api.updateProject).mockRejectedValue(new Error('Project changed'))
       const onUpdated = vi.fn()
       let tree = renderView(api, host, current, onUpdated)
-      findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
-        currentTarget: { open: true },
-      })
+      findByTestId(tree, 'cloud-project-manage-tags')!.props.onOpenChange(true)
       renderView(api, host, current, onUpdated)
       await flushPromises()
       tree = renderView(api, host, current, onUpdated)
@@ -424,21 +438,19 @@ describe('ProjectManageView project scope', () => {
 
       expect(Boolean(findByTestId(tree, 'cloud-project-members-error'))).toBe(failed)
 
-      findByTestId(tree, 'cloud-project-members-toggle')!.props.onClick()
+      findByTestId(tree, 'cloud-project-members-toggle', Popover)!.props.onOpenChange(true)
       tree = renderView(api, host, currentProject, vi.fn())
-      findByTestId(tree, 'cloud-member-search')!.props.onChange({
-        target: { value: 'member' },
-      })
+      findByTestId(tree, 'cloud-member-search')!.props.onValueChange('member')
       renderView(api, host, currentProject, vi.fn())
       await vi.advanceTimersByTimeAsync(250)
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
 
-      findByTestId(tree, 'cloud-member-role')!.props.onChange({
-        target: { value: 'Viewer' },
-      })
+      findByTestId(tree, 'cloud-member-role', SelectRoot)!.props.onValueChange('Viewer')
       tree = renderView(api, host, currentProject, vi.fn())
-      findByTestId(tree, 'cloud-member-result-2')!.props.onClick()
+      findByTestId(tree, 'cloud-member-result-2', Listbox)!.props.onValueChange([2], {
+        cancel: vi.fn(),
+      })
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
 
@@ -472,7 +484,7 @@ describe('ProjectManageView project scope', () => {
     renderView(api, host, currentProject, vi.fn())
     await flushPromises()
     let tree = renderView(api, host, currentProject, vi.fn())
-    findByTestId(tree, 'cloud-project-members-toggle')!.props.onClick()
+    findByTestId(tree, 'cloud-project-members-toggle', Popover)!.props.onOpenChange(true)
     tree = renderView(api, host, currentProject, vi.fn())
 
     const capability = findByTestId(tree, 'cloud-project-member-capability-2')
@@ -515,9 +527,7 @@ describe('ProjectManageView project scope', () => {
     renderView(api, host, projectA, onProjectUpdated)
     await flushPromises()
     const tree = renderView(api, host, projectA, onProjectUpdated)
-    findByTestId(tree, 'cloud-project-member-role-2')!.props.onChange({
-      target: { value: 'Viewer' },
-    })
+    findByTestId(tree, 'cloud-project-member-role-2', SelectRoot)!.props.onValueChange('Viewer')
     await flushPromises()
     expect(api.getProject).toHaveBeenCalledWith('project-a')
 
@@ -647,9 +657,7 @@ it('CP03 saves restricted membership with the current project version', async ()
     version: current.version + 1,
   })
   const tree = renderView(api, host, current, vi.fn())
-  findByTestId(tree, 'cloud-project-membership-mode')!.props.onChange({
-    target: { value: 'restricted' },
-  })
+  findByTestId(tree, 'cloud-project-membership-mode', SelectRoot)!.props.onValueChange('restricted')
   await flushPromises()
   expect(api.updateProject).toHaveBeenCalledWith(current.id, {
     version: current.version,
@@ -722,13 +730,11 @@ it('retains the existing role and releases saving controls after a rejected chan
   renderView(api, host, current, vi.fn())
   await flushPromises()
   let tree = renderView(api, host, current, vi.fn())
-  findByTestId(tree, 'cloud-project-member-role-2')!.props.onChange({
-    target: { value: 'Maintainer' },
-  })
+  findByTestId(tree, 'cloud-project-member-role-2', SelectRoot)!.props.onValueChange('Maintainer')
   await flushPromises()
   tree = renderView(api, host, current, vi.fn())
-  expect(findByTestId(tree, 'cloud-project-member-role-2')!.props.value).toBe('Developer')
-  expect(findByTestId(tree, 'cloud-project-member-role-2')!.props.disabled).toBe(false)
+  expect(findByTestId(tree, 'cloud-project-member-role-2', SelectRoot)!.props.value).toBe('Developer')
+  expect(findByTestId(tree, 'cloud-project-member-role-2', SelectRoot)!.props.disabled).toBe(false)
   expect(host.trackFailed).toHaveBeenCalledOnce()
 })
 
@@ -748,9 +754,7 @@ it('loads only resources needed by the selected settings section', async () => {
   await flushPromises()
   expect(api.listItems).not.toHaveBeenCalled()
   const tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-  findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
-    currentTarget: { open: true },
-  })
+  findByTestId(tree, 'cloud-project-manage-tags')!.props.onOpenChange(true)
   renderView(api, host, current, vi.fn(), undefined, 'overview')
   await flushPromises()
   expect(api.listItems).toHaveBeenCalledOnce()
@@ -770,9 +774,7 @@ it.each(['en', 'zh-CN'] as const)(
         items: [{ id: 'item-1', version: 1, tags: ['task-only-tag'] }],
       })
     let tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-    findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
-      currentTarget: { open: true },
-    })
+    findByTestId(tree, 'cloud-project-manage-tags')!.props.onOpenChange(true)
     renderView(api, host, current, vi.fn(), undefined, 'overview')
     await flushPromises()
     tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
@@ -806,9 +808,7 @@ it('discards late tag discovery after switching projects and leaves the next ove
       })
   )
   let tree = renderView(api, host, first, vi.fn(), undefined, 'overview')
-  findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
-    currentTarget: { open: true },
-  })
+  findByTestId(tree, 'cloud-project-manage-tags')!.props.onOpenChange(true)
   renderView(api, host, first, vi.fn(), undefined, 'overview')
   renderView(api, host, second, vi.fn(), undefined, 'overview')
   resolveTags({
@@ -898,28 +898,41 @@ it('isolates late member searches, clears an empty query and preserves IME Escap
     let tree = renderView(api, host, current, vi.fn(), undefined, 'members')
     await flushPromises()
     tree = renderView(api, host, current, vi.fn(), undefined, 'members')
-    findByTestId(tree, 'cloud-project-members-toggle')!.props.onClick()
+    findByTestId(tree, 'cloud-project-members-toggle', Popover)!.props.onOpenChange(true)
     tree = renderView(api, host, current, vi.fn(), undefined, 'members')
-    findByTestId(tree, 'cloud-member-search')!.props.onChange({ target: { value: 'old' } })
+    findByTestId(tree, 'cloud-member-search')!.props.onValueChange('old')
     await act(async () => vi.advanceTimersByTimeAsync(250))
     tree = renderView(api, host, current, vi.fn(), undefined, 'members')
-    findByTestId(tree, 'cloud-member-search')!.props.onChange({ target: { value: 'current' } })
+    findByTestId(tree, 'cloud-member-search')!.props.onValueChange('current')
     await act(async () => vi.advanceTimersByTimeAsync(250))
     await act(async () => old.resolve({ users: [{ ...user, id: 3, user_name: 'Obsolete' }] }))
     tree = renderView(api, host, current, vi.fn(), undefined, 'members')
     expect(findByTestId(tree, 'cloud-member-result-2')).toBeTruthy()
     expect(findByTestId(tree, 'cloud-member-result-3')).toBeNull()
     act(() =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true }))
+      document
+        .querySelector('[data-testid="cloud-member-search"]')!
+        .dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            isComposing: true,
+            bubbles: true,
+            cancelable: true,
+          })
+        )
     )
-    expect(container!.querySelector('[data-testid="cloud-project-member-picker"]')).not.toBeNull()
-    findByTestId(tree, 'cloud-member-search')!.props.onChange({ target: { value: ' ' } })
+    expect(document.querySelector('[data-testid="cloud-project-member-picker"]')).not.toBeNull()
+    findByTestId(tree, 'cloud-member-search')!.props.onValueChange(' ')
     tree = renderView(api, host, current, vi.fn(), undefined, 'members')
     expect(findByTestId(tree, 'cloud-member-result-2')).toBeNull()
     act(() =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+      document
+        .querySelector('[data-testid="cloud-member-search"]')!
+        .dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
     )
-    expect(container!.querySelector('[data-testid="cloud-project-member-picker"]')).toBeNull()
+    expect(document.querySelector('[data-testid="cloud-project-member-picker"]')).toBeNull()
     expect(api.searchUsers).toHaveBeenCalledTimes(2)
   } finally {
     vi.useRealTimers()
@@ -974,12 +987,12 @@ it('does not publish an old self-role refresh when the API source changes for th
   renderView(api, host, current, onUpdated, undefined, 'members')
   await flushPromises()
   let tree = renderView(api, host, current, onUpdated, undefined, 'members')
-  findByTestId(tree, 'cloud-project-member-role-2')!.props.onChange({ target: { value: 'Viewer' } })
+  findByTestId(tree, 'cloud-project-member-role-2', SelectRoot)!.props.onValueChange('Viewer')
   await flushPromises()
   expect(api.getProject).toHaveBeenCalledExactlyOnceWith('project-a')
   renderView(nextApi, host, current, onUpdated, undefined, 'members')
   await act(async () => refresh.resolve({ ...current, access_role: 'Viewer' }))
   tree = renderView(nextApi, host, current, onUpdated, undefined, 'members')
   expect(onUpdated).not.toHaveBeenCalled()
-  expect(findByTestId(tree, 'cloud-project-member-role-2')!.props.value).toBe('Maintainer')
+  expect(findByTestId(tree, 'cloud-project-member-role-2', SelectRoot)!.props.value).toBe('Maintainer')
 })

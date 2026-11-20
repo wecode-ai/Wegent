@@ -1,14 +1,12 @@
-import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
-import { useMemo, useState, useSyncExternalStore } from 'react'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { runnerSupportsModel } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
+import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  createRunnerSelectionSource,
-  type PendingRunnerSelection as Pending,
-} from './runnerSelectionSource'
+import { runnerSupportsModel } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
+import type { PendingRunnerSelection as Pending } from './runnerSelectionSource'
+import { createRunnerSelectionSource } from './runnerSelectionSource'
 
 function SelectionDialog({ pending, close }: { pending: Pending; close(): void }) {
   const { t } = useTranslation('common')
@@ -47,7 +45,7 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
     pending.reject(new Error(t('workbench.runner_selection_cancelled')))
     close()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(cancel, true, 'select:not([disabled])')
+  const dialogRef = useRef<HTMLElement>(null)
   const confirm = () => {
     pending.resolve({
       ...(pending.request.execution_policy.mode === 'user_select'
@@ -67,13 +65,17 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
     (pending.request.model_policy.mode === 'fixed' || routing.model !== null)
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="runner-selection-title"
-        className="w-full max-w-lg space-y-4 rounded-lg border border-border bg-popover p-5 shadow-lg"
-        data-testid="runner-selection-dialog"
+      <DialogSurface
+        onClose={cancel}
+        initialFocus={'select:not([disabled])'}
+        render={
+          <section
+            ref={dialogRef}
+            aria-labelledby="runner-selection-title"
+            className="w-full max-w-lg space-y-4 rounded-lg border border-border bg-popover p-5 shadow-lg"
+            data-testid="runner-selection-dialog"
+          />
+        }
       >
         <h2 id="runner-selection-title" className="text-sm font-semibold">
           {t('workbench.runner_selection_title')}
@@ -108,7 +110,7 @@ function SelectionDialog({ pending, close }: { pending: Pending; close(): void }
             {t('workbench.runner_selection_confirm')}
           </Button>
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

@@ -1,7 +1,8 @@
-import { Plus } from 'lucide-react'
-import type { Ref } from 'react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Plus } from 'lucide-react'
+import type { Ref } from 'react'
 
 interface TaskBoardCreateButtonProps {
   label: string
@@ -20,7 +21,8 @@ export function TaskBoardCreateButton({
 }: TaskBoardCreateButtonProps) {
   return (
     <Tooltip label={label} side="bottom" align="end">
-      <button
+      <ControlButton
+        variant="unstyled"
         ref={buttonRef}
         type="button"
         data-testid="cloud-todo-add"
@@ -33,7 +35,7 @@ export function TaskBoardCreateButton({
       >
         <Plus className="h-3.5 w-3.5" />
         {showLabel ? label : null}
-      </button>
+      </ControlButton>
     </Tooltip>
   )
 }
@@ -49,7 +51,8 @@ export function TaskBoardColumnCreateButton({
 }) {
   return (
     <Tooltip label={label} side="bottom" align="end">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`cloud-todo-column-add-${columnKey}`}
         onClick={onClick}
@@ -57,7 +60,7 @@ export function TaskBoardColumnCreateButton({
         aria-label={label}
       >
         <Plus className="h-3.5 w-3.5" />
-      </button>
+      </ControlButton>
     </Tooltip>
   )
 }

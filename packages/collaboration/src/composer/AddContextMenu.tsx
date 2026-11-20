@@ -1,13 +1,7 @@
-import { useWindowEvent } from '../dom-events'
-import { ClipboardList, Eye, Paperclip, Plus, PencilLine, Target } from 'lucide-react'
-import type { ChangeEvent } from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { ClipboardList, Eye, Paperclip, PencilLine, Plus, Target } from 'lucide-react'
+import { useRef } from 'react'
+import { ActionMenu, type ActionMenuItem } from '../controls/ActionMenu'
 import type { CollaborationTranslate } from '../i18n'
-import { useCollaborationPortalTheme } from '../theme'
-import { Tooltip } from '../issue-detail/Tooltip'
-import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
-import { useOutsideClick } from './useOutsideClick'
 
 export interface AddContextMenuProps {
   translate: CollaborationTranslate
@@ -34,211 +28,112 @@ export function AddContextMenu({
   supervisorEnabled = false,
   supervisorPending = false,
 }: AddContextMenuProps) {
-  const portalTheme = useCollaborationPortalTheme()
-  const containerRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const [open, setOpen] = useState(false)
-  const closeMenu = useCallback(() => {
-    setOpen(false)
-  }, [])
-  const outsideRefs = useMemo(() => [menuRef], [])
-  const menuLayout = useAnchoredPortalMenu(open, triggerRef, menuRef)
-
-  useOutsideClick(containerRef, open, closeMenu, outsideRefs)
-
-  const attachMenu = useCallback((node: HTMLDivElement | null) => {
-    menuRef.current = node
-    if (!node) return
-    const trigger = triggerRef.current
-    const frame = window.requestAnimationFrame(() =>
-      node.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-    )
-    return () => {
-      window.cancelAnimationFrame(frame)
-      menuRef.current = null
-      trigger?.focus()
-    }
-  }, [])
-  useWindowEvent(
-    'keydown',
-    event => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      closeMenu()
-    },
-    { enabled: open, capture: true }
+  const fileInput = useRef<HTMLInputElement>(null)
+  const describe = (label: string, description: string, testId?: string) => (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span>{label}</span>
+      <span data-testid={testId} className="whitespace-normal text-xs text-text-secondary">
+        {description}
+      </span>
+    </span>
   )
-
-  const handleFileChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files
-      if (files && files.length > 0) {
-        onFileSelect(Array.from(files))
-      }
-      event.target.value = ''
-      setOpen(false)
-    },
-    [onFileSelect]
-  )
-
-  const handleSetGoal = useCallback(() => {
-    setOpen(false)
-    onSetGoal?.()
-  }, [onSetGoal])
-
-  const handleSetPlanMode = useCallback(() => {
-    setOpen(false)
-    onSetPlanMode?.()
-  }, [onSetPlanMode])
-
-  const handleConfigureSupervisor = useCallback(() => {
-    setOpen(false)
-    onConfigureSupervisor?.()
-  }, [onConfigureSupervisor])
-
+  const items: ActionMenuItem[] = [
+    ...(showAttachmentActions
+      ? [
+          {
+            testId: 'attach-files-button',
+            label: t('workbench.add_photos_files', '添加照片和文件'),
+            icon: Paperclip,
+            onSelect: () => fileInput.current?.click(),
+          },
+        ]
+      : []),
+    ...(onSetPlanMode
+      ? [
+          {
+            testId: 'set-plan-mode-button',
+            label: describe(
+              t('workbench.plan_mode', '计划模式'),
+              t('workbench.enable_plan_mode', '开启计划模式')
+            ),
+            icon: ClipboardList,
+            onSelect: onSetPlanMode,
+          },
+        ]
+      : []),
+    ...(onSetGoal
+      ? [
+          {
+            testId: 'set-goal-button',
+            label: describe(
+              t('workbench.goal_chip', '目标'),
+              t('workbench.pursue_goal_description', '设置 WeWork 将持续努力实现的目标'),
+              'goal-mode-description'
+            ),
+            icon: Target,
+            onSelect: onSetGoal,
+          },
+        ]
+      : []),
+    ...(onConfigureSupervisor
+      ? [
+          {
+            testId: 'task-supervisor-toggle-button',
+            label: describe(
+              t('workbench.supervisor_title'),
+              t(
+                supervisorPending
+                  ? 'workbench.supervisor_pending_menu'
+                  : supervisorEnabled
+                    ? 'workbench.supervisor_configure'
+                    : 'workbench.supervisor_enable'
+              )
+            ),
+            icon: Eye,
+            onSelect: onConfigureSupervisor,
+          },
+        ]
+      : []),
+    ...(onDraw
+      ? [
+          {
+            testId: 'draw-attachment-button',
+            label: describe(
+              t('workbench.drawing.title', '绘图'),
+              t('workbench.drawing.description', '绘制草图')
+            ),
+            icon: PencilLine,
+            onSelect: onDraw,
+          },
+        ]
+      : []),
+  ]
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <input
-        ref={fileInputRef}
+        ref={fileInput}
         type="file"
         multiple
-        className="hidden"
+        hidden
         data-testid="attachment-file-input"
-        onChange={handleFileChange}
+        onChange={event => {
+          const files = event.target.files
+          if (files?.length) onFileSelect(Array.from(files))
+          event.target.value = ''
+        }}
       />
-      {open &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            ref={attachMenu}
-            role="menu"
-            data-testid="add-context-menu"
-            style={{
-              ...portalTheme.style,
-              left: menuLayout?.left ?? 0,
-              maxHeight: menuLayout?.maxHeight,
-              top: menuLayout?.top ?? 0,
-              visibility: menuLayout ? 'visible' : 'hidden',
-            }}
-            className={[
-              portalTheme.className,
-              'fixed z-system-popover w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]',
-            ].join(' ')}
-          >
-            {showAttachmentActions && (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="attach-files-button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex h-9 max-md:min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
-                >
-                  <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                  <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
-                </button>
-              </>
-            )}
-            {onSetPlanMode && (
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="set-plan-mode-button"
-                onClick={handleSetPlanMode}
-                className="flex min-h-9 max-md:min-h-11 w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
-              >
-                <ClipboardList className="mt-0.5 h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span>{t('workbench.plan_mode', '计划模式')}</span>
-                  <span className="text-sm text-text-secondary break-words">
-                    {t('workbench.enable_plan_mode', '开启计划模式')}
-                  </span>
-                </span>
-              </button>
-            )}
-            {onSetGoal && (
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="set-goal-button"
-                onClick={handleSetGoal}
-                className="flex min-h-9 max-md:min-h-11 w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
-              >
-                <Target className="mt-0.5 h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span>{t('workbench.goal_chip', '目标')}</span>
-                  <span
-                    data-testid="goal-mode-description"
-                    className="text-sm text-text-secondary break-words"
-                  >
-                    {t('workbench.pursue_goal_description', '设置 WeWork 将持续努力实现的目标')}
-                  </span>
-                </span>
-              </button>
-            )}
-            {onConfigureSupervisor && (
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="task-supervisor-toggle-button"
-                onClick={handleConfigureSupervisor}
-                className="flex min-h-9 max-md:min-h-11 w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
-              >
-                <Eye className="mt-0.5 h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span>{t('workbench.supervisor_title')}</span>
-                  <span className="text-sm text-text-secondary break-words">
-                    {supervisorPending
-                      ? t('workbench.supervisor_pending_menu')
-                      : supervisorEnabled
-                        ? t('workbench.supervisor_configure')
-                        : t('workbench.supervisor_enable')}
-                  </span>
-                </span>
-              </button>
-            )}
-            {onDraw && (
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="draw-attachment-button"
-                onClick={() => {
-                  setOpen(false)
-                  onDraw()
-                }}
-                className="flex h-9 max-md:min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal text-text-primary hover:bg-muted"
-              >
-                <PencilLine className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span>{t('workbench.drawing.title', '绘图')}</span>
-                <span className="text-text-secondary">
-                  {t('workbench.drawing.description', '绘制草图')}
-                </span>
-              </button>
-            )}
-          </div>,
-          document.body
-        )}
-      <Tooltip
-        label={t('workbench.add_context', '添加上下文')}
-        align="start"
-        testId="composer-add-context-tooltip"
-      >
-        <button
-          ref={triggerRef}
-          type="button"
-          data-testid="add-context-button"
-          onClick={() => !disabled && setOpen(current => !current)}
-          disabled={disabled}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-primary hover:bg-background/70 disabled:cursor-not-allowed disabled:opacity-50"
-          aria-expanded={open}
-          aria-label={t('workbench.add_context', '添加上下文')}
-        >
-          <Plus className="h-5 w-5" strokeWidth={1.5} />
-        </button>
-      </Tooltip>
+      <ActionMenu
+        density="dense"
+        testId="add-context-button"
+        menuTestId="add-context-menu"
+        ariaLabel={t('workbench.add_context', '添加上下文')}
+        icon={Plus}
+        disabled={disabled}
+        items={items}
+        placement="top-start"
+        width={352}
+        triggerClassName="flex shrink-0 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40"
+      />
     </div>
   )
 }

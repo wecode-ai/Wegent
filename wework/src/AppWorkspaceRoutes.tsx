@@ -41,7 +41,6 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { cn } from '@/lib/utils'
 import { isSettingsRoute } from '@/lib/navigation'
-import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -390,6 +389,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
           role="tabpanel"
           aria-labelledby={`workspace-tab-select-${tab.id}`}
           tabIndex={active ? 0 : -1}
+          inert={!active}
           aria-hidden={!active}
         >
           {renderProvider ? (
@@ -691,7 +691,6 @@ export function AppRoutes({
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
-          {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
         </WorkbenchProvider>
       </ReplyPredictionCoordinator>
@@ -718,6 +717,7 @@ export function AppRoutes({
               role="tabpanel"
               aria-labelledby={`workspace-tab-select-${tab.id}`}
               tabIndex={tab.id === workspaceTabs.activeTabId ? 0 : -1}
+              inert={tab.id !== workspaceTabs.activeTabId}
               aria-hidden={tab.id !== workspaceTabs.activeTabId}
             >
               <WorkbenchProvider

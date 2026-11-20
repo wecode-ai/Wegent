@@ -1201,7 +1201,8 @@ class LoopItemService:
         *,
         commit: bool = True,
     ) -> dict[str, object]:
-        item = self.get(db, item_id, user_id)
+        # Use the same Issue-first lock order as assignment receipts and updates.
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.COMMENT)
         comment = LoopItemComment(
             cloud_project_id=item.cloud_project_id,

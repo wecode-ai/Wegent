@@ -1,20 +1,35 @@
-import { createPortal } from 'react-dom'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { DialogForm } from '@/components/common/DialogForm'
-import { ProviderModelFields } from './ProviderModelFields'
-import { ProviderConnectionTestButton } from './ProviderConnectionTestButton'
 import {
-  LOCAL_MODEL_PROVIDER_PROFILES,
   findLocalModelProviderProfile,
+  LOCAL_MODEL_PROVIDER_PROFILES,
 } from '@/features/model-settings/localModelProviders'
 import {
   createPresetProviderModel,
   detectProviderPreset,
 } from '@/features/model-settings/providerPresets'
-import { useRef, useState, type FormEvent } from 'react'
-import { Loader2, Plus, X, Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Eye, EyeOff, Loader2, Plus, X } from 'lucide-react'
+import { useRef, useState, type FormEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { ProviderConnectionTestButton } from './ProviderConnectionTestButton'
+import { ProviderModelFields } from './ProviderModelFields'
 
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
@@ -26,8 +41,7 @@ import {
 
 const BUTTON =
   'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
-const INPUT =
-  'min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-text-primary focus:outline-none keyboard:focus:ring-2 keyboard:focus:ring-primary/30 md:min-h-8'
+
 const PRIMARY =
   'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-45 md:min-h-8'
 const FORMATS = ['openai-responses', 'openai-chat-completions', 'anthropic-messages'] as const
@@ -90,11 +104,7 @@ export function ProviderEditor({
     if (dirty) setDiscard(true)
     else onClose()
   }
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(
-    requestClose,
-    !discard,
-    existing ? '[data-testid="provider-model-search"]' : '[data-testid="provider-preset"]'
-  )
+  const dialogRef = useRef<HTMLFormElement>(null)
   const custom = presetId === 'custom'
   function selectPreset(id: string) {
     const profile = findLocalModelProviderProfile(id)
@@ -184,15 +194,22 @@ export function ProviderEditor({
       }}
     >
       {!discard && (
-        <DialogForm
-          ref={dialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="provider-editor-title"
-          onSubmit={event => void save(event)}
-          className="flex max-h-[90vh] w-full max-w-[600px] flex-col overflow-hidden rounded-[20px] border border-border bg-popover text-text-primary shadow-lg"
-          data-testid="provider-editor"
-          data-provider-id={draft.id}
+        <DialogSurface
+          onClose={requestClose}
+          active={!discard}
+          initialFocus={
+            existing ? '[data-testid="provider-model-search"]' : '[data-testid="provider-preset"]'
+          }
+          render={
+            <DialogForm
+              ref={dialogRef}
+              aria-labelledby="provider-editor-title"
+              onSubmit={event => void save(event)}
+              className="flex max-h-[90vh] w-full max-w-[600px] flex-col overflow-hidden rounded-[20px] border border-border bg-popover text-text-primary shadow-lg"
+              data-testid="provider-editor"
+              data-provider-id={draft.id}
+            />
+          }
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div>
@@ -201,7 +218,8 @@ export function ProviderEditor({
               </h2>
               <p className="mt-1 text-xs text-text-secondary">{t('editorDescription')}</p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="provider-editor-close"
               className={BUTTON}
@@ -210,42 +228,48 @@ export function ProviderEditor({
               aria-label={t('cancel')}
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
           <div className="min-h-0 space-y-4 overflow-y-auto p-5">
             <div className="space-y-4">
               <label className="grid gap-1.5 text-sm text-text-primary">
                 {t('service')}
-                <select
-                  data-testid="provider-preset"
-                  className={INPUT}
-                  value={presetId}
+                <SelectRoot
+                  value={normalizeSelectValue(presetId)}
                   disabled={existing || pending || draft.models.length > 0}
-                  onChange={event => selectPreset(event.target.value)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null) return selectPreset(selectedValue)
+                  }}
                 >
-                  <option value="" disabled>
-                    {t('chooseService')}
-                  </option>
-                  {LOCAL_MODEL_PROVIDER_PROFILES.filter(profile => profile.id !== 'custom').map(
-                    profile => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.displayNameKey
-                          ? t(profile.displayNameKey, { ns: 'common' })
-                          : profile.displayName}
-                      </option>
-                    )
-                  )}
-                  <option value="custom">{t('customInterface')}</option>
-                </select>
+                  <SelectTrigger
+                    density="default"
+                    data-testid="provider-preset"
+                    className="w-full min-w-0"
+                  />
+                  <SelectContent>
+                    <SelectItem value="" disabled>
+                      {t('chooseService')}
+                    </SelectItem>
+                    {LOCAL_MODEL_PROVIDER_PROFILES.filter(profile => profile.id !== 'custom').map(
+                      profile => (
+                        <SelectItem key={profile.id} value={String(profile.id)}>
+                          {profile.displayNameKey
+                            ? t(profile.displayNameKey, { ns: 'common' })
+                            : profile.displayName}
+                        </SelectItem>
+                      )
+                    )}
+                    <SelectItem value="custom">{t('customInterface')}</SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
               <fieldset disabled={pending} className="space-y-3">
                 {
                   <label className="flex items-center gap-2 text-sm text-text-secondary">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       data-testid="provider-enabled"
                       checked={draft.enabled !== false}
-                      onChange={event => patch({ enabled: event.target.checked })}
+                      onCheckedChange={checked => patch({ enabled: checked === true })}
                     />
                     {t('enabled')}
                   </label>
@@ -254,9 +278,10 @@ export function ProviderEditor({
                   {
                     <label className="space-y-1 text-sm text-text-secondary">
                       {t('name')}
-                      <input
+                      <ControlInput
+                        density="default"
                         data-testid="provider-name"
-                        className={INPUT}
+                        className="w-full min-w-0"
                         required
                         value={draft.name}
                         onChange={event => patch({ name: event.target.value })}
@@ -266,29 +291,38 @@ export function ProviderEditor({
                   {custom && (
                     <label className="space-y-1 text-sm text-text-secondary">
                       {t('protocol')}
-                      <select
-                        data-testid="provider-protocol"
-                        className={INPUT}
-                        value={draft.api_format}
-                        onChange={event =>
-                          patch({
-                            api_format: event.target.value as ModelProvider['api_format'],
-                            request_path: undefined,
-                          })
-                        }
+                      <SelectRoot
+                        value={normalizeSelectValue(draft.api_format)}
+                        onValueChange={selectedValue => {
+                          if (selectedValue !== null)
+                            return patch({
+                              api_format: selectedValue as ModelProvider['api_format'],
+                              request_path: undefined,
+                            })
+                        }}
                       >
-                        {FORMATS.map(format => (
-                          <option key={format}>{format}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          density="default"
+                          data-testid="provider-protocol"
+                          className="w-full min-w-0"
+                        />
+                        <SelectContent>
+                          {FORMATS.map(format => (
+                            <SelectItem value={String(format)} key={format}>
+                              {format}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </SelectRoot>
                     </label>
                   )}
                   {custom && (
                     <label className="space-y-1 text-sm text-text-secondary">
                       Base URL
-                      <input
+                      <ControlInput
+                        density="default"
                         data-testid="provider-base-url"
-                        className={INPUT}
+                        className="w-full min-w-0"
                         type="url"
                         required
                         placeholder="https://gateway.example/v1"
@@ -300,9 +334,10 @@ export function ProviderEditor({
                   <label className="space-y-1 text-sm text-text-secondary">
                     API Key
                     <div className="relative">
-                      <input
+                      <ControlInput
+                        density="default"
                         data-testid="provider-api-key"
-                        className={`${INPUT} pr-12`}
+                        className="w-full min-w-0 pr-12"
                         type={showKey ? 'text' : 'password'}
                         required={!custom && !draft.api_key_configured}
                         autoComplete="new-password"
@@ -318,7 +353,8 @@ export function ProviderEditor({
                         value={draft.api_key ?? ''}
                         onChange={event => patch({ api_key: event.target.value || undefined })}
                       />
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="provider-key-visibility"
                         className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-text-secondary"
@@ -326,111 +362,132 @@ export function ProviderEditor({
                         onClick={() => setShowKey(value => !value)}
                       >
                         {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
+                      </ControlButton>
                     </div>
                   </label>
                 </div>
                 {
-                  <details className="space-y-3">
-                    <summary
+                  <CollapsibleRoot className="space-y-3">
+                    <CollapsibleTrigger
                       data-testid="provider-connection-advanced"
                       className="cursor-pointer text-sm text-text-secondary"
                     >
                       {t('connectionAdvanced')}
-                    </summary>
-                    {!custom && (
-                      <div className="mt-3 grid gap-3">
+                    </CollapsibleTrigger>
+                    <CollapsiblePanel>
+                      {!custom && (
+                        <div className="mt-3 grid gap-3">
+                          <label className="space-y-1 text-sm text-text-secondary">
+                            Base URL
+                            <ControlInput
+                              density="default"
+                              className="w-full min-w-0"
+                              type="url"
+                              required
+                              data-testid="provider-base-url"
+                              value={draft.base_url}
+                              onChange={event => patch({ base_url: event.target.value })}
+                            />
+                          </label>
+                          <label className="space-y-1 text-sm text-text-secondary">
+                            {t('protocol')}
+                            <SelectRoot
+                              value={normalizeSelectValue(draft.api_format)}
+                              onValueChange={selectedValue => {
+                                if (selectedValue !== null)
+                                  return patch({
+                                    api_format: selectedValue as ModelProvider['api_format'],
+                                    request_path: undefined,
+                                  })
+                              }}
+                            >
+                              <SelectTrigger
+                                density="default"
+                                className="w-full min-w-0"
+                                data-testid="provider-protocol"
+                              />
+                              <SelectContent>
+                                {FORMATS.map(format => (
+                                  <SelectItem value={String(format)} key={format}>
+                                    {format}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </SelectRoot>
+                          </label>
+                        </div>
+                      )}
+
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
                         <label className="space-y-1 text-sm text-text-secondary">
-                          Base URL
-                          <input
-                            className={INPUT}
-                            type="url"
-                            required
-                            data-testid="provider-base-url"
-                            value={draft.base_url}
-                            onChange={event => patch({ base_url: event.target.value })}
+                          {t('requestPath')}
+                          <ControlInput
+                            density="default"
+                            data-testid="provider-request-path"
+                            className="w-full min-w-0"
+                            value={draft.request_path ?? ''}
+                            placeholder={t('automatic')}
+                            onChange={event =>
+                              patch({ request_path: event.target.value || undefined })
+                            }
                           />
                         </label>
                         <label className="space-y-1 text-sm text-text-secondary">
-                          {t('protocol')}
-                          <select
-                            className={INPUT}
-                            data-testid="provider-protocol"
-                            value={draft.api_format}
+                          {t('modelsPath')}
+                          <ControlInput
+                            density="default"
+                            data-testid="provider-models-path"
+                            className="w-full min-w-0"
+                            value={draft.models_path ?? ''}
+                            placeholder="/models"
                             onChange={event =>
-                              patch({
-                                api_format: event.target.value as ModelProvider['api_format'],
-                                request_path: undefined,
-                              })
+                              patch({ models_path: event.target.value || undefined })
                             }
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm text-text-secondary">
+                          {t('listAuth')}
+                          <SelectRoot
+                            value={normalizeSelectValue(
+                              draft.models_api_key_header ?? 'Authorization'
+                            )}
+                            onValueChange={selectedValue => {
+                              if (selectedValue !== null)
+                                return patch({
+                                  models_api_key_header: selectedValue as
+                                    | 'Authorization'
+                                    | 'X-Api-Key',
+                                })
+                            }}
                           >
-                            {FORMATS.map(format => (
-                              <option key={format}>{format}</option>
-                            ))}
-                          </select>
+                            <SelectTrigger
+                              density="default"
+                              data-testid="provider-models-auth"
+                              className="w-full min-w-0"
+                            />
+                            <SelectContent>
+                              <SelectItem value={String('Authorization')}>Authorization</SelectItem>
+                              <SelectItem value={String('X-Api-Key')}>X-Api-Key</SelectItem>
+                            </SelectContent>
+                          </SelectRoot>
                         </label>
                       </div>
-                    )}
-
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <label className="space-y-1 text-sm text-text-secondary">
-                        {t('requestPath')}
-                        <input
-                          data-testid="provider-request-path"
-                          className={INPUT}
-                          value={draft.request_path ?? ''}
-                          placeholder={t('automatic')}
-                          onChange={event =>
-                            patch({ request_path: event.target.value || undefined })
-                          }
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm text-text-secondary">
-                        {t('modelsPath')}
-                        <input
-                          data-testid="provider-models-path"
-                          className={INPUT}
-                          value={draft.models_path ?? ''}
-                          placeholder="/models"
-                          onChange={event =>
-                            patch({ models_path: event.target.value || undefined })
-                          }
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm text-text-secondary">
-                        {t('listAuth')}
-                        <select
-                          data-testid="provider-models-auth"
-                          className={INPUT}
-                          value={draft.models_api_key_header ?? 'Authorization'}
-                          onChange={event =>
-                            patch({
-                              models_api_key_header: event.target.value as
-                                | 'Authorization'
-                                | 'X-Api-Key',
-                            })
-                          }
-                        >
-                          <option>Authorization</option>
-                          <option>X-Api-Key</option>
-                        </select>
-                      </label>
-                    </div>
-                    <p
-                      className="break-all font-mono text-xs text-text-secondary"
-                      data-testid="provider-request-preview"
-                    >
-                      {draft.base_url.replace(/\/+$/, '')}
-                      {draft.request_path ||
-                        (draft.api_format === 'openai-responses'
-                          ? '/responses'
-                          : draft.api_format === 'openai-chat-completions'
-                            ? '/chat/completions'
-                            : draft.base_url.endsWith('/v1')
-                              ? '/messages'
-                              : '/v1/messages')}
-                    </p>
-                  </details>
+                      <p
+                        className="break-all font-mono text-xs text-text-secondary"
+                        data-testid="provider-request-preview"
+                      >
+                        {draft.base_url.replace(/\/+$/, '')}
+                        {draft.request_path ||
+                          (draft.api_format === 'openai-responses'
+                            ? '/responses'
+                            : draft.api_format === 'openai-chat-completions'
+                              ? '/chat/completions'
+                              : draft.base_url.endsWith('/v1')
+                                ? '/messages'
+                                : '/v1/messages')}
+                      </p>
+                    </CollapsiblePanel>
+                  </CollapsibleRoot>
                 }
               </fieldset>
             </div>
@@ -438,7 +495,8 @@ export function ProviderEditor({
               <div className="space-y-2 border-t border-border pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-sm font-medium text-text-primary">{t('models')}</h4>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className={BUTTON}
                     data-testid="provider-discover"
@@ -457,11 +515,12 @@ export function ProviderEditor({
                       : discovered
                         ? t('refreshModels')
                         : t('discover')}
-                  </button>
+                  </ControlButton>
                 </div>
                 <p className="text-xs text-text-secondary">{t('discoveryHint')}</p>
-                <input
-                  className={INPUT}
+                <ControlInput
+                  density="compact"
+                  className="w-full min-w-0"
                   data-testid="provider-model-search"
                   type="search"
                   aria-label={t('searchModels')}
@@ -498,14 +557,13 @@ export function ProviderEditor({
                             className="flex min-h-9 items-center justify-between gap-3 text-sm text-text-primary"
                           >
                             <label className="flex min-h-11 flex-1 cursor-pointer items-center gap-3 md:min-h-9">
-                              <input
-                                type="checkbox"
+                              <Checkbox
                                 data-testid={`provider-discovered-${id}`}
                                 aria-label={`${t('addModel')} ${id}`}
                                 checked={exists}
                                 disabled={pending}
-                                onChange={event =>
-                                  event.target.checked
+                                onCheckedChange={checked =>
+                                  checked === true
                                     ? appendModel(id)
                                     : patch({
                                         models: draft.models.filter(
@@ -521,7 +579,8 @@ export function ProviderEditor({
                       })}
                   </div>
                 )}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className={BUTTON}
                   data-testid="provider-model-add"
@@ -533,7 +592,7 @@ export function ProviderEditor({
                 >
                   <Plus className="h-4 w-4" />
                   {t('manual')}
-                </button>
+                </ControlButton>
                 <div className="divide-y divide-border">
                   {draft.models
                     .filter(model =>
@@ -547,10 +606,10 @@ export function ProviderEditor({
                         className="space-y-2 py-3"
                         data-testid={`provider-model-editor-${model.id}`}
                       >
-                        <details
+                        <CollapsibleRoot
                           open={expandedModels.has(model.id)}
-                          onToggle={event => {
-                            const open = event.currentTarget.open
+                          onOpenChange={nextOpen => {
+                            const open = nextOpen
                             setExpandedModels(current => {
                               const next = new Set(current)
                               if (open) next.add(model.id)
@@ -559,7 +618,7 @@ export function ProviderEditor({
                             })
                           }}
                         >
-                          <summary
+                          <CollapsibleTrigger
                             data-testid={`provider-model-expand-${model.id}`}
                             className="cursor-pointer text-sm text-text-primary"
                           >
@@ -567,64 +626,70 @@ export function ProviderEditor({
                             <span className="ml-2 text-xs text-text-secondary">
                               {t('modelSettings')}
                             </span>
-                          </summary>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <input
-                              className={`${INPUT} flex-1`}
-                              data-testid={`provider-model-id-${model.id}`}
-                              aria-label={t('modelId')}
-                              value={model.model_id}
-                              required
-                              placeholder={t('modelId')}
-                              onChange={event =>
-                                patchModel(model.id, { model_id: event.target.value })
-                              }
-                            />
-                            <input
-                              className={`${INPUT} flex-1`}
-                              data-testid={`provider-model-name-${model.id}`}
-                              aria-label={t('displayName')}
-                              value={model.display_name ?? ''}
-                              placeholder={t('displayName')}
-                              onChange={event =>
-                                patchModel(model.id, {
-                                  display_name: event.target.value || undefined,
-                                })
-                              }
-                            />
-                            <label className="flex items-center gap-1 text-xs text-text-secondary">
-                              <input
-                                data-testid={`provider-model-enabled-${model.id}`}
-                                type="checkbox"
-                                checked={model.enabled !== false}
+                          </CollapsibleTrigger>
+                          <CollapsiblePanel>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <ControlInput
+                                density="default"
+                                className="w-full min-w-0 flex-1"
+                                data-testid={`provider-model-id-${model.id}`}
+                                aria-label={t('modelId')}
+                                value={model.model_id}
+                                required
+                                placeholder={t('modelId')}
                                 onChange={event =>
-                                  patchModel(model.id, { enabled: event.target.checked })
+                                  patchModel(model.id, { model_id: event.target.value })
                                 }
                               />
-                              {t('enabled')}
-                            </label>
-                            <button
-                              type="button"
-                              className={BUTTON}
-                              data-testid={`provider-model-remove-${model.id}`}
-                              onClick={() =>
-                                patch({ models: draft.models.filter(item => item.id !== model.id) })
-                              }
-                            >
-                              {t('remove')}
-                            </button>
-                          </div>
-                          <ProviderConnectionTestButton
-                            provider={{ ...draft, models: [model] }}
-                            disabled={pending || !model.model_id.trim()}
-                            testId={`provider-model-test-${model.id}`}
-                          />
-                          <ProviderModelFields
-                            model={model}
-                            provider={draft}
-                            onChange={value => patchModel(model.id, value)}
-                          />
-                        </details>
+                              <ControlInput
+                                density="default"
+                                className="w-full min-w-0 flex-1"
+                                data-testid={`provider-model-name-${model.id}`}
+                                aria-label={t('displayName')}
+                                value={model.display_name ?? ''}
+                                placeholder={t('displayName')}
+                                onChange={event =>
+                                  patchModel(model.id, {
+                                    display_name: event.target.value || undefined,
+                                  })
+                                }
+                              />
+                              <label className="flex items-center gap-1 text-xs text-text-secondary">
+                                <Checkbox
+                                  data-testid={`provider-model-enabled-${model.id}`}
+                                  checked={model.enabled !== false}
+                                  onCheckedChange={checked =>
+                                    patchModel(model.id, { enabled: checked === true })
+                                  }
+                                />
+                                {t('enabled')}
+                              </label>
+                              <ControlButton
+                                variant="unstyled"
+                                type="button"
+                                className={BUTTON}
+                                data-testid={`provider-model-remove-${model.id}`}
+                                onClick={() =>
+                                  patch({
+                                    models: draft.models.filter(item => item.id !== model.id),
+                                  })
+                                }
+                              >
+                                {t('remove')}
+                              </ControlButton>
+                            </div>
+                            <ProviderConnectionTestButton
+                              provider={{ ...draft, models: [model] }}
+                              disabled={pending || !model.model_id.trim()}
+                              testId={`provider-model-test-${model.id}`}
+                            />
+                            <ProviderModelFields
+                              model={model}
+                              provider={draft}
+                              onChange={value => patchModel(model.id, value)}
+                            />
+                          </CollapsiblePanel>
+                        </CollapsibleRoot>
                       </div>
                     ))}
                 </div>
@@ -647,7 +712,8 @@ export function ProviderEditor({
               testId="provider-editor-test"
             />
             <div className="flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className={BUTTON}
                 data-testid="provider-editor-cancel"
@@ -655,8 +721,9 @@ export function ProviderEditor({
                 onClick={() => (dirty ? setDiscard(true) : onClose())}
               >
                 {t('cancel')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="unstyled"
                 type="submit"
                 className={PRIMARY}
                 data-testid="provider-editor-save"
@@ -664,10 +731,10 @@ export function ProviderEditor({
               >
                 {pending && <Loader2 className="h-4 w-4 animate-spin" />}
                 {existing ? t('save') : t('addProvider')}
-              </button>
+              </ControlButton>
             </div>
           </div>
-        </DialogForm>
+        </DialogSurface>
       )}
       <ConfirmDialog
         open={discard}

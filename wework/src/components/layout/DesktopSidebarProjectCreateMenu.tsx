@@ -1,3 +1,5 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { FolderOpen, Globe2, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
@@ -11,7 +13,6 @@ export function DesktopSidebarProjectCreateMenu({
   setStandaloneWorkspaceDialogMode,
   projectCreateDialogOpen,
   setProjectCreateDialogOpen,
-  projectCreateDialogRef,
 }: ReturnType<typeof useDesktopSidebarModel>['projectCreateMenu']) {
   return (
     <>
@@ -24,13 +25,16 @@ export function DesktopSidebarProjectCreateMenu({
               if (event.target === event.currentTarget) setProjectCreateDialogOpen(false)
             }}
           >
-            <div
-              ref={projectCreateDialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="project-create-dialog-title"
-              data-testid="projects-create-button-menu"
-              className="w-full max-w-[520px] rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+            <DialogSurface
+              onClose={() => setProjectCreateDialogOpen(false)}
+              initialFocus={'[data-testid="project-create-local-option"]'}
+              render={
+                <div
+                  aria-labelledby="project-create-dialog-title"
+                  data-testid="projects-create-button-menu"
+                  className="w-full max-w-[520px] rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
+                />
+              }
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -48,7 +52,8 @@ export function DesktopSidebarProjectCreateMenu({
                   label={t('workbench.close_dialog', '关闭')}
                   testId="close-project-source-dialog-tooltip"
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="close-project-source-dialog"
                     aria-label={t('workbench.close_dialog', '关闭')}
@@ -56,11 +61,12 @@ export function DesktopSidebarProjectCreateMenu({
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
                   >
                     <X className="h-4 w-4" />
-                  </button>
+                  </ControlButton>
                 </Tooltip>
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-create-local-option"
                   onClick={() => {
@@ -80,8 +86,9 @@ export function DesktopSidebarProjectCreateMenu({
                   <span className="mt-1 block text-sm leading-5 text-text-secondary">
                     {t('workbench.local_project_description', '选择一个或多个本地文件夹。')}
                   </span>
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-create-remote-option"
                   onClick={() => {
@@ -102,9 +109,9 @@ export function DesktopSidebarProjectCreateMenu({
                   <span className="mt-1 block text-sm leading-5 text-text-secondary">
                     {t('workbench.cloud_project_description', '使用云设备或远程主机上的项目目录。')}
                   </span>
-                </button>
+                </ControlButton>
               </div>
-            </div>
+            </DialogSurface>
           </div>,
           document.body
         )}

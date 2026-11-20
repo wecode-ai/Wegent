@@ -1,5 +1,6 @@
-import { AlertCircle, Check, Loader2, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Check, Loader2, X } from 'lucide-react'
 
 export type PluginOperationNoticeState = {
   id: string
@@ -41,16 +42,18 @@ export function PluginOperationNotice({
         {notice.message}
       </span>
       {notice.actionLabel && notice.onAction ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="plugin-operation-notice-action"
           className="plugin-operation-notice-action"
           onClick={notice.onAction}
         >
           {notice.actionLabel}
-        </button>
+        </ControlButton>
       ) : null}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="plugin-operation-notice-dismiss"
         className="plugin-operation-notice-dismiss"
@@ -58,7 +61,7 @@ export function PluginOperationNotice({
         onClick={onDismiss}
       >
         <X aria-hidden="true" />
-      </button>
+      </ControlButton>
     </div>
   )
 }

@@ -338,8 +338,8 @@ export function createDesktopScenario(options) {
           if (phase === 'workflow') {
             await control.command(
               'waitFor',
-              `[data-testid="runtime-local-task-event-${address.taskId}"]`,
-              { visible: true }
+              `[data-testid="runtime-local-task-event-${address.taskId}"][data-state="waiting"]`,
+              { visible: true, timeoutMs: uiTimeoutMs }
             )
           }
           const getTask = () => rpc(control, 'runtime.tasks.get', { address })
@@ -352,6 +352,14 @@ export function createDesktopScenario(options) {
           if (phase === 'human') await human.prepare(control, getTask)
           const requestsBefore = modelRequests
           const before = await getTask()
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
+            const waits = before.task.runtimeHandle?.connectionEventSubscriptions ?? []
+            assert.equal(
+              waits.filter(wait => ['preparing', 'armed', 'pending'].includes(wait.status)).length,
+              1,
+              'Alternative Git outcomes use one active wait in the original task'
+            )
+          }
           await captureScreenshot(control, `conversation-event-${phase}-waiting.png`)
           if (phase === 'goal') {
             const goal = await rpc(control, 'runtime.tasks.goal.get', { address })

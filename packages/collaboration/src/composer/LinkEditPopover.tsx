@@ -1,26 +1,27 @@
-import { useDocumentEvent } from '../dom-events'
-import { ArrowUpRight, Check, Link2, Pencil, Trash2 } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { createPortal } from 'react-dom'
+import { DeleteIconButton } from '../controls/DeleteIconButton'
+import { Popover, PopoverContent } from '../controls/Popover'
+import { isHttpUrl } from '@wegent/chat-core/http-url'
+import { isImeEnterEvent } from '@wegent/chat-core/ime'
+import { ArrowUpRight, Check, Link2, Pencil } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { TextField as ControlInput } from '../controls/TextField'
+import { controlPopup } from '../controls/recipes'
 import { useConversationTranslation } from '../conversation/ConversationTranslation'
+import { Button as ControlButton } from '../markdown/Button'
 import { useMarkdownServices } from '../markdown/MarkdownServices'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
-import { isHttpUrl } from '@wegent/chat-core/http-url'
 
 interface LinkPayload {
   url: string
   label: string
 }
-
 export interface LinkEditPopoverProps {
   payload: LinkPayload
   anchor: HTMLElement | null
-  onClose: () => void
-  onChange: (payload: LinkPayload) => void
-  onRemove: () => void
+  onClose(): void
+  onChange(payload: LinkPayload): void
+  onRemove(): void
 }
-
-const POPOVER_HEIGHT_ESTIMATE = 48
 
 export function LinkEditPopover({
   payload,
@@ -32,50 +33,15 @@ export function LinkEditPopover({
   const { t } = useConversationTranslation()
   const { openExternalUrl } = useMarkdownServices()
   const portalTheme = useCollaborationPortalTheme()
-  const popoverRef = useRef<HTMLDivElement>(null)
+  const editor = useRef(
+    typeof document === 'undefined'
+      ? null
+      : (document.activeElement as HTMLElement | null),
+  )
   const [mode, setMode] = useState<'none' | 'text' | 'url'>('none')
   const [draftText, setDraftText] = useState(payload.label || payload.url)
   const [draftUrl, setDraftUrl] = useState(payload.url || '')
   const [urlError, setUrlError] = useState(false)
-
-  const [position, setPosition] = useState<{
-    left: number
-    bottom?: number
-    top?: number
-  } | null>(null)
-
-  useLayoutEffect(() => {
-    if (!anchor) return
-    const update = () => {
-      const rect = anchor.getBoundingClientRect()
-      const spaceAbove = rect.top
-      const spaceBelow = window.innerHeight - rect.bottom
-      const placeAbove = spaceAbove >= POPOVER_HEIGHT_ESTIMATE || spaceAbove >= spaceBelow
-      setPosition({
-        left: rect.left + rect.width / 2,
-        bottom: placeAbove ? window.innerHeight - rect.top + 8 : undefined,
-        top: !placeAbove ? rect.bottom + 8 : undefined,
-      })
-    }
-    update()
-    window.addEventListener('resize', update)
-    document.addEventListener('scroll', update, true)
-    return () => {
-      window.removeEventListener('resize', update)
-      document.removeEventListener('scroll', update, true)
-    }
-  }, [anchor])
-
-  useDocumentEvent('pointerdown', event => {
-    const target = event.target as Node
-    if (!popoverRef.current?.contains(target) && !anchor?.contains(target)) onClose()
-  })
-  useDocumentEvent('keydown', event => {
-    if (event.key === 'Escape' && mode === 'none') onClose()
-  })
-
-  if (!anchor || !position) return null
-
   const commitText = () => {
     const trimmed = draftText.trim()
     if (!trimmed) return
@@ -104,174 +70,128 @@ export function LinkEditPopover({
   const confirmLabel = t('common.confirm')
   const urlErrorLabel = t('workbench.browser_invalid_url')
 
-  if (mode === 'text') {
-    return createPortal(
-      <LinkEditInput
-        popoverRef={popoverRef}
-        position={position}
-        value={draftText}
-        onChange={setDraftText}
-        onCommit={commitText}
-        onCancel={cancelEdit}
-        inputTestId="link-edit-text-input"
-        confirmTestId="link-edit-confirm-text"
-        confirmLabel={confirmLabel}
-      />,
-      document.body
-    )
-  }
-
-  if (mode === 'url') {
-    return createPortal(
-      <LinkEditInput
-        popoverRef={popoverRef}
-        position={position}
-        value={draftUrl}
-        onChange={value => {
-          setDraftUrl(value)
-          setUrlError(false)
-        }}
-        onCommit={commitUrl}
-        onCancel={cancelEdit}
-        inputTestId="link-edit-url-input"
-        confirmTestId="link-edit-confirm-url"
-        confirmLabel={confirmLabel}
-        error={urlError ? urlErrorLabel : undefined}
-        inputSize="xs"
-      />,
-      document.body
-    )
-  }
-
-  return createPortal(
-    <div
-      {...portalTheme}
-      ref={popoverRef}
-      data-testid="link-edit-popover"
-      className={`fixed z-system-popover flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-border/70 bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)] ${portalTheme.className}`}
-      style={{
-        ...portalTheme.style,
-        left: position.left,
-        bottom: position.bottom,
-        top: position.top,
+  if (!anchor) return null
+  const textMode = mode === 'text'
+  const commit = textMode ? commitText : commitUrl
+  return (
+    <Popover
+      open
+      modal={false}
+      onOpenChange={(next, details) => {
+        if (next) return
+        if (details.reason === 'escape-key' && mode !== 'none') {
+          details.cancel()
+          cancelEdit()
+        } else onClose()
       }}
     >
-      <button
-        type="button"
-        data-testid="link-edit-open-link"
-        onClick={() => void openExternalUrl(payload.url)}
-        className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-text-primary hover:bg-muted"
-      >
-        <ArrowUpRight className="h-4 w-4" />
-        {t('workbench.open_link')}
-      </button>
-      <button
-        type="button"
-        data-testid="link-edit-edit-text"
-        onClick={() => setMode('text')}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
-        aria-label={t('workbench.edit_link_text')}
-        title={t('workbench.edit_link_text')}
-      >
-        <Pencil className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        data-testid="link-edit-edit-url"
-        onClick={() => setMode('url')}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+      <PopoverContent
+        {...portalTheme}
+        anchor={anchor}
+        side="top"
+        sideOffset={8}
+        collisionPadding={8}
+        initialFocus="none"
+        finalFocus={() => (editor.current?.isConnected ? editor.current : null)}
+        data-testid="link-edit-popover"
         aria-label={t('workbench.edit_link_url')}
-        title={t('workbench.edit_link_url')}
+        className={portalTheme.className + ' ' + controlPopup}
       >
-        <Link2 className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        data-testid="link-edit-remove"
-        onClick={onRemove}
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-red-600"
-        aria-label={t('workbench.remove_link_preview')}
-        title={t('workbench.remove_link_preview')}
-      >
-        <Trash2 className="h-4 w-4" />
-      </button>
-    </div>,
-    document.body
-  )
-}
-
-interface LinkEditInputProps {
-  popoverRef: RefObject<HTMLDivElement | null>
-  position: { left: number; bottom?: number; top?: number }
-  value: string
-  onChange: (value: string) => void
-  onCommit: () => void
-  onCancel: () => void
-  inputTestId: string
-  confirmTestId: string
-  confirmLabel: string
-  error?: string
-  inputSize?: 'sm' | 'xs'
-}
-
-function LinkEditInput({
-  popoverRef,
-  position,
-  value,
-  onChange,
-  onCommit,
-  onCancel,
-  inputTestId,
-  confirmTestId,
-  confirmLabel,
-  error,
-  inputSize = 'sm',
-}: LinkEditInputProps) {
-  const portalTheme = useCollaborationPortalTheme()
-  return createPortal(
-    <div
-      {...portalTheme}
-      ref={popoverRef}
-      data-testid="link-edit-popover"
-      className={`fixed z-system-popover flex -translate-x-1/2 flex-col items-center gap-1 rounded-2xl border border-border/70 bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)] ${portalTheme.className}`}
-      style={{
-        ...portalTheme.style,
-        left: position.left,
-        bottom: position.bottom,
-        top: position.top,
-      }}
-    >
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={value}
-          onChange={event => onChange(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              onCommit()
-            }
-            if (event.key === 'Escape') onCancel()
-          }}
-          autoFocus
-          data-testid={inputTestId}
-          className={`w-64 bg-transparent outline-none ${
-            inputSize === 'xs' ? 'text-xs text-text-secondary' : 'text-sm text-text-primary'
-          }`}
-        />
-        <button
-          type="button"
-          data-testid={confirmTestId}
-          onClick={onCommit}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary text-background hover:bg-text-secondary"
-          aria-label={confirmLabel}
-          title={confirmLabel}
-        >
-          <Check className="h-4 w-4" />
-        </button>
-      </div>
-      {error && <span className="px-2 text-xs text-red-500">{error}</span>}
-    </div>,
-    document.body
+        {mode === 'none' ? (
+          <div className="flex items-center gap-1">
+            {' '}
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="link-edit-open-link"
+              onClick={() => void openExternalUrl(payload.url)}
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-text-primary hover:bg-muted"
+            >
+              <ArrowUpRight className="h-4 w-4" />
+              {t('workbench.open_link')}
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="link-edit-edit-text"
+              onClick={() => setMode('text')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+              aria-label={t('workbench.edit_link_text')}
+              title={t('workbench.edit_link_text')}
+            >
+              <Pencil className="h-4 w-4" />
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="link-edit-edit-url"
+              onClick={() => setMode('url')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+              aria-label={t('workbench.edit_link_url')}
+              title={t('workbench.edit_link_url')}
+            >
+              <Link2 className="h-4 w-4" />
+            </ControlButton>
+            <DeleteIconButton
+              type="button"
+              data-testid="link-edit-remove"
+              onClick={onRemove}
+              aria-label={t('workbench.remove_link_preview')}
+              title={t('workbench.remove_link_preview')}
+            />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <ControlInput
+                type="text"
+                autoFocus
+                value={textMode ? draftText : draftUrl}
+                aria-label={t(
+                  textMode
+                    ? 'workbench.edit_link_text'
+                    : 'workbench.edit_link_url',
+                )}
+                aria-invalid={urlError || undefined}
+                data-testid={
+                  textMode ? 'link-edit-text-input' : 'link-edit-url-input'
+                }
+                onChange={(event) => {
+                  if (textMode) setDraftText(event.target.value)
+                  else {
+                    setDraftUrl(event.target.value)
+                    setUrlError(false)
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !isImeEnterEvent(event)) {
+                    event.preventDefault()
+                    commit()
+                  }
+                }}
+                className="w-64"
+              />
+              <ControlButton
+                variant="primary"
+                size="icon"
+                type="button"
+                aria-label={confirmLabel}
+                data-testid={
+                  textMode ? 'link-edit-confirm-text' : 'link-edit-confirm-url'
+                }
+                onClick={commit}
+              >
+                <Check className="h-4 w-4" aria-hidden="true" />
+              </ControlButton>
+            </div>
+            {urlError && (
+              <p role="alert" className="text-xs text-destructive">
+                {urlErrorLabel}
+              </p>
+            )}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }

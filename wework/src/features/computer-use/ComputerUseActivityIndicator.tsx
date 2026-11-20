@@ -1,12 +1,13 @@
-import { Loader2, Square } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
-import { createComputerUseStatusStore } from './computerUseStatusStore'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { stopComputerUseCurrentAction } from '@/desktop/computerUse'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Square } from 'lucide-react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createComputerUseStatusStore } from './computerUseStatusStore'
 
 export function ComputerUseActivityIndicator() {
   const { t } = useTranslation('common')
@@ -51,7 +52,9 @@ export function ComputerUseActivityIndicator() {
       <span className="min-w-0 truncate">
         {t('workbench.computer_use_current_action', { action: status.currentTool })}
       </span>
-      <button
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid="computer-use-stop-button"
         disabled={stopping}
@@ -60,7 +63,7 @@ export function ComputerUseActivityIndicator() {
       >
         <Square className="h-3 w-3 fill-current" />
         {t('workbench.computer_use_stop')}
-      </button>
+      </ControlButton>
       <span className="hidden text-xs text-text-muted sm:inline">
         {t('workbench.computer_use_stop_hint')}
       </span>

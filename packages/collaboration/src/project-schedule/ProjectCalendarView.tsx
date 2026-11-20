@@ -1,23 +1,26 @@
+import {
+  statusClass,
+  statusLabel,
+  statusColor,
+  statusSurfaceClasses,
+} from './scheduleStatusAppearance'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  pointerWithin,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragMoveEvent,
-  type DragOverEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+  SchedulePointerContext,
+  useSchedulePointerDrag,
+} from './schedulePointerDrag'
+import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   createContext,
   useContext,
@@ -25,13 +28,11 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
+} from 'react'
 
-import { canEditCollaborationIssue } from "../permissions";
-import type { CollaborationIssue, CollaborationStatus } from "../types";
-import { collaborationTestIds } from "../testIds";
-import { useCollaborationPortalTheme } from "../theme";
+import { canEditCollaborationIssue } from '../permissions'
+import { collaborationTestIds } from '../testIds'
+import type { CollaborationIssue, CollaborationStatus } from '../types'
 import {
   addLocalDays,
   addLocalMonths,
@@ -47,160 +48,119 @@ import {
   scheduleIssueDragId,
   scheduleRangeDateKeys,
   scheduleRangeUpdate,
-  type ScheduleRangeUpdate,
-  type ScheduleViewOptions,
   startOfLocalDay,
   startOfScheduleWeek,
-} from "./model";
-import { ScheduleViewControls } from "./ScheduleViewControls";
+  type ScheduleRangeUpdate,
+  type ScheduleViewOptions,
+} from './model'
+import { ScheduleViewControls } from './ScheduleViewControls'
 
 export interface ProjectScheduleViewProps {
-  issues: CollaborationIssue[];
-  locale: "zh-CN" | "en";
-  statuses: CollaborationStatus[];
-  onOpen(issue: CollaborationIssue): void;
+  issues: CollaborationIssue[]
+  locale: 'zh-CN' | 'en'
+  statuses: CollaborationStatus[]
+  onOpen(issue: CollaborationIssue): void
   onSchedule?(
     issue: CollaborationIssue,
     range: ScheduleRangeUpdate,
-  ): Promise<void> | void;
-  viewOptions: ScheduleViewOptions;
-  hasPersonalViewOptions?: boolean;
-  savingProjectViewOptions?: boolean;
-  onViewOptionsChange?(options: ScheduleViewOptions): void;
-  onResetViewOptions?(): void;
-  onSaveProjectViewOptions?(options: ScheduleViewOptions): Promise<void> | void;
+  ): Promise<void> | void
+  viewOptions: ScheduleViewOptions
+  hasPersonalViewOptions?: boolean
+  savingProjectViewOptions?: boolean
+  onViewOptionsChange?(options: ScheduleViewOptions): void
+  onResetViewOptions?(): void
+  onSaveProjectViewOptions?(options: ScheduleViewOptions): Promise<void> | void
 }
 
-const statusClasses: Record<CollaborationStatus["color"], string> = {
-  gray: "bg-zinc-500",
-  blue: "bg-blue-500",
-  orange: "bg-amber-500",
-  purple: "bg-violet-500",
-  green: "bg-emerald-500",
-  red: "bg-red-500",
-};
-
-const statusSurfaceClasses: Record<CollaborationStatus["color"], string> = {
-  gray: "bg-zinc-500/10",
-  blue: "bg-blue-500/10",
-  orange: "bg-amber-500/10",
-  purple: "bg-violet-500/10",
-  green: "bg-emerald-500/10",
-  red: "bg-red-500/10",
-};
-
 interface ScheduleDragPreview {
-  activeIssueId: string | null;
-  activeMode: "move" | "start" | "end" | null;
-  transform: { x: number; y: number };
-  previewRange: ScheduleRangeUpdate | null;
-  previewDates: ReadonlySet<string>;
+  activeId: string | null
+  targetDate: string | null
+  activeIssueId: string | null
+  activeMode: 'move' | 'start' | 'end' | null
+  transform: { x: number; y: number }
+  previewRange: ScheduleRangeUpdate | null
+  previewDates: ReadonlySet<string>
 }
 
 const ScheduleDragPreviewContext = createContext<ScheduleDragPreview>({
+  activeId: null,
   activeIssueId: null,
   activeMode: null,
   transform: { x: 0, y: 0 },
+  targetDate: null,
   previewRange: null,
   previewDates: new Set(),
-});
-
-function statusColor(
-  statuses: readonly CollaborationStatus[],
-  issue: CollaborationIssue,
-): CollaborationStatus["color"] {
-  return (
-    statuses.find((candidate) => candidate.id === issue.status)?.color ?? "gray"
-  );
-}
-
-export function statusClass(
-  statuses: readonly CollaborationStatus[],
-  issue: CollaborationIssue,
-): string {
-  return statusClasses[statusColor(statuses, issue)];
-}
-
-export function statusLabel(
-  statuses: readonly CollaborationStatus[],
-  issue: CollaborationIssue,
-): string {
-  return (
-    statuses.find((candidate) => candidate.id === issue.status)?.name ??
-    issue.status
-  );
-}
+})
 
 function issueDueTime(
   issue: CollaborationIssue,
-  locale: "zh-CN" | "en",
+  locale: 'zh-CN' | 'en',
 ): string | null {
-  if (!issue.due_at?.includes("T")) return null;
-  const dueDate = parseScheduleDate(issue.due_at);
-  if (!dueDate) return null;
-  return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
+  if (!issue.due_at?.includes('T')) return null
+  const dueDate = parseScheduleDate(issue.due_at)
+  if (!dueDate) return null
+  return new Intl.DateTimeFormat(locale === 'zh-CN' ? 'zh-CN' : 'en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
     hour12: false,
-  }).format(dueDate);
+  }).format(dueDate)
 }
 
 function scheduleDateLabel(
   value: string,
-  locale: ProjectScheduleViewProps["locale"],
+  locale: ProjectScheduleViewProps['locale'],
 ): string {
-  const date = parseScheduleDate(value);
-  if (!date) return value;
-  return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", {
-    month: locale === "zh-CN" ? "long" : "short",
-    day: "numeric",
-  }).format(date);
+  const date = parseScheduleDate(value)
+  if (!date) return value
+  return new Intl.DateTimeFormat(locale === 'zh-CN' ? 'zh-CN' : 'en-US', {
+    month: locale === 'zh-CN' ? 'long' : 'short',
+    day: 'numeric',
+  }).format(date)
 }
 
 export function ScheduleDateDropZone({
   date,
-  instance = "primary",
+  instance = 'primary',
   testId,
   children,
-  className = "",
+  className = '',
   style,
 }: {
-  date: string;
-  instance?: string;
-  testId?: string;
-  children?: ReactNode;
-  className?: string;
-  style?: CSSProperties;
+  date: string
+  instance?: string
+  testId?: string
+  children?: ReactNode
+  className?: string
+  style?: CSSProperties
 }) {
-  const dragPreview = useContext(ScheduleDragPreviewContext);
-  const { isOver, setNodeRef } = useDroppable({
-    id: scheduleDateDropId(date, instance),
-  });
-  const previewsOccupiedDate = dragPreview.previewDates.has(date);
+  const dragPreview = useContext(ScheduleDragPreviewContext)
+  const isOver = dragPreview.targetDate === date
+  const dropId = scheduleDateDropId(date, instance)
+  const previewsOccupiedDate = dragPreview.previewDates.has(date)
   return (
     <div
-      ref={setNodeRef}
+      data-schedule-drop-id={dropId}
       data-testid={testId ?? `collaboration-schedule-drop-${date}`}
-      data-schedule-preview={previewsOccupiedDate ? "occupied" : undefined}
-      className={`${className} ${isOver ? "ring-2 ring-inset ring-text-muted" : ""}`}
+      data-schedule-preview={previewsOccupiedDate ? 'occupied' : undefined}
+      className={`${className} ${isOver ? 'ring-2 ring-inset ring-text-muted' : ''}`}
       style={{
         ...style,
         ...(previewsOccupiedDate
-          ? { backgroundColor: "rgb(var(--color-muted) / 0.82)" }
+          ? { backgroundColor: 'rgb(var(--color-muted) / 0.82)' }
           : {}),
       }}
     >
       {children}
     </div>
-  );
+  )
 }
 
 function UndatedIssueLabel({
   issue,
   statuses,
 }: {
-  issue: CollaborationIssue;
-  statuses: CollaborationStatus[];
+  issue: CollaborationIssue
+  statuses: CollaborationStatus[]
 }) {
   return (
     <>
@@ -210,11 +170,11 @@ function UndatedIssueLabel({
       <span className="sr-only">{statusLabel(statuses, issue)}</span>
       <span className="truncate">{issue.title}</span>
     </>
-  );
+  )
 }
 
 const undatedIssueClassName =
-  "inline-flex h-8 max-w-72 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary max-md:h-11";
+  'inline-flex h-8 max-w-72 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary max-md:h-11'
 
 function DraggableUndatedIssue({
   issue,
@@ -222,36 +182,37 @@ function DraggableUndatedIssue({
   statuses,
   onOpen,
   enabled,
-}: Pick<ProjectScheduleViewProps, "locale" | "statuses" | "onOpen"> & {
-  issue: CollaborationIssue;
-  enabled: boolean;
+}: Pick<ProjectScheduleViewProps, 'locale' | 'statuses' | 'onOpen'> & {
+  issue: CollaborationIssue
+  enabled: boolean
 }) {
-  const { attributes, isDragging, listeners, setNodeRef } = useDraggable({
-    id: scheduleIssueDragId(issue.id, "move"),
+  const { buttonProps, isDragging, setElement } = useSchedulePointerDrag({
+    id: scheduleIssueDragId(issue.id, 'move'),
     disabled: !enabled,
-  });
+    preview: true,
+  })
   return (
-    <button
-      ref={setNodeRef}
+    <ControlButton
+      variant="unstyled"
+      ref={setElement}
       type="button"
       data-testid={`collaboration-schedule-undated-${issue.id}`}
       onClick={() => onOpen(issue)}
       className={`${undatedIssueClassName} hover:bg-muted hover:text-text-primary ${
-        enabled ? "cursor-grab touch-none active:cursor-grabbing" : ""
-      } ${isDragging ? "opacity-50" : ""}`}
+        enabled ? 'cursor-grab touch-none active:cursor-grabbing' : ''
+      } ${isDragging ? 'opacity-50' : ''}`}
       title={
         enabled
-          ? locale === "zh-CN"
+          ? locale === 'zh-CN'
             ? `${issue.title}\n拖到上方日期设置开始和结束时间`
             : `${issue.title}\nDrag onto a date above to set the start and end dates`
           : issue.title
       }
-      {...listeners}
-      {...attributes}
+      {...buttonProps}
     >
       <UndatedIssueLabel issue={issue} statuses={statuses} />
-    </button>
-  );
+    </ControlButton>
+  )
 }
 
 export function DraggableScheduleBar({
@@ -267,73 +228,87 @@ export function DraggableScheduleBar({
   handleClassName,
   liftTogether = false,
   showDragDateLabels = false,
-  locale = "zh-CN",
+  locale = 'zh-CN',
   style,
   title,
   onOpen,
   children,
 }: {
-  issue: CollaborationIssue;
-  dragInstance?: string;
-  enabled: boolean;
-  showStartHandle: boolean;
-  showEndHandle: boolean;
-  testId: string;
-  className: string;
-  bodyClassName?: string;
-  bodyCursorClassName?: string;
-  handleClassName?: string;
-  liftTogether?: boolean;
-  showDragDateLabels?: boolean;
-  locale?: ProjectScheduleViewProps["locale"];
-  style?: CSSProperties;
-  title: string;
-  onOpen(): void;
-  children: ReactNode;
+  issue: CollaborationIssue
+  dragInstance?: string
+  enabled: boolean
+  showStartHandle: boolean
+  showEndHandle: boolean
+  testId: string
+  className: string
+  bodyClassName?: string
+  bodyCursorClassName?: string
+  handleClassName?: string
+  liftTogether?: boolean
+  showDragDateLabels?: boolean
+  locale?: ProjectScheduleViewProps['locale']
+  style?: CSSProperties
+  title: string
+  onOpen(): void
+  children: ReactNode
 }) {
-  const dragPreview = useContext(ScheduleDragPreviewContext);
-  const move = useDraggable({
-    id: scheduleIssueDragId(issue.id, "move", dragInstance),
+  const dragPreview = useContext(ScheduleDragPreviewContext)
+  const {
+    setElement: setMoveElement,
+    isDragging: moveIsDragging,
+    transform: movePointerTransform,
+    buttonProps: moveProps,
+  } = useSchedulePointerDrag({
+    id: scheduleIssueDragId(issue.id, 'move', dragInstance),
     disabled: !enabled,
-  });
-  const start = useDraggable({
-    id: scheduleIssueDragId(issue.id, "start", dragInstance),
+  })
+  const {
+    setElement: setStartElement,
+    isDragging: startIsDragging,
+    transform: startPointerTransform,
+    buttonProps: startProps,
+  } = useSchedulePointerDrag({
+    id: scheduleIssueDragId(issue.id, 'start', dragInstance),
     disabled: !enabled || !showStartHandle,
-  });
-  const end = useDraggable({
-    id: scheduleIssueDragId(issue.id, "end", dragInstance),
+  })
+  const {
+    setElement: setEndElement,
+    isDragging: endIsDragging,
+    transform: endPointerTransform,
+    buttonProps: endProps,
+  } = useSchedulePointerDrag({
+    id: scheduleIssueDragId(issue.id, 'end', dragInstance),
     disabled: !enabled || !showEndHandle,
-  });
-  const liftedTogether = liftTogether && dragPreview.activeIssueId === issue.id;
-  const resizingStart = start.isDragging && start.transform;
-  const resizingEnd = end.isDragging && end.transform;
-  const baseLeft = typeof style?.left === "number" ? style.left : null;
-  const baseWidth = typeof style?.width === "number" ? style.width : null;
-  const minimumWidth = 24;
+  })
+  const liftedTogether = liftTogether && dragPreview.activeIssueId === issue.id
+  const resizingStart = startIsDragging && startPointerTransform
+  const resizingEnd = endIsDragging && endPointerTransform
+  const baseLeft = typeof style?.left === 'number' ? style.left : null
+  const baseWidth = typeof style?.width === 'number' ? style.width : null
+  const minimumWidth = 24
   const startDelta =
     resizingStart && baseWidth !== null
       ? Math.min(resizingStart.x, baseWidth - minimumWidth)
-      : 0;
+      : 0
   const endDelta =
     resizingEnd && baseWidth !== null
       ? Math.max(resizingEnd.x, minimumWidth - baseWidth)
-      : 0;
+      : 0
   const resizedStyle =
     baseLeft !== null && baseWidth !== null
       ? {
           left: baseLeft + startDelta,
           width: baseWidth - startDelta + endDelta,
         }
-      : {};
-  const activelyDragging =
-    move.isDragging || start.isDragging || end.isDragging;
+      : {}
+  const activelyDragging = moveIsDragging || startIsDragging || endIsDragging
   const dragRange =
     showDragDateLabels &&
     dragPreview.activeIssueId === issue.id &&
     dragPreview.activeMode !== null &&
     activelyDragging
       ? dragPreview.previewRange
-      : null;
+      : null
   const moveTransform = liftedTogether
     ? {
         x: dragPreview.transform.x,
@@ -341,22 +316,24 @@ export function DraggableScheduleBar({
         scaleX: 1,
         scaleY: 1,
       }
-    : move.transform;
+    : movePointerTransform
 
   return (
     <div
       data-testid={testId}
       className={`group ${className} ${
         liftedTogether
-          ? "z-20 shadow-lg ring-1 ring-text-muted/30"
+          ? 'z-20 shadow-lg ring-1 ring-text-muted/30'
           : activelyDragging
-            ? "z-20 shadow-lg ring-2 ring-inset ring-white/35"
-            : ""
+            ? 'z-20 shadow-lg ring-2 ring-inset ring-white/35'
+            : ''
       }`}
       style={{
         ...style,
         ...resizedStyle,
-        transform: CSS.Translate.toString(moveTransform),
+        transform: moveTransform
+          ? `translate3d(${moveTransform.x}px, ${moveTransform.y}px, 0)`
+          : undefined,
       }}
       title={title}
     >
@@ -371,45 +348,45 @@ export function DraggableScheduleBar({
         </>
       ) : null}
       {showStartHandle ? (
-        <button
-          ref={start.setNodeRef}
+        <ControlButton
+          variant="unstyled"
+          ref={setStartElement}
           type="button"
           data-testid={`${testId}-start-handle`}
           aria-label="调整开始时间"
           className={`absolute inset-y-0 left-0 z-10 flex w-4 cursor-ew-resize touch-none items-center justify-center rounded-l-[inherit] opacity-0 transition-opacity group-hover:opacity-100 ${
-            start.isDragging ? "opacity-100" : ""
-          } ${handleClassName ?? ""}`}
-          {...start.listeners}
-          {...start.attributes}
+            startIsDragging ? 'opacity-100' : ''
+          } ${handleClassName ?? ''}`}
+          {...startProps}
         />
       ) : null}
-      <button
-        ref={move.setNodeRef}
+      <ControlButton
+        variant="unstyled"
+        ref={setMoveElement}
         type="button"
         onClick={onOpen}
-        className={`${bodyClassName ?? ""} h-full min-w-0 flex-1 touch-none text-inherit ${
-          enabled ? (bodyCursorClassName ?? "cursor-pointer") : "cursor-pointer"
+        className={`${bodyClassName ?? ''} h-full min-w-0 flex-1 touch-none text-inherit ${
+          enabled ? (bodyCursorClassName ?? 'cursor-pointer') : 'cursor-pointer'
         }`}
-        {...move.listeners}
-        {...move.attributes}
+        {...moveProps}
       >
         {children}
-      </button>
+      </ControlButton>
       {showEndHandle ? (
-        <button
-          ref={end.setNodeRef}
+        <ControlButton
+          variant="unstyled"
+          ref={setEndElement}
           type="button"
           data-testid={`${testId}-end-handle`}
           aria-label="调整结束时间"
           className={`absolute inset-y-0 right-0 z-10 flex w-4 cursor-ew-resize touch-none items-center justify-center rounded-r-[inherit] opacity-0 transition-opacity group-hover:opacity-100 ${
-            end.isDragging ? "opacity-100" : ""
-          } ${handleClassName ?? ""}`}
-          {...end.listeners}
-          {...end.attributes}
+            endIsDragging ? 'opacity-100' : ''
+          } ${handleClassName ?? ''}`}
+          {...endProps}
         />
       ) : null}
     </div>
-  );
+  )
 }
 
 export function ScheduleDndArea({
@@ -418,97 +395,100 @@ export function ScheduleDndArea({
   previewOccupiedRange = false,
   children,
 }: {
-  issues: CollaborationIssue[];
-  onSchedule?: ProjectScheduleViewProps["onSchedule"];
-  previewOccupiedRange?: boolean;
-  children: ReactNode;
+  issues: CollaborationIssue[]
+  onSchedule?: ProjectScheduleViewProps['onSchedule']
+  previewOccupiedRange?: boolean
+  children: ReactNode
 }) {
   const [dragPreview, setDragPreview] = useState<ScheduleDragPreview>({
+    activeId: null,
     activeIssueId: null,
     activeMode: null,
     transform: { x: 0, y: 0 },
+    targetDate: null,
     previewRange: null,
     previewDates: new Set(),
-  });
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
-  const clearDragPreview = () =>
-    setDragPreview({
-      activeIssueId: null,
-      activeMode: null,
-      transform: { x: 0, y: 0 },
-      previewRange: null,
-      previewDates: new Set(),
-    });
-  const handleDragStart = ({ active }: DragStartEvent) => {
-    const source = scheduleDragSource(active.id);
-    const issue = source
-      ? issues.find((candidate) => candidate.id === source.issueId)
-      : null;
-    const range = issue ? ganttIssueRange(issue) : null;
-    setDragPreview({
-      activeIssueId: source?.issueId ?? null,
-      activeMode: source?.mode ?? null,
-      transform: { x: 0, y: 0 },
-      previewRange: range
-        ? {
-            startAt: localDateKey(range.start),
-            dueAt: localDateKey(range.end),
-          }
-        : null,
-      previewDates: new Set(),
-    });
-  };
-  const handleDragMove = ({ delta }: DragMoveEvent) => {
-    setDragPreview((current) => ({
-      ...current,
-      transform: delta,
-    }));
-  };
-  const handleDragOver = ({ active, over }: DragOverEvent) => {
-    const drop = scheduleDrop(active.id, over?.id);
-    const issue = drop
-      ? issues.find((candidate) => candidate.id === drop.issueId)
-      : null;
-    const range =
-      issue && drop ? scheduleRangeUpdate(issue, drop.mode, drop.date) : null;
-    setDragPreview((current) => ({
-      ...current,
-      previewRange: range ?? current.previewRange,
-      previewDates: new Set(
-        previewOccupiedRange && range ? scheduleRangeDateKeys(range) : [],
-      ),
-    }));
-  };
-  const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    const drop = scheduleDrop(active.id, over?.id);
-    if (!drop || !onSchedule) {
-      clearDragPreview();
-      return;
+  })
+  const actions = useMemo(() => {
+    const clearDragPreview = () =>
+      setDragPreview({
+        activeId: null,
+        activeIssueId: null,
+        activeMode: null,
+        transform: { x: 0, y: 0 },
+        targetDate: null,
+        previewRange: null,
+        previewDates: new Set(),
+      })
+    const handleDragStart = (id: string) => {
+      const source = scheduleDragSource(id)
+      const issue = source ? issues.find(candidate => candidate.id === source.issueId) : null
+      const range = issue ? ganttIssueRange(issue) : null
+      setDragPreview({
+        activeId: id,
+        activeIssueId: source?.issueId ?? null,
+        activeMode: source?.mode ?? null,
+        transform: { x: 0, y: 0 },
+        targetDate: null,
+        previewRange: range
+          ? {
+              startAt: localDateKey(range.start),
+              dueAt: localDateKey(range.end),
+            }
+          : null,
+        previewDates: new Set(),
+      })
     }
-    const issue = issues.find((candidate) => candidate.id === drop.issueId);
-    const range = issue
-      ? scheduleRangeUpdate(issue, drop.mode, drop.date)
-      : null;
-    if (issue && range) void onSchedule(issue, range);
-    clearDragPreview();
-  };
+    const handleDragMove = (delta: { x: number; y: number }) => {
+      setDragPreview(current => ({
+        ...current,
+        transform: delta,
+      }))
+    }
+    const handleDragOver = (id: string, over: string | null) => {
+      const drop = scheduleDrop(id, over ?? undefined)
+      const issue = drop ? issues.find(candidate => candidate.id === drop.issueId) : null
+      const range = issue && drop ? scheduleRangeUpdate(issue, drop.mode, drop.date) : null
+      setDragPreview(current => ({
+        ...current,
+        targetDate: drop?.date ?? null,
+        previewRange: range ?? current.previewRange,
+        previewDates: new Set(previewOccupiedRange && range ? scheduleRangeDateKeys(range) : []),
+      }))
+    }
+    const handleDragEnd = (id: string, over: string | null, canceled: boolean) => {
+      const drop = canceled ? null : scheduleDrop(id, over ?? undefined)
+      if (!drop || !onSchedule) {
+        clearDragPreview()
+        return
+      }
+      const issue = issues.find(candidate => candidate.id === drop.issueId)
+      const range = issue ? scheduleRangeUpdate(issue, drop.mode, drop.date) : null
+      if (issue && range && canEditCollaborationIssue(issue)) void onSchedule(issue, range)
+      clearDragPreview()
+    }
+    return {
+      start: handleDragStart,
+      move: (id: string, delta: { x: number; y: number }, over: string | null) => {
+        handleDragMove(delta)
+        handleDragOver(id, over)
+      },
+      end: handleDragEnd,
+    }
+  }, [issues, onSchedule, previewOccupiedRange])
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={pointerWithin}
-      onDragStart={handleDragStart}
-      onDragMove={handleDragMove}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      onDragCancel={clearDragPreview}
+    <SchedulePointerContext.Provider
+      value={{
+        ...actions,
+        activeId: dragPreview.activeId,
+        delta: dragPreview.transform,
+      }}
     >
       <ScheduleDragPreviewContext.Provider value={dragPreview}>
         {children}
       </ScheduleDragPreviewContext.Provider>
-    </DndContext>
-  );
+    </SchedulePointerContext.Provider>
+  )
 }
 
 export function ScheduleToolbar({
@@ -522,15 +502,15 @@ export function ScheduleToolbar({
   onToday,
   onNext,
 }: {
-  icon: ReactNode;
-  title: string;
-  todayLabel: string;
-  previousLabel: string;
-  nextLabel: string;
-  extraActions?: ReactNode;
-  onPrevious(): void;
-  onToday(): void;
-  onNext(): void;
+  icon: ReactNode
+  title: string
+  todayLabel: string
+  previousLabel: string
+  nextLabel: string
+  extraActions?: ReactNode
+  onPrevious(): void
+  onToday(): void
+  onNext(): void
 }) {
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-border px-6 py-3">
@@ -542,7 +522,8 @@ export function ScheduleToolbar({
       </h1>
       {extraActions}
       <div className="flex items-center gap-1">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary max-md:h-11 max-md:w-11"
           aria-label={previousLabel}
@@ -550,16 +531,19 @@ export function ScheduleToolbar({
           onClick={onPrevious}
         >
           <ChevronLeft className="h-4 w-4" />
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           className="h-8 rounded-lg border border-border px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary max-md:h-11"
           data-testid="collaboration-schedule-today"
           onClick={onToday}
         >
           {todayLabel}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary max-md:h-11 max-md:w-11"
           aria-label={nextLabel}
@@ -567,10 +551,10 @@ export function ScheduleToolbar({
           onClick={onNext}
         >
           <ChevronRight className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </div>
     </header>
-  );
+  )
 }
 
 export function UndatedIssues({
@@ -580,28 +564,25 @@ export function UndatedIssues({
   onOpen,
   onSchedule,
 }: ProjectScheduleViewProps) {
-  const { activeIssueId } = useContext(ScheduleDragPreviewContext);
-  const portalTheme = useCollaborationPortalTheme();
   const undated = issues.filter(
     (issue) =>
       !parseScheduleDate(issue.start_at) && !parseScheduleDate(issue.due_at),
-  );
-  const draggedIssue = undated.find((issue) => issue.id === activeIssueId);
-  if (undated.length === 0) return null;
+  )
+  if (undated.length === 0) return null
   return (
     <>
       <section className="max-h-40 overflow-auto border-t border-border px-6 py-4">
         <h2 className="mb-2 text-sm font-medium text-text-primary">
-          {locale === "zh-CN" ? "未安排时间" : "Unscheduled"}
+          {locale === 'zh-CN' ? '未安排时间' : 'Unscheduled'}
           <span className="ml-2 text-xs font-normal text-text-muted">
             {undated.length}
           </span>
         </h2>
         {onSchedule ? (
           <p className="mb-3 text-xs text-text-muted">
-            {locale === "zh-CN"
-              ? "拖拽任务到上方日期即可设置起止时间"
-              : "Drag a task onto a date above to set its schedule"}
+            {locale === 'zh-CN'
+              ? '拖拽任务到上方日期即可设置起止时间'
+              : 'Drag a task onto a date above to set its schedule'}
           </p>
         ) : null}
         <div className="flex flex-wrap gap-2">
@@ -617,100 +598,84 @@ export function UndatedIssues({
           ))}
         </div>
       </section>
-      {typeof document !== "undefined"
-        ? createPortal(
-            <DragOverlay dropAnimation={null}>
-              {draggedIssue ? (
-                <div
-                  {...portalTheme}
-                  data-testid="collaboration-schedule-undated-drag-overlay"
-                  className={`${portalTheme.className} ${undatedIssueClassName} cursor-grabbing shadow-sm`}
-                >
-                  <UndatedIssueLabel issue={draggedIssue} statuses={statuses} />
-                </div>
-              ) : null}
-            </DragOverlay>,
-            document.body,
-          )
-        : null}
     </>
-  );
+  )
 }
 
-type CalendarScale = "month" | "week" | "day";
+type CalendarScale = 'month' | 'week' | 'day'
 
 export function ProjectCalendarView(props: ProjectScheduleViewProps) {
-  const { issues, locale, statuses, onOpen } = props;
-  const [scale, setScale] = useState<CalendarScale>("month");
+  const { issues, locale, statuses, onOpen } = props
+  const [scale, setScale] = useState<CalendarScale>('month')
   const [visibleDate, setVisibleDate] = useState(() =>
     startOfLocalDay(new Date()),
-  );
-  const weekStartsOnMonday = locale === "zh-CN";
+  )
+  const weekStartsOnMonday = locale === 'zh-CN'
   const days = useMemo(() => {
-    if (scale === "month") {
-      return calendarDays(visibleDate, weekStartsOnMonday);
+    if (scale === 'month') {
+      return calendarDays(visibleDate, weekStartsOnMonday)
     }
-    if (scale === "week") {
-      const weekStart = startOfScheduleWeek(visibleDate, weekStartsOnMonday);
+    if (scale === 'week') {
+      const weekStart = startOfScheduleWeek(visibleDate, weekStartsOnMonday)
       return Array.from({ length: 7 }, (_, index) =>
         addLocalDays(weekStart, index),
-      );
+      )
     }
-    return [visibleDate];
-  }, [scale, visibleDate, weekStartsOnMonday]);
-  const todayKey = localDateKey(new Date());
-  const dateLocale = locale === "zh-CN" ? "zh-CN" : "en-US";
+    return [visibleDate]
+  }, [scale, visibleDate, weekStartsOnMonday])
+  const todayKey = localDateKey(new Date())
+  const dateLocale = locale === 'zh-CN' ? 'zh-CN' : 'en-US'
   const weekdayFormatter = new Intl.DateTimeFormat(dateLocale, {
-    weekday: "short",
-  });
+    weekday: 'short',
+  })
   const title = new Intl.DateTimeFormat(dateLocale, {
-    year: "numeric",
-    month: "long",
-    ...(scale === "day" ? { day: "numeric", weekday: "short" } : {}),
-  }).format(visibleDate);
+    year: 'numeric',
+    month: 'long',
+    ...(scale === 'day' ? { day: 'numeric', weekday: 'short' } : {}),
+  }).format(visibleDate)
   const scaleLabels: Record<CalendarScale, string> =
-    locale === "zh-CN"
-      ? { month: "月", week: "周", day: "日" }
-      : { month: "Month", week: "Week", day: "Day" };
+    locale === 'zh-CN'
+      ? { month: '月', week: '周', day: '日' }
+      : { month: 'Month', week: 'Week', day: 'Day' }
   const shiftVisibleDate = (direction: -1 | 1) => {
     setVisibleDate((current) => {
-      if (scale === "month") return addLocalMonths(current, direction);
-      return addLocalDays(current, direction * (scale === "week" ? 7 : 1));
-    });
-  };
+      if (scale === 'month') return addLocalMonths(current, direction)
+      return addLocalDays(current, direction * (scale === 'week' ? 7 : 1))
+    })
+  }
   const previousLabel =
-    locale === "zh-CN"
+    locale === 'zh-CN'
       ? `上一个${scaleLabels[scale]}`
-      : `Previous ${scaleLabels[scale].toLowerCase()}`;
+      : `Previous ${scaleLabels[scale].toLowerCase()}`
   const nextLabel =
-    locale === "zh-CN"
+    locale === 'zh-CN'
       ? `下一个${scaleLabels[scale]}`
-      : `Next ${scaleLabels[scale].toLowerCase()}`;
-  const columnCount = scale === "day" ? 1 : 7;
+      : `Next ${scaleLabels[scale].toLowerCase()}`
+  const columnCount = scale === 'day' ? 1 : 7
   const headerDays =
-    scale === "month"
+    scale === 'month'
       ? days.slice(0, 7)
-      : scale === "week"
+      : scale === 'week'
         ? days
-        : [visibleDate];
+        : [visibleDate]
   const calendarRows = useMemo(
     () =>
       Array.from({ length: Math.ceil(days.length / columnCount) }, (_, index) =>
         days.slice(index * columnCount, (index + 1) * columnCount),
       ),
     [columnCount, days],
-  );
+  )
   const displayedIssues = useMemo(
     () => filterAndSortScheduleIssues(issues, props.viewOptions),
     [issues, props.viewOptions],
-  );
+  )
   const issueOrder = useMemo(
     () =>
       new Map(
         displayedIssues.map((issue, index) => [issue.id, index] as const),
       ),
     [displayedIssues],
-  );
+  )
 
   return (
     <ScheduleDndArea
@@ -725,7 +690,7 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
         <ScheduleToolbar
           icon={<CalendarDays className="h-4 w-4" />}
           title={title}
-          todayLabel={locale === "zh-CN" ? "今天" : "Today"}
+          todayLabel={locale === 'zh-CN' ? '今天' : 'Today'}
           previousLabel={previousLabel}
           nextLabel={nextLabel}
           extraActions={
@@ -734,11 +699,12 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                 className="hidden items-center rounded-lg bg-muted p-0.5 md:flex"
                 role="group"
                 aria-label={
-                  locale === "zh-CN" ? "日历时间范围" : "Calendar time range"
+                  locale === 'zh-CN' ? '日历时间范围' : 'Calendar time range'
                 }
               >
-                {(["month", "week", "day"] as CalendarScale[]).map((option) => (
-                  <button
+                {(['month', 'week', 'day'] as CalendarScale[]).map((option) => (
+                  <ControlButton
+                    variant="unstyled"
                     key={option}
                     type="button"
                     data-testid={`collaboration-calendar-scale-${option}`}
@@ -746,31 +712,38 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                     onClick={() => setScale(option)}
                     className={
                       scale === option
-                        ? "h-7 rounded-md bg-background px-3 text-xs font-medium text-blue-600 shadow-sm dark:text-blue-400"
-                        : "h-7 rounded-md px-3 text-xs text-text-secondary hover:text-text-primary"
+                        ? 'h-7 rounded-md bg-background px-3 text-xs font-medium text-blue-600 shadow-sm dark:text-blue-400'
+                        : 'h-7 rounded-md px-3 text-xs text-text-secondary hover:text-text-primary'
                     }
                   >
                     {scaleLabels[option]}
-                  </button>
+                  </ControlButton>
                 ))}
               </div>
-              <select
-                value={scale}
-                data-testid="collaboration-calendar-scale-mobile"
-                aria-label={
-                  locale === "zh-CN" ? "日历时间范围" : "Calendar time range"
-                }
-                onChange={(event) =>
-                  setScale(event.target.value as CalendarScale)
-                }
-                className="h-11 rounded-lg border border-border bg-background px-2 text-xs text-text-primary md:hidden"
+              <SelectRoot
+                value={normalizeSelectValue(scale)}
+                onValueChange={(selectedValue) => {
+                  if (selectedValue !== null)
+                    return setScale(selectedValue as CalendarScale)
+                }}
               >
-                {(["month", "week", "day"] as CalendarScale[]).map((option) => (
-                  <option key={option} value={option}>
-                    {scaleLabels[option]}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  data-testid="collaboration-calendar-scale-mobile"
+                  aria-label={
+                    locale === 'zh-CN' ? '日历时间范围' : 'Calendar time range'
+                  }
+                  className="h-11 text-xs md:hidden"
+                />
+                <SelectContent>
+                  {(['month', 'week', 'day'] as CalendarScale[]).map(
+                    (option) => (
+                      <SelectItem key={option} value={String(option)}>
+                        {scaleLabels[option]}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </SelectRoot>
             </>
           }
           onPrevious={() => shiftVisibleDate(-1)}
@@ -780,9 +753,7 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
         <ScheduleViewControls {...props} view="calendar" />
         <div className="min-h-0 flex-1 overflow-auto">
           <div
-            className={`flex min-h-full flex-col ${
-              scale === "day" ? "min-w-0" : "min-w-[720px]"
-            }`}
+            className={`flex min-h-full flex-col ${scale === 'day' ? 'min-w-0' : 'min-w-[720px]'}`}
           >
             <div
               className="sticky top-0 z-10 grid shrink-0 border-b border-border bg-background"
@@ -801,17 +772,17 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
             </div>
             <div className="flex flex-1 flex-col border-l border-border">
               {calendarRows.map((rowDays) => {
-                const rowKey = localDateKey(rowDays[0]);
+                const rowKey = localDateKey(rowDays[0])
                 const segments = calendarIssueSegments(
                   displayedIssues,
                   rowDays,
                   issueOrder,
-                );
+                )
                 const laneCount =
                   segments.reduce(
                     (count, segment) => Math.max(count, segment.lane + 1),
                     0,
-                  ) || 1;
+                  ) || 1
                 return (
                   <div
                     key={rowKey}
@@ -819,29 +790,28 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                     style={{
                       gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
                       minHeight:
-                        scale === "month"
+                        scale === 'month'
                           ? Math.max(112, 46 + laneCount * 30)
                           : Math.max(480, 46 + laneCount * 30),
                     }}
                   >
                     {rowDays.map((day) => {
-                      const key = localDateKey(day);
+                      const key = localDateKey(day)
                       const inMonth =
-                        scale !== "month" ||
-                        day.getMonth() === visibleDate.getMonth();
-                      const isToday = key === todayKey;
-                      const isWeekend =
-                        day.getDay() === 0 || day.getDay() === 6;
+                        scale !== 'month' ||
+                        day.getMonth() === visibleDate.getMonth()
+                      const isToday = key === todayKey
+                      const isWeekend = day.getDay() === 0 || day.getDay() === 6
                       return (
                         <ScheduleDateDropZone
                           key={key}
                           date={key}
                           className={`border-b border-r border-border p-2 ${
                             isToday
-                              ? "bg-blue-500/5"
+                              ? 'bg-blue-500/5'
                               : isWeekend
-                                ? "bg-muted/20"
-                                : "bg-background"
+                                ? 'bg-muted/20'
+                                : 'bg-background'
                           }`}
                         >
                           <section
@@ -852,17 +822,17 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                               dateTime={key}
                               className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${
                                 isToday
-                                  ? "bg-blue-600 font-semibold text-white"
+                                  ? 'bg-blue-600 font-semibold text-white'
                                   : inMonth
-                                    ? "text-text-primary"
-                                    : "text-text-muted"
+                                    ? 'text-text-primary'
+                                    : 'text-text-muted'
                               }`}
                             >
                               {day.getDate()}
                             </time>
                           </section>
                         </ScheduleDateDropZone>
-                      );
+                      )
                     })}
                     <div
                       className="pointer-events-none absolute inset-x-0 top-10 z-[2] grid gap-y-1"
@@ -872,14 +842,14 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                       }}
                     >
                       {segments.map((segment) => {
-                        const range = ganttIssueRange(segment.issue);
+                        const range = ganttIssueRange(segment.issue)
                         const singleDay =
                           segment.startColumn === segment.endColumn &&
                           !segment.continuesBefore &&
-                          !segment.continuesAfter;
+                          !segment.continuesAfter
                         const dueTime = singleDay
                           ? issueDueTime(segment.issue, locale)
-                          : null;
+                          : null
                         return (
                           <DraggableScheduleBar
                             key={`${segment.issue.id}-${rowKey}`}
@@ -895,13 +865,9 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                             onOpen={() => onOpen(segment.issue)}
                             className={`pointer-events-auto mx-1 flex min-w-0 items-stretch text-left text-xs text-text-primary shadow-sm hover:brightness-95 ${statusSurfaceClasses[statusColor(statuses, segment.issue)]} ${
                               segment.continuesBefore
-                                ? "rounded-l-none"
-                                : "rounded-l-md"
-                            } ${
-                              segment.continuesAfter
-                                ? "rounded-r-none"
-                                : "rounded-r-md"
-                            }`}
+                                ? 'rounded-l-none'
+                                : 'rounded-l-md'
+                            } ${segment.continuesAfter ? 'rounded-r-none' : 'rounded-r-md'}`}
                             bodyClassName="flex items-center gap-1.5 px-2 text-left"
                             bodyCursorClassName="cursor-pointer"
                             liftTogether
@@ -923,11 +889,11 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
                               {segment.issue.title}
                             </span>
                           </DraggableScheduleBar>
-                        );
+                        )
                       })}
                     </div>
                   </div>
-                );
+                )
               })}
             </div>
           </div>
@@ -935,5 +901,5 @@ export function ProjectCalendarView(props: ProjectScheduleViewProps) {
         <UndatedIssues {...props} issues={displayedIssues} />
       </div>
     </ScheduleDndArea>
-  );
+  )
 }

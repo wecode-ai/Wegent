@@ -1,4 +1,12 @@
 import {
+  SelectRoot,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
   Box,
   CheckCircle2,
   CirclePlus,
@@ -26,6 +34,7 @@ import { SmartAppShareDialog } from './SmartAppsMarketplaceAccess'
 import { SmartAppPublishDialog } from './SmartAppPublishDialog'
 export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMarketplaceModel>) {
   const {
+    requestDialogs,
     api,
     mode,
     t,
@@ -170,36 +179,52 @@ export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMa
         trailing={
           mode === 'marketplace' ? (
             <>
-              <select
-                data-testid="smart-apps-marketplace-source"
-                value={source}
-                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
-                onChange={event => setSource(event.target.value as typeof source)}
+              <SelectRoot
+                value={normalizeSelectValue(source)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null) return setSource(selectedValue as typeof source)
+                }}
               >
-                <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
-                <option value="official">
-                  {t('workbench.smart_apps_source_official', '官方工作台')}
-                </option>
-                <option value="public">
-                  {t('workbench.smart_apps_source_public', '全员应用')}
-                </option>
-                <option value="shared">
-                  {t('workbench.smart_apps_source_shared', '分享给我')}
-                </option>
-              </select>
-              <select
-                data-testid="smart-apps-marketplace-tag"
-                value={tag}
-                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
-                onChange={event => setTag(event.target.value)}
+                <SelectTrigger
+                  aria-label={t('workbench.plugins_market_source')}
+                  data-testid="smart-apps-marketplace-source"
+                  className="h-full min-w-32"
+                />
+                <SelectContent>
+                  <SelectItem value="all">
+                    {t('workbench.smart_apps_source_all', '全部来源')}
+                  </SelectItem>
+                  <SelectItem value="official">
+                    {t('workbench.smart_apps_source_official', '官方工作台')}
+                  </SelectItem>
+                  <SelectItem value="public">
+                    {t('workbench.smart_apps_source_public', '全员应用')}
+                  </SelectItem>
+                  <SelectItem value="shared">
+                    {t('workbench.smart_apps_source_shared', '分享给我')}
+                  </SelectItem>
+                </SelectContent>
+              </SelectRoot>
+              <SelectRoot
+                value={normalizeSelectValue(tag)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null) return setTag(selectedValue)
+                }}
               >
-                <option value="">{t('workbench.smart_apps_tag_all', '全部标签')}</option>
-                {tags.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {i18n.language.startsWith('zh') ? item.name_zh : item.name_en}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  aria-label={t('todo.tags')}
+                  data-testid="smart-apps-marketplace-tag"
+                  className="h-full min-w-32"
+                />
+                <SelectContent>
+                  <SelectItem value="">{t('workbench.smart_apps_tag_all', '全部标签')}</SelectItem>
+                  {tags.map(item => (
+                    <SelectItem key={item.id} value={String(item.id)}>
+                      {i18n.language.startsWith('zh') ? item.name_zh : item.name_en}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             </>
           ) : (
             <div
@@ -221,7 +246,8 @@ export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMa
                   ],
                 ] as Array<[OwnedFilter, string, number]>
               ).map(([value, label, count]) => (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={value}
                   type="button"
                   data-testid={`smart-apps-owned-filter-${value}`}
@@ -234,7 +260,7 @@ export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMa
                   onClick={() => setOwnedFilter(value)}
                 >
                   {label} <span className="ml-1 text-xs text-text-muted">{count}</span>
-                </button>
+                </ControlButton>
               ))}
             </div>
           )
@@ -250,18 +276,28 @@ export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMa
             )}
           </span>
           {mode === 'marketplace' ? (
-            <select
-              data-testid="smart-apps-marketplace-sort"
-              value={marketplaceSort}
-              aria-label={t('workbench.smart_apps_sort_label', '排序方式')}
-              className="h-8 rounded-lg border border-transparent bg-transparent px-2 text-sm text-text-primary outline-none hover:bg-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
-              onChange={event => setMarketplaceSort(event.target.value as MarketplaceSort)}
+            <SelectRoot
+              value={normalizeSelectValue(marketplaceSort)}
+              onValueChange={selectedValue => {
+                if (selectedValue !== null)
+                  return setMarketplaceSort(selectedValue as MarketplaceSort)
+              }}
             >
-              <option value="recommended">
-                {t('workbench.smart_apps_sort_recommended', '推荐排序')}
-              </option>
-              <option value="updated">{t('workbench.smart_apps_sort_updated', '最近更新')}</option>
-            </select>
+              <SelectTrigger
+                density="compact"
+                data-testid="smart-apps-marketplace-sort"
+                aria-label={t('workbench.smart_apps_sort_label', '排序方式')}
+                className="border-transparent bg-transparent hover:bg-muted"
+              />
+              <SelectContent>
+                <SelectItem value="recommended">
+                  {t('workbench.smart_apps_sort_recommended', '推荐排序')}
+                </SelectItem>
+                <SelectItem value="updated">
+                  {t('workbench.smart_apps_sort_updated', '最近更新')}
+                </SelectItem>
+              </SelectContent>
+            </SelectRoot>
           ) : null}
         </div>
       ) : null}
@@ -484,38 +520,44 @@ export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMa
                         {installation ? (
                           <label className="flex min-w-0 items-center gap-1">
                             <span>{t('workbench.harness_apps_bound_model', '模型')}：</span>
-                            <select
-                              data-testid={`harness-app-model-${installation.id}`}
-                              aria-label={t('workbench.smart_apps_change_model', '修改模型')}
-                              className="min-w-0 max-w-44 rounded-md border border-border/50 bg-background px-1.5 py-0.5 text-xs text-text-secondary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:cursor-not-allowed disabled:opacity-60"
-                              value={installation.modelKey ?? ''}
+                            <SelectRoot
+                              value={normalizeSelectValue(installation.modelKey ?? '')}
                               disabled={
                                 !localReady ||
                                 busy === installation.id ||
                                 installation.state === 'running'
                               }
-                              onChange={event =>
-                                withCurrentInstallation(installation, current =>
-                                  changeModel(current, event.target.value)
-                                )
-                              }
+                              onValueChange={selectedValue => {
+                                if (selectedValue !== null)
+                                  return withCurrentInstallation(installation, current =>
+                                    changeModel(current, selectedValue)
+                                  )
+                              }}
                             >
-                              {!installation.modelKey ? (
-                                <option value="">
-                                  {t('workbench.harness_apps_model_choose', '请选择模型')}
-                                </option>
-                              ) : null}
-                              {modelOptions.map(option => (
-                                <option key={option.key} value={option.key}>
-                                  {option.label}
-                                </option>
-                              ))}
-                              {!hasSelectedModel(installation) && installation.modelKey ? (
-                                <option value={installation.modelKey}>
-                                  {t('workbench.harness_apps_model_unavailable', '模型不可用')}
-                                </option>
-                              ) : null}
-                            </select>
+                              <SelectTrigger
+                                data-value={installation.modelKey ?? ''}
+                                data-testid={`harness-app-model-${installation.id}`}
+                                aria-label={t('workbench.smart_apps_change_model', '修改模型')}
+                                className="min-w-0 max-w-44 py-0.5 text-xs text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                              />
+                              <SelectContent>
+                                {!installation.modelKey ? (
+                                  <SelectItem value="">
+                                    {t('workbench.harness_apps_model_choose', '请选择模型')}
+                                  </SelectItem>
+                                ) : null}
+                                {modelOptions.map(option => (
+                                  <SelectItem key={option.key} value={String(option.key)}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                                {!hasSelectedModel(installation) && installation.modelKey ? (
+                                  <SelectItem value={String(installation.modelKey)}>
+                                    {t('workbench.harness_apps_model_unavailable', '模型不可用')}
+                                  </SelectItem>
+                                ) : null}
+                              </SelectContent>
+                            </SelectRoot>
                           </label>
                         ) : null}
                         {item?.updatedAt ? (
@@ -847,6 +889,7 @@ export function SmartAppsMarketplaceView(model: ReturnType<typeof useSmartAppsMa
         onClose={() => setPendingDelete(null)}
         onConfirm={() => void deleteLocalInstallation()}
       />
+      {requestDialogs}
     </section>
   )
 }

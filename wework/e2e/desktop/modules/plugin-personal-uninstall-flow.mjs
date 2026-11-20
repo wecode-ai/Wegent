@@ -122,7 +122,10 @@ async function uninstallPersonalPluginInUi(control, plugin, options) {
   await openPersonalPlugin(control, plugin, options)
   await control.command('clickIfPresent', testId('plugin-operation-notice-dismiss'))
   await control.command('click', 'button[data-testid^="plugin-detail-actions-"]')
-  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-uninstall-"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[role="menuitem"][data-testid^="plugin-detail-uninstall-"]'
+  )
   await control.command('waitFor', testId('uninstall-plugin-dialog'))
   await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
   await control.command(

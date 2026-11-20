@@ -1,5 +1,3 @@
-import { X } from 'lucide-react'
-import { useState, type SVGProps } from 'react'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -12,6 +10,10 @@ import {
   deviceZoomOptions,
   type BrowserDeviceToolbarState,
 } from '@/lib/browser-device-toolbar'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
+import { useState, type SVGProps } from 'react'
 
 interface BrowserDeviceToolbarProps {
   state: BrowserDeviceToolbarState
@@ -50,7 +52,8 @@ function DimensionInput({
   }
 
   return (
-    <input
+    <ControlInput
+      density="dense"
       data-testid={testId}
       aria-label={ariaLabel}
       type="number"
@@ -69,7 +72,7 @@ function DimensionInput({
       onKeyDown={event => {
         if (event.key === 'Enter') event.currentTarget.blur()
       }}
-      className="h-6 w-[72px] rounded-lg border border-transparent bg-foreground/5 px-2 text-center text-sm font-semibold tabular-nums text-text-primary outline-none hover:bg-muted keyboard:focus:border-primary focus:bg-background"
+      className="w-[72px] border-transparent bg-foreground/5 text-center font-semibold tabular-nums hover:bg-muted focus:bg-background"
     />
   )
 }
@@ -104,14 +107,12 @@ export function BrowserDeviceToolbar({
       data-testid="workspace-browser-device-toolbar"
       className="flex h-[34px] shrink-0 items-center gap-2 border-b border-border bg-muted px-2.5 text-sm text-text-primary"
     >
-      <label
-        htmlFor="workspace-browser-device-preset"
-        className="max-w-28 min-w-0 shrink truncate font-medium"
-      >
+      <span className="max-w-28 min-w-0 shrink truncate font-medium">
         {t('workbench.browser_device_dimensions')}
-      </label>
+      </span>
       <MenuSelect
         testId="workspace-browser-device-preset-select"
+        accessibleLabel={t('workbench.browser_device_dimensions')}
         value={state.presetId}
         options={presetOptions}
         onChange={onPresetChange}
@@ -134,7 +135,8 @@ export function BrowserDeviceToolbar({
           onCommit={height => onDimensionsChange(state.width, height)}
         />
       </div>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="workspace-browser-device-rotate-button"
         aria-label={t('workbench.browser_device_rotate')}
@@ -151,15 +153,17 @@ export function BrowserDeviceToolbar({
         >
           <RotateDeviceIcon className="size-4" />
         </span>
-      </button>
+      </ControlButton>
       <MenuSelect
         testId="workspace-browser-device-zoom-select"
+        accessibleLabel={t('workbench.browser_device_zoom', '缩放')}
         value={String(zoomPercent)}
         options={zoomOptions}
         onChange={value => onZoomPercentChange(Number(value))}
         pill
       />
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="workspace-browser-device-close-button"
         aria-label={t('workbench.browser_device_toolbar_close')}
@@ -171,7 +175,7 @@ export function BrowserDeviceToolbar({
         className="ms-auto flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-secondary outline-none hover:bg-muted hover:text-text-primary focus:bg-muted focus:text-text-primary"
       >
         <X className="h-3.5 w-3.5" />
-      </button>
+      </ControlButton>
     </div>
   )
 }

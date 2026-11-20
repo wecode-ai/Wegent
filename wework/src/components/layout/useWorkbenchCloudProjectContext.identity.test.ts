@@ -1,6 +1,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
+import {
+  projectSpaceRef,
+  publishProjectSpaceTaskContextChanged,
+} from '@/features/todo/projectSpaceSelection'
 import type { DeliveryApi } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
@@ -115,4 +119,53 @@ test('completes task association when the board items load during tracking', asy
 
   expect(result.current.taskBoardAssociation).toBeNull()
   expect(result.current.boundCloudItem?.id).toBe(item.id)
+})
+
+test('loads mention candidates once when the same project and issue are resolved again', async () => {
+  const task = { deviceId: 'mention-device', taskId: 'mention-task' }
+  const board = project('mention-board', 'local')
+  let item = loopItem(board.id)
+  const listLoopItems = vi.fn(async () => ({ items: [item] }))
+  const services = {
+    projectSpaceApis: {
+      local: {
+        listCloudFiles: async () => ({ items: [] }),
+        listLoopItems,
+        listDeliveries: async () => ({ items: [] }),
+        findCloudContextForTask: async () => ({ project: { ...board }, loop_item: { ...item } }),
+      } as DeliveryApi,
+    },
+  }
+  const { result } = renderHook(() =>
+    useWorkbenchCloudProjectContext({
+      active: true,
+      currentRuntimeTask: task,
+      defaultProjectSpace: null,
+      paneKey: 'runtime:mention-device:mention-task',
+      runtimeTaskTitle: 'Mention task',
+      services,
+      userId: 1,
+    })
+  )
+  await waitFor(() =>
+    expect(result.current.visibleCloudMentionCandidates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: `cloud-todo:${item.id}` })])
+    )
+  )
+
+  item = { ...item, title: 'Updated issue title' }
+  await act(async () =>
+    publishProjectSpaceTaskContextChanged({ task, project: projectSpaceRef(board) })
+  )
+  expect(result.current.boundCloudItem?.title).toBe(item.title)
+  expect(listLoopItems).toHaveBeenCalledTimes(1)
+
+  item = { ...item, id: 'todo-2' }
+  await act(async () =>
+    publishProjectSpaceTaskContextChanged({ task, project: projectSpaceRef(board) })
+  )
+  expect(result.current.visibleCloudMentionCandidates).toEqual(
+    expect.arrayContaining([expect.objectContaining({ key: `cloud-todo:${item.id}` })])
+  )
+  expect(listLoopItems).toHaveBeenCalledTimes(2)
 })

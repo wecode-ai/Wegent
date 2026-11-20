@@ -1,5 +1,6 @@
 import {
   elementScroll,
+  measureElement,
   observeElementOffset,
   useVirtualizer,
   type Virtualizer,
@@ -17,6 +18,7 @@ import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   observeConversationScrollWrites,
   recordConversationScrollWrite,
+  SCROLLBAR_DRAG_POSITION_EVENT,
 } from './conversationScrollWrite'
 
 export type ConversationVirtualizer = Virtualizer<HTMLDivElement, HTMLElement>
@@ -62,20 +64,35 @@ export function useConversationVirtualizer({
   const enabled = options.enabled && viewportReady
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
+    // Row measurements may compensate scroll and commit new layout synchronously.
+    // Keep those writes together, outside the browser's ResizeObserver delivery.
+    useAnimationFrameWithResizeObserver: true,
     ...options,
     enabled,
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
+    measureElement: (element, entry, instance) => {
+      const viewport = instance.scrollElement
+      // External scroll writes can precede native event delivery and row measurements.
+      if (viewport && viewport.scrollTop !== instance.scrollOffset)
+        readOffsetRef.current?.(viewport.scrollTop, false)
+      return (options.measureElement ?? measureElement)(element, entry, instance)
+    },
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
       const element = instance.scrollElement
+      const updateDragOffset = () => {
+        if (element) callback(element.scrollTop, true)
+      }
+      element?.addEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
       const stopObservingWrites = element
         ? observeConversationScrollWrites(element, offset => callback(offset, false))
         : undefined
       return () => {
         readOffsetRef.current = null
+        element?.removeEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
         stopObservingWrites?.()
         dispose?.()
       }

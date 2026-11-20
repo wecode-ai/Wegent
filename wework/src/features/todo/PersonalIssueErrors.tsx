@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 
 // One page-level live region; each data source retains its own retry action.
 export function PersonalIssueErrors({
@@ -19,14 +20,15 @@ export function PersonalIssueErrors({
       {projects?.error ? (
         <div className="flex flex-wrap items-center gap-2">
           <span>{t('personalHome.loadFailed')}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="personal-home-retry"
             className="min-h-11 underline md:min-h-8"
             onClick={projects.reload}
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       {independent.error ? (
@@ -34,14 +36,15 @@ export function PersonalIssueErrors({
           <span>
             {t('independentIssues.independent')}: {independent.error}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="independent-issues-retry"
             onClick={independent.reload}
             className="min-h-11 rounded-md px-3 underline md:min-h-8"
           >
             {t('independentIssues.retry')}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
     </div>

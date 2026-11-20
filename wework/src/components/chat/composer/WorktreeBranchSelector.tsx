@@ -1,17 +1,5 @@
-import { branchMatchesQuery } from '@wegent/chat-core/workspace-branches'
-import { Check, ChevronDown, GitBranch, Search, X } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
-import { useEscapeKey, useFocusRequest, useWindowEvent } from '@wegent/collaboration/dom-events'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { BranchPicker } from '@/components/common/branch-selector/BranchPicker'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  calculateFloatingMenuLayout,
-  getFloatingMenuVisibleBounds,
-  type FloatingMenuPlacement,
-} from '@/lib/floating-menu'
-import { cn } from '@/lib/utils'
-import { useOutsideClick } from './useOutsideClick'
 
 interface WorktreeBranchSelectorProps {
   currentBranch?: string
@@ -21,8 +9,6 @@ interface WorktreeBranchSelectorProps {
   onSelectBranch: (branchName: string | null) => void
 }
 
-const WORKTREE_BRANCH_MENU_MAX_HEIGHT = 360
-
 export function WorktreeBranchSelector({
   currentBranch,
   selectedBranch,
@@ -31,217 +17,26 @@ export function WorktreeBranchSelector({
   onSelectBranch,
 }: WorktreeBranchSelectorProps) {
   const { t } = useTranslation('common')
-  const isMobile = useIsMobile()
-  const containerRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const [open, setOpen] = useState(false)
-  const branchesResource = useMemo(
-    () =>
-      createAsyncResource('worktree-branches', () => onListBranches(), {
-        refreshOnSubscribe: true,
-      }),
-    [onListBranches]
-  )
-  const snapshot = useSyncExternalStore(
-    open ? branchesResource.subscribe : subscribeIdleResource,
-    branchesResource.getSnapshot,
-    branchesResource.getSnapshot
-  )
-  const [query, setQuery] = useState('')
-  const branchesLoading = open && (snapshot.status === 'loading' || snapshot.status === 'idle')
-  const error =
-    snapshot.status === 'error'
-      ? snapshot.error instanceof Error
-        ? snapshot.error.message
-        : t('workbench.project_worktree_branch_load_failed', '分支加载失败')
-      : null
-  const [desktopMenuLayout, setDesktopMenuLayout] = useState<{
-    placement: FloatingMenuPlacement
-    maxHeight: number
-  }>({
-    placement: 'below',
-    maxHeight: WORKTREE_BRANCH_MENU_MAX_HEIGHT,
-  })
-  const normalizedCurrentBranch = currentBranch?.trim() || ''
-  const effectiveBranch = selectedBranch?.trim() || normalizedCurrentBranch
-  const branchLabel = loading
-    ? t('workbench.project_worktree_branch_loading', '加载中')
-    : effectiveBranch || t('workbench.project_worktree_branch_empty', '选择分支')
-  const filteredBranches = useMemo(
-    () => (snapshot.data ?? []).filter(branch => branchMatchesQuery(branch, query)),
-    [snapshot.data, query]
-  )
-
-  const close = useCallback(() => {
-    setOpen(false)
-    setQuery('')
-  }, [])
-
-  useOutsideClick(containerRef, open, close)
-
-  const updateDesktopMenuLayout = useCallback(() => {
-    if (!open || isMobile || typeof window === 'undefined') return
-
-    const triggerRect = triggerRef.current?.getBoundingClientRect()
-    if (!triggerRect) return
-
-    const nextLayout = calculateFloatingMenuLayout({
-      triggerRect,
-      visibleBounds: getFloatingMenuVisibleBounds(containerRef.current),
-      preferredPlacement: 'below',
-      maxHeight: WORKTREE_BRANCH_MENU_MAX_HEIGHT,
-    })
-
-    setDesktopMenuLayout(current =>
-      current.placement === nextLayout.placement && current.maxHeight === nextLayout.maxHeight
-        ? current
-        : nextLayout
-    )
-  }, [isMobile, open])
-
-  useFocusRequest(searchInputRef, 'worktree-branches', { enabled: open && !isMobile })
-
-  const bindMenu = useCallback(
-    (menu: HTMLDivElement | null) => {
-      if (menu) updateDesktopMenuLayout()
-    },
-    [updateDesktopMenuLayout]
-  )
-
-  useWindowEvent('resize', updateDesktopMenuLayout, { enabled: open && !isMobile })
-  useWindowEvent('scroll', updateDesktopMenuLayout, { enabled: open && !isMobile, capture: true })
-  useEscapeKey(close, open, containerRef)
-
-  const handleSelectBranch = (branch: string) => {
-    onSelectBranch(branch === normalizedCurrentBranch ? null : branch)
-    close()
-    triggerRef.current?.focus()
-  }
-
+  const current = currentBranch?.trim() || ''
+  const selected = selectedBranch?.trim() || current
   return (
-    <div ref={containerRef} className="relative min-w-0 max-w-[18rem] shrink">
-      {open && isMobile && <div className="fixed inset-0 z-modal bg-black/25" onClick={close} />}
-      {open && (
-        <div
-          ref={bindMenu}
-          data-testid="project-worktree-branch-menu"
-          data-mobile={isMobile ? 'true' : undefined}
-          className={cn(
-            isMobile
-              ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-              : 'absolute right-0 z-popover flex w-64 flex-col overflow-hidden rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-            !isMobile && (desktopMenuLayout.placement === 'below' ? 'top-11' : 'bottom-11')
-          )}
-          style={isMobile ? undefined : { maxHeight: desktopMenuLayout.maxHeight }}
-        >
-          {isMobile && (
-            <>
-              <div className="mx-auto mt-3 h-1 w-11 shrink-0 rounded-full bg-border" />
-              <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-semibold text-text-primary">
-                    {t('workbench.project_worktree_branch_title', '启动分支')}
-                  </h2>
-                  <p className="mt-1 truncate text-xs text-text-muted">{branchLabel}</p>
-                </div>
-                <button
-                  type="button"
-                  data-testid="project-worktree-branch-mobile-close-button"
-                  aria-label={t('workbench.close_menu', '关闭菜单')}
-                  onClick={close}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </>
-          )}
-          <div className={cn('min-h-0 flex flex-1 flex-col', isMobile && 'px-5 pb-5')}>
-            <label
-              className={cn(
-                'flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
-                isMobile && 'h-11 rounded-2xl text-base'
-              )}
-            >
-              <Search className="h-4 w-4 shrink-0" />
-              <input
-                ref={searchInputRef}
-                data-testid="project-worktree-branch-search-input"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder={t('workbench.project_worktree_branch_search', '搜索分支')}
-                className={cn(
-                  'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
-                  isMobile && 'text-base leading-5'
-                )}
-              />
-            </label>
-            <div className="mt-2 shrink-0 px-2 text-xs font-medium leading-5 text-text-muted">
-              {t('workbench.project_worktree_branch_title', '启动分支')}
-            </div>
-            <div
-              data-testid="project-worktree-branch-list"
-              className={cn(
-                'min-h-0 flex-1 overflow-y-auto',
-                isMobile ? 'max-h-[28dvh]' : 'max-h-56'
-              )}
-            >
-              {branchesLoading && (
-                <p className="px-2 py-3 text-sm text-text-muted">
-                  {t('workbench.project_worktree_branch_loading', '加载中')}
-                </p>
-              )}
-              {!branchesLoading && error && (
-                <p className="px-2 py-3 text-sm text-danger">{error}</p>
-              )}
-              {!branchesLoading &&
-                !error &&
-                filteredBranches.map(branch => (
-                  <button
-                    key={branch}
-                    type="button"
-                    data-testid="project-worktree-branch-option"
-                    onClick={() => handleSelectBranch(branch)}
-                    className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-text-primary hover:bg-muted"
-                  >
-                    <GitBranch className="h-4 w-4 shrink-0 text-text-secondary" />
-                    <span className="min-w-0 flex-1 truncate">{branch}</span>
-                    {branch === effectiveBranch && (
-                      <Check className="h-4 w-4 shrink-0 text-text-primary" />
-                    )}
-                  </button>
-                ))}
-              {!branchesLoading && !error && filteredBranches.length === 0 && (
-                <p
-                  data-testid="project-worktree-branch-empty"
-                  className="px-2 py-3 text-sm text-text-muted"
-                >
-                  {t('workbench.project_worktree_branch_empty_results', '没有匹配的分支')}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid="project-worktree-branch-button"
-        onClick={() => setOpen(current => !current)}
-        className={cn(
-          'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
-          isMobile && 'font-medium',
-          open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
-        )}
-        title={branchLabel}
-        aria-expanded={open}
-        aria-label={t('workbench.project_worktree_branch_title', '启动分支')}
-      >
-        <GitBranch className="h-4 w-4 shrink-0" />
-        <span className="max-w-[8rem] truncate">{branchLabel}</span>
-        <ChevronDown className="h-4 w-4 shrink-0" />
-      </button>
+    <div className="min-w-0 max-w-72 shrink">
+      <BranchPicker
+        mobileSheet
+        composer
+        activateSelected
+        value={selected}
+        label={
+          loading
+            ? t('workbench.project_worktree_branch_loading', '加载中')
+            : selected || t('workbench.project_worktree_branch_empty', '选择分支')
+        }
+        prefix="project-worktree"
+        triggerTestId="project-worktree-branch-button"
+        accessibleLabel={t('workbench.project_worktree_branch_title', '启动分支')}
+        onListBranches={onListBranches}
+        onChoose={branch => onSelectBranch(branch === current ? null : branch)}
+      />
     </div>
   )
 }

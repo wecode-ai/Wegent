@@ -1,3 +1,18 @@
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { LOCAL_USER } from '@/api/local/localSession'
+import type { ChatInputHandle, ProjectWorkControls } from '@/components/chat/ChatInput'
+import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
+import { truncateRuntimeTaskTitle } from '@wegent/chat-core/runtime-task-title'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { persistIssueDetailFields } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 import {
   useCallback,
   useId,
@@ -6,24 +21,11 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { PersonalHomeTaskDraftSession } from './personalHomeTaskDraftSession'
-import { persistIssueDetailFields, type SharedWorkspaceApi } from '@wegent/collaboration'
-import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
-import { truncateRuntimeTaskTitle } from '@wegent/chat-core/runtime-task-title'
-import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
-import type { ChatInputHandle, ProjectWorkControls } from '@/components/chat/ChatInput'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
-import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { useTranslation } from '@/hooks/useTranslation'
-import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 import { issueRuntimePort } from './issueRuntimePort'
-import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
-import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalHomeTaskDraft, PersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
+import { PersonalHomeTaskDraftSession } from './personalHomeTaskDraftSession'
+import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
+import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 
 interface PersonalHomeTaskComposerProps {
   draft: IssueHomeTaskComposerProps
@@ -299,7 +301,8 @@ function ProjectTaskComposer({
           <span className="truncate">
             {t('personalHome.savedTaskDraft', { title: savedIssue.title })}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={submitting}
             data-testid="personal-home-new-task-draft"
@@ -311,7 +314,7 @@ function ProjectTaskComposer({
             }}
           >
             {t('personalHome.newTaskDraft')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <BufferedChatInput

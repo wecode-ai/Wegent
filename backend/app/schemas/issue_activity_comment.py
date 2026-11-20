@@ -3,6 +3,8 @@
 
 """Comment views with the activity cursor used by Issue subscriptions."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.schemas.delivery import LoopItemCommentCreate, LoopItemCommentResponse
@@ -37,6 +39,8 @@ class CollaborationPublicReply(BaseModel):
     dispatch_id: str = Field(min_length=1, max_length=255)
     message_id: str = Field(min_length=1, max_length=64)
     trigger_comment_id: str | None = Field(default=None, min_length=1, max_length=64)
+    turn_id: str | None = Field(default=None, min_length=1, max_length=64)
+    phase: Literal["start", "output"] | None = None
     execution_trigger_comment_id: str | None = Field(
         default=None, min_length=1, max_length=64
     )

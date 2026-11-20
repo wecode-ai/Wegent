@@ -1,11 +1,11 @@
 import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { pluginMarketplaceCacheKey } from '@/features/plugins/pluginMarketplaceCache'
-import { usePluginsWorkspaceController } from './workspace/usePluginsWorkspaceController'
-import { renderPluginWorkspaceDialogs } from './workspace/renderPluginWorkspaceDialogs'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { renderInstalledPluginWorkspace } from './workspace/renderInstalledPluginWorkspace'
 import { renderMarketplacePluginWorkspace } from './workspace/renderMarketplacePluginWorkspace'
 import { renderPluginCatalogWorkspace } from './workspace/renderPluginCatalogWorkspace'
+import { renderPluginWorkspaceDialogs } from './workspace/renderPluginWorkspaceDialogs'
+import { usePluginsWorkspaceController } from './workspace/usePluginsWorkspaceController'
 
 export function PluginsWorkspace(props: Parameters<typeof usePluginsWorkspaceController>[0]) {
   const key = JSON.stringify([

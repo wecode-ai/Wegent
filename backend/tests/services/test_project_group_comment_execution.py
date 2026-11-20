@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from app.models.delivery import LoopItemTaskBinding, ProjectChatAgent
+from app.models.delivery import LoopItemTaskBinding, LoopNode, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -15,6 +15,7 @@ from app.schemas.issue_activity_comment import CollaborationPublicReply
 from app.schemas.project_chat import (
     LoopItemExecutionAssignmentStatus,
     ProjectChatCommentExecution,
+    ProjectChatMention,
 )
 from app.schemas.runtime_work import RuntimeTaskCreateRequest, RuntimeTranscriptRequest
 from app.services.collaboration_member_activity import (
@@ -24,7 +25,10 @@ from app.services.collaboration_round_assignment import assign_round_owner
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.collaboration_replies import publish_collaboration_reply
 from app.services.project_chat.comment_execution import _execution, execute_comment
-from app.services.project_chat.issue_comments import list_issue_comments
+from app.services.project_chat.issue_comments import (
+    add_issue_comment,
+    list_issue_comments,
+)
 from app.services.project_chat.runtime_binding import collaboration_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
 from tests.services.test_project_comment_execution import comment, scenario
@@ -292,6 +296,97 @@ def test_member_public_reply_uses_recorded_author_and_is_idempotent(member_scena
             identity=identity.model_copy(update={"device_id": "unknown-device"}),
         )
     assert error.value.status_code == 403
+
+
+def test_group_root_comment_keeps_agent_authorship_and_mentions(member_scenario):
+    s = member_scenario
+    scope = dict(
+        user_id=s.owner.id,
+        user_name=s.owner.user_name,
+        project_id=str(s.project.id),
+        item_id=s.issue.id,
+        body="Root progress",
+        collaboration=CollaborationPublicReply(
+            dispatch_id="group-dispatch-1",
+            device_id="admin-native",
+            task_id=s.root.runtime_task_id,
+            message_id="explicit-progress",
+        ),
+    )
+    mention = ProjectChatMention(
+        type="user", id=str(s.member.id), label=s.member.user_name
+    )
+    comment = add_issue_comment(s.db, **scope, mentions=[mention])
+    assert add_issue_comment(s.db, **scope, mentions=[mention]) == comment
+    assert comment["author"] == s.member_agent.title
+    assert comment["publication_source"] == "ai"
+    assert comment["reply_to_comment_id"] is None
+    assert comment["mentions"] == [mention.model_dump(by_alias=True)]
+    events = s.db.query(LoopNode).filter_by(
+        resource_type="stand_in_issue_event", user_id=s.member.id
+    )
+    assert [event.metadata_json["commentId"] for event in events] == [comment["id"]]
+    with pytest.raises(HTTPException) as error:
+        add_issue_comment(s.db, **scope)
+    assert error.value.status_code == 409
+    outsider = ProjectChatMention(type="user", id="999999999", label="Outsider")
+    other_identity = scope["collaboration"].model_copy(update={"message_id": "denied"})
+    scope.update(collaboration=other_identity, body="Denied comment")
+    with pytest.raises(HTTPException) as denied:
+        add_issue_comment(s.db, **scope, mentions=[mention, outsider])
+    assert denied.value.status_code == 422
+    assert (
+        s.db.query(ProjectChatMessage).filter_by(content="Denied comment").count() == 0
+    )
+    assert (
+        s.db.query(LoopNode).filter_by(resource_type="stand_in_issue_event").count()
+        == 1
+    )
+
+
+def test_autonomous_turn_publishes_one_start_and_threads_its_outputs(member_scenario):
+    s = member_scenario
+    s.root.content = "Unpublished progress and mirrored result"
+    s.db.commit()
+    scope = dict(user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id)
+    identity = CollaborationPublicReply(
+        dispatch_id="group-dispatch-1",
+        device_id="admin-native",
+        task_id=s.root.runtime_task_id,
+        message_id="turn-a",
+        turn_id="turn-a",
+        phase="start",
+    )
+    output = identity.model_copy(update={"message_id": "output-a", "phase": "output"})
+    with pytest.raises(HTTPException) as missing:
+        publish_collaboration_reply(s.db, **scope, body="Finished", identity=output)
+    assert missing.value.status_code == 425
+
+    start = publish_collaboration_reply(
+        s.db, **scope, body="开始处理", identity=identity
+    )
+    result = publish_collaboration_reply(
+        s.db, **scope, body="Finished", identity=output
+    )
+    result_replay = publish_collaboration_reply(
+        s.db, **scope, body="Finished", identity=output
+    )
+    additional = publish_collaboration_reply(
+        s.db,
+        **scope,
+        body="Additional output",
+        identity=output.model_copy(update={"message_id": "output-b"}),
+    )
+    assert start.reply_to_message_id is None
+    assert result_replay.message_id == result.message_id
+    assert (
+        result.reply_to_message_id == additional.reply_to_message_id == start.message_id
+    )
+    assert result.root_message_id == additional.root_message_id == start.message_id
+    assert (
+        list_issue_comments(s.db, **scope, message_id=s.root.message_id)[0]["body"]
+        == ""
+    )
 
 
 def test_manager_public_reply_hides_the_dispatch_envelopes_copy(group_scenario):

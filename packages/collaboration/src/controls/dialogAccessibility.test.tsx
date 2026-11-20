@@ -1,3 +1,6 @@
+import { settle } from '@ui-sdk/core/testing'
+import { useRef } from 'react'
+import { DialogSurface } from './DialogSurface'
 // @vitest-environment jsdom
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -5,9 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { DefaultModal } from '../project-create/ProjectCreatePrimitives'
 import { ModelSelector } from './ModelSelector'
-import { useDialogKeyboard } from './useDialogKeyboard'
-import { hideOthers } from 'aria-hidden'
-import { isolateModalBackground } from './dialogAccessibility'
+import { Tooltip } from './Tooltip'
 
 let container: HTMLDivElement
 let background: HTMLButtonElement
@@ -39,13 +40,13 @@ const translate = createCollaborationTranslator('en')
 
 it('leaves a preexisting inert attribute under its React owner when a layer closes', () => {
   function Layer({ onClose }: { onClose: () => void }) {
-    const ref = useDialogKeyboard<HTMLDivElement>(onClose)
+    const ref = useRef<HTMLDivElement>(null)
     return (
-      <div ref={ref} role="dialog" aria-modal="true">
+      <DialogSurface onClose={onClose} render={<div ref={ref} />}>
         <button onClick={onClose} data-testid="close-owned-layer">
           Close
         </button>
-      </div>
+      </DialogSurface>
     )
   }
   function Host() {
@@ -66,39 +67,42 @@ it('leaves a preexisting inert attribute under its React owner when a layer clos
 })
 
 it.each(['popover-first', 'modal-first'] as const)(
-  'restores background attributes after overlapping Radix aria isolation (%s)',
-  order => {
+  'restores background attributes after overlapping SDK layers (%s)',
+  async order => {
     background.removeAttribute('aria-hidden')
-    const dialog = document.createElement('div')
-    dialog.setAttribute('role', 'dialog')
-    dialog.setAttribute('aria-modal', 'true')
-    container.append(dialog)
-    const restoreModal = isolateModalBackground(dialog)!
-    const popover = document.createElement('div')
-    document.body.append(popover)
-    const restorePopover = hideOthers(popover)
-    try {
-      expect(background.getAttribute('aria-hidden')).toBe('true')
-      expect(background.hasAttribute('inert')).toBe(true)
-      if (order === 'popover-first') {
-        restorePopover()
-        restoreModal()
-      } else {
-        restoreModal()
-        restorePopover()
-      }
-      expect(background.hasAttribute('inert')).toBe(false)
-      expect(background.hasAttribute('aria-hidden')).toBe(false)
-    } finally {
-      popover.remove()
-      dialog.remove()
-    }
+    const render = (modal: boolean, popup: boolean) => (
+      <>
+        {modal && (
+          <DialogSurface onClose={() => {}} render={<div aria-label="Outer" />}>
+            <button>Outer action</button>
+          </DialogSurface>
+        )}
+        {popup && (
+          <DialogSurface onClose={() => {}} render={<div aria-label="Inner" />}>
+            <button>Inner action</button>
+          </DialogSurface>
+        )}
+      </>
+    )
+    await act(async () => root.render(render(true, true)))
+    await act(async () => {
+      await vi.waitFor(() => expect(background.closest('[inert]')).not.toBeNull())
+    })
+    await act(async () => root.render(render(order === 'popover-first', order !== 'popover-first')))
+    expect(background.closest('[inert]')).not.toBeNull()
+    expect(preserved.getAttribute('aria-hidden')).toBe('true')
+    expect(preserved.hasAttribute('inert')).toBe(true)
+    await act(async () => root.render(render(false, false)))
+    expect(background.hasAttribute('inert')).toBe(false)
+    expect(background.hasAttribute('aria-hidden')).toBe(false)
+    expect(preserved.getAttribute('aria-hidden')).toBe('true')
+    expect(preserved.hasAttribute('inert')).toBe(true)
   }
 )
 
 it.each([false, true])(
   'isolates the main modal and real model portal, then restores prior background state (mobile=%s)',
-  isMobile => {
+  async isMobile => {
     function Host() {
       const [open, setOpen] = useState(true)
       return open ? (
@@ -120,31 +124,43 @@ it.each([false, true])(
         </DefaultModal>
       ) : null
     }
-    act(() => root.render(<Host />))
+    await act(async () => root.render(<Host />))
+    await act(async () => {
+      await vi.waitFor(() => expect(background.closest(isolationBoundary)).not.toBeNull())
+    })
     const main = get('collaboration-project-create-dialog')
     expect(background.closest(isolationBoundary)).not.toBeNull()
     expect(main.closest(isolationBoundary)).toBeNull()
     expect(main.contains(document.activeElement)).toBe(true)
     const trigger = get('model-selector-button')
-    act(() => {
+    await act(async () => {
       trigger.focus()
       trigger.click()
+      await settle()
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(get('project-name').closest(isolationBoundary)).not.toBeNull())
     })
     const picker = get('model-selector-menu').closest<HTMLElement>('[role="dialog"]')!
     expect(picker.closest(isolationBoundary)).toBeNull()
-    expect(main.closest(isolationBoundary)).not.toBeNull()
+    expect(get('project-name').closest(isolationBoundary)).not.toBeNull()
+    expect(main.querySelector('[role="status"]')?.closest(isolationBoundary)).toBeNull()
     expect(picker.contains(document.activeElement)).toBe(true)
-    act(() =>
+    await act(async () => {
       picker.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
       )
-    )
+      await settle()
+    })
     expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
     expect(main.isConnected).toBe(true)
     expect(main.closest(isolationBoundary)).toBeNull()
     expect(background.closest(isolationBoundary)).not.toBeNull()
     expect(document.activeElement).toBe(trigger)
-    act(() => get('collaboration-project-create-close').click())
+    await act(async () => {
+      get('collaboration-project-create-close').click()
+      await settle()
+    })
     expect(background.getAttribute('aria-hidden')).toBe('false')
     expect(background.hasAttribute('inert')).toBe(false)
     expect(preserved.getAttribute('aria-hidden')).toBe('true')
@@ -160,11 +176,15 @@ it.each([
   'keeps non-modal configuration surfaces outside the isolation lifecycle ($trap/$modal)',
   ({ trap, modal }) => {
     function Configuration() {
-      const ref = useDialogKeyboard<HTMLDivElement>(vi.fn(), true, undefined, trap)
+      const ref = useRef<HTMLDivElement>(null)
       return (
-        <div ref={ref} role="dialog" aria-modal={modal || undefined}>
+        <DialogSurface
+          onClose={vi.fn()}
+          modal={trap}
+          render={<div ref={ref} aria-modal={modal || undefined} />}
+        >
           <input />
-        </div>
+        </DialogSurface>
       )
     }
     act(() => root.render(<Configuration />))
@@ -172,3 +192,19 @@ it.each([
     expect(background.hasAttribute('inert')).toBe(false)
   }
 )
+
+it('dismisses an open tooltip when its trigger opens another surface', async () => {
+  const render = (disabled: boolean) => (
+    <Tooltip label="Select a model" testId="keyboard-tooltip" disabled={disabled}>
+      <button data-testid="keyboard-tooltip-trigger">Model</button>
+    </Tooltip>
+  )
+  await act(async () => root.render(render(false)))
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+  await act(async () => get('keyboard-tooltip-trigger').focus())
+  expect(get('keyboard-tooltip')?.hasAttribute('data-open')).toBe(true)
+  await act(async () => root.render(render(true)))
+  expect(get('keyboard-tooltip')?.hasAttribute('data-open') ?? false).toBe(false)
+  await act(async () => root.render(render(false)))
+  expect(get('keyboard-tooltip')?.hasAttribute('data-open') ?? false).toBe(false)
+})

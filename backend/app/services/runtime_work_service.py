@@ -4499,6 +4499,7 @@ def _build_direct_wework_runtime_execution_request(
         preload_skills=list(request.additional_skills),
         attachments=[],
         auth_token=auth_token,
+        backend_url=settings.BACKEND_INTERNAL_URL,
         skill_identity_token=create_skill_identity_token(
             user_id=user.id,
             user_name=user.user_name,

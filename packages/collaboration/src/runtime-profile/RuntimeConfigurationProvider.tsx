@@ -1,3 +1,5 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 import {
   RuntimeConfigurationContext,
   RuntimeConfigurationRevisionContext,
@@ -6,7 +8,7 @@ import {
   type ProfileConfigurationTarget,
   type Configured,
 } from './context'
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { createCollaborationTranslator } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationProject, CollaborationIssue, CollaborationExecution } from '../types'
@@ -40,7 +42,6 @@ export function RuntimeConfigurationProvider({
   const [environments, setEnvironments] = useState(false)
   const [revision, setRevision] = useState(0)
   const [saving, setSaving] = useState(false)
-  const dialog = useRef<HTMLDialogElement>(null)
   const t = useMemo(
     () => createCollaborationTranslator(locale === 'zh-CN' ? 'zh-CN' : 'en'),
     [locale]
@@ -92,19 +93,7 @@ export function RuntimeConfigurationProvider({
           })
         }
       : null
-  const close = () => {
-    dialog.current?.close()
-    setRequest(null)
-  }
-  const attachDialog = useCallback((node: HTMLDialogElement | null) => {
-    dialog.current = node
-    if (!node) return
-    node.showModal()
-    return () => {
-      node.close()
-      dialog.current = null
-    }
-  }, [])
+  const close = () => setRequest(null)
 
   return (
     <RuntimeConfigurationContext.Provider value={open}>
@@ -113,19 +102,21 @@ export function RuntimeConfigurationProvider({
           <RuntimeConfigurationRevisionContext.Provider value={revision}>
             {children}
             {visible && api && project ? (
-              <dialog
-                ref={attachDialog}
-                className="collaboration-dialog m-auto max-h-[85dvh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-background p-6 text-text-primary backdrop:bg-black/50"
-                aria-label={request?.target?.title ?? t('runtimeSettings.title')}
-                data-testid="runtime-configuration-dialog"
-                onCancel={event => {
-                  if (saving) event.preventDefault()
-                  else setRequest(null)
-                }}
+              <DialogSurface
+                inline={false}
+                onClose={saving ? undefined : close}
+                render={
+                  <div
+                    className="collaboration-dialog m-auto max-h-[85dvh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-background p-6 text-text-primary backdrop:bg-black/50"
+                    aria-label={request?.target?.title ?? t('runtimeSettings.title')}
+                    data-testid="runtime-configuration-dialog"
+                  />
+                }
               >
                 <div className="flex items-center justify-between gap-3">
                   {environments ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-secondary-button min-h-11"
                       data-testid="runtime-configuration-back"
@@ -133,11 +124,12 @@ export function RuntimeConfigurationProvider({
                       onClick={() => setEnvironments(false)}
                     >
                       {t('runtimeSettings.back')}
-                    </button>
+                    </ControlButton>
                   ) : (
                     <span />
                   )}
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-secondary-button min-h-11"
                     data-testid="runtime-configuration-close"
@@ -145,7 +137,7 @@ export function RuntimeConfigurationProvider({
                     onClick={close}
                   >
                     {t('runtimeSettings.done')}
-                  </button>
+                  </ControlButton>
                 </div>
                 {environments ? (
                   <ProjectExecutionEnvironments api={api} project={project} translate={t} />
@@ -164,7 +156,7 @@ export function RuntimeConfigurationProvider({
                     onConfigureEnvironments={() => setEnvironments(true)}
                   />
                 )}
-              </dialog>
+              </DialogSurface>
             ) : null}
           </RuntimeConfigurationRevisionContext.Provider>
         </ExecutionRuntimeConfigurationContext.Provider>

@@ -1,9 +1,10 @@
-import { ChevronDown, FolderOpen, Loader2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
 import type { SmartAppTemplate } from '@/api/local/harnessApps'
 import { Button } from '@/components/ui/button'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
@@ -12,6 +13,13 @@ import {
   isOutdatedSmartAppCreationHost,
   isSmartAppSaveLocationError,
 } from '@/lib/smart-app-error-message'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, FolderOpen, Loader2, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface SmartAppDevelopmentInput {
   parentPath: string
@@ -100,8 +108,6 @@ export function SmartAppDevelopmentDialog({
     [displayName, mode, name, parentPath]
   )
 
-  useEscapeKey(onClose, !submitting)
-
   async function chooseDirectory() {
     try {
       const selected = await openNativeDirectoryPicker()
@@ -175,7 +181,7 @@ export function SmartAppDevelopmentDialog({
   const directoryNameField = (
     <label className="grid gap-1.5 text-sm text-text-secondary">
       <span>{t('workbench.smart_apps_directory_name', '目录标识')}</span>
-      <input
+      <ControlInput
         data-testid="smart-app-development-name"
         value={name}
         disabled={submitting}
@@ -184,7 +190,7 @@ export function SmartAppDevelopmentDialog({
           setName(smartAppSlug(event.target.value))
           setError(null)
         }}
-        className="h-9 rounded-lg border border-border/50 bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+        className="h-9 font-mono"
       />
       {mode === 'create' ? (
         <span className="text-xs">
@@ -196,12 +202,17 @@ export function SmartAppDevelopmentDialog({
 
   return createPortal(
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="smart-app-development-title"
-        data-testid="smart-app-development-dialog"
-        className="plugin-dialog-surface max-h-[100dvh] w-full max-w-xl overflow-y-auto p-5 sm:max-h-[calc(100dvh-2rem)]"
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onClose()
+        }}
+        render={
+          <div
+            aria-labelledby="smart-app-development-title"
+            data-testid="smart-app-development-dialog"
+            className="plugin-dialog-surface max-h-[100dvh] w-full max-w-xl overflow-y-auto p-5 sm:max-h-[calc(100dvh-2rem)]"
+          />
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -220,7 +231,8 @@ export function SmartAppDevelopmentDialog({
                   )}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             aria-label={t('common.close', '关闭')}
             data-testid="smart-app-development-close"
@@ -229,13 +241,13 @@ export function SmartAppDevelopmentDialog({
             className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         <div className="mt-5 grid gap-4">
           <label className="grid gap-1.5 text-sm text-text-secondary">
             <span>{t('workbench.smart_apps_display_name', '工作台名称')}</span>
-            <input
+            <ControlInput
               autoFocus
               data-testid="smart-app-development-display-name"
               value={displayName}
@@ -246,14 +258,14 @@ export function SmartAppDevelopmentDialog({
                 if (!nameEdited) setName(smartAppSlug(value) || generatedName)
                 setError(null)
               }}
-              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+              className="h-9"
             />
           </label>
 
           {mode === 'create' ? (
             <label className="grid gap-1.5 text-sm text-text-secondary">
               <span>{t('workbench.smart_apps_description_optional', '用途说明（可选）')}</span>
-              <textarea
+              <ControlTextarea
                 data-testid="smart-app-development-description"
                 value={description}
                 disabled={submitting}
@@ -273,7 +285,7 @@ export function SmartAppDevelopmentDialog({
                 : t('workbench.smart_apps_parent_directory', '保存位置')}
             </span>
             <div className="flex gap-2">
-              <input
+              <ControlInput
                 data-testid="smart-app-development-parent-path"
                 value={parentPath}
                 disabled={submitting}
@@ -296,7 +308,7 @@ export function SmartAppDevelopmentDialog({
                   setError(null)
                   setShowChooseLocation(false)
                 }}
-                className="h-9 min-w-0 flex-1 rounded-lg border border-border/50 bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+                className="h-9 min-w-0 flex-1 font-mono"
               />
               <Button
                 type="button"
@@ -322,7 +334,8 @@ export function SmartAppDevelopmentDialog({
 
           {mode === 'create' ? (
             <div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 aria-expanded={advancedOpen}
                 aria-controls="smart-app-development-advanced-options"
@@ -336,7 +349,7 @@ export function SmartAppDevelopmentDialog({
                   className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
                   aria-hidden="true"
                 />
-              </button>
+              </ControlButton>
               <div
                 id="smart-app-development-advanced-options"
                 className={advancedOpen ? 'grid gap-4 pt-2' : undefined}
@@ -352,7 +365,8 @@ export function SmartAppDevelopmentDialog({
                         {SMART_APP_TEMPLATES.map(option => {
                           const selected = template === option.value
                           return (
-                            <button
+                            <ControlButton
+                              variant="unstyled"
                               key={option.value}
                               type="button"
                               aria-pressed={selected}
@@ -371,7 +385,7 @@ export function SmartAppDevelopmentDialog({
                               <span className="mt-0.5 block text-xs">
                                 {t(option.descriptionKey, option.description)}
                               </span>
-                            </button>
+                            </ControlButton>
                           )
                         })}
                       </div>
@@ -410,15 +424,17 @@ export function SmartAppDevelopmentDialog({
               ) : null}
             </div>
             {errorDetail ? (
-              <details className="text-xs text-text-secondary">
-                <summary
+              <CollapsibleRoot className="text-xs text-text-secondary">
+                <CollapsibleTrigger
                   className="cursor-pointer"
                   data-testid="smart-app-development-error-details"
                 >
                   {t('workbench.smart_apps_error_details', '查看错误详情')}
-                </summary>
-                <p className="mt-1 break-all font-mono">{errorDetail}</p>
-              </details>
+                </CollapsibleTrigger>
+                <CollapsiblePanel>
+                  <p className="mt-1 break-all font-mono">{errorDetail}</p>
+                </CollapsiblePanel>
+              </CollapsibleRoot>
             ) : null}
           </div>
         ) : null}
@@ -445,7 +461,7 @@ export function SmartAppDevelopmentDialog({
               : t('workbench.smart_apps_copy_and_develop', '复制并开发')}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

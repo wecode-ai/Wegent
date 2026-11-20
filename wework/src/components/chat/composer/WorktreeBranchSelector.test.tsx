@@ -35,7 +35,7 @@ test('loads on opening, focuses search, filters branches and returns to the trig
   expect(screen.getByTestId('project-worktree-branch-button')).toHaveFocus()
   fireEvent.click(screen.getByTestId('project-worktree-branch-button'))
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-  fireEvent.click(await screen.findByText('main', { selector: 'span.min-w-0' }))
+  fireEvent.click(await screen.findByRole('option', { name: 'main' }))
   expect(select).toHaveBeenLastCalledWith(null)
 })
 

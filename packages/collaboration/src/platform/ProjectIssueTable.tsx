@@ -1,3 +1,7 @@
+import { Checkbox } from '../controls/Checkbox'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -287,7 +291,8 @@ function ProjectIssueTableContent({
     return <ArrowUpDown aria-hidden="true" />
   }
   const sortButton = (key: IssueTableSortKey, label: string) => (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       className={`collaboration-issue-table-sort ${sort?.key === key ? 'is-active' : ''}`}
       data-testid={`collaboration-issue-table-sort-${key}`}
@@ -295,7 +300,7 @@ function ProjectIssueTableContent({
     >
       <span>{label}</span>
       {sortIcon(key)}
-    </button>
+    </ControlButton>
   )
   const ariaSort = (key: IssueTableSortKey) =>
     sortDirection(key) === 'asc'
@@ -309,7 +314,7 @@ function ProjectIssueTableContent({
       <div className="collaboration-issue-table-toolbar">
         <label className="collaboration-issue-table-search">
           <Search aria-hidden="true" />
-          <input
+          <ControlInput
             aria-label={searchPlaceholder}
             data-testid="collaboration-issue-table-search"
             placeholder={searchPlaceholder}
@@ -319,7 +324,8 @@ function ProjectIssueTableContent({
         </label>
         {toolbarAction}
         {onCreate && createLabel ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-primary-button"
             data-testid={
@@ -330,7 +336,7 @@ function ProjectIssueTableContent({
             onClick={onCreate}
           >
             {createLabel}
-          </button>
+          </ControlButton>
         ) : null}
         {selectedIssues.length > 0 ? (
           <div
@@ -343,39 +349,48 @@ function ProjectIssueTableContent({
             {renderBulkActions?.(selectedIssues)}
             {onBulkStatusChange ? (
               <div className="collaboration-issue-table-batch-group">
-                <select
-                  aria-label={batchStatusLabel}
-                  data-testid="collaboration-issue-table-batch-status"
-                  value={batchStatus}
-                  onChange={event => setBatchStatus(event.target.value)}
+                <SelectRoot
                   disabled={batchBusy}
+                  value={String(batchStatus)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return setBatchStatus(selectedValue)
+                  }}
                 >
-                  <option value="">{batchStatusLabel}</option>
-                  {filterOptions.statuses.map(status => (
-                    <option key={status} value={status}>
-                      {statusName(status)}
-                    </option>
-                  ))}
-                </select>
-                <button
+                  <SelectTrigger
+                    aria-label={batchStatusLabel}
+                    data-testid="collaboration-issue-table-batch-status"
+                  />
+                  <SelectContent>
+                    <SelectItem value="">{batchStatusLabel}</SelectItem>
+                    {filterOptions.statuses.map(status => (
+                      <SelectItem key={status} value={String(status)}>
+                        {statusName(status)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="collaboration-issue-table-batch-apply"
                   disabled={!batchStatus || batchBusy}
                   onClick={() => void applyBatchStatus()}
                 >
                   {batchApplyLabel}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             {onBulkDelete ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="collaboration-issue-table-batch-delete"
                 disabled={batchBusy || archivableSelectedIssues.length === 0}
                 onClick={() => onBulkDelete(archivableSelectedIssues)}
               >
                 {batchDeleteLabel}
-              </button>
+              </ControlButton>
             ) : null}
           </div>
         ) : null}
@@ -418,16 +433,16 @@ function ProjectIssueTableContent({
           <thead>
             <tr>
               <th className="collaboration-issue-table-select">
-                <input
-                  ref={input => {
-                    if (input) input.indeterminate = someVisibleSelected && !allVisibleSelected
-                  }}
-                  type="checkbox"
+                <Checkbox
                   aria-label={selectAllLabel}
                   data-testid="collaboration-issue-table-select-all"
-                  checked={allVisibleSelected}
+                  checked={
+                    someVisibleSelected && !allVisibleSelected
+                      ? 'indeterminate'
+                      : allVisibleSelected
+                  }
                   disabled={selectableVisibleIssues.length === 0}
-                  onChange={toggleAllVisible}
+                  onCheckedChange={toggleAllVisible}
                 />
               </th>
               <th aria-sort={ariaSort('title')}>{sortButton('title', issueLabel)}</th>
@@ -440,21 +455,28 @@ function ProjectIssueTableContent({
                     }`}
                   >
                     <ChevronDown aria-hidden="true" />
-                    <select
-                      aria-label={statusLabel}
-                      data-testid="collaboration-issue-table-status-filter"
-                      value={statusFilter}
-                      onChange={event => setStatusFilter(event.target.value)}
+                    <SelectRoot
+                      value={String(statusFilter)}
+                      onValueChange={selectedValue => {
+                        if (selectedValue === null) return
+                        return setStatusFilter(selectedValue)
+                      }}
                     >
-                      <option value="">
-                        {allLabel} {statusLabel}
-                      </option>
-                      {filterOptions.statuses.map(status => (
-                        <option key={status} value={status}>
-                          {statusName(status)}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger
+                        aria-label={statusLabel}
+                        data-testid="collaboration-issue-table-status-filter"
+                      />
+                      <SelectContent>
+                        <SelectItem value="">
+                          {allLabel} {statusLabel}
+                        </SelectItem>
+                        {filterOptions.statuses.map(status => (
+                          <SelectItem key={status} value={String(status)}>
+                            {statusName(status)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectRoot>
                   </label>
                 </div>
               </th>
@@ -467,21 +489,28 @@ function ProjectIssueTableContent({
                     }`}
                   >
                     <ChevronDown aria-hidden="true" />
-                    <select
-                      aria-label={assignmentsLabel}
-                      data-testid="collaboration-issue-table-assignee-filter"
-                      value={assigneeFilter}
-                      onChange={event => setAssigneeFilter(event.target.value)}
+                    <SelectRoot
+                      value={String(assigneeFilter)}
+                      onValueChange={selectedValue => {
+                        if (selectedValue === null) return
+                        return setAssigneeFilter(selectedValue)
+                      }}
                     >
-                      <option value="">
-                        {allLabel} {assignmentsLabel}
-                      </option>
-                      {filterOptions.assignees.map(([id, name]) => (
-                        <option key={id} value={id}>
-                          {name}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger
+                        aria-label={assignmentsLabel}
+                        data-testid="collaboration-issue-table-assignee-filter"
+                      />
+                      <SelectContent>
+                        <SelectItem value="">
+                          {allLabel} {assignmentsLabel}
+                        </SelectItem>
+                        {filterOptions.assignees.map(([id, name]) => (
+                          <SelectItem key={id} value={String(id)}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectRoot>
                   </label>
                 </div>
               </th>
@@ -494,21 +523,28 @@ function ProjectIssueTableContent({
                     }`}
                   >
                     <ChevronDown aria-hidden="true" />
-                    <select
-                      aria-label={tagLabel}
-                      data-testid="collaboration-issue-table-tag-filter"
-                      value={tagFilter}
-                      onChange={event => setTagFilter(event.target.value)}
+                    <SelectRoot
+                      value={String(tagFilter)}
+                      onValueChange={selectedValue => {
+                        if (selectedValue === null) return
+                        return setTagFilter(selectedValue)
+                      }}
                     >
-                      <option value="">
-                        {allLabel} {tagLabel}
-                      </option>
-                      {filterOptions.tags.map(tag => (
-                        <option key={tag} value={tag}>
-                          {tag}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger
+                        aria-label={tagLabel}
+                        data-testid="collaboration-issue-table-tag-filter"
+                      />
+                      <SelectContent>
+                        <SelectItem value="">
+                          {allLabel} {tagLabel}
+                        </SelectItem>
+                        {filterOptions.tags.map(tag => (
+                          <SelectItem key={tag} value={String(tag)}>
+                            {tag}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectRoot>
                   </label>
                 </div>
               </th>
@@ -529,17 +565,21 @@ function ProjectIssueTableContent({
               return (
                 <tr key={issue.id} data-testid={`collaboration-issue-table-row-${issue.id}`}>
                   <td className="collaboration-issue-table-select">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       aria-label={`${selectIssueLabel} ${issue.title}`}
                       data-testid={`collaboration-issue-table-select-${issue.id}`}
                       checked={selectedIssueIds.has(issue.id)}
                       disabled={!canEditCollaborationIssue(issue)}
-                      onChange={() => toggleIssue(issue)}
+                      onCheckedChange={() => toggleIssue(issue)}
                     />
                   </td>
                   <td>
-                    <button type="button" title={issue.title} onClick={() => onOpen(issue)}>
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      title={issue.title}
+                      onClick={() => onOpen(issue)}
+                    >
                       {showIssueKey ? (
                         <span className="collaboration-issue-key">
                           {projectKey
@@ -548,7 +588,7 @@ function ProjectIssueTableContent({
                         </span>
                       ) : null}
                       <span className="collaboration-issue-title">{issue.title}</span>
-                    </button>
+                    </ControlButton>
                   </td>
                   <td>{statusName(issue.status)}</td>
                   <td>{currentAssignment?.target_name || '—'}</td>
@@ -573,7 +613,8 @@ function ProjectIssueTableContent({
                   {onDelete ? (
                     <td className="collaboration-issue-table-actions">
                       {canEditCollaborationIssue(issue) && canDelete(issue) ? (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           aria-label={deleteLabel}
                           className="collaboration-issue-table-delete"
                           data-testid={`collaboration-issue-table-delete-${issue.id}`}
@@ -582,7 +623,7 @@ function ProjectIssueTableContent({
                           type="button"
                         >
                           <Archive aria-hidden="true" />
-                        </button>
+                        </ControlButton>
                       ) : null}
                     </td>
                   ) : null}

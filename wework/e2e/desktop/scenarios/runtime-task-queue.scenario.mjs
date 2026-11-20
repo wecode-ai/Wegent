@@ -224,6 +224,7 @@ async function assertRestoredFollowUps(control, prompts, timeoutMs) {
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
+  modelResponseTimeoutMs,
   workspacePath,
   resultDir,
 }) {
@@ -753,7 +754,8 @@ export function createDesktopScenario({
         await waitForRequestCount(
           requests,
           requestsBeforeBackgroundDrain.length + index + 1,
-          uiTimeoutMs
+          modelResponseTimeoutMs,
+          `model requests through ${prompt}`
         )
         assert.deepEqual(
           requests,

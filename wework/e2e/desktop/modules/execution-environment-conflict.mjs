@@ -5,7 +5,7 @@ const PREFIX = 'collaboration-project-execution-environment'
 export async function verifyExecutionEnvironmentConflict(control, request, projectId, content) {
   const field = suffix => `${content} [data-testid="${PREFIX}-${suffix}"]`
   await control.command('clickWhenEnabled', field('preparation-toggle'))
-  await control.command('waitFor', `${field('preparation')}[open]`)
+  await control.command('waitFor', `${field('preparation-toggle')}[aria-expanded="true"]`)
   const originalPolicy = await control.command('getValue', field('workspace-policy'))
   const draftPolicy = originalPolicy === 'project' ? 'git_worktree' : 'project'
   await control.command('select', field('workspace-policy'), { value: draftPolicy })
@@ -48,5 +48,5 @@ export async function verifyExecutionEnvironmentConflict(control, request, proje
   await control.command('clickWhenEnabled', field('save-configuration'))
   await control.command('waitFor', field('configuration-status'), { text: '配置已保存' })
   await control.command('click', field('preparation-toggle'))
-  await control.command('waitFor', `${field('preparation')}:not([open])`)
+  await control.command('waitFor', `${field('preparation-toggle')}[aria-expanded="false"]`)
 }

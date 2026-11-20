@@ -1,9 +1,10 @@
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   CollaborationIssueCard,
   createCollaborationTranslator,
   createIssueBoardCardLabels,
 } from '@wegent/collaboration'
-import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { useIndependentIssuePage } from './useIndependentIssuePage'
 
 export function IndependentIssueList({
@@ -106,14 +107,15 @@ export function IndependentIssueList({
         />
       ))}
       {state.hasMore ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="independent-issues-load-more"
           onClick={() => void state.loadMore()}
           className="min-h-11 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
         >
           {t('personalHome.loadMore')}
-        </button>
+        </ControlButton>
       ) : null}
     </section>
   )

@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -238,14 +239,14 @@ function ScopedProjectCollaborationGroups({
             groupsError,
             translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
           )}
-          <button
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-link-button"
             data-testid="project-groups-load-retry"
             onClick={() => void reload().catch(() => {})}
           >
             {locale === 'zh-CN' ? '重试' : 'Retry'}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       {membersError ? (
@@ -255,14 +256,14 @@ function ScopedProjectCollaborationGroups({
             membersError,
             translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
           )}
-          <button
+          <ControlButton variant="unstyled"
             className="collaboration-link-button"
             data-testid="project-group-members-retry"
             onClick={() => void membersResource.reload()}
             type="button"
           >
             {locale === 'zh-CN' ? '重试' : 'Retry'}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
       <WorkspaceCollaborationGroupsConfiguration

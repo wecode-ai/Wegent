@@ -1,6 +1,8 @@
-import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { IssueTaskConversationPanel } from '@wegent/collaboration'
-import { ArrowUpRight, Bot, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpRight, Bot, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -305,18 +307,6 @@ export function AiChatModal({
     )
   }, [initialAddress?.deviceId, state?.devices])
 
-  // Embedded panes handle Escape locally so sibling drawers keep their context.
-  useWindowEvent(
-    'keydown',
-    event => {
-      if (event.key === 'Escape' && !event.defaultPrevented) {
-        event.stopPropagation()
-        onClose()
-      }
-    },
-    { enabled: open && !embedded }
-  )
-
   const taskRequest = useMemo(() => {
     if (!initialTaskRequest) return null
     const directEnvironmentTarget =
@@ -474,16 +464,24 @@ export function AiChatModal({
           !open && 'hidden'
         )}
       >
-        <section
-          data-testid="ai-chat-modal"
-          className="grid h-full min-h-0 grid-cols-[minmax(320px,38%)_minmax(0,1fr)]"
+        <DialogSurface
+          active={open}
+          onClose={onClose}
+          render={
+            <section
+              data-testid="ai-chat-modal"
+              className="grid h-full min-h-0 grid-cols-[minmax(320px,38%)_minmax(0,1fr)]"
+              aria-label={t('workbench.project_chat')}
+            />
+          }
         >
           <aside
             data-testid="work-item-task-context"
             className="flex min-h-0 flex-col border-r border-border bg-background"
           >
             <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="ai-chat-modal-close"
                 onClick={onClose}
@@ -491,7 +489,7 @@ export function AiChatModal({
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
               >
                 <X className="h-4 w-4" />
-              </button>
+              </ControlButton>
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
                 {t('workbench.work_item_detail', 'Issue 详情')}
               </span>
@@ -530,7 +528,9 @@ export function AiChatModal({
                 {taskTitle || t('workbench.task_conversation', '任务对话')}
               </span>
               {onOpenRuntimeTask ? (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
                   onClick={() => void openRuntimeTask()}
@@ -538,7 +538,7 @@ export function AiChatModal({
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
                   <ArrowUpRight className="h-3.5 w-3.5" />
-                </button>
+                </ControlButton>
               ) : null}
             </header>
             <TemporaryChatPanel
@@ -556,7 +556,7 @@ export function AiChatModal({
               expanded
             />
           </div>
-        </section>
+        </DialogSurface>
       </div>
     )
   }
@@ -592,9 +592,16 @@ export function AiChatModal({
         if (event.currentTarget === event.target) onClose()
       }}
     >
-      <section
-        data-testid="ai-chat-modal"
-        className="flex h-[80vh] max-h-[820px] w-[880px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+      <DialogSurface
+        active={open}
+        onClose={onClose}
+        render={
+          <section
+            data-testid="ai-chat-modal"
+            className="flex h-[80vh] max-h-[820px] w-[880px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+            aria-label={t('workbench.project_chat')}
+          />
+        }
       >
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <Bot className="h-4 w-4 shrink-0 text-primary wework:text-violet-600" />
@@ -606,29 +613,25 @@ export function AiChatModal({
               {task.id} · {task.title}
             </span>
           ) : null}
-          <label className="relative ml-2 flex h-[26px] max-w-[200px] shrink-0 items-center rounded-full bg-muted/60 transition-colors hover:bg-muted">
-            <span className="sr-only">{t('workbench.project_space_chat.runtime_project')}</span>
-            <select
-              data-testid="ai-chat-runtime-project"
-              value={selectedLocalProject?.id ?? ''}
-              onChange={event =>
-                setLocalProjectId(event.target.value ? Number(event.target.value) : null)
-              }
-              className="h-full w-full appearance-none truncate rounded-full bg-transparent pl-2.5 pr-[22px] text-xs text-text-primary outline-none"
-            >
-              <option value="">{t('workbench.project_space_chat.no_runtime_project')}</option>
-              {localProjects.map(localProject => (
-                <option key={localProject.id} value={localProject.id}>
-                  {t('workbench.project_space_chat.runtime_project_prefix', {
-                    name: localProject.name,
-                  })}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-[7px] h-[11px] w-[11px] text-text-muted" />
-          </label>
+          <SelectField
+            testId="ai-chat-runtime-project"
+            accessibleLabel={t('workbench.project_space_chat.runtime_project')}
+            value={String(selectedLocalProject?.id ?? '')}
+            options={[
+              { value: '', label: t('workbench.project_space_chat.no_runtime_project') },
+              ...localProjects.map(project => ({
+                value: String(project.id),
+                label: t('workbench.project_space_chat.runtime_project_prefix', {
+                  name: project.name,
+                }),
+              })),
+            ]}
+            onChange={value => setLocalProjectId(value ? Number(value) : null)}
+            className="ml-2 max-w-52 shrink-0"
+          />
           <span className="flex-1" />
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="ai-chat-new-conversation"
             title={
@@ -645,8 +648,9 @@ export function AiChatModal({
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
           >
             {composeNew ? <Undo2 className="h-3.5 w-3.5" /> : <Plus className="h-4 w-4" />}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="ai-chat-modal-close"
             onClick={onClose}
@@ -654,14 +658,14 @@ export function AiChatModal({
             className="-mr-1 flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         {renderNewTaskComposer(
           `ai-chat:${project.id}:${task?.id ?? 'project'}:${sessionKey}`,
           'ai-chat-panel',
           { key: sessionKey, startFresh: composeNew }
         )}
-      </section>
+      </DialogSurface>
     </div>
   )
 }

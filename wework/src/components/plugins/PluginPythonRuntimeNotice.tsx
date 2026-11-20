@@ -1,8 +1,10 @@
-import { Download, X } from 'lucide-react'
-import { useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
 import { executionEnvironmentResource } from '@/desktop/executionEnvironmentResource'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ProgressBar } from '@wegent/collaboration/controls/ProgressBar'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Download, X } from 'lucide-react'
+import { useState, useSyncExternalStore } from 'react'
 
 export function PluginPythonRuntimeNotice() {
   const { t } = useTranslation('common')
@@ -44,7 +46,8 @@ export function PluginPythonRuntimeNotice() {
         <p role={failed ? 'alert' : 'status'} className="min-w-0 flex-1 text-sm font-medium">
           {label}
         </p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="plugin-python-runtime-dismiss"
           aria-label={t('workbench.plugin_python_dismiss', '关闭提示')}
@@ -52,7 +55,7 @@ export function PluginPythonRuntimeNotice() {
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-7 md:w-7"
         >
           <X className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </div>
       <p className="mt-2 text-sm text-text-secondary">
         {status.temporaryPythonVersion && !failed
@@ -83,23 +86,7 @@ export function PluginPythonRuntimeNotice() {
         </Button>
       ) : (
         <div className="mt-3">
-          <div
-            role="progressbar"
-            aria-label={label}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={determinate ? progress : undefined}
-            className="h-1.5 overflow-hidden rounded-full bg-muted"
-          >
-            <div
-              className={
-                determinate
-                  ? 'h-full bg-text-primary transition-[width] motion-reduce:transition-none'
-                  : 'h-full w-1/3 animate-pulse bg-text-primary motion-reduce:animate-none'
-              }
-              style={determinate ? { width: `${progress}%` } : undefined}
-            />
-          </div>
+          <ProgressBar value={determinate ? progress : null} label={label} />
           {determinate && <p className="mt-1 text-xs text-text-secondary">{progress}%</p>}
         </div>
       )}

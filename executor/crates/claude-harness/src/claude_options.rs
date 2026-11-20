@@ -35,12 +35,6 @@ pub fn merge_claude_mcp_servers(
                 .unwrap_or_else(|| Value::Object(Map::new()));
             let servers: BTreeMap<String, Value> = serde_json::from_value(servers)
                 .map_err(|_| format!("invalid mcpServers map: {}", config_path.display()))?;
-            if servers.values().any(|server| !server.is_object()) {
-                return Err(format!(
-                    "invalid MCP server config: {}",
-                    config_path.display()
-                ));
-            }
             servers
         }
         Err(error) if error.kind() == ErrorKind::NotFound => BTreeMap::new(),
@@ -58,11 +52,32 @@ pub fn extract_claude_mcp_templates(
     request: &ExecutionRequest,
     global_mcps: &BTreeMap<String, Value>,
 ) -> BTreeMap<String, Value> {
-    convert_mcp_servers_to_dict(&Value::Array(collect_mcp_servers_for_claude(
-        request,
-        primary_bot(request),
-        global_mcps,
-    )))
+    extract_mcp_templates(request, global_mcps, normalize_mcp_server_for_claude)
+}
+
+pub fn extract_codex_mcp_templates(
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    extract_mcp_templates(request, global_mcps, Value::clone)
+}
+
+fn extract_mcp_templates(
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+    normalize: fn(&Value) -> Value,
+) -> BTreeMap<String, Value> {
+    let mut servers = collect_mcp_servers_for_claude(request, primary_bot(request), global_mcps);
+    for server in &mut servers {
+        // Resolve routing metadata before indexing and transport normalization.
+        // Transport values remain templates for service-local credential binding.
+        for key in ["name", "type"] {
+            if let Some(value) = server.get_mut(key) {
+                *value = replace_mcp_server_variables(value, Some(request));
+            }
+        }
+    }
+    convert_mcp_servers_to_dict_with(&Value::Array(servers), normalize)
 }
 
 pub fn extract_claude_options(
@@ -144,16 +159,19 @@ fn append_mcp_servers(target: &mut Vec<Value>, mcp_servers: Option<&Value>) {
 }
 
 fn convert_mcp_servers_to_dict(mcp_servers: &Value) -> BTreeMap<String, Value> {
+    convert_mcp_servers_to_dict_with(mcp_servers, normalize_mcp_server_for_claude)
+}
+
+fn convert_mcp_servers_to_dict_with(
+    mcp_servers: &Value,
+    normalize: fn(&Value) -> Value,
+) -> BTreeMap<String, Value> {
     match mcp_servers {
         Value::Object(object) => {
             let mut normalized = BTreeMap::new();
             for (name, config) in object {
                 if config.as_object().is_some() {
-                    merge_mcp_server(
-                        &mut normalized,
-                        name.clone(),
-                        normalize_mcp_server_for_claude(config),
-                    );
+                    merge_mcp_server(&mut normalized, name.clone(), normalize(config));
                 }
             }
             normalized
@@ -172,7 +190,7 @@ fn convert_mcp_servers_to_dict(mcp_servers: &Value) -> BTreeMap<String, Value> {
                 merge_mcp_server(
                     &mut normalized,
                     name.to_owned(),
-                    normalize_mcp_server_for_claude(&Value::Object(object)),
+                    normalize(&Value::Object(object)),
                 );
             }
             normalized
@@ -219,7 +237,7 @@ fn preserve_existing_mcp_timeout(existing: &Value, incoming: &mut Value) {
     incoming_object.insert("timeout".to_owned(), existing_timeout);
 }
 
-fn normalize_mcp_server_for_claude(server: &Value) -> Value {
+pub fn normalize_mcp_server_for_claude(server: &Value) -> Value {
     let Some(config) = server.as_object() else {
         return server.clone();
     };
@@ -227,7 +245,7 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
         .get("type")
         .and_then(Value::as_str)
         .map(|value| {
-            if value == "streamable-http" {
+            if matches!(value, "streamable-http" | "streamable_http") {
                 "http"
             } else {
                 value
@@ -493,12 +511,7 @@ mod mcp_config_tests {
     fn invalid_existing_config_is_reported_without_discarding_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        for content in [
-            "{broken",
-            "[]",
-            "{\"mcpServers\":[]}",
-            "{\"mcpServers\":{\"docs\":null}}",
-        ] {
+        for content in ["{broken", "[]", "{\"mcpServers\":[]}"] {
             fs::write(&path, content).unwrap();
 
             let result = merge_claude_mcp_servers(&path, BTreeMap::new());
@@ -506,5 +519,12 @@ mod mcp_config_tests {
             assert!(result.is_err());
             assert_eq!(fs::read_to_string(&path).unwrap(), content);
         }
+        // Individual definitions are validated by runtime preparation so one
+        // invalid service does not prevent loading the rest of the table.
+        let content = "{\"mcpServers\":{\"docs\":null}}";
+        fs::write(&path, content).unwrap();
+        let merged = merge_claude_mcp_servers(&path, BTreeMap::new()).unwrap();
+        assert_eq!(merged["docs"], Value::Null);
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
 }

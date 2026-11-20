@@ -1,5 +1,6 @@
 import { useContext, useMemo, type ComponentProps } from 'react'
 import { MessageCircle } from 'lucide-react'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
@@ -372,7 +373,8 @@ export function RequestUserInputCard({
         }}
         additionalActions={
           canDiscuss ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="request-user-input-discuss"
               disabled={props.disabled}
@@ -381,7 +383,7 @@ export function RequestUserInputCard({
             >
               <MessageCircle className="h-4 w-4" aria-hidden="true" />
               {t('question_discussion.open')}
-            </button>
+            </ControlButton>
           ) : (
             props.additionalActions
           )
