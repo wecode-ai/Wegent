@@ -2,6 +2,8 @@ import { DesktopWorkbenchMain } from '@/components/layout/DesktopWorkbenchMain'
 import type { WorkbenchPaneIdentity } from '@/components/layout/workbenchPaneIdentity'
 import { dismissPopoutWindow, openPopoutTaskInMain } from '@/desktop/popoutWindow'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import {
   findRuntimeTask,
   truncateRuntimeTaskTitle,
@@ -46,7 +48,7 @@ export function PopoutWorkbenchPage() {
       localDeviceRequired,
     ]
   )
-  const overlayOpen = useSyncExternalStore(
+  const { overlayOpen, ready } = useSyncExternalStore(
     subscribeWindow,
     windowSource.getSnapshot,
     windowSource.getSnapshot
@@ -73,6 +75,7 @@ export function PopoutWorkbenchPage() {
         !expanded && 'popout-window-compact'
       )}
     >
+      {ready && isElectronRuntime() && <SystemDragBridge />}
       {expanded ? (
         <header
           data-testid="popout-window-header"

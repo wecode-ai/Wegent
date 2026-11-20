@@ -41,7 +41,6 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { cn } from '@/lib/utils'
 import { isSettingsRoute } from '@/lib/navigation'
-import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -691,7 +690,6 @@ export function AppRoutes({
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
-          {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
         </WorkbenchProvider>
       </ReplyPredictionCoordinator>
