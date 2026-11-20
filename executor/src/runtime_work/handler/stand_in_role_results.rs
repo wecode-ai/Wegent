@@ -217,12 +217,12 @@ impl RuntimeWorkRpcHandler {
                 Ok(_) | Err(_) => return record("waiting_for_device", None),
             }
         };
-        let status = match result["status"].as_str() {
-            Some(status @ ("done" | "failed" | "cancelled")) => status,
+        match result["status"].as_str() {
+            Some("done" | "failed" | "cancelled") => {}
             Some("waiting_for_user") => return record("waiting_for_user", None),
             _ => return record("running", None),
         };
-        self.publish_role_result(store, &parent, user, id, intent, &result, status)
+        self.publish_role_result(store, &parent, user, id, intent, &result)
             .await
     }
 
@@ -251,7 +251,7 @@ impl RuntimeWorkRpcHandler {
         let failure = json!({"status":"failed","errorCode":request["terminalError"],"attempt":request["attempt"]});
         let result = json!({"taskId":id,"status":"failed","errorCode":request["terminalError"],
             "resultId":result_command(id,&failure)});
-        self.publish_role_result(store, &parent, user, id, intent, &result, "failed")
+        self.publish_role_result(store, &parent, user, id, intent, &result)
             .await
     }
 
@@ -263,8 +263,8 @@ impl RuntimeWorkRpcHandler {
         id: &str,
         intent: &Value,
         result: &Value,
-        status: &str,
     ) -> Result<(), AppIpcError> {
+        let status = result["status"].as_str().ok_or_else(denied)?;
         let parent_id = &parent.local_task_id;
         let record = |status, receipt| {
             store

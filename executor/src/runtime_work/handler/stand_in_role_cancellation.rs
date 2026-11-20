@@ -59,15 +59,12 @@ impl RuntimeWorkRpcHandler {
                     let status = self
                         .local_task_link(&id)
                         .filter(|link| role_attempt(link) == attempt)
-                        .map(|link| link.status);
-                    let status = match status.as_deref() {
-                        Some(status @ ("done" | "failed")) => status,
-                        _ => "cancelled",
-                    };
+                        .map(|link| link.status)
+                        .filter(|status| matches!(status.as_str(), "done" | "failed"));
                     store.record_remote_stand_in_role_result(
                         &id,
                         user,
-                        status,
+                        status.as_deref().unwrap_or("cancelled"),
                         Some("local-stop-confirmed"),
                     )
                 }
