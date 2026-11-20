@@ -102,7 +102,14 @@ export function createDesktopScenario({ workspacePath, workbenchReadyTimeoutMs }
         visible: true,
       })
       await control.command('click', `${PAGE} [data-testid="interaction-list-item"]`)
-      const submit = `${PAGE} [data-testid="request-user-input-submit-button"]`
+      await control.command(
+        'clickWhenEnabled',
+        `${PAGE} [data-testid="interaction-show-context"]`,
+        {
+          visible: true,
+        }
+      )
+      const submit = `${PAGE} [data-testid="interaction-entity-container"] [data-testid="request-user-input-submit-button"]`
       await control.command('waitFor', `${submit}:not(:disabled)`, { visible: true })
       await access(fixture)
       await control.command('clickWhenEnabled', submit)
