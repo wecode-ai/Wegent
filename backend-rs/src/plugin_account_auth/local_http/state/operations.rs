@@ -79,25 +79,26 @@ pub(super) async fn exchange(
     p: &Principal,
     operation: &str,
     data: &Value,
-) -> MysqlResult<Value> {
-    match operation {
+) -> MysqlResult<ExchangeOutcome> {
+    let result = match operation {
         "plugin.auth.local_lifecycle" => lifecycle(tx, p, data).await,
         "plugin.auth.oauth.revocations" => pending_revocations(tx, p, data).await,
         "plugin.auth.oauth.revoke_begin" => revoke_begin(tx, p, data).await,
-        "plugin.auth.oauth.revoke_finish" => revoke_finish(tx, p, data).await,
-        "plugin.auth.oauth.finish" => refresh_finish(tx, p, data).await,
+        "plugin.auth.oauth.revoke_finish" => return revoke_finish(tx, p, data).await,
+        "plugin.auth.oauth.finish" => return refresh_finish(tx, p, data).await,
         "plugin.auth.read" => read(tx, p, data).await,
         "plugin.auth.execute" | "plugin.auth.oauth.begin" => {
             let (package, row, raw) = resolve(tx, p, data).await?;
             if operation == "plugin.auth.execute" {
-                return Ok(
+                return Ok(ExchangeOutcome::Fresh(
                     json!({"package":package.metadata()?,"credential":credentials::business(raw,&row.json["spec"]["credentialType"])?}),
-                );
+                ));
             }
             refresh_begin(tx, p, &package, &row, raw).await
         }
         _ => Err(invalid()),
-    }
+    };
+    result.map(ExchangeOutcome::Fresh)
 }
 
 async fn read(tx: &mut impl MysqlTransaction, p: &Principal, data: &Value) -> MysqlResult<Value> {
@@ -199,7 +200,7 @@ async fn refresh_finish(
     tx: &mut impl MysqlTransaction,
     p: &Principal,
     data: &Value,
-) -> MysqlResult<Value> {
+) -> MysqlResult<ExchangeOutcome> {
     let input: Finish = parse(data)?;
     if input.succeeded
         && (!input.attempted || input.credential.is_none() || input.account_id.is_none())
@@ -222,7 +223,7 @@ async fn refresh_finish(
         return Err(fail("plugin_auth_operation_mismatch"));
     }
     if op["state"] == "finished" {
-        return Ok(json!({"state":"finished"}));
+        return Ok(ExchangeOutcome::Replayed(json!({"state":"finished"})));
     }
     let mut revoke = spec["oauthRevocation"].clone();
     let revoking = spec["status"] == "disconnected"
@@ -292,7 +293,7 @@ async fn refresh_finish(
         true,
     )
     .await?;
-    Ok(json!({"state":state}))
+    Ok(ExchangeOutcome::Fresh(json!({"state":state})))
 }
 
 async fn lifecycle(
@@ -567,7 +568,7 @@ async fn revoke_finish(
     tx: &mut impl MysqlTransaction,
     p: &Principal,
     data: &Value,
-) -> MysqlResult<Value> {
+) -> MysqlResult<ExchangeOutcome> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Finish {
@@ -591,7 +592,7 @@ async fn revoke_finish(
         return Err(fail("plugin_auth_operation_mismatch"));
     }
     if job["state"] == "revoked" {
-        return Ok(json!({"state":"revoked"}));
+        return Ok(ExchangeOutcome::Replayed(json!({"state":"revoked"})));
     }
     if job["state"] != "in_flight" {
         return Err(fail("plugin_auth_operation_mismatch"));
@@ -620,5 +621,5 @@ async fn revoke_finish(
         true,
     )
     .await?;
-    Ok(result)
+    Ok(ExchangeOutcome::Fresh(result))
 }

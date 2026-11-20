@@ -41,6 +41,7 @@ struct Endpoint {
     home: PathBuf,
     lifecycle: tokio::sync::mpsc::Sender<super::local_lifecycle::Request>,
     reconcile: tokio::sync::mpsc::Sender<ReconciliationRequest>,
+    pending_logins: Arc<PendingLogins>,
 }
 
 fn endpoint() -> &'static Mutex<Option<Endpoint>> {
@@ -85,9 +86,14 @@ pub(super) fn lifecycle_sender(
 pub(crate) fn request_reconcile(installed_id: Option<u64>) {
     if let Ok(guard) = endpoint().lock() {
         if let Some(endpoint) = guard.as_ref() {
-            let _ = endpoint.reconcile.try_send(
-                installed_id.map_or(ReconciliationRequest::Audit, ReconciliationRequest::Target),
-            );
+            let request = match installed_id {
+                Some(id) => ReconciliationRequest::Target(id),
+                None => {
+                    endpoint.pending_logins.wake();
+                    ReconciliationRequest::Audit
+                }
+            };
+            let _ = endpoint.reconcile.try_send(request);
         }
     }
 }
@@ -180,6 +186,7 @@ async fn start_with_logins<T: super::PluginAuthTransport>(
         home,
         lifecycle: lifecycle_sender,
         reconcile,
+        pending_logins: pending_logins.clone(),
     };
     let revocation_transport = transport.clone();
     let revocation_home = endpoint_value.home.clone();

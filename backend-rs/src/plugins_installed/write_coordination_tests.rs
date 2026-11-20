@@ -75,12 +75,13 @@ struct LeaseRedis {
     script_loaded: Arc<Mutex<bool>>,
     set_delay: Duration,
     policy_get_delay: Duration,
-    block_set_reply: Option<Arc<SetReplyGate>>,
+    block_set_reply: Option<Arc<RedisReplyGate>>,
+    block_promotion_reply: Option<Arc<RedisReplyGate>>,
     released: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Default)]
-struct SetReplyGate {
+struct RedisReplyGate {
     applied: tokio::sync::Notify,
     respond: tokio::sync::Notify,
 }
@@ -131,13 +132,12 @@ async fn native_admission_times_out_once_and_unlocks_a_late_set_success() {
         // Tokio can observe a ready SET before its timer at the same cutoff.
         match (reply_ms, acquired) {
             (200, Err(NativeAdmissionError::RedisReplyLate)) => {}
-            (250, Err(NativeAdmissionError::RedisReplyUnknown)) => {
-                tokio::time::timeout(Duration::from_secs(1), redis.released.notified())
-                    .await
-                    .unwrap();
-            }
+            (250, Err(NativeAdmissionError::RedisReplyUnknown)) => {}
             _ => panic!("unexpected acquisition result for a {reply_ms} ms Redis reply"),
         }
+        tokio::time::timeout(Duration::from_secs(1), redis.released.notified())
+            .await
+            .unwrap();
         let commands = redis.commands.lock().unwrap();
         assert_eq!(
             commands
@@ -153,8 +153,128 @@ async fn native_admission_times_out_once_and_unlocks_a_late_set_success() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn native_admission_sends_no_set_when_late_cleanup_slots_are_full() {
+    static CLEANUP_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let gate = Arc::new(RedisReplyGate::default());
+    let redis = LeaseRedis {
+        block_set_reply: Some(gate.clone()),
+        ..LeaseRedis::default()
+    };
+    let delayed = PluginWriteLease::acquire_native_named_with_cleanup_slots(
+        &redis,
+        23,
+        "delayed".into(),
+        Instant::now() + Duration::from_millis(200),
+        &CLEANUP_SLOTS,
+    )
+    .await;
+    assert!(matches!(
+        delayed,
+        Err(NativeAdmissionError::RedisReplyUnknown)
+    ));
+    assert!(
+        redis
+            .owners
+            .lock()
+            .unwrap()
+            .contains_key("wegent:plugin-write:23:delayed")
+    );
+
+    let saturated = PluginWriteLease::acquire_native_named_with_cleanup_slots(
+        &redis,
+        23,
+        "another".into(),
+        Instant::now() + Duration::from_millis(200),
+        &CLEANUP_SLOTS,
+    )
+    .await;
+    assert!(matches!(
+        saturated,
+        Err(NativeAdmissionError::CleanupCapacityExhausted)
+    ));
+    assert_eq!(redis.commands.lock().unwrap().len(), 1);
+
+    gate.respond.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), redis.released.notified())
+        .await
+        .expect("The late SET must be released");
+    assert!(redis.owners.lock().unwrap().is_empty());
+    assert_eq!(CLEANUP_SLOTS.available_permits(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn native_admission_keeps_the_unobserved_set_on_the_provisional_ttl() {
+    static CLEANUP_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let gate = Arc::new(RedisReplyGate::default());
+    let redis = LeaseRedis {
+        block_set_reply: Some(gate.clone()),
+        ..LeaseRedis::default()
+    };
+    let result = PluginWriteLease::acquire_native_named_with_cleanup_slots(
+        &redis,
+        23,
+        "unobserved".into(),
+        Instant::now() + Duration::from_millis(200),
+        &CLEANUP_SLOTS,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(NativeAdmissionError::RedisReplyUnknown)
+    ));
+    gate.applied.notified().await;
+
+    // Withhold the reply beyond the observation window. The only command
+    // Redis received must expire on its own, even if its reply was lost.
+    let _permit = tokio::time::timeout(Duration::from_secs(6), CLEANUP_SLOTS.acquire())
+        .await
+        .expect("observation must release its cleanup capacity")
+        .unwrap();
+    gate.respond.notify_one();
+    let commands = redis.commands.lock().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0][0], "SET");
+    assert_eq!(&commands[0][3..], ["PX", "1000", "NX"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn native_admission_cleans_up_an_acknowledged_set_after_a_promotion_timeout() {
+    let gate = Arc::new(RedisReplyGate::default());
+    let redis = LeaseRedis {
+        block_promotion_reply: Some(gate.clone()),
+        ..LeaseRedis::default()
+    };
+    let start = Instant::now();
+    let result = PluginWriteLease::acquire_native_named(
+        &redis,
+        23,
+        "unconfirmed-promotion".into(),
+        start + Duration::from_millis(200),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(NativeAdmissionError::RedisPromotionNotConfirmed)
+    ));
+    assert_eq!(start.elapsed(), Duration::from_millis(200));
+    gate.applied.notified().await;
+    tokio::time::timeout(Duration::from_secs(1), redis.released.notified())
+        .await
+        .expect("the unconfirmed promotion must get token-checked cleanup");
+    let commands = redis.commands.lock().unwrap();
+    assert_eq!(
+        commands.iter().map(|c| c[0].as_str()).collect::<Vec<_>>(),
+        ["SET", "EVAL", "EVALSHA"]
+    );
+    assert_eq!(&commands[1][3..5], &commands[0][1..3]);
+    assert_eq!(&commands[1][5..], ["800", "180000"]);
+    assert_eq!(&commands[2][3..], &commands[0][1..3]);
+    assert!(redis.owners.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancelling_native_response_during_set_keeps_cleanup_owned() {
-    let gate = Arc::new(SetReplyGate::default());
+    let gate = Arc::new(RedisReplyGate::default());
     let redis = LeaseRedis {
         block_set_reply: Some(gate.clone()),
         ..LeaseRedis::default()
@@ -359,7 +479,12 @@ impl Redis for LeaseRedis {
         command.arg_encoded(script)?.arg_encoded(keys.num_args())?;
         keys.encode_args(&mut command)?;
         arguments.encode_args(&mut command)?;
-        self.run(command)
+        let result = self.run(command);
+        if let Some(gate) = &self.block_promotion_reply {
+            gate.applied.notify_one();
+            gate.respond.notified().await;
+        }
+        result
     }
 
     async fn get<K, T>(&self, key: K) -> RedisResult<Option<T>>

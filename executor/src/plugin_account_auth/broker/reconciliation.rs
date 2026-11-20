@@ -1,13 +1,89 @@
 //! Event-driven enrollment with a fixed low-frequency safety audit.
 use super::super::automation::{PendingLogins, Reconciler};
 use super::*;
-use std::time::Duration;
+use futures_util::{stream::FuturesUnordered, StreamExt};
+use std::{path::Path, time::Duration};
 use tokio::sync::mpsc;
 
 pub(super) async fn run<T: super::super::PluginAuthTransport>(
     transport: T,
     home: PathBuf,
     connected: Arc<AtomicBool>,
+    cancel: watch::Receiver<bool>,
+    requested: mpsc::Receiver<ReconciliationRequest>,
+    pending_logins: Arc<PendingLogins>,
+    interval: Duration,
+) {
+    // Foreground registration has its own capacity and cannot wait behind an
+    // ordinary audit's provider calls. The reconciler serializes each installation.
+    tokio::select! {
+        biased;
+        _ = run_logins(transport.clone(), &home, &connected, cancel.clone(), pending_logins.clone()) => {},
+        _ = run_ordinary(transport, &home, &connected, cancel, requested, pending_logins, interval) => {},
+    }
+}
+
+async fn run_logins<T: super::super::PluginAuthTransport>(
+    transport: T,
+    home: &Path,
+    connected: &AtomicBool,
+    mut cancel: watch::Receiver<bool>,
+    pending_logins: Arc<PendingLogins>,
+) {
+    let actions = Arc::new(Semaphore::new(1));
+    let mut batches = FuturesUnordered::new();
+    let mut offline_retry = None;
+    loop {
+        let next = if batches.len() < 16 {
+            pending_logins
+                .next_ready()
+                .map(|due| offline_retry.map_or(due, |retry| due.max(retry)))
+        } else {
+            None
+        };
+        tokio::select! {
+            biased;
+            _ = cancel.changed() => break,
+            _ = pending_logins.notified() => {
+                if transport.available(connected.load(Ordering::Acquire)) {
+                    offline_retry = None;
+                }
+                continue;
+            },
+            _ = batches.next(), if !batches.is_empty() => {
+                write_cycle_marker();
+                continue;
+            },
+            _ = wait_for_retry(next) => {},
+        };
+        if !transport.available(connected.load(Ordering::Acquire)) {
+            offline_retry = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+            continue;
+        }
+        offline_retry = None;
+        let batch = pending_logins.take();
+        let mut reconciler = Reconciler::new(pending_logins.clone());
+        let transport = transport.clone();
+        let home = home.to_owned();
+        let actions = actions.clone();
+        batches.push(async move {
+            if let Err(error) = reconciler
+                .reconcile_logins(transport, &home, batch, actions)
+                .await
+            {
+                crate::logging::log_executor_event(
+                    "plugin auth login registration discovery failed",
+                    &[("code", error.0.to_owned())],
+                );
+            }
+        });
+    }
+}
+
+async fn run_ordinary<T: super::super::PluginAuthTransport>(
+    transport: T,
+    home: &Path,
+    connected: &AtomicBool,
     mut cancel: watch::Receiver<bool>,
     mut requested: mpsc::Receiver<ReconciliationRequest>,
     pending_logins: Arc<PendingLogins>,
@@ -18,11 +94,17 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
     let mut audit = tokio::time::Instant::now();
     let mut cycle_retry = None;
     let mut failures = 0_u32;
+    let mut owner_revision = pending_logins.revision();
     loop {
+        let revision = pending_logins.revision();
+        if revision != owner_revision {
+            owner_revision = revision;
+            cycle_retry = None;
+            failures = 0;
+        }
         enum Trigger {
             Audit,
             Inventory,
-            Login,
             Requests(Vec<ReconciliationRequest>),
             Retry,
         }
@@ -34,7 +116,6 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
         let mut trigger = tokio::select! {
             biased;
             _ = cancel.changed() => break,
-            _ = pending_logins.notified() => Trigger::Login,
             target = requested.recv() => {
                 let Some(first) = target else { break; };
                 let mut events = vec![first];
@@ -46,15 +127,18 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
                 if changed.is_err() { break; }
                 Trigger::Inventory
             },
-            _ = async { match retry {
-                Some(due) => tokio::time::sleep_until(due).await,
-                None => std::future::pending::<()>().await,
-            }} => Trigger::Retry,
+            _ = wait_for_retry(retry) => Trigger::Retry,
         };
         if tokio::time::Instant::now() >= audit {
             if let Trigger::Requests(events) = &mut trigger {
                 events.push(ReconciliationRequest::Audit);
             }
+        }
+        let revision = pending_logins.revision();
+        if revision != owner_revision {
+            owner_revision = revision;
+            cycle_retry = None;
+            failures = 0;
         }
         let scheduled_audit = matches!(trigger, Trigger::Audit)
             || matches!(&trigger, Trigger::Requests(events) if events.iter().any(|event| matches!(event, ReconciliationRequest::Audit)));
@@ -75,17 +159,19 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             _ = cancel.changed() => break,
             result = async {
                 match trigger {
-                    Trigger::Audit => reconciler.reconcile(transport.clone(), &home).await,
-                    Trigger::Inventory => reconciler.reconcile_changes(transport.clone(), &home).await,
-                    Trigger::Login => reconciler.reconcile_logins(transport.clone(), &home).await,
+                    Trigger::Audit => reconciler.reconcile(transport.clone(), home).await,
+                    Trigger::Inventory => reconciler.reconcile_changes(transport.clone(), home).await,
                     Trigger::Requests(events) => {
-                        reconcile_requested(&mut reconciler, transport.clone(), &home, events).await
+                        reconcile_requested(&mut reconciler, transport.clone(), home, events).await
                     },
-                    Trigger::Retry if retry_all => reconciler.reconcile(transport.clone(), &home).await,
-                    Trigger::Retry => reconciler.reconcile_due(transport.clone(), &home).await,
+                    Trigger::Retry if retry_all => reconciler.reconcile(transport.clone(), home).await,
+                    Trigger::Retry => reconciler.reconcile_due(transport.clone(), home).await,
                 }
             } => result,
         };
+        if pending_logins.revision() != revision {
+            continue;
+        }
         match result {
             Ok(()) if full_cycle => failures = 0,
             Ok(()) => {}
@@ -100,14 +186,26 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
                 cycle_retry = Some(cycle_retry.map_or(due, |previous| previous.min(due)));
             }
         }
-        if let Some(path) = super::super::e2e_reconcile_marker() {
-            if let Ok(mut marker) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                let _ = writeln!(marker, "reconciled");
-            }
+        write_cycle_marker();
+    }
+}
+
+async fn wait_for_retry(retry: Option<tokio::time::Instant>) {
+    match retry {
+        Some(due) if due > tokio::time::Instant::now() => tokio::time::sleep_until(due).await,
+        Some(_) => {}
+        None => std::future::pending::<()>().await,
+    }
+}
+
+fn write_cycle_marker() {
+    if let Some(path) = super::super::e2e_reconcile_marker() {
+        if let Ok(mut marker) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(marker, "reconciled");
         }
     }
 }

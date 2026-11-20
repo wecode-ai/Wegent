@@ -7,6 +7,8 @@ use axum::{
 };
 use tokio::sync::oneshot;
 
+mod confirmation;
+
 fn context(base: &str) -> LocalAuthContext {
     LocalAuthContext::new(Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: base.into(),
@@ -832,131 +834,6 @@ async fn contention_backoff_keeps_its_schedule_across_same_owner_renewal() {
             assert!(Instant::now() < next);
         }
     }
-}
-
-fn lost_response() -> axum::response::Response {
-    use axum::{body::Body, response::Response};
-    Response::new(Body::from_stream(futures_util::stream::once(async {
-        Err::<axum::body::Bytes, _>(std::io::Error::other("lost response"))
-    })))
-}
-
-#[tokio::test]
-async fn an_idempotent_result_can_replay_after_the_contention_window_closes() {
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let observed = requests.clone();
-    let app = Router::new().route(
-        "/api/plugins/native-auth/exchange",
-        post(move |Json(body): Json<Value>| {
-            let first = {
-                let mut requests = requests.lock().unwrap();
-                requests.push(body);
-                requests.len() == 1
-            };
-            async move {
-                if first {
-                    tokio::time::sleep(RETRY_WINDOW + Duration::from_millis(10)).await;
-                    return lost_response();
-                }
-                Json(json!({"success":true,"state":"finished"})).into_response()
-            }
-        }),
-    );
-    let (base, server) = serve(app).await;
-    let context = context(&base);
-    configure(&context, 1, &base);
-    let payload = json!({"operation_id":"same-operation","credential":"same-result"});
-    let result = context
-        .for_plugin(42, true)
-        .exchange(
-            "plugin.auth.oauth.finish",
-            payload.clone(),
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap();
-    assert_eq!(result["state"], "finished");
-    let requests = observed.lock().unwrap();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0], requests[1]);
-    assert_eq!(requests[0]["data"], payload);
-    server.abort();
-}
-
-#[tokio::test]
-async fn a_lost_result_after_lease_timeout_requires_confirmation_in_the_original_session() {
-    let run = |confirmation_busy, renewed_device: Option<&'static str>| async move {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let observed = requests.clone();
-        let second_started = Arc::new(tokio::sync::Notify::new());
-        let written = second_started.clone();
-        let app = Router::new().route(
-            "/api/plugins/native-auth/exchange",
-            post(move |Json(body): Json<Value>| {
-                let attempt = {
-                    let mut observed = observed.lock().unwrap();
-                    observed.push(body);
-                    observed.len()
-                };
-                let written = written.clone();
-                async move {
-                    let contention = |code| {
-                        (
-                            [(CONTENTION_HEADER, BUSY_BEFORE_WRITE)],
-                            Json(json!({"success":false,"error":code,"retryable":true})),
-                        )
-                            .into_response()
-                    };
-                    match attempt {
-                        1 => contention(LEASE_TIMEOUT_CODE),
-                        2 => {
-                            written.notify_one();
-                            let delay = LEASE_TIMEOUT_RETRY_WINDOW + Duration::from_millis(100);
-                            tokio::time::sleep(delay).await;
-                            lost_response()
-                        }
-                        3 if confirmation_busy => contention(BUSY_CODE),
-                        3 => Json(json!({"success":true,"state":"finished"})).into_response(),
-                        _ => panic!("Exceeded the three-attempt limit"),
-                    }
-                }
-            }),
-        );
-        let (base, server) = serve(app).await;
-        let context = context(&base);
-        let identity = (7, "account-a");
-        let token = configure_owner(&context, 1, &base, identity, "device-a");
-        let scoped = context.for_plugin(42, true);
-        let operation = "plugin.auth.oauth.finish";
-        let payload = json!({"operation_id":"same-operation","credential":"same-result"});
-        let expected = json!({"operation":operation,"native_token":token,"data":payload});
-        let call = tokio::spawn(async move {
-            scoped
-                .exchange(operation, payload, Duration::from_secs(6))
-                .await
-        });
-        if let Some(device) = renewed_device {
-            tokio::time::timeout(Duration::from_secs(2), second_started.notified())
-                .await
-                .unwrap();
-            configure_owner(&context, 2, &base, identity, device);
-        }
-        let result = call.await.unwrap();
-        let count = if renewed_device.is_some() { 2 } else { 3 };
-        assert_eq!(*requests.lock().unwrap(), vec![expected; count]);
-        if confirmation_busy || renewed_device.is_some() {
-            assert_eq!(result.unwrap_err(), BACKEND_UNAVAILABLE);
-        } else {
-            assert_eq!(result.unwrap()["state"], "finished");
-        }
-        server.abort();
-    };
-    tokio::join!(
-        run(false, None),
-        run(true, None),
-        run(false, Some("device-a")),
-        run(false, Some("device-b")),
-    );
 }
 
 #[tokio::test(start_paused = true)]

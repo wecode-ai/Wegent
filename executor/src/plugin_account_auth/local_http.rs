@@ -32,6 +32,7 @@ const RETRY_DELAYS_MS: [u64; 2] = [100, 200];
 const RETRY_WINDOW: Duration = Duration::from_secs(1);
 const LEASE_TIMEOUT_RETRY_WINDOW: Duration = Duration::from_secs(3);
 const LEASE_TIMEOUT_FINAL_RETRY: Duration = Duration::from_millis(2700);
+const MAX_RESULT_CONFIRMATION_BUDGET: Duration = Duration::from_secs(2);
 
 pub(crate) fn account_scope(connection: &ConnectionConfig) -> String {
     // This is only a local cancellation key, never an authorization decision.
@@ -220,6 +221,9 @@ impl LocalAuthContext {
         state.configuration_revision = input.configuration_revision;
         state.session = session;
         self.session_changes.send_replace(());
+        if let Some(logins) = state.pending_logins.upgrade() {
+            logins.wake();
+        }
         Ok(json!({"enabled":state.session.is_some()}))
     }
     pub(crate) fn socket(&self, socket: Option<SocketIoTransport>, remote: bool) {
@@ -390,14 +394,62 @@ impl LocalAuthContext {
                     }
                     return Err(BACKEND_UNAVAILABLE.into());
                 }
-                match self
-                    .await_native_response(
-                        native_response(&client, &url, &body, deadline - now),
-                        &mut session_changes,
-                        result_owner.filter(|_| unconfirmed_result.is_none()),
-                    )
-                    .await
-                {
+                let confirmation_at = (replay_safe_result
+                    && unconfirmed_result.is_none()
+                    && attempt < RETRY_DELAYS_MS.len())
+                .then(|| {
+                    let reserve = ((deadline - now) / 3).min(MAX_RESULT_CONFIRMATION_BUDGET);
+                    let soft_deadline = deadline - reserve;
+                    if lease_timeout_observed {
+                        soft_deadline.max(started + LEASE_TIMEOUT_FINAL_RETRY)
+                    } else {
+                        soft_deadline
+                    }
+                })
+                .filter(|when| *when < deadline);
+                let mut confirmation_changes = session_changes.clone();
+                let response = self.await_native_response(
+                    native_response(&client, &url, &body, deadline - now),
+                    &mut session_changes,
+                    result_owner.filter(|_| unconfirmed_result.is_none()),
+                );
+                tokio::pin!(response);
+                let response = if let Some(when) = confirmation_at {
+                    tokio::select! {
+                        biased;
+                        result = &mut response => result,
+                        _ = tokio::time::sleep_until(when) => {
+                            let remaining = deadline.saturating_duration_since(Instant::now());
+                            if !remaining.is_zero() && self.still_bound(&session, generation) {
+                                // Keep the original request alive. Its transaction may still
+                                // hold the lease when the idempotent confirmation arrives.
+                                let confirmation = self.await_native_response(
+                                    native_response(&client, &url, &body, remaining),
+                                    &mut confirmation_changes,
+                                    None,
+                                );
+                                return self.confirm_in_flight(
+                                    response,
+                                    confirmation,
+                                    &session,
+                                    generation,
+                                    owner_generation,
+                                    |offset, response| {
+                                        if let Some(reason) = response.retry_before_write {
+                                            self.log_contention(
+                                                operation, attempt + offset, response, reason, false,
+                                            );
+                                        }
+                                    },
+                                ).await;
+                            }
+                            response.await
+                        }
+                    }
+                } else {
+                    response.await
+                };
+                match response {
                     Ok(Some(response)) => break Ok(response),
                     Err(error) => break Err(error),
                     // A watch update canceled the unsent future. Rebind within this attempt.
@@ -466,6 +518,73 @@ impl LocalAuthContext {
         Ok(failed("plugin_auth_busy_retry_later"))
     }
 
+    async fn confirm_in_flight(
+        &self,
+        original: impl Future<Output = NativeResponseResult>,
+        confirmation: impl Future<Output = NativeResponseResult>,
+        session: &Session,
+        generation: u64,
+        owner_generation: u64,
+        log_response: impl Fn(usize, &NativeResponse),
+    ) -> Result<Value, String> {
+        let bound = || self.still_bound(session, generation);
+        let original_bound = || bound() || self.owner_bound(owner_generation);
+        let original_reply = |response: NativeResponseResult| {
+            response
+                .ok()
+                .flatten()
+                .filter(|_| original_bound())
+                .inspect(|response| log_response(0, response))
+        };
+        let confirmation_reply = |response: NativeResponseResult| {
+            response
+                .ok()
+                .flatten()
+                .filter(|_| bound())
+                .inspect(|response| log_response(1, response))
+        };
+        tokio::pin!(original, confirmation);
+        let mut confirmation_polled = false;
+        let (original, confirmation) = tokio::select! {
+            biased;
+            first = &mut original => match original_reply(first) {
+                Some(first)
+                    if first.value["success"] == true
+                        || !confirmation_polled && first.retry_before_write.is_none() =>
+                {
+                    return Ok(first.value);
+                }
+                first => (first, confirmation_reply(confirmation.await)),
+            },
+            second = poll_fn(|cx| {
+                confirmation_polled = true;
+                confirmation.as_mut().poll(cx)
+            }) => match confirmation_reply(second) {
+                Some(second) if second.value["success"] == true => return Ok(second.value),
+                second => (original_reply(original.await), second),
+            },
+        };
+        match (original, confirmation) {
+            (Some(original), _) if original_bound() && original.value["success"] == true => {
+                Ok(original.value)
+            }
+            (_, Some(confirmation)) if bound() && confirmation.value["success"] == true => {
+                Ok(confirmation.value)
+            }
+            (Some(original), _) if original_bound() && original.retry_before_write.is_none() => {
+                Ok(original.value)
+            }
+            (Some(original), Some(confirmation))
+                if bound()
+                    && original.retry_before_write.is_some()
+                    && confirmation.retry_before_write.is_some() =>
+            {
+                Ok(failed("plugin_auth_busy_retry_later"))
+            }
+            _ => Err(BACKEND_UNAVAILABLE.into()),
+        }
+    }
+
     fn renewed_session(
         &self,
         owner_generation: u64,
@@ -510,7 +629,7 @@ impl LocalAuthContext {
         response: impl Future<Output = Result<NativeResponse, &'static str>>,
         session_changes: &mut watch::Receiver<()>,
         result_owner: Option<u64>,
-    ) -> Result<Option<NativeResponse>, &'static str> {
+    ) -> NativeResponseResult {
         tokio::pin!(response);
         let mut started = false;
         loop {
@@ -628,6 +747,8 @@ struct NativeResponse {
     request_id: String,
     status: reqwest::StatusCode,
 }
+
+type NativeResponseResult = Result<Option<NativeResponse>, &'static str>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum RetryBeforeWrite {

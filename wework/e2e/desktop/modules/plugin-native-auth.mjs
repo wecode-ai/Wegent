@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
-import { readFile, rm, watch, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
-import { TransportFaultProxy } from './transport-fault-proxy.mjs'
-import { holdInstalledPluginRow, holdPluginWriteLease } from './plugin-write-lease.mjs'
+import {
+  holdInstalledPluginRow,
+  holdPluginWriteLease,
+  observePausedPluginWrites,
+} from './plugin-write-lease.mjs'
 import { managedRoot } from './managed-plugin-root.mjs'
 import { requestPluginExecutor, until } from './plugin-regression-fixture.mjs'
-import { commandOutputAsync, redisCliBinary } from './shared.mjs'
 
 const manageSites = '[data-testid="plugin-connection-manage-group:sites"]'
 const sourceAction = '[data-testid="plugin-connector-source-continue"]'
@@ -79,17 +81,24 @@ async function withLogoutConfirmation(control, resultDir, run) {
 async function observeLogoutUi(page) {
   const result = await page('Runtime.evaluate', {
     expression: `(() => {
-      const state = { pending: false, error: false }
+      const state = { pending: false, error: false, interrupted: false }
+      let finalGatePassed = false
       const inspect = () => {
-        state.pending ||= Boolean(document.querySelector(${JSON.stringify(`${manageSites}[aria-busy="true"]:disabled`)}))
+        const pending = Boolean(document.querySelector(${JSON.stringify(`${manageSites}[aria-busy="true"]:disabled`)}))
+        const error = Boolean(document.querySelector(${JSON.stringify(detailError)}))
+        state.interrupted ||= !finalGatePassed && state.pending && !pending
+        state.pending ||= pending
         // A failed previous operation may still have a banner until this
         // submission clears it and renders its pending state.
-        state.error ||= state.pending && Boolean(document.querySelector(${JSON.stringify(detailError)}))
+        state.error ||= state.pending && error
+        return { pending, error, interrupted: state.interrupted }
       }
       const observer = new MutationObserver(inspect)
       observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-busy', 'disabled'] })
-      return () => {
-        inspect()
+      return phase => {
+        const current = inspect()
+        if (phase === 'final-gate') finalGatePassed = true
+        if (phase !== 'finish') return current
         observer.disconnect()
         return state
       }
@@ -97,18 +106,29 @@ async function observeLogoutUi(page) {
   })
   const objectId = result.result?.objectId
   assert.ok(objectId, 'The Native logout UI observer could not start')
-  return async () => {
+  const read = async phase => {
     try {
       const evidence = await page('Runtime.callFunctionOn', {
         objectId,
-        functionDeclaration: 'function () { return this() }',
+        functionDeclaration: 'function (phase) { return this(phase) }',
+        arguments: [{ value: phase }],
         returnByValue: true,
       })
       assert.equal(evidence.exceptionDetails, undefined)
       return evidence.result.value
     } finally {
-      await page('Runtime.releaseObject', { objectId })
+      if (phase === 'finish') await page('Runtime.releaseObject', { objectId })
     }
+  }
+  return {
+    async assertPending(message, { finalGate = false } = {}) {
+      assert.deepEqual(
+        await read(finalGate ? 'final-gate' : 'observe'),
+        { pending: true, error: false, interrupted: false },
+        message
+      )
+    },
+    finish: () => read('finish'),
   }
 }
 
@@ -133,27 +153,71 @@ function assertNativeLogoutContentionStatus(attempts) {
   )
 }
 
-async function waitForFirstLogoutContention(executorLog, offset, installedId, cancel) {
-  const signal = AbortSignal.any([cancel, AbortSignal.timeout(logoutStepMs)])
-  try {
-    // Watch the exact foreground request before dispatch; the retry window is
-    // shorter than a series of runner polling and UI commands.
-    for await (const _change of watch(executorLog, { signal })) {
-      const log = (await readFile(executorLog, 'utf8')).slice(offset)
-      const attempt = nativeLogoutContention(log, installedId).find(
-        fields => fields.includes('attempt=1') && fields.includes('will_retry=true')
+function captureNativeLogout(proxy, installedId, faults) {
+  assert.equal(proxy.jsonRule, null)
+  const attempts = faults.map(fault => ({ fault, ...Promise.withResolvers() }))
+  const captured = new Set()
+  let cursor = 0
+  const rule = {
+    matches: ({ method, path }) =>
+      method === 'POST' && path === '/api/plugins/native-auth/exchange',
+    select: ({ operation, data }) => {
+      if (
+        operation !== 'plugin.auth.local_lifecycle' ||
+        data?.action !== 'logout' ||
+        data.installed_plugin_id !== installedId ||
+        data.connector_slug !== 'mail'
       )
-      if (attempt) {
-        assertNativeLogoutContentionStatus([attempt])
-        return
+        return null
+      const attempt = attempts[cursor++]
+      if (!attempt) return null
+      return {
+        fault: attempt.fault,
+        ready: entry => {
+          if (proxy.jsonRule !== rule) {
+            entry.cancel()
+            return
+          }
+          captured.add(entry)
+          attempt.resolve(entry)
+        },
       }
-    }
-  } catch (error) {
-    if (!signal.aborted) throw error
-    throw new Error('The Native logout did not report retryable first-attempt contention', {
-      cause: error,
-    })
+    },
   }
+  proxy.jsonRule = rule
+  return {
+    async wait(attempt, event) {
+      let timeout
+      const deadline = new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Native logout request ${attempt} did not ${event}`)),
+          logoutStepMs
+        )
+      })
+      try {
+        return await Promise.race([attempts[attempt - 1].promise, deadline])
+      } finally {
+        clearTimeout(timeout)
+      }
+    },
+    stop() {
+      proxy.jsonRule = null
+      for (const entry of captured) {
+        if (!entry.released) entry.cancel()
+      }
+    },
+  }
+}
+
+function assertRetryableLogoutResponse(entry, code) {
+  const response = entry.readHeldResponse()
+  assert.ok(response, 'The real Native logout response was not captured')
+  assert.equal(response.status, 200, 'Native logout contention must use HTTP 200')
+  assert.equal(response.headers['x-wegent-plugin-auth-contention'], 'busy-before-write')
+  const result = JSON.parse(response.body)
+  assert.equal(result.success, false)
+  assert.ok(result.error === code, `Native logout must return ${code}`)
+  assert.equal(result.retryable, true)
 }
 
 async function verifyLogoutBudgetExhaustion({
@@ -213,6 +277,7 @@ async function assertLoggedOutMailSource(control) {
 async function verifyLogoutRecovery({
   cloud,
   control,
+  proxy,
   installedId,
   readGrantCount,
   connectionFor,
@@ -222,38 +287,53 @@ async function verifyLogoutRecovery({
 }) {
   assert.equal(await openMailSource(control, '退出登录'), '退出登录')
   const held = await holdPluginWriteLease(cloud, installedId)
-  const cancel = new AbortController()
+  let logout
   try {
-    const readUi = await observeLogoutUi(page)
+    logout = captureNativeLogout(proxy, installedId, ['hold-response', 'pause-request'])
+    const ui = await observeLogoutUi(page)
     let evidence
     try {
       const offset = (await readFile(executorLog, 'utf8')).length
-      await Promise.all([
-        waitForFirstLogoutContention(executorLog, offset, installedId, cancel.signal).then(() =>
-          held.release()
-        ),
-        confirm(),
-      ])
+      const recover = async () => {
+        const first = await logout.wait(1, 'return a Redis busy response')
+        assertRetryableLogoutResponse(first, 'plugin_write_busy')
+        // Executor cannot start retrying until it receives the real busy response.
+        await held.release()
+        await ui.assertPending('Native logout must stay pending while the busy reply is held')
+        assert.ok(await first.release(), 'The first Native busy response was not delivered')
+        const retry = await logout.wait(2, 'reach the retry gate')
+        await ui.assertPending('Native logout must stay pending until the retry is released', {
+          finalGate: true,
+        })
+        assert.ok(retry.release(), 'The Native busy retry was not forwarded')
+      }
+      await Promise.all([recover(), confirm()])
       await control.command('waitFor', `${manageSites}[aria-busy="false"]`, {
         enabled: true,
         timeoutMs: logoutStepMs,
       })
-      assertNativeLogoutContentionStatus(
-        nativeLogoutContention((await readFile(executorLog, 'utf8')).slice(offset), installedId)
+      const attempts = nativeLogoutContention(
+        (await readFile(executorLog, 'utf8')).slice(offset),
+        installedId
       )
+      assert.ok(
+        attempts.some(fields => fields.includes('attempt=1') && fields.includes('will_retry=true')),
+        'Executor must schedule a retry for the confirmed contention'
+      )
+      assertNativeLogoutContentionStatus(attempts)
     } finally {
-      evidence = await readUi()
+      evidence = await ui.finish()
     }
     assert.deepEqual(
       evidence,
-      { pending: true, error: false },
+      { pending: true, error: false, interrupted: false },
       'Recoverable contention must stay pending without exposing a UI error'
     )
     await assertLoggedOutMailSource(control)
     assert.equal((await connectionFor('mail')).status, 'disconnected')
     assert.equal(await readGrantCount(), 0, 'Native logout must revoke its committed grants')
   } finally {
-    cancel.abort()
+    logout?.stop()
     await held.release()
   }
   await control.command('click', '[data-testid="plugin-connector-source-cancel"]')
@@ -271,6 +351,7 @@ async function readNativeGrantCount(cloud, connectionId) {
 async function verifyContendedNativeLogout({
   cloud,
   control,
+  proxy,
   installedId,
   connectionFor,
   resultDir,
@@ -283,6 +364,7 @@ async function verifyContendedNativeLogout({
     const context = {
       cloud,
       control,
+      proxy,
       installedId,
       connectionFor,
       readGrantCount,
@@ -298,15 +380,11 @@ async function verifyContendedNativeLogout({
 async function verifyNativeLogoutAfterLeaseTimeout({
   cloud,
   control,
+  proxy,
   installedId,
   connectionFor,
   resultDir,
 }) {
-  const redisHost = '127.0.0.1'
-  assert.ok(cloud.redis?.pid && Number.isSafeInteger(cloud.redisPort))
-  assert.equal(cloud.backendEnv.REDIS_URL, `redis://${redisHost}:${cloud.redisPort}/0`)
-  const redis = (...args) =>
-    commandOutputAsync(redisCliBinary(), ['-h', redisHost, '-p', String(cloud.redisPort), ...args])
   const executorLog = join(resultDir, 'executor.log')
   await openNativePluginDetail(control, installedId)
   assert.equal(await openMailSource(control, '退出登录'), '退出登录')
@@ -316,24 +394,47 @@ async function verifyNativeLogoutAfterLeaseTimeout({
 
   await withLogoutConfirmation(control, resultDir, async (confirm, page) => {
     const offset = (await readFile(executorLog, 'utf8')).length
-    const readUi = await observeLogoutUi(page)
+    const ui = await observeLogoutUi(page)
+    let writes
+    let logout
     let evidence
     try {
-      // Arm the isolated Redis while the confirmation still blocks dispatch.
-      await confirm(async () => {
-        assert.equal(await redis('CLIENT', 'PAUSE', '2450', 'WRITE'), 'OK')
-      })
+      writes = await observePausedPluginWrites(cloud, installedId)
+      logout = captureNativeLogout(proxy, installedId, [
+        'hold-response',
+        'hold-response',
+        'pause-request',
+      ])
+      const recover = async () => {
+        for (const attempt of [1, 2]) {
+          const reply = await logout.wait(attempt, 'return a Redis lease timeout')
+          assertRetryableLogoutResponse(reply, 'plugin_write_lease_timeout')
+          await ui.assertPending(`Native logout must stay pending while timeout ${attempt} is held`)
+          assert.ok(await reply.release(), `Native lease timeout ${attempt} was not delivered`)
+        }
+        await writes.resumeAfterTimeouts(2)
+        const third = await logout.wait(3, 'reach the retry gate')
+        await ui.assertPending(
+          'Native logout must stay pending until the final retry is released',
+          {
+            finalGate: true,
+          }
+        )
+        assert.ok(third.release(), 'The final Native retry was not forwarded')
+      }
+      await Promise.all([recover(), confirm(() => writes.pause())])
       await control.command('waitFor', `${manageSites}[aria-busy="false"]`, {
         enabled: true,
         timeoutMs: 5_000,
       })
     } finally {
-      const [, state] = await Promise.all([redis('CLIENT', 'UNPAUSE'), readUi()])
+      logout?.stop()
+      const [, state] = await Promise.all([writes?.release(), ui.finish()])
       evidence = state
     }
     assert.deepEqual(
       evidence,
-      { pending: true, error: false },
+      { pending: true, error: false, interrupted: false },
       'Recovering from a Redis lease timeout must stay pending without exposing a UI error'
     )
     const attempts = nativeLogoutContention(
@@ -366,6 +467,7 @@ async function verifyNativeLogoutAfterLeaseTimeout({
 export async function verifyPluginNativeAuth({
   cloud,
   control,
+  proxy,
   executorHome,
   homePath,
   sourceAuth,
@@ -391,8 +493,7 @@ export async function verifyPluginNativeAuth({
     await control.command('reloadMainWindow', 'body')
     await control.awaitReadyAfter(readyCount)
   }
-  const proxy = await new TransportFaultProxy(cloud.backendUrl).start()
-  const fault = proxy.rejectDeviceRegistration()
+  let fault
   const runtime = await fetch(`${cloud.backendUrl}/api/users/me/wegent-runtime-token`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${cloud.authToken}` },
@@ -401,7 +502,7 @@ export async function verifyPluginNativeAuth({
   const runtimeToken = (await runtime.json()).auth_token
   const configure = socket =>
     requestPluginExecutor(control, 'executor.backend.configure', {
-      backend_url: cloud.backendUrl,
+      backend_url: proxy.url,
       socket_url: socket,
       auth_token: cloud.authToken,
       runtime_auth_token: runtimeToken,
@@ -427,6 +528,7 @@ export async function verifyPluginNativeAuth({
   }
   try {
     await cloud.stopBackend()
+    fault = proxy.rejectDeviceRegistration()
     cloud.backendEnv = { ...flags, PLUGIN_LOCAL_SYNC_ENABLED: 'true' }
     await cloud.launchBackend()
     // Change the authoritative profile too: a real token renewal must keep
@@ -508,6 +610,7 @@ export async function verifyPluginNativeAuth({
     await verifyContendedNativeLogout({
       cloud,
       control,
+      proxy,
       installedId,
       connectionFor,
       resultDir,
@@ -516,6 +619,7 @@ export async function verifyPluginNativeAuth({
     await verifyNativeLogoutAfterLeaseTimeout({
       cloud,
       control,
+      proxy,
       installedId,
       connectionFor,
       resultDir,
@@ -547,25 +651,27 @@ export async function verifyPluginNativeAuth({
     )
   } finally {
     try {
-      await writeFile(
-        join(resultDir, 'plugin-native-registration-fault.json'),
-        JSON.stringify(
-          {
-            submitted: fault.submitted,
-            rejected: fault.rejected,
-            transportError: fault.error ? String(fault.error.message) : null,
-          },
-          null,
-          2
+      if (fault) {
+        await writeFile(
+          join(resultDir, 'plugin-native-registration-fault.json'),
+          JSON.stringify(
+            {
+              submitted: fault.submitted,
+              rejected: fault.rejected,
+              transportError: fault.error ? String(fault.error.message) : null,
+            },
+            null,
+            2
+          )
         )
-      )
+      }
+    } finally {
       await cloud.stopBackend()
+      proxy.registrationFault = null
       cloud.backendEnv = flags
       await cloud.launchBackend()
       await restoreProfile(stored)
       await configure(current.socket_url || cloud.backendUrl)
-    } finally {
-      await proxy.stop()
     }
   }
 }

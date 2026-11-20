@@ -139,6 +139,57 @@ async fn enroll(api: &Api, token: &str, id: i64, slug: &str, raw: Value) -> Valu
     api.call(token,"plugin.auth.enroll",json!({"migration_id":migration,"account_id":"account","account_label":"Test account","credential":raw.to_string()}),200).await["connection"].clone()
 }
 
+async fn verify_lease_promotion(redis: &brz_redis::RedisService) -> anyhow::Result<()> {
+    use crate::plugins_installed::write_coordination::NATIVE_LEASE_PROMOTION_SCRIPT;
+    use brz_redis::{SetExpiration, SetOptions, cmd, pipe};
+
+    let key = format!(
+        "native-lease-promotion-test:{}",
+        crate::wework_auth_tokens::uuid4_hex().expect("generate Redis test key")
+    );
+    // Each pipeline tests one Redis-side ordering without relying on sleeps
+    // or the client scheduler to keep a newly seeded key fresh.
+    for (initial_ttl, claimed_owner, expected_promotion) in [
+        (1_000, "owner", 1),
+        (700, "owner", 0),
+        (1_000, "previous-owner", 0),
+    ] {
+        let mut promote = cmd("EVAL");
+        promote
+            .arg(NATIVE_LEASE_PROMOTION_SCRIPT)
+            .arg(1)
+            .arg(&key)
+            .arg(claimed_owner)
+            .arg(800)
+            .arg(180_000);
+        let mut ttl = cmd("PTTL");
+        ttl.arg(&key);
+        let mut pipeline = pipe();
+        pipeline
+            .set_with(
+                &key,
+                "owner",
+                SetOptions::default()
+                    .if_absent()
+                    .with_expiration(SetExpiration::Milliseconds(initial_ttl)),
+            )?
+            .command(promote)?
+            .command(ttl)?
+            .del([&key])?;
+        let mut results = redis.pipe(pipeline).await?;
+        assert_eq!(results.take_value::<String>().await?, "OK");
+        assert_eq!(results.take_value::<i64>().await?, expected_promotion);
+        let remaining = results.take_value::<i64>().await?;
+        if expected_promotion == 1 {
+            assert!((179_000..=180_000).contains(&remaining));
+        } else {
+            assert!((1..=initial_ttl as i64).contains(&remaining));
+        }
+        assert_eq!(results.take::<i64>().await?, 1);
+    }
+    Ok(())
+}
+
 async fn verify_short_admission(
     api: &Api,
     token: &str,
@@ -149,6 +200,7 @@ async fn verify_short_admission(
     let login =
         json!({"installed_plugin_id":installed_id,"connector_slug":"mail","action":"login"});
     let redis = state.redis.as_ref().expect("real Redis fixture");
+    verify_lease_promotion(redis).await?;
     let account_policy = PluginWriteLease::acquire(Some(redis), OWNER).await?;
     assert_short_busy(api, token, lifecycle, &login, "account policy lease").await;
     account_policy.verify_owned().await?;
@@ -356,6 +408,80 @@ async fn installed_write_revision(mysql: &brz_mysql::MysqlService, id: i64) -> M
     }
     let revision: Revision = mysql.fetch_one("SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.writeRevision')) AS SIGNED),0) AS n FROM kinds WHERE user_id=? AND id=?", (OWNER,id)).await?;
     Ok(revision.n)
+}
+
+async fn assert_write_receipt_replay(
+    api: &Api,
+    token: &str,
+    mysql: &brz_mysql::MysqlService,
+    installed_id: i64,
+    operation: &str,
+    data: Value,
+) -> anyhow::Result<()> {
+    let before = installed_write_revision(mysql, installed_id).await?;
+    let first = api
+        .request(token, operation, data.clone(), ResultProtocol::BusinessV2)
+        .await;
+    assert_eq!(first.status().as_u16(), 200, "{operation}");
+    let first = first.json::<Value>().await?;
+    assert_eq!(first["success"], true, "{operation}");
+    assert_eq!(
+        installed_write_revision(mysql, installed_id).await?,
+        before + 1
+    );
+
+    let replay = api
+        .request(token, operation, data, ResultProtocol::BusinessV2)
+        .await;
+    assert_eq!(replay.status().as_u16(), 200, "{operation}");
+    assert_eq!(replay.json::<Value>().await?, first, "{operation}");
+    assert_eq!(
+        installed_write_revision(mysql, installed_id).await?,
+        before + 1,
+        "{operation} replay must only return the committed receipt"
+    );
+    Ok(())
+}
+
+async fn verify_refresh_receipt_replay(
+    api: &Api,
+    token: &str,
+    state: &AppState,
+    installed_id: i64,
+    data: Value,
+) -> anyhow::Result<()> {
+    let redis = state.redis.as_ref().expect("real Redis fixture");
+    let channel = crate::socketio_emit::SOCKETIO_CHANNEL;
+    let mut subscription = redis.subscribe(channel).await?;
+    assert_write_receipt_replay(
+        api,
+        token,
+        &state.mysql,
+        installed_id,
+        "plugin.auth.oauth.finish",
+        data,
+    )
+    .await?;
+    // Both HTTP replies are complete before this ordered pub/sub marker.
+    // Seeing the marker second proves no duplicate notification was published.
+    let marker = "native-refresh-replay-fixture-complete";
+    redis.publish(channel, marker).await?;
+    let first = tokio::time::timeout(Duration::from_secs(1), subscription.next_message())
+        .await??
+        .expect("refresh notification");
+    let notification = serde_json::from_slice::<Value>(&first.payload)?;
+    assert_eq!(notification["event"], "plugin.auth.changed");
+    assert_eq!(notification["room"], format!("user:{OWNER}"));
+    assert_eq!(
+        notification["data"],
+        json!([{"installed_plugin_id":installed_id}])
+    );
+    let second = tokio::time::timeout(Duration::from_secs(1), subscription.next_message())
+        .await??
+        .expect("notification completion marker");
+    assert_eq!(second.payload.as_ref(), marker.as_bytes());
+    subscription.close().await?;
+    Ok(())
 }
 
 async fn wait_for_blocked_write(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
@@ -612,10 +738,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         .await;
     api.call(&other_key,"plugin.auth.oauth.finish",json!({"connection_id":lease["connection_id"],"operation_id":lease["operation_id"],"succeeded":false}),409).await;
     let finish = json!({"connection_id":lease["connection_id"],"operation_id":lease["operation_id"],"succeeded":true,"account_id":"account","credential":json!({"access_token":"fresh-business","refresh_token":"rotated-private","expires_at":chrono::Utc::now().timestamp()+600,"provider_private":{"secret":"private"}}).to_string()});
-    api.call(token, "plugin.auth.oauth.finish", finish.clone(), 200)
-        .await;
-    api.call(token, "plugin.auth.oauth.finish", finish, 200)
-        .await;
+    verify_refresh_receipt_replay(&api, token, &state, oauth, finish).await?;
     let result = api
         .call(token, "plugin.auth.execute", execution.clone(), 200)
         .await;
@@ -653,10 +776,15 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     )
     .await;
     let done = json!({"connection_id":lease["connection_id"],"operation_id":revoke["operation_id"],"succeeded":true});
-    api.call(token, "plugin.auth.oauth.revoke_finish", done.clone(), 200)
-        .await;
-    api.call(token, "plugin.auth.oauth.revoke_finish", done, 200)
-        .await;
+    assert_write_receipt_replay(
+        &api,
+        token,
+        mysql,
+        oauth,
+        "plugin.auth.oauth.revoke_finish",
+        done,
+    )
+    .await?;
     let uncertain=seed(mysql,"uncertain",json!({"protocolVersion":1,"credentialType":"oauth2","adapter":"auth.py","oauth2":["refresh"]})).await?;
     enroll(
         &api,
@@ -678,6 +806,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     recovery::verify_refresh_relogin(&api, token, mysql).await?;
     recovery::verify_interleaved_logins(&api, token, &state).await?;
     verify_unicode_account(&api, token, mysql).await?;
+    verify_transfer_abort(&api, token, mysql).await?;
     verify_transfer(&api, token, mysql).await?;
     #[derive(brz_mysql::FromMysqlRow)]
     struct Count {
@@ -699,6 +828,27 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     task.await??;
     Ok(())
 }
+
+async fn verify_transfer_abort(
+    api: &Api,
+    token: &str,
+    mysql: &brz_mysql::MysqlService,
+) -> anyhow::Result<()> {
+    let id=seed(mysql,"exclusive-abort",json!({"protocolVersion":1,"credentialType":"oauth2","exportMode":"exclusive","adapter":"auth.py","oauth2":["refresh"]})).await?;
+    let migration = intent(api, token, id, "exclusive-abort").await;
+    let stage = json!({"migration_id":migration,"account_id":"account","credential":json!({"access_token":"aborted-copy","refresh_token":"aborted-refresh"}).to_string()});
+    assert_write_receipt_replay(api, token, mysql, id, "plugin.auth.transfer.stage", stage).await?;
+    assert_write_receipt_replay(
+        api,
+        token,
+        mysql,
+        id,
+        "plugin.auth.transfer.abort",
+        json!({"migration_id":migration}),
+    )
+    .await
+}
+
 async fn verify_transfer(
     api: &Api,
     token: &str,
@@ -748,13 +898,8 @@ async fn verify_transfer(
             .contains("only-refresh")
     );
     let finish = json!({"migration_id":migration});
-    let complete = api
-        .call(token, "plugin.auth.transfer.finish", finish.clone(), 200)
-        .await;
-    let replay = api
-        .call(token, "plugin.auth.transfer.finish", finish, 200)
-        .await;
-    assert_eq!(complete, replay);
+    assert_write_receipt_replay(api, token, mysql, id, "plugin.auth.transfer.finish", finish)
+        .await?;
     api.call(token, "plugin.auth.execute", request, 200).await;
     Ok(())
 }

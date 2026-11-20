@@ -250,7 +250,7 @@ async fn read_authorization(
     timing: &mut ExchangeTiming,
 ) -> Result<Value, ExchangeFailure> {
     timing.failure_stage = Some("auth_read_mysql");
-    let mut value = timed(
+    let outcome = timed(
         &mut timing.auth_read_mysql_ms,
         app.mysql.with_transaction(async |tx| {
             state::exchange(tx, principal, &body.operation, &body.data).await
@@ -258,8 +258,7 @@ async fn read_authorization(
     )
     .await
     .map_err(|error| traced_mysql_error(error, timing))?;
-    value["success"] = json!(true);
-    Ok(value)
+    Ok(outcome.into_response())
 }
 
 async fn within_admission<T>(
@@ -363,15 +362,15 @@ async fn exchange_write(
     if matches!(&outcome, Ok(_) | Err(MysqlError::InvalidQuery { .. })) {
         release_lease(lease, timing).await;
     }
-    let value = outcome.map_err(|error| transaction_failure(error, timing))?;
-    if super::notifications::changes_credentials(action) {
+    let outcome = outcome.map_err(|error| transaction_failure(error, timing))?;
+    if !outcome.is_replayed() && super::notifications::changes_credentials(action) {
         timed(
             &mut timing.notification_redis_ms,
             super::notifications::publish(app.redis.as_ref(), principal.user_id, &targets),
         )
         .await;
     }
-    Ok(value)
+    Ok(outcome.into_response())
 }
 
 async fn release_lease(
@@ -428,7 +427,7 @@ async fn write_transaction(
     targets: &[i64],
     lease: &PluginWriteLease<'_, brz_redis::RedisService>,
     timing: &mut ExchangeTiming,
-) -> Result<MysqlResult<Value>, tokio::time::error::Elapsed> {
+) -> Result<MysqlResult<state::ExchangeOutcome>, tokio::time::error::Elapsed> {
     let started = Instant::now();
     let mut transaction_end = None;
     timing.failure_stage = Some("auth_begin_mysql");
@@ -477,7 +476,7 @@ async fn apply_authorization_write(
     targets: &[i64],
     lease: &PluginWriteLease<'_, brz_redis::RedisService>,
     timing: &mut ExchangeTiming,
-) -> MysqlResult<Value> {
+) -> MysqlResult<state::ExchangeOutcome> {
     timing.failure_stage = Some("auth_verify_redis");
     lease.verify_owned().await?;
     timing.failure_stage = Some("auth_owner_mysql");
@@ -506,16 +505,22 @@ async fn apply_authorization_write(
     })
     .await?;
     timing.failure_stage = Some("auth_state_mysql");
-    let mut result = timed(
+    let result = timed(
         &mut timing.transaction.state_mysql_ms,
         state::exchange(tx, principal, &body.operation, &body.data),
     )
     .await?;
     timing.failure_stage = Some("auth_plugin_revision_mixed");
-    timed(
-        &mut timing.transaction.plugin_revision_mixed_ms,
-        lease.commit_plugin_revisions(tx, revisions),
-    )
+    timed(&mut timing.transaction.plugin_revision_mixed_ms, async {
+        if result.is_replayed() {
+            if lease.read_plugin_revisions(tx).await? != revisions {
+                return Err(fail("plugin_auth_revision_conflict"));
+            }
+            Ok(())
+        } else {
+            lease.commit_plugin_revisions(tx, revisions).await
+        }
+    })
     .await?;
     timing.failure_stage = Some("auth_policy_revision_mixed");
     timed(
@@ -523,14 +528,15 @@ async fn apply_authorization_write(
         lease.validate_policy_revision(tx, policy),
     )
     .await?;
-    result["success"] = json!(true);
     Ok(result)
 }
 
 fn admission_failure(error: NativeAdmissionError, timing: &mut ExchangeTiming) -> ExchangeFailure {
     let redis_failure = matches!(
         &error,
-        NativeAdmissionError::RedisUnavailable | NativeAdmissionError::Verify(_)
+        NativeAdmissionError::RedisUnavailable
+            | NativeAdmissionError::RedisPromotionUnavailable
+            | NativeAdmissionError::Verify(_)
     );
     let (outcome, response) = match error {
         NativeAdmissionError::Occupied => {
@@ -549,12 +555,23 @@ fn admission_failure(error: NativeAdmissionError, timing: &mut ExchangeTiming) -
             safe_error(fail("plugin_write_unavailable")),
         ),
         NativeAdmissionError::RedisReplyUnknown => {
-            // The pending SET can only trigger lease cleanup after this return.
             timing.record_redis_failure("redis_set_reply_unknown");
             return ExchangeFailure::LeaseTimeoutBeforeWrite;
         }
         NativeAdmissionError::RedisReplyLate => {
             timing.record_redis_failure("redis_set_reply_late");
+            return ExchangeFailure::LeaseTimeoutBeforeWrite;
+        }
+        NativeAdmissionError::RedisPromotionNotConfirmed => {
+            timing.record_redis_failure("redis_lease_promotion_not_confirmed");
+            return ExchangeFailure::LeaseTimeoutBeforeWrite;
+        }
+        NativeAdmissionError::RedisPromotionUnavailable => (
+            "redis_lease_promotion_failed",
+            safe_error(fail("plugin_write_unavailable")),
+        ),
+        NativeAdmissionError::CleanupCapacityExhausted => {
+            timing.outcome = Some("redis_cleanup_capacity_exhausted");
             return ExchangeFailure::LeaseTimeoutBeforeWrite;
         }
         NativeAdmissionError::Mysql(error) => {
@@ -655,6 +672,9 @@ mod tests {
             let error = match request.path() {
                 "/lease-timeout" => NativeAdmissionError::RedisReplyUnknown,
                 "/late-lease-reply" => NativeAdmissionError::RedisReplyLate,
+                "/promotion-unconfirmed" => NativeAdmissionError::RedisPromotionNotConfirmed,
+                "/promotion-failed" => NativeAdmissionError::RedisPromotionUnavailable,
+                "/cleanup-capacity" => NativeAdmissionError::CleanupCapacityExhausted,
                 "/admission-deadline" => NativeAdmissionError::Deadline,
                 "/redis-unavailable" => NativeAdmissionError::RedisUnavailable,
                 "/policy-transaction-timeout" => NativeAdmissionError::PolicyTimedOut,
@@ -699,10 +719,34 @@ mod tests {
                 "2",
                 200,
                 Some(BUSY_BEFORE_WRITE),
-                retryable,
+                retryable.clone(),
             ),
             ("/late-lease-reply", "1", 503, None, unavailable.clone()),
             ("/late-lease-reply", "", 503, None, unavailable.clone()),
+            (
+                "/promotion-unconfirmed",
+                "2",
+                200,
+                Some(BUSY_BEFORE_WRITE),
+                retryable.clone(),
+            ),
+            (
+                "/promotion-unconfirmed",
+                "1",
+                503,
+                None,
+                unavailable.clone(),
+            ),
+            ("/promotion-failed", "2", 503, None, unavailable.clone()),
+            (
+                "/cleanup-capacity",
+                "2",
+                200,
+                Some(BUSY_BEFORE_WRITE),
+                retryable,
+            ),
+            ("/cleanup-capacity", "1", 503, None, unavailable.clone()),
+            ("/cleanup-capacity", "", 503, None, unavailable.clone()),
             ("/admission-deadline", "2", 503, None, unavailable.clone()),
             ("/redis-unavailable", "2", 503, None, unavailable.clone()),
             ("/policy-transaction-timeout", "2", 503, None, unavailable),

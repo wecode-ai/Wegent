@@ -2,12 +2,21 @@
 
 use super::*;
 use std::future::Future;
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::{Semaphore, SemaphorePermit, oneshot};
 use tracing::Instrument;
 
-// A canceled SET reply may still arrive. Limit cleanup work under Redis stalls.
-static PENDING_SET_CLEANUPS: Semaphore = Semaphore::const_new(64);
+// Every acquisition must have room for cleanup before it sends anything to Redis.
+static PENDING_ADMISSION_CLEANUPS: Semaphore = Semaphore::const_new(64);
 const PENDING_SET_BUDGET: Duration = Duration::from_secs(5);
+const PROVISIONAL_LEASE_MS: u64 = 1_000;
+const PROMOTABLE_AGE_MS: u64 = 200;
+pub(crate) const NATIVE_LEASE_PROMOTION_SCRIPT: &str = r"
+if redis.call('GET', KEYS[1]) ~= ARGV[1]
+    or redis.call('PTTL', KEYS[1]) < tonumber(ARGV[2]) then
+    return 0
+end
+return redis.call('PEXPIRE', KEYS[1], ARGV[3])
+";
 
 pub(crate) async fn complete_native_write<T, F>(
     operation: impl FnOnce(oneshot::Sender<()>) -> F,
@@ -30,6 +39,9 @@ pub(crate) enum NativeAdmissionError {
     RedisUnavailable,
     RedisReplyUnknown,
     RedisReplyLate,
+    RedisPromotionNotConfirmed,
+    RedisPromotionUnavailable,
+    CleanupCapacityExhausted,
     Mysql(MysqlError),
     LegacyAcquire(MysqlError),
     Verify(MysqlError),
@@ -233,9 +245,29 @@ impl<'a, R: Redis + Clone + 'static> PluginWriteLease<'a, R> {
         name: String,
         deadline: Instant,
     ) -> Result<Self, NativeAdmissionError> {
+        Self::acquire_native_named_with_cleanup_slots(
+            redis,
+            user_id,
+            name,
+            deadline,
+            &PENDING_ADMISSION_CLEANUPS,
+        )
+        .await
+    }
+
+    pub(super) async fn acquire_native_named_with_cleanup_slots(
+        redis: &'a R,
+        user_id: i64,
+        name: String,
+        deadline: Instant,
+        cleanup_slots: &'static Semaphore,
+    ) -> Result<Self, NativeAdmissionError> {
         if Instant::now() >= deadline {
             return Err(NativeAdmissionError::Deadline);
         }
+        let permit = cleanup_slots
+            .try_acquire()
+            .map_err(|_| NativeAdmissionError::CleanupCapacityExhausted)?;
         let key = format!("wegent:plugin-write:{user_id}:{name}");
         let mut random = [0_u8; 16];
         getrandom::getrandom(&mut random).map_err(|_| NativeAdmissionError::RedisUnavailable)?;
@@ -261,39 +293,72 @@ impl<'a, R: Redis + Clone + 'static> PluginWriteLease<'a, R> {
                     token,
                     SetOptions::default()
                         .if_absent()
-                        .with_expiration(SetExpiration::Milliseconds(LEASE_SECONDS * 1000)),
+                        .with_expiration(SetExpiration::Milliseconds(PROVISIONAL_LEASE_MS)),
                 )
                 .await
         });
         match tokio::time::timeout_at(deadline, &mut pending).await {
-            Ok(Ok(true)) if Instant::now() < deadline => Ok(lease),
-            Ok(Ok(true)) => {
-                lease.release().await;
-                Err(NativeAdmissionError::RedisReplyLate)
-            }
+            Ok(Ok(true)) => lease.promote_native_set(deadline, permit).await,
             Ok(Ok(false)) => Err(NativeAdmissionError::Occupied),
             Ok(Err(_)) => Err(NativeAdmissionError::RedisUnavailable),
             Err(_) => {
-                if let Ok(permit) = PENDING_SET_CLEANUPS.try_acquire() {
-                    let redis = R::clone(redis);
-                    let key = lease.key;
-                    let token = lease.token;
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        if matches!(
-                            tokio::time::timeout(PENDING_SET_BUDGET, pending).await,
-                            Ok(Ok(true))
-                        ) {
-                            PluginWriteLease::<'static, R>::release_key(
-                                &redis, user_id, &key, &token,
-                            )
+                let redis = R::clone(redis);
+                let key = lease.key;
+                let token = lease.token;
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    if matches!(
+                        tokio::time::timeout(PENDING_SET_BUDGET, pending).await,
+                        Ok(Ok(true))
+                    ) {
+                        PluginWriteLease::<'static, R>::release_key(&redis, user_id, &key, &token)
                             .await;
-                        }
-                    });
-                }
+                    }
+                });
                 Err(NativeAdmissionError::RedisReplyUnknown)
             }
         }
+    }
+
+    async fn promote_native_set(
+        self,
+        deadline: Instant,
+        permit: SemaphorePermit<'static>,
+    ) -> Result<Self, NativeAdmissionError> {
+        let failure = if Instant::now() >= deadline {
+            NativeAdmissionError::RedisReplyLate
+        } else {
+            // Redis can execute an abandoned command later. A stale provisional key
+            // must never gain the transaction TTL, even if its token still matches.
+            let promotion = self.redis.eval::<_, _, _, i64>(
+                NATIVE_LEASE_PROMOTION_SCRIPT,
+                [self.key.as_str()],
+                (
+                    self.token.as_str(),
+                    PROVISIONAL_LEASE_MS - PROMOTABLE_AGE_MS,
+                    LEASE_SECONDS * 1_000,
+                ),
+            );
+            match tokio::time::timeout_at(deadline, promotion).await {
+                Ok(Ok(1)) if Instant::now() < deadline => return Ok(self),
+                Ok(Err(_)) => NativeAdmissionError::RedisPromotionUnavailable,
+                Ok(Ok(_)) | Err(_) => NativeAdmissionError::RedisPromotionNotConfirmed,
+            }
+        };
+        let redis = R::clone(self.redis);
+        let Self {
+            user_id,
+            key,
+            token,
+            ..
+        } = self;
+        tokio::spawn(async move {
+            let _permit = permit;
+            // If cleanup reaches Redis before a pending promotion, the token
+            // check also prevents that promotion from restoring the lease.
+            PluginWriteLease::<'static, R>::release_key(&redis, user_id, &key, &token).await;
+        });
+        Err(failure)
     }
 }
 

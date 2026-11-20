@@ -7,17 +7,24 @@ use super::{
 };
 #[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
-use futures_util::{stream::FuturesUnordered, StreamExt};
+use futures_util::{stream, Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::Notify;
+use tokio::{sync::Semaphore, task::JoinSet};
+
+mod pending_logins;
+use pending_logins::{LoginOutcome, Target};
+pub(super) use pending_logins::{PendingLoginBatch, PendingLogins};
+
+const DISCOVERY_BATCH_SIZE: usize = 16;
+const ORDINARY_CONCURRENCY: usize = 4;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,117 +37,11 @@ struct Intent {
 pub(super) struct Reconciler {
     retries: HashMap<(u64, String), Instant>,
     failures: HashMap<(u64, String), (u32, Instant)>,
-    foreground_registrations: HashSet<(u64, String)>,
-    foreground_revision: u64,
+    owner_revision: u64,
     pending_logins: Arc<PendingLogins>,
     inventory: HashMap<u64, Value>,
     retry_signal: Option<PathBuf>,
     retry_signal_value: Option<Vec<u8>>,
-}
-
-#[derive(Default)]
-pub(super) struct PendingLogins {
-    state: Mutex<PendingLoginState>,
-    ready: Notify,
-}
-
-#[derive(Default)]
-struct PendingLoginState {
-    revision: u64,
-    entries: HashSet<(u64, String)>,
-    processing: HashMap<u64, usize>,
-}
-
-// Keep the login visible to other Native writers while its registration is being prepared.
-pub(super) struct PendingLoginBatch {
-    logins: Arc<PendingLogins>,
-    revision: u64,
-    entries: HashSet<(u64, String)>,
-}
-
-impl Drop for PendingLoginBatch {
-    fn drop(&mut self) {
-        let mut state = self
-            .logins
-            .state
-            .lock()
-            .expect("pending plugin logins lock poisoned");
-        if state.revision != self.revision {
-            return;
-        }
-        for (id, _) in &self.entries {
-            if let std::collections::hash_map::Entry::Occupied(mut entry) =
-                state.processing.entry(*id)
-            {
-                if *entry.get() == 1 {
-                    entry.remove();
-                } else {
-                    *entry.get_mut() -= 1;
-                }
-            }
-        }
-    }
-}
-
-impl PendingLogins {
-    pub(super) fn submit(&self, installed_id: u64, connector_slug: String) {
-        self.state
-            .lock()
-            .expect("pending plugin logins lock poisoned")
-            .entries
-            .insert((installed_id, connector_slug));
-        self.ready.notify_one();
-    }
-
-    pub(super) async fn notified(&self) {
-        self.ready.notified().await;
-    }
-
-    pub(super) fn clear_owner(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("pending plugin logins lock poisoned");
-        state.revision += 1;
-        state.entries.clear();
-        state.processing.clear();
-    }
-
-    fn revision(&self) -> u64 {
-        self.state
-            .lock()
-            .expect("pending plugin logins lock poisoned")
-            .revision
-    }
-
-    pub(super) fn take(self: &Arc<Self>) -> PendingLoginBatch {
-        let mut state = self
-            .state
-            .lock()
-            .expect("pending plugin logins lock poisoned");
-        let entries = std::mem::take(&mut state.entries);
-        for (id, _) in &entries {
-            *state.processing.entry(*id).or_default() += 1;
-        }
-        PendingLoginBatch {
-            logins: self.clone(),
-            revision: state.revision,
-            entries,
-        }
-    }
-
-    pub(super) fn contains_installation(&self, installed_id: u64) -> bool {
-        let state = self
-            .state
-            .lock()
-            .expect("pending plugin logins lock poisoned");
-        // Old revocation records may lack resolvable installation metadata.
-        if installed_id == 0 {
-            return !state.processing.is_empty() || !state.entries.is_empty();
-        }
-        state.processing.contains_key(&installed_id)
-            || state.entries.iter().any(|(id, _)| *id == installed_id)
-    }
 }
 
 impl Default for Reconciler {
@@ -154,8 +55,7 @@ impl Reconciler {
         Self {
             retries: HashMap::new(),
             failures: HashMap::new(),
-            foreground_registrations: HashSet::new(),
-            foreground_revision: 0,
+            owner_revision: pending_logins.revision(),
             pending_logins,
             inventory: HashMap::new(),
             retry_signal: super::e2e_retry_signal(),
@@ -167,6 +67,7 @@ impl Reconciler {
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
+        self.sync_owner();
         let inventory = installed_inventory(home)?;
         let mut ids: Vec<_> = inventory.keys().copied().collect();
         ids.sort_unstable();
@@ -179,6 +80,7 @@ impl Reconciler {
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
+        self.sync_owner();
         let inventory = installed_inventory(home)?;
         let ids: Vec<_> = inventory
             .iter()
@@ -192,11 +94,15 @@ impl Reconciler {
     }
 
     pub fn invalidate(&mut self, id: u64) {
+        self.sync_owner();
         self.retries.retain(|(target, _), _| *target != id);
         self.failures.retain(|(target, _), _| *target != id);
+        self.pending_logins
+            .invalidate_registrations(self.owner_revision, Some(id));
     }
 
-    pub fn next_retry(&self) -> Option<Instant> {
+    pub fn next_retry(&mut self) -> Option<Instant> {
+        self.sync_owner();
         self.failures.values().map(|(_, due)| *due).min()
     }
 
@@ -205,6 +111,7 @@ impl Reconciler {
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
+        self.sync_owner();
         let ids: Vec<_> = self
             .failures
             .iter()
@@ -225,9 +132,14 @@ impl Reconciler {
         requested: &[u64],
     ) -> Result<(), AuthError> {
         let ids = self.select_targets(home, requested)?;
-        for selected in ids.chunks(16) {
-            self.reconcile_logins(transport.clone(), home).await?;
-            self.reconcile_batch(transport.clone(), home, selected, false)
+        let lane = RegistrationLane {
+            actions: Arc::new(Semaphore::new(ORDINARY_CONCURRENCY)),
+            foreground: false,
+            pending_logins: self.pending_logins.clone(),
+            revision: self.owner_revision,
+        };
+        for selected in ids.chunks(DISCOVERY_BATCH_SIZE) {
+            self.reconcile_batch(transport.clone(), home, selected, &lane, None)
                 .await?;
         }
         Ok(())
@@ -237,55 +149,59 @@ impl Reconciler {
         &mut self,
         transport: T,
         home: &Path,
+        mut batch: PendingLoginBatch,
+        actions: Arc<Semaphore>,
     ) -> Result<(), AuthError> {
-        loop {
-            let batch = self.pending_logins.take();
-            let Some((id, _)) = batch.entries.iter().next() else {
-                return Ok(());
-            };
-            // Pin discovery and the subsequent writes to the login's Native owner.
-            let scoped = transport.for_plugin(*id, false);
-            if self.pending_logins.revision() != batch.revision {
-                continue;
-            }
-            self.sync_foreground_owner(batch.revision);
-            let requested: Vec<_> = batch.entries.iter().map(|(id, _)| *id).collect();
-            for key in &batch.entries {
-                self.retries.remove(key);
-                self.failures.remove(key);
-                self.foreground_registrations.insert(key.clone());
-            }
-            let ids = self.select_targets(home, &requested)?;
-            for selected in ids.chunks(16) {
-                self.reconcile_batch(scoped.clone(), home, selected, true)
-                    .await?;
-            }
+        let requested: Vec<_> = batch.targets().map(|(id, _)| *id).collect();
+        if requested.is_empty() {
+            return Ok(());
         }
+        let result = async {
+            let ids = select_installed_targets(&installed_ids(home)?, &requested);
+            let removed: Vec<_> = batch
+                .targets()
+                .filter(|(id, _)| !ids.contains(id))
+                .cloned()
+                .collect();
+            for key in removed {
+                batch.finish(&key, LoginOutcome::Finished);
+            }
+            let lane = RegistrationLane {
+                actions,
+                foreground: true,
+                pending_logins: self.pending_logins.clone(),
+                revision: batch.revision,
+            };
+            self.reconcile_batch(transport, home, &ids, &lane, Some(&mut batch))
+                .await
+        }
+        .await;
+        batch.finish_remaining(if result.is_err_and(retry_login) {
+            LoginOutcome::RetryDiscovery
+        } else {
+            LoginOutcome::Finished
+        });
+        result
     }
 
-    fn sync_foreground_owner(&mut self, revision: u64) {
-        if self.foreground_revision != revision {
-            self.foreground_registrations.clear();
-            self.foreground_revision = revision;
+    fn sync_owner(&mut self) {
+        let revision = self.pending_logins.revision();
+        if self.owner_revision != revision {
+            self.retries.clear();
+            self.failures.clear();
+            self.inventory.clear();
+            self.owner_revision = revision;
         }
     }
 
     fn select_targets(&mut self, home: &Path, requested: &[u64]) -> Result<Vec<u64>, AuthError> {
+        self.sync_owner();
         self.consume_retry_signal();
         let owned = installed_ids(home)?;
         self.retries
             .retain(|(id, _), until| owned.contains(id) && *until > Instant::now());
         self.failures.retain(|(id, _), _| owned.contains(id));
-        self.foreground_registrations
-            .retain(|(id, _)| owned.contains(id));
-        let mut ids: Vec<_> = requested
-            .iter()
-            .copied()
-            .filter(|id| owned.contains(id))
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        Ok(ids)
+        Ok(select_installed_targets(&owned, requested))
     }
 
     async fn reconcile_batch<T: super::PluginAuthTransport>(
@@ -293,23 +209,26 @@ impl Reconciler {
         transport: T,
         home: &Path,
         selected: &[u64],
-        foreground_only: bool,
+        lane: &RegistrationLane,
+        mut logins: Option<&mut PendingLoginBatch>,
     ) -> Result<(), AuthError> {
         let Some(id) = selected.first() else {
             return Ok(());
         };
-        let revision = self.pending_logins.revision();
+        let revision = lane.revision;
         let transport = transport.for_plugin(*id, false);
         if self.pending_logins.revision() != revision {
             return Err(AuthError("plugin_auth_backend_unavailable"));
         }
-        self.sync_foreground_owner(revision);
         let response = NativeAuthGateway::new(transport.clone())
             .call(
                 "plugin.auth.automatic",
                 json!({"installed_plugin_ids": selected, "prepare_only": true}),
             )
             .await?;
+        if self.pending_logins.revision() != revision {
+            return Err(AuthError("plugin_auth_backend_unavailable"));
+        }
         let packages: Vec<PreparedPackage> =
             serde_json::from_value(response["packages"].clone())
                 .map_err(|_| AuthError("plugin_auth_invalid_response"))?;
@@ -333,102 +252,97 @@ impl Reconciler {
                 })
         };
         self.failures.retain(|key, _| still_eligible(key));
-        self.foreground_registrations.retain(still_eligible);
+        if let Some(batch) = &mut logins {
+            let obsolete: Vec<_> = batch
+                .targets()
+                .filter(|key| !still_eligible(key))
+                .cloned()
+                .collect();
+            for key in obsolete {
+                batch.finish(&key, LoginOutcome::Finished);
+            }
+        }
         let mut groups = BTreeMap::<_, Vec<_>>::new();
         let mut seen = HashSet::new();
         for package in packages {
             let key = (package.installed_plugin_id, package.connector_slug.clone());
-            let foreground = self.foreground_registrations.contains(&key);
             if !selected.contains(&key.0)
-                || self.retries.contains_key(&key)
-                || foreground_only && !foreground
+                || logins.as_ref().is_some_and(|batch| !batch.contains(&key))
                 || !seen.insert(key.clone())
             {
                 continue;
             }
-            groups
-                .entry(key.0)
-                .or_default()
-                .push((key, package, foreground));
-        }
-        let mut pending = tokio::task::JoinSet::new();
-        let actions = Arc::new(tokio::sync::Semaphore::new(4));
-        for (installed_id, mut group) in groups {
-            group.sort_by_key(|(_, _, foreground)| !foreground);
-            let transport = transport.clone();
-            let home = home.to_owned();
-            let actions = actions.clone();
-            pending.spawn(async move {
-                let mut results = Vec::with_capacity(group.len());
-                // A connector waiting for its runtime must not delay ready connectors or claim an intent.
-                let mut preparations = group
-                    .into_iter()
-                    .map(|(key, package, foreground)| {
-                        let home = &home;
-                        async move {
-                            let prepared = prepare_package_python(home, &package).await;
-                            (key, package, foreground, prepared)
-                        }
-                    })
-                    .collect::<FuturesUnordered<_>>();
-                while let Some((key, package, foreground, prepared)) = preparations.next().await {
-                    let result = match prepared {
-                        Ok(()) => {
-                            let scoped = transport.for_plugin(installed_id, foreground);
-                            reconcile_prepared_target(scoped, &home, &package, &actions).await
-                        }
-                        Err(error) => Err(error),
-                    };
-                    crate::logging::log_executor_event(
-                        "plugin auth automatic enrollment finished",
-                        &[
-                            ("installed_plugin_id", key.0.to_string()),
-                            ("connector_slug", key.1.clone()),
-                            ("ok", result.is_ok().to_string()),
-                            (
-                                "code",
-                                result.as_ref().err().map_or("", |error| error.0).to_owned(),
-                            ),
-                        ],
+            if logins.is_none() {
+                if self.pending_logins.recently_registered(revision, &key) {
+                    self.failures.remove(&key);
+                    continue;
+                }
+                if self.retries.contains_key(&key) {
+                    continue;
+                }
+                if self.pending_logins.contains_installation(key.0) {
+                    self.record(
+                        revision,
+                        key,
+                        Err(AuthError("plugin_auth_background_deferred")),
                     );
-                    results.push((key, result));
+                    continue;
                 }
-                results
-            });
+            }
+            groups.entry(key.0).or_default().push((key, package));
         }
-        while let Some(result) = pending.join_next().await {
-            if let Ok(results) = result {
-                for (key, result) in results {
-                    self.record(key, result);
-                }
+        // The discovery response bounds preparation. Only ready writes
+        // occupy registration slots, so runtime waits cannot block them.
+        let mut pending = std::pin::pin!(stream::iter(groups.into_values())
+            .map(|group| Box::pin(reconcile_group(
+                transport.clone(),
+                home.to_owned(),
+                group,
+                lane.clone()
+            )))
+            .flatten_unordered(None));
+        while let Some((key, result)) = pending.next().await {
+            if self.pending_logins.revision() != revision {
+                self.sync_owner();
+                return Err(AuthError("plugin_auth_backend_unavailable"));
+            }
+            if let Some(batch) = &mut logins {
+                // Revocations and other reconciliation work must be
+                // able to run after a rejected registration attempt.
+                let outcome = match result {
+                    Ok(()) => LoginOutcome::Registered,
+                    Err(error) if retry_login(error) => LoginOutcome::RetryRegistration,
+                    Err(_) => LoginOutcome::Finished,
+                };
+                batch.finish(&key, outcome);
+            } else {
+                self.record(revision, key, result);
             }
         }
         Ok(())
     }
 
-    fn record(&mut self, key: (u64, String), result: Result<(), AuthError>) {
+    fn record(&mut self, revision: u64, key: Target, result: Result<(), AuthError>) {
+        self.sync_owner();
+        if revision != self.owner_revision {
+            return;
+        }
         // Logout/login can replace an intent while a previous cycle is in flight.
         // An obsolete intent says nothing about the new login's native credentials.
         if result == Err(AuthError("plugin_auth_migration_expired")) {
             self.retries.remove(&key);
             self.failures.remove(&key);
-            self.foreground_registrations.remove(&key);
             return;
         }
         let delay = if result.is_ok() {
             self.failures.remove(&key);
-            self.foreground_registrations.remove(&key);
             Duration::from_secs(60)
         } else {
             let attempt = self
                 .failures
                 .get(&key)
                 .map_or(1, |(attempt, _)| attempt.saturating_add(1));
-            let delay = Duration::from_secs(match attempt {
-                1 => 30,
-                2 => 60,
-                _ => 300,
-            });
+            let delay = retry_delay(attempt);
             self.failures
                 .insert(key.clone(), (attempt, Instant::now() + delay));
             delay
@@ -449,19 +363,179 @@ impl Reconciler {
         self.retry_signal_value = Some(value);
         self.retries.clear();
         self.failures.clear();
+        self.pending_logins
+            .invalidate_registrations(self.owner_revision, None);
     }
+}
+
+fn select_installed_targets(owned: &[u64], requested: &[u64]) -> Vec<u64> {
+    let mut ids: Vec<_> = requested
+        .iter()
+        .copied()
+        .filter(|id| owned.contains(id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs(match attempt {
+        1 => 30,
+        2 => 60,
+        _ => 300,
+    })
+}
+
+fn retry_login(error: AuthError) -> bool {
+    !matches!(
+        error.0,
+        "plugin_auth_invalid_request"
+            | "plugin_auth_invalid_operation"
+            | "plugin_auth_plugin_not_found"
+            | "plugin_auth_plugin_disabled"
+            | "plugin_auth_not_supported"
+            | "plugin_auth_migration_expired"
+    )
+}
+
+#[derive(Clone)]
+struct RegistrationLane {
+    actions: Arc<Semaphore>,
+    foreground: bool,
+    pending_logins: Arc<PendingLogins>,
+    revision: u64,
+}
+
+impl RegistrationLane {
+    fn check(&self, id: u64) -> Result<(), AuthError> {
+        if self.pending_logins.revision() != self.revision {
+            return Err(AuthError("plugin_auth_backend_unavailable"));
+        }
+        if !self.foreground && self.pending_logins.contains_installation(id) {
+            return Err(AuthError("plugin_auth_background_deferred"));
+        }
+        Ok(())
+    }
+
+    async fn prepare(&self, home: &Path, package: &PreparedPackage) -> Result<(), AuthError> {
+        self.check(package.installed_plugin_id)?;
+        prepare_package_python(home, package).await
+    }
+
+    async fn register<T: super::PluginAuthTransport>(
+        &self,
+        transport: T,
+        home: &Path,
+        package: &PreparedPackage,
+    ) -> Result<(), AuthError> {
+        let id = package.installed_plugin_id;
+        self.check(id)?;
+        let gate = self
+            .pending_logins
+            .action_gate(self.revision, id)
+            .ok_or(AuthError("plugin_auth_backend_unavailable"))?;
+        let acquire = async {
+            self.actions
+                .acquire()
+                .await
+                .map_err(|_| AuthError("plugin_auth_owner_unavailable"))
+        };
+        let (_permit, _installation) = if self.foreground {
+            // Waiting on this installation must leave the foreground slot free.
+            let installation = gate.lock().await;
+            self.check(id)?;
+            (acquire.await?, installation)
+        } else {
+            // A queued ordinary write cannot reserve this installation against
+            // foreground work. If it is active, retry from fresh discovery.
+            let permit = acquire.await?;
+            self.check(id)?;
+            let installation = gate
+                .try_lock()
+                .map_err(|_| AuthError("plugin_auth_background_deferred"))?;
+            (permit, installation)
+        };
+        self.check(id)?;
+        if !self.foreground
+            && self
+                .pending_logins
+                .recently_registered(self.revision, &(id, package.connector_slug.clone()))
+        {
+            return Ok(());
+        }
+        reconcile_prepared_target(transport.for_plugin(id, self.foreground), home, package).await
+    }
+}
+
+fn reconcile_group<T: super::PluginAuthTransport>(
+    transport: T,
+    home: PathBuf,
+    group: Vec<(Target, PreparedPackage)>,
+    lane: RegistrationLane,
+) -> impl Stream<Item = (Target, Result<(), AuthError>)> {
+    let preparations = group
+        .into_iter()
+        .map(|(key, package)| {
+            let home = home.clone();
+            let lane = lane.clone();
+            async move {
+                let prepared = lane.prepare(&home, &package).await;
+                (key, package, prepared)
+            }
+        })
+        .collect();
+    register_ready_connectors(preparations, move |package| {
+        let lane = lane.clone();
+        let home = home.clone();
+        let transport = transport.clone();
+        async move { lane.register(transport, &home, &package).await }
+    })
+}
+
+fn register_ready_connectors<W>(
+    preparations: JoinSet<(Target, PreparedPackage, Result<(), AuthError>)>,
+    register: impl FnMut(PreparedPackage) -> W,
+) -> impl Stream<Item = (Target, Result<(), AuthError>)>
+where
+    W: std::future::Future<Output = Result<(), AuthError>>,
+{
+    // Preparations remain active while the previous connector's writes finish.
+    stream::unfold(
+        (preparations, register),
+        |(mut preparations, mut register)| async move {
+            while let Some(ready) = preparations.join_next().await {
+                let Ok((key, package, prepared)) = ready else {
+                    continue;
+                };
+                let result = match prepared {
+                    Ok(()) => register(package).await,
+                    Err(error) => Err(error),
+                };
+                crate::logging::log_executor_event(
+                    "plugin auth automatic enrollment finished",
+                    &[
+                        ("installed_plugin_id", key.0.to_string()),
+                        ("connector_slug", key.1.clone()),
+                        ("ok", result.is_ok().to_string()),
+                        (
+                            "code",
+                            result.as_ref().err().map_or("", |error| error.0).to_owned(),
+                        ),
+                    ],
+                );
+                return Some(((key, result), (preparations, register)));
+            }
+            None
+        },
+    )
 }
 
 async fn reconcile_prepared_target<T: super::PluginAuthTransport>(
     transport: T,
     home: &Path,
     package: &PreparedPackage,
-    actions: &tokio::sync::Semaphore,
 ) -> Result<(), AuthError> {
-    let _permit = actions
-        .acquire()
-        .await
-        .map_err(|_| AuthError("plugin_auth_owner_unavailable"))?;
     let response = NativeAuthGateway::new(transport.clone())
         .call(
             "plugin.auth.automatic",
@@ -529,315 +603,4 @@ fn installed_inventory_at(path: &Path) -> Result<HashMap<u64, Value>, AuthError>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::local::backend::{EventHandler, LocalBackendConfig};
-    use std::{
-        collections::VecDeque,
-        future::Future,
-        pin::Pin,
-        sync::{Arc, Mutex},
-    };
-
-    type TransportFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
-
-    #[derive(Clone)]
-    struct Transport(Arc<Mutex<VecDeque<(&'static str, Value)>>>);
-
-    impl LocalBackendTransport for Transport {
-        fn connect<'a>(&'a self, _: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
-            panic!("reconciliation uses an established transport")
-        }
-        fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
-            panic!("reconciliation must not disconnect")
-        }
-        fn call<'a>(&'a self, event: &'a str, _: Value, _: Duration) -> TransportFuture<'a, Value> {
-            let (expected, response) = self.0.lock().unwrap().pop_front().expect("unexpected call");
-            assert_eq!(event, expected);
-            Box::pin(async move { Ok(response) })
-        }
-        fn emit<'a>(&'a self, _: &'a str, _: Value) -> TransportFuture<'a, ()> {
-            panic!("reconciliation uses request/reply")
-        }
-        fn on(&self, _: &str, _: EventHandler) {
-            panic!("no subscription")
-        }
-        fn on_close(&self, _: crate::local::backend::ConnectionClosedHandler) {
-            panic!("no subscription")
-        }
-    }
-
-    #[tokio::test]
-    async fn failed_login_discovery_releases_background_priority() {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir(home.path().join("capabilities")).unwrap();
-        fs::write(
-            home.path().join("capabilities/manifest-v2.json"),
-            json!({"plugins":{
-                "mail":{"installed_plugin_id":42,"managed":true,"enabled":true},
-            }})
-            .to_string(),
-        )
-        .unwrap();
-        let transport = Transport(Arc::new(Mutex::new(VecDeque::from([(
-            "plugin.auth.automatic",
-            json!({"success":false,"error":"plugin_auth_invalid_request"}),
-        )]))));
-        let logins = Arc::new(PendingLogins::default());
-        logins.submit(42, "mail".into());
-
-        let error = Reconciler::new(logins.clone())
-            .reconcile_logins(transport, home.path())
-            .await
-            .unwrap_err();
-
-        assert_eq!(error, AuthError("plugin_auth_invalid_request"));
-        assert!(!logins.contains_installation(42));
-    }
-
-    #[tokio::test]
-    async fn expired_intent_does_not_suppress_the_next_login() {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir(home.path().join("capabilities")).unwrap();
-        let root = home
-            .path()
-            .join("workbench/shared/plugins")
-            .join("a".repeat(64));
-        fs::create_dir_all(root.join(".codex-plugin")).unwrap();
-        let definition =
-            json!({"protocolVersion":1,"credentialType":"bearer","adapter":"auth.mjs"});
-        fs::write(root.join("auth.mjs"), "// not executed").unwrap();
-        fs::write(
-            root.join(".codex-plugin/plugin.json"),
-            json!({"connectors":[{
-                "slug":"mail","accountAuth":definition
-            }]})
-            .to_string(),
-        )
-        .unwrap();
-        let package = json!({"installed_plugin_id":42,"connector_slug":"mail",
-            "checksum":format!("sha256:{}", "a".repeat(64)),"auth_definition":definition});
-        fs::write(
-            home.path().join("capabilities/manifest-v2.json"),
-            json!({"plugins": {
-                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true,
-                    "checksum":package["checksum"],"store_path":root}
-            }})
-            .to_string(),
-        )
-        .unwrap();
-        let intents = |id: &str| {
-            json!({"success": true, "migrations": [{
-                "id": id.repeat(64), "installed_plugin_id": 42, "connector_slug": "mail"
-            }]})
-        };
-        let calls = Arc::new(Mutex::new(VecDeque::from([
-            (
-                "plugin.auth.automatic",
-                json!({"success":true,"packages":[package.clone(),package.clone()]}),
-            ),
-            ("plugin.auth.automatic", intents("a")),
-            (
-                "plugin.auth.prepare",
-                json!({"success": false, "error": "plugin_auth_migration_expired"}),
-            ),
-            (
-                "plugin.auth.automatic",
-                json!({"success":true,"packages":[package.clone()]}),
-            ),
-            ("plugin.auth.automatic", intents("b")),
-            (
-                "plugin.auth.prepare",
-                json!({"success": false, "error": "plugin_auth_owner_unavailable"}),
-            ),
-            (
-                "plugin.auth.automatic",
-                json!({"success":true,"packages":[package]}),
-            ),
-        ])));
-        let transport = Transport(calls.clone());
-        let mut reconciler = Reconciler {
-            retry_signal: None,
-            ..Reconciler::default()
-        };
-        for _ in 0..3 {
-            reconciler
-                .reconcile(transport.clone(), home.path())
-                .await
-                .unwrap();
-        }
-        assert!(calls.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn claimed_intent_must_match_the_package_whose_runtime_was_prepared() {
-        let home = tempfile::tempdir().unwrap();
-        let original = json!({"installed_plugin_id":42,"connector_slug":"native",
-            "checksum":format!("sha256:{}", "a".repeat(64)),
-            "auth_definition":{"adapter":"auth.mjs"}});
-        for field in ["checksum", "auth_definition"] {
-            let mut changed = original.clone();
-            changed[field] = if field == "checksum" {
-                json!(format!("sha256:{}", "b".repeat(64)))
-            } else {
-                json!({"adapter":"new-python-auth.py"})
-            };
-            let calls = Arc::new(Mutex::new(VecDeque::from([(
-                "plugin.auth.prepare",
-                json!({"success":true,"operation":"export","package":changed}),
-            )])));
-            let expected = serde_json::from_value(original.clone()).unwrap();
-            let result = migrate_prepared(
-                Transport(calls.clone()),
-                home.path(),
-                &"a".repeat(64),
-                &expected,
-            )
-            .await;
-            // Reject before loading a replacement adapter or starting another wait.
-            assert_eq!(
-                result.err(),
-                Some(AuthError("plugin_auth_definition_mismatch"))
-            );
-            assert!(calls.lock().unwrap().is_empty());
-        }
-    }
-
-    #[test]
-    fn discovery_reads_explicit_relocated_manifest_without_legacy_home() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp
-            .path()
-            .join("workbench/wework/test/capabilities/manifest.json");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            json!({"plugins": {
-                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true}
-            }})
-            .to_string(),
-        )
-        .unwrap();
-        assert_eq!(installed_ids_at(&path).unwrap(), vec![42]);
-        assert!(!temp.path().join("capabilities").exists());
-    }
-
-    #[test]
-    fn discovery_only_reports_enabled_managed_installations() {
-        let home = tempfile::tempdir().unwrap();
-        assert!(installed_ids(home.path()).unwrap().is_empty());
-        fs::create_dir(home.path().join("capabilities")).unwrap();
-        fs::write(
-            home.path().join("capabilities/manifest-v2.json"),
-            json!({"plugins": {
-                "managed": {"installed_plugin_id": 12, "managed": true, "enabled": true},
-                "disabled": {"installed_plugin_id": 13, "managed": true, "enabled": false},
-                "personal": {"installed_plugin_id": 14, "managed": false, "enabled": true},
-                "duplicate": {"installed_plugin_id": 12, "managed": true, "enabled": true}
-            }})
-            .to_string(),
-        )
-        .unwrap();
-        fs::write(
-            home.path().join("capabilities/manifest.json"),
-            json!({"plugins": {
-                "stale": {"installed_plugin_id": 99, "managed": true, "enabled": true}
-            }})
-            .to_string(),
-        )
-        .unwrap();
-        assert_eq!(installed_ids(home.path()).unwrap(), vec![12]);
-    }
-
-    #[test]
-    fn e2e_retry_signal_clears_cooldowns_only_when_it_changes() {
-        let home = tempfile::tempdir().unwrap();
-        let signal = home.path().join("retry.signal");
-        let key = (12, "mail".to_owned());
-        let mut reconciler = Reconciler {
-            retries: HashMap::from([(key.clone(), Instant::now() + Duration::from_secs(60))]),
-            retry_signal: Some(signal.clone()),
-            ..Reconciler::default()
-        };
-
-        fs::write(&signal, "1").unwrap();
-        reconciler.consume_retry_signal();
-        assert!(reconciler.retries.is_empty());
-
-        reconciler
-            .retries
-            .insert(key.clone(), Instant::now() + Duration::from_secs(60));
-        reconciler.consume_retry_signal();
-        assert!(reconciler.retries.contains_key(&key));
-
-        fs::write(signal, "2").unwrap();
-        reconciler.consume_retry_signal();
-        assert!(reconciler.retries.is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn discovery_rejects_symlinked_manifests() {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir(home.path().join("capabilities")).unwrap();
-        fs::write(home.path().join("untrusted.json"), r#"{"plugins":{}}"#).unwrap();
-        std::os::unix::fs::symlink(
-            home.path().join("untrusted.json"),
-            home.path().join("capabilities/manifest-v2.json"),
-        )
-        .unwrap();
-        assert_eq!(
-            installed_ids(home.path()),
-            Err(AuthError("plugin_auth_invalid_package"))
-        );
-    }
-    #[test]
-    fn failures_back_off_and_login_invalidates_only_its_own_target() {
-        let mut reconciler = Reconciler::default();
-        let key = (42, "mail".to_owned());
-        let other = (43, "mail".to_owned());
-        reconciler.record(other.clone(), Ok(()));
-        for seconds in [30, 60, 300, 300] {
-            let before = Instant::now();
-            reconciler.record(key.clone(), Err(AuthError("plugin_auth_owner_unavailable")));
-            let due = reconciler.next_retry().unwrap();
-            assert!(due >= before + Duration::from_secs(seconds));
-            assert!(due <= Instant::now() + Duration::from_secs(seconds));
-        }
-        reconciler.invalidate(42);
-        assert!(reconciler.next_retry().is_none());
-        assert!(reconciler.retries.contains_key(&other));
-        reconciler.record(key, Ok(()));
-        assert!(reconciler.next_retry().is_none());
-    }
-
-    #[tokio::test]
-    async fn unchanged_or_removed_inventory_does_not_rediscover_credentials() {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir(home.path().join("capabilities")).unwrap();
-        let path = home.path().join("capabilities/manifest-v2.json");
-        let manifest =
-            json!({"plugins":{"mail":{"installed_plugin_id":42,"managed":true,"enabled":true}}});
-        fs::write(&path, manifest.to_string()).unwrap();
-        let calls = Arc::new(Mutex::new(VecDeque::new()));
-        let mut reconciler = Reconciler {
-            inventory: installed_inventory(home.path()).unwrap(),
-            ..Default::default()
-        };
-        reconciler
-            .reconcile_changes(Transport(calls.clone()), home.path())
-            .await
-            .unwrap();
-        fs::write(path, json!({"plugins":{}}).to_string()).unwrap();
-        reconciler.record(
-            (42, "mail".into()),
-            Err(AuthError("plugin_auth_owner_unavailable")),
-        );
-        reconciler
-            .reconcile_changes(Transport(calls.clone()), home.path())
-            .await
-            .unwrap();
-        assert!(reconciler.next_retry().is_none());
-        assert!(calls.lock().unwrap().is_empty());
-    }
-}
+mod tests;

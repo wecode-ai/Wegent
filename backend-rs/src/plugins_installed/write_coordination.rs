@@ -19,6 +19,8 @@ use crate::http_compat::FastApiError;
 
 mod native;
 mod scoped;
+#[cfg(test)]
+pub(crate) use native::NATIVE_LEASE_PROMOTION_SCRIPT;
 pub(crate) use native::{
     NativeAdmissionError, NativeAdmissionTiming, NativeWriteAdmission, complete_native_write,
 };
