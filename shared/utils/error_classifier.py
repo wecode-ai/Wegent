@@ -38,6 +38,7 @@ class ChatErrorCode(str, Enum):
     MODEL_PROTOCOL_ERROR = "model_protocol_error"
     INVALID_ROLE = "invalid_role"
     PERMISSION_DENIED = "permission_denied"
+    HISTORY_RESTORE_FAILED = "history_restore_failed"
     GENERIC_ERROR = "generic_error"
 
 
@@ -263,6 +264,7 @@ _EXCEPTION_CLASS_MAP: dict[str, ChatErrorCode] = {
     "ResourceExhausted": ChatErrorCode.RATE_LIMIT,
     "PermissionDenied": ChatErrorCode.FORBIDDEN,
     "NotFound": ChatErrorCode.MODEL_UNAVAILABLE,
+    "HistoryRestoreError": ChatErrorCode.HISTORY_RESTORE_FAILED,
 }
 
 
