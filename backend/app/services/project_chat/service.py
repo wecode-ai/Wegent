@@ -80,6 +80,7 @@ from app.services.project_chat.agent_permissions import (
     preserve_redacted_mcp_servers,
 )
 from app.services.project_chat.mention_notification import (
+    enqueue_issue_mention_wakeups,
     notify_project_chat_mentions,
 )
 from app.services.project_chat.workspace_binding import (
@@ -1000,11 +1001,9 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        self._validate_agent_mentions(db, project, request)
-        if request.task_id and any(
-            mention.type == "agent" for mention in request.mentions
-        ):
-            self._require_task_execution(db, user_id, project, request.task_id)
+        self._validate_comment_mentions(
+            db, project, user_id, request.task_id, request.mentions
+        )
         assistant_source_binding = self._verified_assistant_source(
             db, user_id=user_id, request=request, source=assistant_source
         )
@@ -1127,24 +1126,13 @@ class ProjectChatService:
             reply_preview=reply.preview,
         )
         if request.task_id and request.mentions:
-            from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
-
-            for recipient_id in sorted(
-                {
-                    int(mention.id)
-                    for mention in request.mentions
-                    if mention.type == "user"
-                }
-            ):
-                enqueue_issue_wakeup(
-                    db,
-                    user_id=recipient_id,
-                    payload={
-                        "projectId": request.project_id,
-                        "itemId": request.task_id,
-                        "commentId": message_id,
-                    },
-                )
+            enqueue_issue_mention_wakeups(
+                db,
+                project_id=request.project_id,
+                item_id=request.task_id,
+                comment_id=message_id,
+                mentions=request.mentions,
+            )
         if request.task_id:
             if item is not None:
                 item.metadata_json = update_change_request_source(
@@ -2678,12 +2666,15 @@ class ProjectChatService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project
 
-    def _validate_agent_mentions(
-        self, db: Session, project: LoopItem, request: ProjectChatSend
+    def _validate_comment_mentions(
+        self,
+        db: Session,
+        project: LoopItem,
+        user_id: int,
+        task_id: str | None,
+        mentions: list[ProjectChatMention],
     ) -> None:
-        agent_mentions = [
-            mention for mention in request.mentions if mention.type == "agent"
-        ]
+        agent_mentions = [mention for mention in mentions if mention.type == "agent"]
         if not agent_mentions:
             return
         unknown = [
@@ -2699,6 +2690,8 @@ class ProjectChatService:
                 status.HTTP_409_CONFLICT,
                 "Mentioned AI is not a member of this project chat",
             )
+        if task_id:
+            self._require_task_execution(db, user_id, project, task_id)
 
     @staticmethod
     def _agent_row_or_none(

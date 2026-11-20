@@ -77,6 +77,30 @@ def notify_project_chat_mentions(
         )
 
 
+def enqueue_issue_mention_wakeups(
+    db: Session,
+    *,
+    project_id: str,
+    item_id: str,
+    comment_id: str,
+    mentions: list[ProjectChatMention],
+) -> None:
+    from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
+
+    for recipient_id in sorted(
+        {int(mention.id) for mention in mentions if mention.type == "user"}
+    ):
+        enqueue_issue_wakeup(
+            db,
+            user_id=recipient_id,
+            payload={
+                "projectId": project_id,
+                "itemId": item_id,
+                "commentId": comment_id,
+            },
+        )
+
+
 def _authorized_mention_target(
     db: Session,
     project: CloudProject,

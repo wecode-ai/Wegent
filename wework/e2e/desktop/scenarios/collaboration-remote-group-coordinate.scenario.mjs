@@ -66,10 +66,12 @@ const SECOND_MEMBER_REPLY = `${MARKER} 请同时核对证据的时间范围。`
 const SECOND_MEMBER_REPLY_RESULT = '已单独核对时间范围，采样和结果来自同一窗口。'
 const MEMBER_PROGRESS = '准备好了待复核的执行证据。'
 const INITIAL_MANAGER_OUTPUT = '第一轮两个任务已交给 Executor 并发执行，等待全部结果。'
+const MANAGER_ROOT_COMMENT = '负责人已收到两份交付，正在核对一致性。'
 const MANAGER_REQUEST_CONTEXT = 'You are the manager for one project Issue.'
 const GROUP_RULES = `${MARKER} 协作规则：每轮任务必须独立可验收，全部返回后由负责人评估并显式提交待确认。`
 const MANAGER_DECISION = '确认保持存量用户现状，限定本仓并新增隐私项。'
 const CALLS = {
+  rootComment: `${MARKER}-root-comment`,
   businessQuestion: `${MARKER}-business-question`,
   firstPlan: `${MARKER}-plan-1`,
   updateStatus: `${MARKER}-update-status`,
@@ -329,6 +331,7 @@ export async function createDesktopScenario({
   let reviewerAgentId = ''
   let managerRuns = 0
   let managerReplyRequests = 0
+  let managerRootCommentPosted = false
   const guidedReplies = createGuidedReplies({
     marker: MARKER,
     firstQuestion: MEMBER_REPLY,
@@ -522,6 +525,18 @@ export async function createDesktopScenario({
       if (parentStage === 'first-round-dispatched') {
         assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
         assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
+        if (!managerRootCommentPosted) {
+          if (!requestContainsToolOutput(body, CALLS.rootComment)) {
+            const selection = managerToolEvents(body, 'add_board_item_comment', CALLS.rootComment, {
+              space_id: String(project.id),
+              item_id: rootIssue.id,
+              body: MANAGER_ROOT_COMMENT,
+            })
+            writeEvents(response, responseId, selection.events)
+            return true
+          }
+          managerRootCommentPosted = true
+        }
         if (requestContainsToolOutput(body, CALLS.businessQuestion)) {
           parentStage = 'awaiting-issue-reply'
           writeEvents(response, responseId, [
@@ -690,6 +705,19 @@ export async function createDesktopScenario({
         `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
         modelResponseTimeoutMs
       )
+      const managerEventCard = scoped(
+        '[data-testid^="cloud-task-activity-card-"]:has(> [data-activity-sequence] > [data-testid^="cloud-task-manager-event-"])'
+      )
+      await control.command('waitFor', `${managerEventCard} > [data-activity-sequence] time`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitForHidden',
+        `${managerEventCard} > .task-detail-thread-actions > time`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const assignedIssue = await request(`/api/v1/loop-items/${rootIssue.id}`)
       const assignment = assignedIssue.assignment_history.find(
         entry => entry.to_type === 'agent' && entry.to_name === COLLECTOR
@@ -780,6 +808,11 @@ export async function createDesktopScenario({
         '负责人应在本轮开始评论下提问',
         modelResponseTimeoutMs
       )
+      const rootComment = (await listComments()).find(row => row.body === MANAGER_ROOT_COMMENT)
+      assert.equal(rootComment?.author, LEADER, '顶层评论应署名为负责人智能体')
+      assert.equal(rootComment.publication_source, 'ai')
+      assert.equal(rootComment.reply_to_comment_id, null)
+      await waitForActivityText(control, MANAGER_ROOT_COMMENT, uiTimeoutMs)
       const decisionCard = `cloud-task-activity-card-${decisionQuestion.root_comment_id}`
       await control.command('waitFor', scoped(`[data-testid="${decisionCard}"]`), {
         text: MANAGER_RESUME_QUESTION,

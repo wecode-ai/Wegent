@@ -474,19 +474,14 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                     <div data-testid={`cloud-task-activity-replies-${rootId}`}>
                       {card.replies.map(reply => renderActivityMessage(reply))}
                     </div>
-                    <IssueTimelineActions
-                      rootId={rootId}
-                      createdAt={issueThreadActivityTimestamp(card)}
-                      replyLabel={cardReplyLabel(card)}
-                      active={replyTarget?.root.messageId === rootId}
-                      onReply={
-                        humanDispatchForCard(card) && onStartHumanTaskFromReply
-                          ? () => beginReply(card)
-                          : undefined
-                      }
-                    >
-                      {renderCommentChildAction(card.root)}
-                    </IssueTimelineActions>
+                    {humanDispatchForCard(card) && onStartHumanTaskFromReply ? (
+                      <IssueTimelineActions
+                        rootId={rootId}
+                        replyLabel={cardReplyLabel(card)}
+                        active={replyTarget?.root.messageId === rootId}
+                        onReply={() => beginReply(card)}
+                      />
+                    ) : null}
                   </div>
                 )
               }

@@ -10,29 +10,29 @@ export function IssueTimelineActions({
   children,
 }: {
   rootId: string
-  createdAt: string
+  createdAt?: string
   replyLabel: string
   active: boolean
-  onReply?: () => void
+  onReply: () => void
   children?: ReactNode
 }) {
   return (
     <div className="task-detail-thread-actions">
-      <time dateTime={createdAt} className="text-xs text-text-secondary">
-        {formatIssueTimestamp(createdAt)}
-      </time>
+      {createdAt && (
+        <time dateTime={createdAt} className="text-xs text-text-secondary">
+          {formatIssueTimestamp(createdAt)}
+        </time>
+      )}
       {children}
-      {onReply ? (
-        <button
-          type="button"
-          data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
-          aria-expanded={active}
-          aria-controls="issue-reply-composer"
-          onClick={onReply}
-        >
-          {replyLabel}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
+        aria-expanded={active}
+        aria-controls="issue-reply-composer"
+        onClick={onReply}
+      >
+        {replyLabel}
+      </button>
     </div>
   )
 }

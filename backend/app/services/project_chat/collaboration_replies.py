@@ -10,7 +10,11 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import CollaborationPublicReply
-from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatMessageView
+from app.schemas.project_chat import (
+    ProjectChatCommentExecution,
+    ProjectChatMention,
+    ProjectChatMessageView,
+)
 from app.services.collaboration_group_execution import (
     collaboration_group_snapshot_for_dispatch,
 )
@@ -18,6 +22,10 @@ from app.services.collaboration_revocation import execution_authorized
 from app.services.device.identity import same_owned_device
 from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
+)
+from app.services.project_chat.mention_notification import (
+    enqueue_issue_mention_wakeups,
+    notify_project_chat_mentions,
 )
 from app.services.project_chat.public_replies import (
     existing_public_reply,
@@ -142,8 +150,9 @@ def publish_collaboration_reply(
     body: str,
     identity: CollaborationPublicReply,
     reply_to_comment_id: str | None = None,
+    mentions: list[ProjectChatMention] | None = None,
 ) -> ProjectChatMessageView:
-    project_chat_service._require_scope(
+    project = project_chat_service._require_scope(
         db,
         user_id=user_id,
         project_id=project_id,
@@ -205,6 +214,7 @@ def publish_collaboration_reply(
         identity.task_id,
         identity.message_id,
     )
+    mention_metadata = [mention.model_dump(by_alias=True) for mention in mentions or []]
     if identity.trigger_comment_id and reply_to_comment_id:
         raise HTTPException(422, "Choose one Issue reply target")
     mirror = (
@@ -275,8 +285,17 @@ def publish_collaboration_reply(
             raise HTTPException(
                 409, "The public message identity has another reply target"
             )
+        if (existing.metadata_json or {}).get("mentions", []) != mention_metadata:
+            raise HTTPException(
+                409, "The public message identity has different mentions"
+            )
         return public_reply_view(db, existing)
-    if not member_activity and not explicit_target and identity.phase != "start":
+    if (
+        not member_activity
+        and not explicit_target
+        and not mentions
+        and identity.phase != "start"
+    ):
         status_comments = (
             db.query(ProjectChatMessage)
             .filter_by(
@@ -309,6 +328,10 @@ def publish_collaboration_reply(
             project_chat_service._commit(db)
             return public_reply_view(db, status_comment)
     message_id = str(uuid.uuid4())
+    if mentions:
+        project_chat_service._validate_comment_mentions(
+            db, project, user_id, item_id, mentions
+        )
     row = ProjectChatMessage(
         message_id=message_id,
         client_message_id=key,
@@ -325,6 +348,7 @@ def publish_collaboration_reply(
         metadata_json={
             "execution_dispatch": "comment_only",
             "collaboration_public_reply": True,
+            **({"mentions": mention_metadata} if mention_metadata else {}),
             **({"collaboration_turn_start": True} if identity.phase == "start" else {}),
             "dispatch_id": identity.dispatch_id,
             **(
@@ -364,6 +388,26 @@ def publish_collaboration_reply(
                 **guided_response.metadata_json,
                 "run_status": "completed",
             }
+    if mentions:
+        notify_project_chat_mentions(
+            db,
+            project=project,
+            task_id=item_id,
+            item=item,
+            comment_id=message_id,
+            actor_user_id=user_id,
+            actor_name=row.sender_name,
+            content=body,
+            mentions=mentions,
+            reply_preview=reply.preview,
+        )
+        enqueue_issue_mention_wakeups(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            comment_id=message_id,
+            mentions=mentions,
+        )
     return save_public_reply(
         db, item=item, row=row, item_metadata=item.metadata_json or {}
     )

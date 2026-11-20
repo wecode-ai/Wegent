@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::super::{call_backend_tool, BackendToolContext, SpaceContextGrant};
+use super::super::{call_backend_tool, BackendToolContext, SpaceContextGrant, SpaceContextRole};
 use super::*;
 
 #[tokio::test]
@@ -67,7 +67,7 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
                 json!([{"type": "user", "id": "52", "label": "Reviewer"}])
             );
             Json(
-                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"], "assistant_source":body["assistant_source"]}),
+                json!({"id": "visible-report", "body": body["body"], "mentions": body["mentions"], "assistant_source":body["assistant_source"], "collaboration":body["collaboration"]}),
             )
         }),
     );
@@ -126,6 +126,29 @@ async fn backend_comment_tools_use_the_visible_issue_activity() {
             assert!(published["assistant_source"].is_null());
         }
     }
+    grant.item_id = Some("ISSUE-1".into());
+    grant.dispatch_id = Some("group-dispatch".into());
+    grant.role = Some(SpaceContextRole::Executor);
+    let published = call_backend_tool(
+        &BackendToolContext {
+            grant: Some(&grant),
+            ..context
+        },
+        "add_board_item_comment",
+        &json!({
+            "item_id": "ISSUE-1",
+            "body": "Review report",
+            "mentions": [{"type": "user", "id": "52", "label": "Reviewer"}],
+            "collaboration": {"dispatch_id": "forged-dispatch"}
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(published["assistant_source"].is_null());
+    assert_eq!(published["collaboration"]["dispatch_id"], "group-dispatch");
+    assert_eq!(published["collaboration"]["device_id"], "cloud-device");
+    assert_eq!(published["collaboration"]["task_id"], "owned-runtime");
+    assert!(published["collaboration"]["message_id"].is_string());
     let comments = call_backend_tool(
         &context,
         "list_board_item_comments",
