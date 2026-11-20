@@ -83,7 +83,7 @@ export function TaskIssueShare({
       )}
       {draft && apis && cloud.user && (
         <IndependentIssueDialog
-          key={`${cloud.serviceKey}:${cloud.user.id}`}
+          key={`${cloud.apiBaseUrl ?? ''}:${cloud.user.id}`}
           api={apis.personal}
           userId={Number(cloud.user.id)}
           issueId={null}

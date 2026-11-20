@@ -30,7 +30,7 @@ export function TaskIssueShareExcerpts({
             <input
               type="checkbox"
               data-testid="task-issue-share-excerpt"
-              className="mt-1 shrink-0 accent-primary"
+              className="mt-1 shrink-0 accent-text-primary"
               checked={selected.includes(excerpt.id)}
               onChange={event => {
                 onSelect(
