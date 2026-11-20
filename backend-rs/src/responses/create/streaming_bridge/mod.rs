@@ -764,20 +764,20 @@ impl Bridge {
             ..
         } = failure;
         if self.callback_mode() {
-            if self.device_callback_mode() && !self.callback_dispatch_attempted {
-                if let Some(app) = self.app.upgrade()
-                    && let Some((_, request)) = self.callback_dispatch.as_ref()
-                {
-                    crate::responses::dispatch::finalize_executor_failure(
-                        &crate::responses::dispatch::ConsumerState::from_app(&app),
-                        self.task_id,
-                        self.subtask_id,
-                        request.user_id,
-                        self.message_id,
-                        (&message, "stream_subscribe_error"),
-                    )
-                    .await;
-                }
+            if self.device_callback_mode()
+                && !self.callback_dispatch_attempted
+                && let Some(app) = self.app.upgrade()
+                && let Some((_, request)) = self.callback_dispatch.as_ref()
+            {
+                crate::responses::dispatch::finalize_executor_failure(
+                    &crate::responses::dispatch::ConsumerState::from_app(&app),
+                    self.task_id,
+                    self.subtask_id,
+                    request.user_id,
+                    self.message_id,
+                    (&message, "stream_subscribe_error"),
+                )
+                .await;
             }
             // The producer owns the failure persistence; the consumer renders
             // the failed stream and releases its subscription.
