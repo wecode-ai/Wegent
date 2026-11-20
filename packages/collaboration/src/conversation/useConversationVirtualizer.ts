@@ -18,6 +18,7 @@ import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   observeConversationScrollWrites,
   recordConversationScrollWrite,
+  SCROLLBAR_DRAG_POSITION_EVENT,
 } from './conversationScrollWrite'
 
 export type ConversationVirtualizer = Virtualizer<HTMLDivElement, HTMLElement>
@@ -82,11 +83,16 @@ export function useConversationVirtualizer({
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
       const element = instance.scrollElement
+      const updateDragOffset = () => {
+        if (element) callback(element.scrollTop, true)
+      }
+      element?.addEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
       const stopObservingWrites = element
         ? observeConversationScrollWrites(element, offset => callback(offset, false))
         : undefined
       return () => {
         readOffsetRef.current = null
+        element?.removeEventListener(SCROLLBAR_DRAG_POSITION_EVENT, updateDragOffset)
         stopObservingWrites?.()
         dispose?.()
       }

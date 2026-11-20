@@ -11,7 +11,7 @@ packageExtensionsChecksum: sha256-3GPW0RD2OEoa+ghjgZDxiKOdOuYbfpGKnEfG8cSqwz0=
 
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': 96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c
-  '@ui-sdk/core@0.1.0-beta.10': 1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875
+  '@ui-sdk/core@0.1.0-beta.10': e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48
   '@xterm/xterm@6.0.0': b38db80fd1709677fc969ffc8691a371d0fa4131a20c4a6f46968c2279918cdb
   mermaid@11.15.0: 2b8912a36e818cbbd0f1ddf7f966c133655ac97b31224bad724e1f931d1071c3
 
@@ -524,10 +524,10 @@ importers:
         version: 3.14.23(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@ui-sdk/core':
         specifier: 0.1.0-beta.10
-        version: 0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875)
+        version: 0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48)
       '@ui-sdk/react':
         specifier: 0.1.0-beta.10
-        version: 0.1.0-beta.10(@types/react@19.2.17)(@ui-sdk/core@0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.1.0-beta.10(@types/react@19.2.17)(@ui-sdk/core@0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@wegent/chat-core':
         specifier: workspace:*
         version: link:../chat-core
@@ -733,10 +733,10 @@ importers:
         version: 3.14.23(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@ui-sdk/core':
         specifier: 0.1.0-beta.10
-        version: 0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875)
+        version: 0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48)
       '@ui-sdk/react':
         specifier: 0.1.0-beta.10
-        version: 0.1.0-beta.10(@types/react@19.2.17)(@ui-sdk/core@0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.1.0-beta.10(@types/react@19.2.17)(@ui-sdk/core@0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@wegent/chat-core':
         specifier: workspace:*
         version: link:../packages/chat-core
@@ -14443,11 +14443,11 @@ snapshots:
       '@typescript-eslint/types': 8.61.0
       eslint-visitor-keys: 5.0.1
 
-  '@ui-sdk/core@0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875)': {}
+  '@ui-sdk/core@0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48)': {}
 
-  '@ui-sdk/react@0.1.0-beta.10(@types/react@19.2.17)(@ui-sdk/core@0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@ui-sdk/react@0.1.0-beta.10(@types/react@19.2.17)(@ui-sdk/core@0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@ui-sdk/core': 0.1.0-beta.10(patch_hash=1c2ff0de12d6a8f6190a8c19c5033c7fb7c185b9ce7f891ef8dc2f7049333875)
+      '@ui-sdk/core': 0.1.0-beta.10(patch_hash=e1d74c167ffc6f640fbd1f04b02ba3080f478a5f7a3bc7d65a3b58f5649b0f48)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:

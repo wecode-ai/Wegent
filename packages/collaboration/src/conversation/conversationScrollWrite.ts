@@ -4,6 +4,8 @@ import {
   recordConversationDiagnostic,
 } from './conversationDiagnostics'
 
+export const SCROLLBAR_DRAG_POSITION_EVENT = 'ui-sdk:scrollbar-drag-position'
+
 // Numeric sources keep exported diagnostics free of application strings and identify each owner.
 // 1: virtualizer; 3: shared bottom-distance writer;
 // 4: shared content-position writer; 5: controller bottom follow.

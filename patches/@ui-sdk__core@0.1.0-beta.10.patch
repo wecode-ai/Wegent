@@ -2,15 +2,51 @@ diff --git a/dist/components/scroll-area/scroll-area-view.js b/dist/components/s
 index 1b9e92c7bebd05cde1daa05e37c96ed4813b7b06..29a0766d137e17686e63f2935ea5eed17d712fbc 100644
 --- a/dist/components/scroll-area/scroll-area-view.js
 +++ b/dist/components/scroll-area/scroll-area-view.js
-@@ -270,6 +270,11 @@ function createScrollView(store) {
+@@ -181,6 +181,11 @@ function createScrollView(store) {
+       if (scrollbar.axis !== axis) {
+         continue;
+       }
++      if (scrollbar.el.getAttribute("role") === "scrollbar") {
++        const max = maxScroll(metrics[axis]);
++        scrollbar.el.setAttribute("aria-valuemax", String(Math.round(max)));
++        scrollbar.el.setAttribute("aria-valuenow", String(Math.round(Math.max(0, Math.min(max, metrics[axis].position)))));
++      }
+       write(scrollbar.el, names[axis].thumbSize, geometry.size);
+       write(
+         scrollbar.el,
+@@ -270,6 +275,15 @@ function createScrollView(store) {
      } else {
        viewport.scrollTo({ left: rtl ? -position : position, behavior });
      }
 +    // Keep the grabbed thumb under the pointer before the deferred scroll update.
 +    if (behavior === "instant" && store.get().dragging === axis) {
++      const previousPosition = metrics[axis].position;
 +      metrics[axis].position = axis === "y" ? viewport.scrollTop : rtl ? -viewport.scrollLeft : viewport.scrollLeft;
 +      writeThumb(axis);
++      if (axis === "y" && metrics[axis].position !== previousPosition) {
++        viewport.dispatchEvent(new Event("ui-sdk:scrollbar-drag-position"));
++      }
 +    }
    }
    function release() {
      stopEasing();
+diff --git a/dist/foundation/platform/layers.js b/dist/foundation/platform/layers.js
+--- a/dist/foundation/platform/layers.js
++++ b/dist/foundation/platform/layers.js
+@@ -316,7 +316,15 @@ function escapeTop(doc, event, from) {
+   if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) {
+     return;
+   }
+-  const top = active().filter((layer) => documentOf(layer) === doc).at(-1);
++  const layers = active().filter((layer) => documentOf(layer) === doc);
++  const modal = layers.findLast((layer) => layer.blocking);
++  const target = event.composedPath()[0];
++  // Popups behind a focused modal cannot handle its Escape, even if registered later.
++  const top = modal && target && insideTree(modal, target, event)
++    ? layers.findLast((layer) => layer === modal || (
++        layer.order > modal.order && layer.el && insideTree(modal, layer.el, event)
++      ))
++    : layers.at(-1);
+   if (!top?.onEscape || from && top !== from) {
+     return;
+   }

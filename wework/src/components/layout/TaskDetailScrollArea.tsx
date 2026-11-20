@@ -1,9 +1,10 @@
-import type { CSSProperties, ReactNode, RefObject } from 'react'
+import { useId, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import {
   ScrollArea,
   ScrollAreaContent,
   ScrollAreaViewport,
 } from '@wegent/collaboration/controls/ScrollArea'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { WorkbenchScrollbar } from './WorkbenchScrollbar'
 
@@ -30,6 +31,8 @@ export function TaskDetailScrollArea({
   showPageTopBar,
   viewportRef,
 }: TaskDetailScrollAreaProps) {
+  const viewportId = useId()
+  const { t } = useTranslation('common')
   return (
     <ScrollArea
       type="auto"
@@ -38,6 +41,7 @@ export function TaskDetailScrollArea({
       style={frameStyle}
     >
       <ScrollAreaViewport
+        id={viewportId}
         ref={viewportRef}
         data-testid="desktop-workbench-content"
         data-scroll-origin="top"
@@ -65,6 +69,7 @@ export function TaskDetailScrollArea({
           orientation="vertical"
           testId="desktop-workbench-scrollbar"
           thumbTestId="desktop-workbench-scrollbar-thumb"
+          keyboard={{ label: t('workbench.conversation_scrollbar'), viewportId, viewportRef }}
           className="absolute bottom-[3px] right-[3px] top-[3px] z-critical w-2 p-0"
         />
       ) : null}
