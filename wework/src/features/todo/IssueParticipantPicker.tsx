@@ -241,6 +241,7 @@ export function IssueParticipantPicker({
         <label className="flex items-center gap-2 rounded-md border border-border px-2">
           <Search className="h-4 w-4 text-text-muted" />
           <ControlInput
+            appearance="plain"
             disabled={disabled}
             value={query}
             data-testid="independent-issue-search-people"
