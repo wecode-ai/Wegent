@@ -26,9 +26,8 @@ export const WorkbenchScrollbar = forwardRef<HTMLDivElement, WorkbenchScrollbarP
         ref={ref}
         orientation={orientation}
         data-testid={testId}
-        role={keyboard ? 'scrollbar' : undefined}
         tabIndex={keyboard ? 0 : undefined}
-        render={keyboard ? <div aria-hidden={false} /> : undefined}
+        render={keyboard ? <div role="scrollbar" aria-hidden={false} /> : undefined}
         aria-label={keyboard?.label}
         aria-controls={keyboard?.viewportId}
         aria-orientation={keyboard ? orientation : undefined}
