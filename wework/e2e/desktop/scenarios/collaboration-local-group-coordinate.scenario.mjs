@@ -184,18 +184,21 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
 }
 
 async function createCoordinateGroup(control, timeoutMs) {
+  const form = '[data-testid="collaboration-group-form"]'
+  const members = `${form} [data-testid="collaboration-group-create-add-members"]`
   await control.command('click', scoped('[data-testid="collaboration-project-settings-groups"]'))
   await control.command('click', scoped('[data-testid="collaboration-group-open-create"]'))
-  await control.command('waitFor', scoped('[data-testid="collaboration-group-form"]'), {
+  await control.command('waitFor', form, {
+    visible: true,
     timeoutMs,
   })
-  await control.command('fill', scoped('[data-testid="collaboration-group-name"]'), {
+  await control.command('fill', `${form} [data-testid="collaboration-group-name"]`, {
     value: GROUP,
   })
-  await control.command('fill', scoped('[data-testid="collaboration-group-description"]'), {
+  await control.command('fill', `${form} [data-testid="collaboration-group-description"]`, {
     value: '用于验证负责人并发委派、汇总结果和显式更新 Issue 状态。',
   })
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
+  await control.command('setExpanded', members, { value: 'true', timeoutMs })
   const leaderMemberTestId = await waitForTestIdByText(
     control,
     'body',
@@ -227,15 +230,18 @@ async function createCoordinateGroup(control, timeoutMs) {
   assert.equal(humanTestIds.length, 1, 'The local group must expose its current human member')
   const humanSelector = `[data-testid="${humanTestIds[0]}"]`
   if (
-    (await control.command('getAttribute', humanSelector, { value: 'aria-pressed' })) !== 'true'
+    (await control.command('getAttribute', humanSelector, { value: 'aria-selected' })) !== 'true'
   ) {
     await control.command('click', humanSelector)
   }
-  await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
-  await control.command('click', scoped('[data-testid="collaboration-group-leader"]'))
+  await control.command('setExpanded', members, { value: 'false', timeoutMs })
   const leaderId = leaderMemberTestId.slice('collaboration-group-create-member-agent-'.length)
-  await control.command('click', `[data-testid="collaboration-group-leader-agent-${leaderId}"]`)
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-group-create"]'), {
+  await control.command(
+    'clickWhenEnabled',
+    `${form} button[data-testid="collaboration-group-leader-agent-${leaderId}"]`,
+    { timeoutMs }
+  )
+  await control.command('clickWhenEnabled', `${form} [data-testid="collaboration-group-create"]`, {
     timeoutMs,
   })
   await control.command('waitFor', scoped('[data-testid^="collaboration-group-detail-"]'), {

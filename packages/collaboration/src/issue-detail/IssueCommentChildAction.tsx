@@ -23,6 +23,7 @@ export function IssueCommentChildAction({
 }) {
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState('')
+  const [form, setForm] = useState<HTMLDivElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState(false)
   const [error, setError] = useState('')
@@ -86,6 +87,7 @@ export function IssueCommentChildAction({
       </PopoverTrigger>
       <>
         <PopoverContent
+          ref={setForm}
           side="bottom"
           align="end"
           collisionPadding={12}
@@ -97,6 +99,7 @@ export function IssueCommentChildAction({
             {body}
           </p>
           <SearchableSelect
+            portalContainer={form}
             testId={`issue-comment-child-assignee-${messageId}`}
             accessibleLabel={t('todo.comment_assign_to')}
             value={target}

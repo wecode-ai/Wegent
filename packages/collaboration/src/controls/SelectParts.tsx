@@ -73,7 +73,12 @@ export function SelectContent({ className, children, ...props }: ContentProps) {
       sideOffset={4}
       collisionPadding={8}
       {...props}
-      className={cn(theme.className, controlPopup, 'min-w-[var(--anchor-width)]', className)}
+      className={cn(
+        theme.className,
+        controlPopup,
+        'min-w-[var(--anchor-width)] data-[closed]:invisible',
+        className
+      )}
     >
       {children}
     </UiSelectContent>

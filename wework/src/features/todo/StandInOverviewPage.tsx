@@ -125,6 +125,7 @@ export function StandInOverviewPage({
   const detailsTrigger = useRef<HTMLButtonElement>(null)
   const [scheduleTarget, setScheduleTarget] = useState<{ id: string; scope: string }>()
   const scheduleTrigger = useRef<HTMLElement | null>(null)
+  const [scheduleFocusRequest, setScheduleFocusRequest] = useState<{ scope: string }>()
   const profileTrigger = useRef<HTMLElement | null>(null)
   const rememberProfileTrigger = useCallback(
     (trigger?: HTMLElement) => {
@@ -247,6 +248,22 @@ export function StandInOverviewPage({
   const setSelectedScheduleId = (id?: string) =>
     setScheduleTarget(id ? { id, scope: detailsScope } : undefined)
   const detailsAnchor = detailsTarget?.scope === detailsScope ? detailsTarget.anchor : null
+  const scheduleFocusTarget = useMemo(
+    () => ({
+      get current() {
+        return scheduleTrigger.current?.isConnected
+          ? scheduleTrigger.current
+          : detailsTrigger.current
+      },
+    }),
+    []
+  )
+  useFocusRequest(scheduleFocusTarget, scheduleFocusRequest, {
+    enabled:
+      Boolean(detailsAnchor) && scheduleFocusRequest?.scope === detailsScope && !selectedScheduleId,
+    animationFrame: true,
+    preventScroll: true,
+  })
   const roles = roleLocations?.map(entry => entry.role) ?? state.draft?.roles ?? []
   const role =
     roleLocations?.find(entry => entry.role.id === roleId && entry.deviceId === deviceId)?.role ??
@@ -518,6 +535,7 @@ export function StandInOverviewPage({
             }
             suspended={!!selectedScheduleId}
             onSchedule={(schedule, trigger) => {
+              setScheduleFocusRequest(undefined)
               scheduleTrigger.current = trigger
               setSelectedScheduleId(schedule.id)
             }}
@@ -610,12 +628,10 @@ export function StandInOverviewPage({
             userId={props.userId}
             roleId={roleId ?? '@primary'}
             deviceId={deviceId}
-            onClose={() => setSelectedScheduleId(undefined)}
-            finalFocus={() =>
-              scheduleTrigger.current?.isConnected
-                ? scheduleTrigger.current
-                : detailsTrigger.current
-            }
+            onClose={() => {
+              setSelectedScheduleId(undefined)
+              setScheduleFocusRequest({ scope: detailsScope })
+            }}
           />
         )}
         <StandInReviewDialog

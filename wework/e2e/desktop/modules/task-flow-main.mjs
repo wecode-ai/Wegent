@@ -4151,6 +4151,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
+      await control.command('pointerLeave', filePanelLinkSelector, {
+        target: rightWorkspacePanelSelector,
+      })
       await control.command('hover', filePanelLinkSelector)
       await control.command('waitFor', filePanelLinkTooltipSelector, {
         visible: true,
@@ -4189,14 +4192,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )
       await captureVerificationScreenshot(control, 'file-panel-anchor-03-link-tooltip.png')
       await control.command('press', filePanelLinkSelector, { key: 'Escape' })
-      await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.includes(linkedFileTabId) &&
-          !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
-        'The assistant file-link tooltip did not dismiss above the open file panel',
-        DEFAULT_STEP_TIMEOUT_MS
-      )
+      await control.command('waitFor', filePanelLinkTooltipSelector, {
+        visible: false,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('waitFor', linkedFileTabSelector, {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
 
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(

@@ -968,6 +968,9 @@ export function createDesktopScenario({
         'Manual execution and its reply made unexpected model requests'
       )
       const requestsAfterReply = modelRequests
+      const issueClose = scoped('[data-testid="cloud-todo-detail-close"]')
+      await control.command('clickWhenEnabled', issueClose, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', issueClose, { visible: false, timeoutMs: uiTimeoutMs })
       await verifyConfiguredExecutionEnvironment(
         control,
         request,

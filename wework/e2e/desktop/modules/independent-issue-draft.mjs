@@ -178,7 +178,7 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
   const trigger = testId('issue-environment-picker-trigger')
   const picker = testId('issue-environment-picker')
   const prefix = 'collaboration-project-execution-environment'
-  await control.command('clickWhenEnabled', trigger)
+  await control.command('nativePress', picker, { key: 'Escape' })
   await control.command('waitFor', picker, { visible: false })
   const previousSize = await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 390, height: 844 }),

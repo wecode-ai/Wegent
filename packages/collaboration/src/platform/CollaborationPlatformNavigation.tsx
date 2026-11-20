@@ -674,6 +674,7 @@ function ProjectNavigationRow({
           <ActionMenu
             ariaLabel={`${messages.projectActions} · ${project.name}`}
             testId={`collaboration-project-menu-${project.id}`}
+            density="dense"
             showTriggerTooltip={false}
             triggerClassName="collaboration-project-new-conversation"
             items={[

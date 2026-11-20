@@ -70,6 +70,13 @@ export async function verifyAppUpdateRetry(control, { policy, requests, advertis
     /Release download failed: HTTP 503/
   )
   await control.command('navigate', 'body', { value: '/' })
+  const sidebar = '[data-testid="desktop-sidebar"]'
+  await control.command('waitFor', `${sidebar}[aria-hidden]`)
+  if ((await control.command('getAttribute', sidebar, { value: 'aria-hidden' })) === 'true') {
+    await control.command('clickWhenEnabled', '[data-testid="expand-sidebar-button"]', {
+      visible: true,
+    })
+  }
   await control.command('clickWhenEnabled', '[data-testid="settings-button"]', { visible: true })
   await control.command('clickWhenEnabled', '[data-testid="app-update-error-details-button"]')
   const dialog = '[data-testid="app-update-error-dialog"]'

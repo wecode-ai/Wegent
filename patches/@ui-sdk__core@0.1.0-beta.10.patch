@@ -1,0 +1,16 @@
+diff --git a/dist/components/scroll-area/scroll-area-view.js b/dist/components/scroll-area/scroll-area-view.js
+index 1b9e92c7bebd05cde1daa05e37c96ed4813b7b06..29a0766d137e17686e63f2935ea5eed17d712fbc 100644
+--- a/dist/components/scroll-area/scroll-area-view.js
++++ b/dist/components/scroll-area/scroll-area-view.js
+@@ -270,6 +270,11 @@ function createScrollView(store) {
+     } else {
+       viewport.scrollTo({ left: rtl ? -position : position, behavior });
+     }
++    // Keep the grabbed thumb under the pointer before the deferred scroll update.
++    if (behavior === "instant" && store.get().dragging === axis) {
++      metrics[axis].position = axis === "y" ? viewport.scrollTop : rtl ? -viewport.scrollLeft : viewport.scrollLeft;
++      writeThumb(axis);
++    }
+   }
+   function release() {
+     stopEasing();
