@@ -155,7 +155,8 @@ function ConnectionEventProviderDetail({
     <div className="min-w-0 space-y-2 pl-5 text-sm text-text-secondary">
       <div className="flex flex-wrap items-center gap-x-3">
         <span>{t('tool_activity.event_provider_summary', { total: providers.length, ready })}</span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           aria-expanded={expanded}
           className="min-h-11 rounded text-text-secondary hover:text-text-primary hover:underline keyboard:focus-visible:outline keyboard:focus-visible:outline-2 md:min-h-7"
@@ -163,7 +164,7 @@ function ConnectionEventProviderDetail({
           onClick={() => setExpanded(value => !value)}
         >
           {t(expanded ? 'tool_activity.hide_full_result' : 'tool_activity.show_full_result')}
-        </button>
+        </ControlButton>
       </div>
       {expanded && (
         <ToolDetailSection

@@ -64,6 +64,7 @@ export function StandInReviewDialog({
             data-testid={`${testId}-close`}
             aria-label={t('standIn.close')}
             title={t('standIn.close')}
+            showTooltip={false}
             disabled={busy}
             onClick={close}
             className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted disabled:opacity-45 md:h-8 md:w-8"

@@ -224,6 +224,9 @@ export async function verifyIssueDeviceLayout(control, deviceId) {
       )
     }
     await control.command('nativePress', preparation, { key: 'Escape' })
+    await control.command('waitFor', preparation, { visible: false })
+    await control.command('waitFor', picker, { visible: true })
+    await control.command('nativePress', picker, { key: 'Escape' })
     await control.command('waitFor', picker, { visible: false })
   } finally {
     await control.command('setMainWindowSize', 'body', { value: previousSize })
