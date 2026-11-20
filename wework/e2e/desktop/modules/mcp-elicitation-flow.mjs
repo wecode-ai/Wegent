@@ -32,6 +32,9 @@ import {
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
+
+const CATALOG_RELOAD_TIMEOUT_MS = 30_000
 
 async function assertElicitationCountdown(control, durationMs) {
   const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
@@ -470,9 +473,24 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   assert.equal(response.success, false, 'The real executor accepted a late response')
   assert.ok(['missing_request_user_input', 'stale_request_user_input'].includes(response.code))
   await reloadMainWindow(control, `Reload failed after ${scenario}`)
-  await control.command('ensureLocalModelCatalogReady', 'body', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  // Renderer reconnection can precede the idle app-server restart needed by the catalog.
+  const deadline = Date.now() + CATALOG_RELOAD_TIMEOUT_MS
+  await waitForValue(
+    async () => {
+      try {
+        await control.command('ensureLocalModelCatalogReady', 'body', {
+          timeoutMs: Math.max(1, deadline - Date.now()),
+        })
+        return { ready: true }
+      } catch (error) {
+        if (!error.message.startsWith('Local model catalog is not ready:')) throw error
+        return { ready: false, detail: error.message }
+      }
+    },
+    result => result.ready,
+    `Local model catalog did not become ready after reloading ${scenario}`,
+    CATALOG_RELOAD_TIMEOUT_MS
+  )
   await assertExpiredElicitation(control, taskId, original, round)
   assert.deepEqual(
     await readElicitationEvidence(evidencePath),
