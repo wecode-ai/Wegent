@@ -1521,26 +1521,43 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
   const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
   const hit = element.ownerDocument.elementFromPoint(startOptions.clientX, startOptions.clientY)
-  const pressed = dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
-  console.warn(
-    `[desktop-e2e-drag-start] ${JSON.stringify({
-      source: command.selector,
-      target: command.target,
-      start: [startOptions.clientX, startOptions.clientY],
-      end: [endOptions.clientX, endOptions.clientY],
-      sourceConnected: element.isConnected,
-      targetConnected: target.isConnected,
-      hitSource: hit !== null && element.contains(hit),
-      hitId: hit?.closest('[data-testid]')?.getAttribute('data-testid'),
-      defaultPrevented: !pressed,
-    })}`
+  const layers = Array.from(
+    element.ownerDocument.querySelectorAll<HTMLElement>('[data-slot$="-content"][data-open]'),
+    layer => ({
+      slot: layer.dataset.slot,
+      testId: layer.dataset.testid,
+      modal: layer.getAttribute('aria-modal'),
+      containsSource: layer.contains(element),
+    })
   )
+  const pressed = dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  const start = {
+    source: command.selector,
+    target: command.target,
+    start: [startOptions.clientX, startOptions.clientY],
+    end: [endOptions.clientX, endOptions.clientY],
+    sourceConnected: element.isConnected,
+    targetConnected: target.isConnected,
+    hitSource: hit !== null && element.contains(hit),
+    hitId: hit?.closest('[data-testid]')?.getAttribute('data-testid'),
+    defaultPrevented: !pressed,
+    layers,
+  }
   await waitForDesktopControlTick()
-  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  const moved = dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
   dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
+  console.warn(
+    `[desktop-e2e-drag-start] ${JSON.stringify({
+      ...start,
+      moveDefaultPrevented: !moved,
+      previews: document.querySelectorAll('[data-drag-preview]').length,
+      dragging: element.hasAttribute('data-dragging'),
+      pressed: element.getAttribute('aria-pressed'),
+    })}`
+  )
   activeDesktopControlDrag = {
     endOptions,
     sourceElement: element,
