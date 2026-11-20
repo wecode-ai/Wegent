@@ -41,6 +41,14 @@ export async function verifyCollaborationExpTeamManagement({
   assert.equal(await control.command('getValue', roleName), 'Integration assistant')
   assert.deepEqual(await nativeTaskIdentities(), beforeManage)
   assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
+  const profile = '[data-testid="stand-in-profile-panel"]'
+  await click(control, `${profile} [data-testid="stand-in-close"]`)
+  await control.command('waitFor', profile, { visible: false })
+  const settings = '[data-testid="stand-in-page"]'
+  if (Number(await control.command('getElementCount', `${settings}[data-open]`))) {
+    await click(control, `${settings} [data-testid="stand-in-close"]`)
+    await control.command('waitFor', settings, { visible: false })
+  }
 }
 
 /** Reuse one held native execution across every actual responsive presentation. */
