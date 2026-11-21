@@ -87,6 +87,32 @@ async fn deferred_api_key_refresh_uses_the_request_handle() {
     );
 }
 
+/// A service key reads `users` by name and, on a miss, repeats the source's
+/// follow-up lookup with the name inlined.
+#[tokio::test]
+async fn the_service_key_deferred_read_repeats_the_follow_up_lookup() {
+    let mut sql = RecordedRequestSql::default();
+    let _ = resolve_authenticated_key_on(
+        &user_reader(),
+        &mut sql,
+        AuthenticatedKey {
+            api_key_id: 6539,
+            api_key_name: None,
+            key_hash: String::new(),
+            lookup: UserLookup::ByName("yingeng".to_string()),
+        },
+    )
+    .await
+    .expect_err("the fake returns no user");
+    let calls = sql.calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].1, crate::user_reader::USER_BY_NAME_QUERY);
+    assert_eq!(calls[0].2, 1);
+    assert!(calls[1].1.contains("FROM users"));
+    assert!(calls[1].1.contains("users.user_name = 'yingeng'"));
+    assert_eq!(calls[1].2, 0, "the follow-up read inlines the name");
+}
+
 use super::*;
 use crate::user_reader::PublicUserReader;
 
@@ -217,7 +243,7 @@ fn a_deferred_rejection_renders_exactly_like_the_extractor_rejection() {
 
 /// The public reader on a lazily-connected pool: the deferred reads only
 /// use the request handle, so no server is needed.
-fn user_reader() -> crate::user_reader::PublicUserReader {
+fn user_reader() -> PublicUserReader {
     PublicUserReader::new(
         brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
             .expect("lazy pool"),
@@ -295,30 +321,4 @@ async fn the_deferred_user_read_follows_the_api_keys_reload_on_one_handle() {
         calls[1].2, 1,
         "the user id is bound, like the pooled reader binds it"
     );
-}
-
-/// A service key reads `users` by name and, on a miss, repeats the source's
-/// follow-up lookup with the name inlined.
-#[tokio::test]
-async fn the_service_key_deferred_read_repeats_the_follow_up_lookup() {
-    let mut sql = RecordedRequestSql::default();
-    let _ = resolve_authenticated_key_on(
-        &user_reader(),
-        &mut sql,
-        AuthenticatedKey {
-            api_key_id: 6539,
-            api_key_name: None,
-            key_hash: String::new(),
-            lookup: UserLookup::ByName("yingeng".to_string()),
-        },
-    )
-    .await
-    .expect_err("the fake returns no user");
-    let calls = sql.calls();
-    assert_eq!(calls.len(), 2, "{calls:?}");
-    assert_eq!(calls[0].1, crate::user_reader::USER_BY_NAME_QUERY);
-    assert_eq!(calls[0].2, 1);
-    assert!(calls[1].1.contains("FROM users"));
-    assert!(calls[1].1.contains("users.user_name = 'yingeng'"));
-    assert_eq!(calls[1].2, 0, "the follow-up read inlines the name");
 }
