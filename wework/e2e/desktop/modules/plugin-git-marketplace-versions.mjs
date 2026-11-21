@@ -220,13 +220,10 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
     const authMarker = join(executorHome, CONNECTOR_AUTH_MARKER_NAME)
     await access(authMarker)
 
+    const activeBefore = await readFile(activatedManifest, 'utf8')
+    assert.equal(JSON.parse(activeBefore).version, originalVersion)
+    // Publish to Git without changing the active catalog, which Codex can sync into the cache.
     await writeRelease(root, publishedVersion)
-    const sourceBefore = await readFile(
-      join(root, 'plugins', PLUGIN_NAME, '.codex-plugin', 'plugin.json'),
-      'utf8'
-    )
-    // Native plugin/installed reports the active catalog version in this state.
-    await writeFile(activatedManifest, sourceBefore)
 
     await control.command('click', controlId('plugins-button'))
     await control.command('click', controlId('plugins-manage-button'))
@@ -294,7 +291,7 @@ export async function verifyGitMarketplaceVersions({ codexHome, control, executo
     )
     assert.equal(
       await readFile(activatedManifest, 'utf8'),
-      sourceBefore,
+      activeBefore,
       'Checking mutated the active marketplace'
     )
 
