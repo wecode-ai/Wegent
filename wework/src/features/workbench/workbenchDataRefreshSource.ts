@@ -117,6 +117,7 @@ export function createWorkbenchDataRefreshSource(
   let workListRefreshRevision = 0
   let deviceListRevision = 0
   let runtimeLoadGeneration = 0
+  let lastProjectMutationRevision = 0
   let localRuntimeWork: RuntimeWorkListResponse | null = null
   const runtimeTaskTitleOverrides = new Map<
     string,
@@ -419,7 +420,16 @@ export function createWorkbenchDataRefreshSource(
       })
     }
     if (!isCurrent()) return
-    if (revision !== workListRefreshRevision) {
+    const latest = revision === workListRefreshRevision
+    // Publish the first usable inventory while a newer refresh is in flight.
+    // A project mutation or a result already on screen still supersedes it.
+    if (
+      !latest &&
+      (!preferCached ||
+        result.status !== 'fulfilled' ||
+        localRuntimeWork !== null ||
+        lastProjectMutationRevision > revision)
+    ) {
       if (generation === runtimeLoadGeneration) return loadLocalRuntimeWork(false, isCurrent)
       return
     }
@@ -430,33 +440,34 @@ export function createWorkbenchDataRefreshSource(
       })
       return
     }
-    const runtimeWork = applyRuntimeTaskOverrides(result.value, true, supervisorRevision)
+    const runtimeWork = applyRuntimeTaskOverrides(result.value, latest, supervisorRevision)
     localRuntimeWork = runtimeWork
-    if (!transport.cloudBackgroundApi?.listRuntimeWork)
+    if (latest && !transport.cloudBackgroundApi?.listRuntimeWork)
       releaseConfirmedArchivedRuntimeTasks(runtimeWork)
     dispatch({
       type: 'runtime_work_refreshed',
       runtimeWork: selectVisibleRuntimeWork(runtimeWork, cloudRuntimeState, readState().devices),
     })
-    dispatch({ type: 'runtime_work_load_succeeded' })
+    if (latest) dispatch({ type: 'runtime_work_load_succeeded' })
+    else if (readState().runtimeWorkLoad.phase === 'loading')
+      dispatch({ type: 'runtime_work_load_started' })
     return runtimeWork
   }
 
-  const startBootstrap = () => {
+  const startBootstrap = (transportChanged: boolean) => {
     const executorClient = transport.executorClient
     const isCurrent = captureOwner()
     const deviceRevision = ++deviceListRevision
     const traceId = createModelLoadingTrace()
     const startedAt = nowMs()
     logModelLoading(traceId, 'bootstrap.devices_started')
-    logModelLoading(traceId, 'bootstrap.tasks_started')
+    logModelLoading(traceId, 'bootstrap.tasks_started', { transportChanged })
     const runtimeRequest = loadLocalRuntimeWork(true, isCurrent).then(runtimeWork => {
       logModelLoading(traceId, 'bootstrap.tasks_received', {
         elapsedMs: Math.round(nowMs() - startedAt),
         ok: Boolean(runtimeWork),
         cancelled: !isCurrent(),
       })
-      return runtimeWork
     })
     const devicesRequest = timedWorkbenchBootstrapRequest(
       'devices',
@@ -493,18 +504,14 @@ export function createWorkbenchDataRefreshSource(
     })
     // Local results are already published independently; only cloud composition needs both.
     void Promise.all([devicesRequest, runtimeRequest])
-      .then(([devices, runtimeWork]) => {
+      .then(([devices]) => {
         if (!isCurrent() || !devices || deviceRevision !== deviceListRevision) return
-        return refreshCloudBackgroundData(
-          devices,
-          runtimeWork ?? localRuntimeWork ?? EMPTY_RUNTIME_WORK,
-          {
-            projects: [],
-            standaloneDeviceId: getRememberedStandaloneDeviceId(readUser(), devices),
-            trigger: 'bootstrap',
-            isCancelled: () => !isCurrent(),
-          }
-        )
+        return refreshCloudBackgroundData(devices, localRuntimeWork ?? EMPTY_RUNTIME_WORK, {
+          projects: [],
+          standaloneDeviceId: getRememberedStandaloneDeviceId(readUser(), devices),
+          trigger: 'bootstrap',
+          isCancelled: () => !isCurrent(),
+        })
       })
       .catch(error => console.error('[Wework] Workbench background bootstrap failed', error))
   }
@@ -599,7 +606,7 @@ export function createWorkbenchDataRefreshSource(
     const removesSelection = isRuntimeProjectSelectionRemoved(selection, projectId, visible)
     cloudBackgroundRequest?.controller.abort()
     cloudBackgroundRequest = null
-    workListRefreshRevision += 1
+    lastProjectMutationRevision = ++workListRefreshRevision
     localRuntimeWork = nextLocal
     cachedRemoteRuntimeWork = {
       ...cachedRemoteRuntimeWork,
@@ -793,7 +800,7 @@ export function createWorkbenchDataRefreshSource(
     if (!isActive()) return
 
     if (cachedRemoteRuntimeWork.ownershipKey !== cacheScope) return
-    workListRefreshRevision += 1
+    lastProjectMutationRevision = ++workListRefreshRevision
     cloudBackgroundRequest?.controller.abort()
     const projectUpdate = (work: RuntimeWorkListResponse) =>
       updateRuntimeWorkProject(work, update, readState().devices)
@@ -880,7 +887,7 @@ export function createWorkbenchDataRefreshSource(
                 : filterDisconnectedRemoteRuntimeWork(work),
             })
         }
-        startBootstrap()
+        startBootstrap(changed)
       }
       return () => {
         listeners.delete(listener)
