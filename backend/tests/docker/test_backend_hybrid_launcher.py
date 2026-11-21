@@ -35,6 +35,7 @@ Path(os.environ['FIXTURE_RECORDS'], role + '.json').write_text(json.dumps({
     'routes': os.environ.get('WEGENT_RS_ROUTES_FILE'),
     'dotenv': os.environ.get('WEGENT_BACKEND_RS_ENV_FILE'),
     'db_owner': os.environ.get('DB_INITIALIZATION_OWNER'),
+    'shutdown_marker': os.environ.get('WEGENT_HYBRID_SHUTDOWN_FILE'),
 }))
 if os.environ.get('FIXTURE_HOLD_ROLE') == role:
     while not Path(os.environ['FIXTURE_RECORDS'], role + '.start').exists():
@@ -137,7 +138,7 @@ def _running_launcher(
 ) -> Iterator[subprocess.Popen]:
     with (tmp_path / "launcher.log").open("w") as log:
         process = subprocess.Popen(
-            ["bash", str(LAUNCHER)], env=env, stdout=log, stderr=log
+            ["bash", str(LAUNCHER)], cwd=tmp_path, env=env, stdout=log, stderr=log
         )
         try:
             yield process
@@ -216,9 +217,13 @@ def _assert_stopped(state: dict[str, str], env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("production", [True, False])
 def test_launcher_preserves_layout_modes_and_stops_both_children(
-    tmp_path: Path, production: bool
+    tmp_path: Path, production: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Container startup uses a prebuilt gateway and no development reloader."""
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    monkeypatch.setenv("TMPDIR", "tmp")
+    monkeypatch.setenv("CDPATH", ".")
     with _launch(tmp_path, production=production) as (process, env, state):
         python = json.loads((tmp_path / "python.json").read_text())
         rust = json.loads((tmp_path / "rust.json").read_text())
@@ -238,6 +243,11 @@ def test_launcher_preserves_layout_modes_and_stops_both_children(
         assert rust["routes"] == str(
             tmp_path / "repository/backend-rs/config/routes.toml"
         )
+        assert python["shutdown_marker"] == rust["shutdown_marker"]
+        marker = Path(rust["shutdown_marker"])
+        assert marker.is_absolute()
+        assert marker.parent.parent == scratch.resolve()
+        marker.touch()
         if production:
             assert args[args.index("--timeout-graceful-shutdown") + 1] == "7"
         assert args[args.index("--log-level") + 1] == (
@@ -246,6 +256,7 @@ def test_launcher_preserves_layout_modes_and_stops_both_children(
         process.terminate()
         assert process.wait(timeout=10) == 143
         _assert_stopped(state, env)
+        assert not marker.parent.exists()
 
 
 @pytest.mark.parametrize("role", ["python", "rust"])

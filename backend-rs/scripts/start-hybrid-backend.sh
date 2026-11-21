@@ -166,6 +166,7 @@ done
 BUILD_PID=""
 PYTHON_PID=""
 RUST_PID=""
+SHUTDOWN_DIR=""
 
 write_state() {
     if [ -z "$STATE_FILE" ]; then
@@ -197,6 +198,10 @@ cleanup() {
     done
     if [ -n "$STATE_FILE" ]; then
         rm -f "$STATE_FILE" "$STATE_FILE.$$"
+    fi
+    if [ -n "$SHUTDOWN_DIR" ]; then
+        rm -f "$SHUTDOWN_DIR/shutting-down"
+        rmdir "$SHUTDOWN_DIR"
     fi
 }
 
@@ -237,6 +242,10 @@ echo "Starting Rust gateway on http://$PUBLIC_HOST:$PUBLIC_PORT"
 echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
 echo "Dotenv file: $RS_ENV_FILE"
+# Keep the shutdown state local to this pair of Backend processes.
+SHUTDOWN_TMPDIR=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd -P)
+SHUTDOWN_DIR=$(mktemp -d "$SHUTDOWN_TMPDIR/wegent-hybrid-shutdown.XXXXXXXX")
+export WEGENT_HYBRID_SHUTDOWN_FILE="$SHUTDOWN_DIR/shutting-down"
 (
     # Rust resolves its default config/example.env relative to the current
     # working directory. Run it from the Rust project root so the default and

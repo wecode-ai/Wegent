@@ -24,6 +24,7 @@ pub use routes::load_routes_config;
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8000;
 pub(crate) const DEFAULT_PYTHON_UPSTREAM: &str = "http://127.0.0.1:8004";
+pub(crate) const DATABASE_HEALTH_PATH: &str = "/api/health";
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 // The locked OriginService uses hyper-util's 90s idle connection pool. Keep
 // loopback connections alive beyond that lease; the independent public gateway
@@ -247,7 +248,8 @@ where
     let authenticator = crate::auth::AppAuthenticator::new(state.authentication_services());
     let socketio = crate::socketio::handlers::build(Arc::clone(&state)).await?;
     let http = brz_http_server::hyper::HandlerService::with_authenticator(
-        crate::http_fallback::FastApiFallback::new(routes),
+        crate::http_fallback::FastApiFallback::new(routes)
+            .with_slash_redirect(DATABASE_HEALTH_PATH),
         authenticator,
         server_config(),
     )?;

@@ -288,7 +288,7 @@ class HostingFixture(unittest.TestCase):
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             try:
-                if cls.client.get("/api/health").status_code == 200:
+                if cls.client.get("/api/ready").status_code == 200:
                     return
             except httpx.TransportError:
                 pass

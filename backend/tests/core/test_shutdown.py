@@ -13,10 +13,13 @@ These tests verify that the shutdown manager correctly:
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException, Response
 
+from app.api.endpoints import health
 from app.core.shutdown import ShutdownManager
 
 
@@ -66,6 +69,103 @@ class TestShutdownManager:
 
             # Duration should continue from first initiation
             assert shutdown_manager.shutdown_duration > first_duration
+
+    @pytest.mark.asyncio
+    async def test_hybrid_shutdown_marker_tracks_python_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        marker = tmp_path / "marker" / "shutting-down"
+        marker.parent.mkdir()
+        marker.touch()
+        monkeypatch.setenv("WEGENT_HYBRID_SHUTDOWN_FILE", str(marker))
+        manager = ShutdownManager()
+        monkeypatch.setattr(health, "shutdown_manager", manager)
+        assert not marker.exists()
+        marker.parent.rmdir()
+
+        try:
+            with patch("app.core.cache.cache_manager") as mock_cache:
+                mock_cache.set = AsyncMock(return_value=True)
+                # A missing parent makes the first marker write fail.
+                with pytest.raises(HTTPException) as error:
+                    await health.initiate_shutdown()
+                assert error.value.status_code == 503
+                assert manager.is_shutting_down
+                assert not marker.exists()
+
+                response = Response()
+                result = await health.wait_for_shutdown(response)
+                assert response.status_code == 503
+                assert result["status"] == "completed"
+                assert result["marker_synced"] is False
+
+                marker.parent.mkdir()
+                result = await health.initiate_shutdown()
+                assert result["status"] == "already_shutting_down"
+                assert marker.is_file()
+                mock_cache.set.assert_awaited_once()
+        finally:
+            manager.reset()
+        assert not marker.exists()
+
+    @pytest.mark.asyncio
+    async def test_reset_retries_when_hybrid_marker_cannot_be_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        marker = tmp_path / "shutting-down"
+        monkeypatch.setenv("WEGENT_HYBRID_SHUTDOWN_FILE", str(marker))
+        manager = ShutdownManager()
+        monkeypatch.setattr(health, "shutdown_manager", manager)
+
+        try:
+            with patch("app.core.cache.cache_manager") as mock_cache:
+                mock_cache.set = AsyncMock(return_value=True)
+                assert (await manager.initiate_shutdown()).started
+            marker.unlink()
+            marker.mkdir()
+
+            with pytest.raises(HTTPException) as error:
+                await health.reset_shutdown()
+            assert error.value.status_code == 503
+            assert manager.is_shutting_down
+            assert marker.exists()
+
+            marker.rmdir()
+            marker.touch()
+            assert (await health.reset_shutdown())["status"] == "reset_complete"
+            assert not manager.is_shutting_down
+            assert not marker.exists()
+        finally:
+            if marker.is_dir():
+                marker.rmdir()
+            manager.reset()
+
+    @pytest.mark.asyncio
+    async def test_repeated_shutdown_proceeds_while_redis_publish_is_pending(
+        self, shutdown_manager: ShutdownManager
+    ) -> None:
+        publishing = asyncio.Event()
+        finish_publish = asyncio.Event()
+
+        async def publish(*args, **kwargs) -> bool:
+            publishing.set()
+            await finish_publish.wait()
+            return True
+
+        with patch("app.core.cache.cache_manager") as mock_cache:
+            mock_cache.set = AsyncMock(side_effect=publish)
+            first = asyncio.create_task(shutdown_manager.initiate_shutdown())
+            try:
+                await asyncio.wait_for(publishing.wait(), timeout=5)
+                repeated = await asyncio.wait_for(
+                    shutdown_manager.initiate_shutdown(), timeout=5
+                )
+                assert not repeated.started
+                assert repeated.marker_synced
+                mock_cache.set.assert_awaited_once()
+            finally:
+                finish_publish.set()
+                await first
 
     @pytest.mark.asyncio
     async def test_register_stream_success(self, shutdown_manager):

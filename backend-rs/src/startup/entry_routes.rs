@@ -10,6 +10,7 @@ use crate::shutdown_state::ShutdownState;
 use crate::state::AppState;
 use brz_redis::{Redis as _, SetExpiration, SetOptions};
 use serde::Serialize;
+use std::future::Future;
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -85,7 +86,7 @@ async fn startup() -> StartupStatus {
 /// rollback statements are issued here.
 #[brz_http_server::get("/api/health", access = public)]
 async fn health_check(#[inject(state)] state: &AppState) -> brz_http_server::Response {
-    health_response(&state.mysql, state.shutdown.is_shutting_down()).await
+    health_response(&state.mysql, state.shutdown.is_health_shutting_down()).await
 }
 
 /// `health_check`'s liveness statement
@@ -96,7 +97,7 @@ const HEALTH_USERS_COUNT_QUERY: &str = "SELECT COUNT(*) FROM users";
 /// the statement and both response branches stay testable without a database.
 async fn health_response<M: brz_mysql::Mysql>(
     mysql: &M,
-    shutting_down: bool,
+    shutting_down: impl Future<Output = bool>,
 ) -> brz_http_server::Response {
     // Source `.scalar()` reads the first column positionally and never
     // inspects the value, so only a raised error selects the unhealthy body.
@@ -104,7 +105,7 @@ async fn health_response<M: brz_mysql::Mysql>(
         .fetch_optional::<_, _, i64>(HEALTH_USERS_COUNT_QUERY, ())
         .await;
     let body = match result {
-        Ok(_) => healthy_body(shutting_down),
+        Ok(_) => healthy_body(shutting_down.await),
         Err(error) => unhealthy_body(&error.to_string()),
     };
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
@@ -317,6 +318,20 @@ mod tests {
         assert_eq!(paths, ["/api/health"]);
     }
 
+    #[test]
+    fn default_gateway_routes_health_method_errors_to_rust() {
+        let routes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&routes).unwrap();
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(table.matches(&http::Method::GET, "/api/health"));
+        assert!(table.matches(&http::Method::POST, "/api/health"));
+        let custom = http::Method::from_bytes(b"CUSTOM").unwrap();
+        assert!(table.matches(&custom, "/api/health"));
+        assert!(table.matches(&http::Method::GET, "/api/health/"));
+        assert!(table.matches(&custom, "/api/health/"));
+        assert!(!table.matches(&custom, "/api/health/detail"));
+    }
+
     /// The recorded response body of `api-health/5f47f84b` (recording
     /// 20261016030056): 200 with the healthy payload while running.
     #[test]
@@ -337,18 +352,21 @@ mod tests {
     #[tokio::test]
     async fn health_check_issues_the_source_liveness_statement() {
         let capture = crate::sql_test_support::KindQueryCapture::default();
-        let response = health_response(&capture, false).await;
-        let queries = capture.queries();
-        assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].sql, "SELECT COUNT(*) FROM users");
-        assert_eq!(queries[0].args, 0);
+        let response = health_response(&capture, async {
+            let queries = capture.queries();
+            assert_eq!(queries.len(), 1);
+            assert_eq!(queries[0].sql, "SELECT COUNT(*) FROM users");
+            assert_eq!(queries[0].args, 0);
+            true
+        })
+        .await;
         assert_eq!(response.status(), brz_http_server::StatusCode::OK);
         let brz_http_server::ResponseBody::Owned(body) = response.body() else {
             panic!("health renders an owned JSON body");
         };
         assert_eq!(
             body.as_ref(),
-            br#"{"status":"healthy","shutting_down":false}"#.as_slice()
+            br#"{"status":"healthy","shutting_down":true}"#.as_slice()
         );
     }
 }

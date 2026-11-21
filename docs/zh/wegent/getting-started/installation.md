@@ -165,8 +165,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml --profile rag u
 
 镜像构建阶段编译 Rust，运行时复用混合启动脚本，不再编译或启用 Python 热重载。
 容器停止时，脚本向两个进程转发终止信号；任一进程退出时，另一进程也会被清理，
-随后由原有 Compose 重启策略恢复服务。健康检查通过 Rust 网关访问 Python 的
-`/api/health`。`GRACEFUL_SHUTDOWN_TIMEOUT` 继续控制 Python 的优雅退出等待时间，
+随后由原有 Compose 重启策略恢复服务。Rust 负责 `GET /api/health`，报告数据库健康
+和同一容器内的关闭状态。`GRACEFUL_SHUTDOWN_TIMEOUT` 继续控制 Python 的优雅退出等待时间，
 使用 `docker compose stop -t` 时应为活跃请求预留足够时间。
 
 运行配置通过 Compose 环境变量注入，真实 `.env` 和本机 Cargo `target` 不会打进镜像。

@@ -27,14 +27,21 @@ Usage:
 
 import asyncio
 import logging
+import os
 import time
-from typing import Optional, Set
+from pathlib import Path
+from typing import NamedTuple, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 # Redis key for shutdown state (cross-worker communication)
 SHUTDOWN_STATE_KEY = "wegent:shutdown_state"
 SHUTDOWN_STATE_TTL = 120  # 2 minutes TTL for shutdown state
+
+
+class ShutdownInitiation(NamedTuple):
+    started: bool
+    marker_synced: bool
 
 
 class ShutdownManager:
@@ -53,6 +60,25 @@ class ShutdownManager:
         self._active_streams: Set[int] = set()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._shutdown_start_time: Optional[float] = None
+        marker = os.environ.get("WEGENT_HYBRID_SHUTDOWN_FILE")
+        self._hybrid_marker = Path(marker) if marker else None
+        # A reloaded Python worker starts with a fresh shutdown state.
+        self._set_hybrid_marker(False)
+
+    def _set_hybrid_marker(self, shutting_down: bool) -> bool:
+        if self._hybrid_marker is None:
+            return True
+        try:
+            if shutting_down:
+                self._hybrid_marker.touch(mode=0o600)
+            else:
+                self._hybrid_marker.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Failed to update hybrid Backend shutdown state", exc_info=True
+            )
+            return False
+        return True
 
     @property
     def is_shutting_down(self) -> bool:
@@ -74,7 +100,7 @@ class ShutdownManager:
         """Get a copy of active stream IDs."""
         return self._active_streams.copy()
 
-    async def initiate_shutdown(self) -> None:
+    async def initiate_shutdown(self) -> ShutdownInitiation:
         """
         Initiate graceful shutdown.
 
@@ -82,14 +108,17 @@ class ShutdownManager:
         1. Sets the shutdown flag
         2. Records shutdown start time
         3. Optionally notifies other workers via Redis
+
+        Reports whether this call started the drain and synchronized its marker.
         """
         from app.core.local_shutdown import mark_local_shutdown
 
         mark_local_shutdown()
         async with self._lock:
+            marker_synced = self._set_hybrid_marker(True)
             if self._shutting_down:
                 logger.warning("Shutdown already initiated")
-                return
+                return ShutdownInitiation(started=False, marker_synced=marker_synced)
 
             self._shutting_down = True
             self._shutdown_start_time = time.time()
@@ -98,8 +127,9 @@ class ShutdownManager:
                 len(self._active_streams),
             )
 
-            # Try to notify other workers via Redis
-            await self._notify_shutdown_via_redis()
+        # The drain can proceed while the first caller publishes to Redis.
+        await self._notify_shutdown_via_redis()
+        return ShutdownInitiation(started=True, marker_synced=marker_synced)
 
     async def _notify_shutdown_via_redis(self) -> None:
         """Notify other workers about shutdown via Redis."""
@@ -231,20 +261,23 @@ class ShutdownManager:
 
         return cancelled_count
 
-    def reset(self) -> None:
+    def reset(self) -> bool:
         """
-        Reset shutdown state (for testing purposes).
+        Reset shutdown state once the hybrid marker has been removed.
 
-        WARNING: This should only be used in tests.
+        Returns whether the reset completed.
         """
         from app.core.local_shutdown import reset_local_shutdown
 
+        if not self._set_hybrid_marker(False):
+            return False
         reset_local_shutdown()
         self._shutting_down = False
         self._shutdown_event.clear()
         self._active_streams.clear()
         self._shutdown_start_time = None
         logger.debug("Shutdown manager state reset")
+        return True
 
 
 # Global shutdown manager instance

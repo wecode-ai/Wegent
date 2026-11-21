@@ -227,7 +227,7 @@ echo -e "\n${YELLOW}Step 6: Waiting for services to be ready...${NC}"
 
 echo "Waiting for backend..."
 for i in {1..60}; do
-    if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
+    if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
         echo -e "${GREEN}Backend is ready!${NC}"
         break
     fi

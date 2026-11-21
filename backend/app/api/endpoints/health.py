@@ -10,7 +10,7 @@ During graceful shutdown:
 - /shutdown/reset (POST) resets shutdown state to restore 200
 """
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -41,10 +41,9 @@ async def health() -> dict[str, str]:
     return {"status": "healthy"}
 
 
-@router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     """
-    This endpoint checks if the application is alive and responding.
+    Report database health for API prefixes served by Python.
     It should return 200 even during graceful shutdown (app is still alive,
     just not accepting new traffic).
     Returns:
@@ -119,15 +118,18 @@ async def initiate_shutdown():
     Returns:
         dict: Shutdown initiation status
     """
-    if shutdown_manager.is_shutting_down:
+    result = await shutdown_manager.initiate_shutdown()
+    if not result.marker_synced:
+        raise HTTPException(
+            status_code=503, detail="Could not publish hybrid Backend shutdown state."
+        )
+    if not result.started:
         return {
             "status": "already_shutting_down",
             "message": "Shutdown was already initiated",
             "active_streams": shutdown_manager.get_active_stream_count(),
             "shutdown_duration": shutdown_manager.shutdown_duration,
         }
-
-    await shutdown_manager.initiate_shutdown()
 
     return {
         "status": "shutdown_initiated",
@@ -157,7 +159,7 @@ def shutdown_status(response: Response):
 
 
 @router.post("/shutdown/wait")
-async def wait_for_shutdown():
+async def wait_for_shutdown(response: Response):
     """
     Wait for all active streams to complete during graceful shutdown.
 
@@ -181,9 +183,11 @@ async def wait_for_shutdown():
     """
     from app.core.config import settings
 
-    # Initiate shutdown if not already
-    if not shutdown_manager.is_shutting_down:
-        await shutdown_manager.initiate_shutdown()
+    result = await shutdown_manager.initiate_shutdown()
+    marker_status = {}
+    if not result.marker_synced:
+        response.status_code = 503
+        marker_status["marker_synced"] = False
 
     active_streams = shutdown_manager.get_active_stream_count()
 
@@ -193,6 +197,7 @@ async def wait_for_shutdown():
             "message": "No active streams, shutdown can proceed immediately",
             "active_streams": 0,
             "waited_seconds": 0,
+            **marker_status,
         }
 
     # Wait for streams to complete
@@ -205,6 +210,7 @@ async def wait_for_shutdown():
             "message": "All streams completed successfully",
             "active_streams": 0,
             "waited_seconds": shutdown_manager.shutdown_duration,
+            **marker_status,
         }
     else:
         # Timeout reached, cancel remaining streams
@@ -217,11 +223,12 @@ async def wait_for_shutdown():
             "active_streams": remaining,
             "cancelled_streams": cancelled,
             "waited_seconds": shutdown_manager.shutdown_duration,
+            **marker_status,
         }
 
 
 @router.post("/shutdown/reset")
-def reset_shutdown():
+async def reset_shutdown() -> dict[str, str | bool]:
     """
     Reset shutdown state to restore normal operation.
 
@@ -235,7 +242,10 @@ def reset_shutdown():
         dict: Reset status
     """
     was_shutting_down = shutdown_manager.is_shutting_down
-    shutdown_manager.reset()
+    if not shutdown_manager.reset():
+        raise HTTPException(
+            status_code=503, detail="Could not reset hybrid Backend shutdown state."
+        )
 
     return {
         "status": "reset_complete",

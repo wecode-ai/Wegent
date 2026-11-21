@@ -52,6 +52,7 @@ Direct gateway configuration uses these environment variables:
 | `WEGENT_PYTHON_UPSTREAM_URL` | `http://127.0.0.1:8004` | Python origin |
 | `WEGENT_BACKEND_RS_ENV_FILE` | `config/example.env` | Dotenv file read by the gateway; the launcher defaults it to the Python Backend's `.env` |
 | `WEGENT_RS_ROUTES_FILE` | unset | Optional TOML route file; unset forwards every request to Python |
+| `WEGENT_HYBRID_SHUTDOWN_FILE` | unset | Instance-local marker used by Rust health checks to report Python shutdown |
 
 The launcher sets `WEGENT_RS_ROUTES_FILE` to the selected backend's
 [`config/routes.toml`](config/routes.toml). The internal backend's route file
@@ -59,6 +60,21 @@ includes this public list and adds its own routes. Rules can match exact paths,
 path prefixes, or templates with `:parameter` and terminal `*path` segments.
 Named parameters match one nonempty path segment, so unrelated Python paths
 under the same prefix remain with Python.
+
+When upgrading a hybrid deployment that uses a custom `WEGENT_RS_ROUTES_FILE`,
+copy the exact `/api/health` and `/api/health/` rules from the shipped route file
+into the override. Keep `methods = []` for Rust to handle method errors and
+the trailing-slash redirect. The Python process probe remains available at `/health`.
+For a directly launched gateway, set `WEGENT_RS_ROUTES_FILE` to the shipped
+route file or to an override that includes those rules before using `/api/health`.
+
+The hybrid launcher automatically provides a shutdown marker shared by its
+Rust and Python processes. If you launch those processes separately with Rust
+handling `GET /api/health`, set `WEGENT_HYBRID_SHUTDOWN_FILE` to the same
+absolute path in both environments. Use a path unique to that Backend instance
+with a parent directory writable by Python and accessible to Rust.
+Hybrid health reports Python's shutdown state, including when Python resets it.
+A standalone Rust process reports its own shutdown state.
 
 Set `WEGENT_RS_UNIQUE_APP_DEVICE_NAMES=1` if a legacy MySQL schema enforces
 uniqueness on `kinds (user_id, kind, name, namespace)`. Rust App device

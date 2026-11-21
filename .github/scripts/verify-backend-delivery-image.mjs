@@ -37,7 +37,7 @@ export function assertHealthy(body) {
   assert.equal(
     body.shutting_down,
     false,
-    "Python upstream must be serving requests",
+    "Backend must be ready to accept traffic",
   );
 }
 
@@ -116,7 +116,7 @@ export function assertRouteOwnership(routes) {
   const matches = (method, path) =>
     routes.some(
       (route) =>
-        route.methods.includes(method) &&
+        (route.methods.length === 0 || route.methods.includes(method)) &&
         new RegExp(
           "^" +
             route.path
@@ -136,13 +136,26 @@ export function assertRouteOwnership(routes) {
     true,
     "Identity probe must use a Rust-owned route",
   );
-  for (const path of ["/api/health", "/api/knowledge-bases/all-grouped"]) {
-    assert.equal(
-      matches("GET", path),
-      false,
-      `${path} must exercise Python forwarding`,
-    );
-  }
+  assert.equal(
+    matches("GET", "/api/health"),
+    true,
+    "Database health must use a Rust-owned route",
+  );
+  assert.equal(
+    matches("POST", "/api/health"),
+    true,
+    "Rust must handle health method errors",
+  );
+  assert.equal(
+    matches("GET", "/api/health/"),
+    true,
+    "Rust must handle the health redirect",
+  );
+  assert.equal(
+    matches("GET", "/api/knowledge-bases/all-grouped"),
+    false,
+    "Knowledge base probe must exercise Python forwarding",
+  );
 }
 
 async function waitFor(label, predicate, timeout = 180_000) {
@@ -172,9 +185,10 @@ function token(secret) {
   return `${data}.${createHmac("sha256", secret).update(data).digest("base64url")}`;
 }
 
-async function request(base, path, secret) {
+async function request(base, path, credential, method = "GET") {
   const response = await fetch(base + path, {
-    headers: { Authorization: `Bearer ${token(secret)}` },
+    method,
+    headers: { Authorization: `Bearer ${credential}` },
     signal: AbortSignal.timeout(5000),
   });
   assert.equal(response.status, 200, `${path} must return HTTP 200`);
@@ -247,30 +261,50 @@ async function ready(name, base, secret) {
     assert.equal(state.Running, true, `${name} exited during startup`);
     if (state.Health?.Status !== "healthy") return false;
     try {
-      assertHealthy(await request(base, "/api/health", secret));
+      assertHealthy(await request(base, "/api/health", token(secret)));
+      const body = await request(base, "/api/ready", token(secret));
+      assert.equal(
+        body.status,
+        "ready",
+        "Database must contain initialized users",
+      );
       return true;
     } catch {
       return false;
     }
   });
-  const body = await request(base, "/api/ready", secret);
-  assert.equal(body.status, "ready", "Database must contain initialized users");
 }
 
 async function verifyRoutes(name, base, secret) {
   assertRouteOwnership(readRoutes(name));
-  assertHealthy(await request(base, "/api/health", secret));
+  assertHealthy(await request(base, "/api/health", token(secret)));
   const direct = JSON.parse(
     python(
       name,
       `
 import json, urllib.request
-print(urllib.request.urlopen('http://127.0.0.1:8004/api/health', timeout=5).read().decode())
+print(urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=5).read().decode())
 `,
     ),
   );
-  assertHealthy(direct);
-  const user = await request(base, "/api/users/me", secret);
+  assert.deepEqual(direct, { status: "healthy" });
+  const wrongMethod = await fetch(base + "/api/health", {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.get("allow"), "GET");
+  assert.deepEqual(await wrongMethod.json(), { detail: "Method Not Allowed" });
+  const slashRedirect = await fetch(base + "/api/health/?check=value%2Bmore", {
+    redirect: "manual",
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(slashRedirect.status, 307);
+  assert.equal(
+    new URL(slashRedirect.headers.get("location"), base).href,
+    new URL("/api/health?check=value%2Bmore", base).href,
+  );
+  const user = await request(base, "/api/users/me", token(secret));
   assert.equal(
     user.user_name,
     "admin",
@@ -279,11 +313,21 @@ print(urllib.request.urlopen('http://127.0.0.1:8004/api/health', timeout=5).read
   const grouped = await request(
     base,
     "/api/knowledge-bases/all-grouped",
-    secret,
+    token(secret),
   );
   assert.ok(Array.isArray(grouped.personal.created_by_me));
   assert.ok(Array.isArray(grouped.groups));
   assert.ok(Array.isArray(grouped.organization.knowledge_bases));
+}
+
+async function verifyHealthDuringShutdown(base, internalToken) {
+  await request(base, "/api/shutdown/initiate", internalToken, "POST");
+  assert.deepEqual(await request(base, "/api/health", internalToken), {
+    status: "healthy",
+    shutting_down: true,
+  });
+  await request(base, "/api/shutdown/reset", internalToken, "POST");
+  assertHealthy(await request(base, "/api/health", internalToken));
 }
 
 async function stopped(name, stateFile, evidence, expectedCode) {
@@ -430,6 +474,7 @@ export async function verifyDeliveryImage({ image, revision, evidence }) {
         "Rust must load the packaged initialization resources",
       );
       if (scenario === "sigterm") {
+        await verifyHealthDuringShutdown(base, internalToken);
         const started = inspect(name).State.StartedAt;
         docker("restart", "--time", "20", name);
         assert.notEqual(inspect(name).State.StartedAt, started);

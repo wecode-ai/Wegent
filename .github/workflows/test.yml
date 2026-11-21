@@ -1083,7 +1083,7 @@ jobs:
           uvicorn app.main:app --host 0.0.0.0 --port 8000 &
           echo "Waiting for backend to start..."
           for i in {1..30}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+            if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
               echo "Backend is ready!"
               break
             fi

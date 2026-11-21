@@ -197,7 +197,13 @@ mod tests {
         let file: FileConfig = toml::from_str(&source).unwrap();
         assert!(file.include.is_empty());
         assert!(!file.routes.is_empty());
-        assert!(file.routes.iter().all(|rule| !rule.methods.is_empty()));
+        let all_method_paths: Vec<_> = file
+            .routes
+            .iter()
+            .filter(|rule| rule.methods.is_empty())
+            .map(|rule| rule.path.as_str())
+            .collect();
+        assert_eq!(all_method_paths, ["/api/health", "/api/health/"]);
         let table = load(&path).unwrap();
         let selected: BTreeSet<_> = file
             .routes

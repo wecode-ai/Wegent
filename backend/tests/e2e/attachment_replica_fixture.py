@@ -337,7 +337,7 @@ def gateway(fixture: ReplicaFixture, report: Path) -> Iterator[httpx.Client]:
                 while True:
                     assert process.poll() is None, "gateway exited; inspect gateway.log"
                     try:
-                        if client.get("/api/health").is_success:
+                        if client.get("/api/ready").is_success:
                             break
                     except httpx.TransportError:
                         pass
