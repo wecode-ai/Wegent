@@ -15,6 +15,8 @@ import type {
   KnowledgeBaseWithGroupInfo,
   KnowledgeDocument,
 } from '@/types/knowledge'
+import type { SelectableMessage } from '@/features/tasks/components/share/ExportSelectModal'
+import type { SourceAccessMap } from '@/features/tasks/utils/answerEvidenceMarkers'
 import type { InteractiveFormAnswerPayload } from '@/types/api'
 
 const messageBubbleRenderSpy = jest.fn()
@@ -166,10 +168,36 @@ jest.mock('@/features/tasks/components/share/TaskShareModal', () => ({
   default: () => null,
 }))
 
+let mockExportSourceAccess: SourceAccessMap | undefined
+jest.mock('@/features/tasks/components/message/evidence/sourceAccess', () => {
+  const actual = jest.requireActual('@/features/tasks/components/message/evidence/sourceAccess')
+  return {
+    ...actual,
+    useTaskSourceDecisions: (...args: Parameters<typeof actual.useTaskSourceDecisions>) => {
+      const decisions = actual.useTaskSourceDecisions(...args)
+      return mockExportSourceAccess ? { ...decisions, access: mockExportSourceAccess } : decisions
+    },
+  }
+})
+
 jest.mock('@/features/tasks/components/share/ExportSelectModal', () => ({
   __esModule: true,
-  default: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog" aria-label="Export messages" /> : null,
+  default: ({
+    open,
+    messages,
+    presentContent,
+  }: {
+    open: boolean
+    messages: SelectableMessage[]
+    presentContent?: (msg: SelectableMessage) => string
+  }) =>
+    open ? (
+      <div role="dialog" aria-label="Export messages">
+        {messages.map(msg => (
+          <div key={msg.id}>{presentContent?.(msg) ?? msg.content}</div>
+        ))}
+      </div>
+    ) : null,
 }))
 
 jest.mock('@/features/tasks/components/group-chat', () => ({
@@ -234,6 +262,7 @@ describe('deriveSaveToKnowledgeTitle', () => {
 describe('MessagesArea memoization', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockExportSourceAccess = undefined
     mockMessages = [
       {
         id: 'user-1',
@@ -325,6 +354,42 @@ describe('MessagesArea memoization', () => {
     await user.click(screen.getByTestId('message-export-menu'))
     await user.click(screen.getByRole('menuitem', { name: 'chat:export.export_pdf' }))
     expect(screen.getByRole('dialog', { name: 'Export messages' })).toBeInTheDocument()
+  })
+
+  it('keeps readable export markers and updates the open export after a source is revoked', async () => {
+    mockTaskSession.selectedTaskDetail = { id: 707, title: 'Task 707', status: 'COMPLETED' }
+    mockMessages[1] = {
+      ...mockMessages[1],
+      content: '${$$}$正文[[citation:42]]/[[citation:43]]',
+      subtaskStatus: 'COMPLETED',
+      result: {
+        answer_citations: [
+          { citation_id: '42', knowledge_base_id: 7, document_id: 9, title: 'First' },
+          { citation_id: '43', knowledge_base_id: 8, document_id: 10, title: 'Second' },
+        ],
+      },
+    }
+    mockExportSourceAccess = { 7: 'readable', 8: 'readable' }
+    const user = userEvent.setup()
+    function ChatHost({ refresh }: { refresh?: boolean }) {
+      const [actions, setActions] = React.useState<React.ReactNode>(null)
+      return (
+        <>
+          {actions}
+          <MessagesArea onShareButtonRender={setActions} enableTaskMentions={refresh} />
+        </>
+      )
+    }
+    const { rerender } = render(<ChatHost />)
+    await user.click(screen.getByTestId('message-export-menu'))
+    await user.click(screen.getByRole('menuitem', { name: 'chat:export.export_pdf' }))
+    const dialog = screen.getByRole('dialog', { name: 'Export messages' })
+    expect(dialog).toHaveTextContent('正文[[citation:42]]/[[citation:43]]')
+
+    mockExportSourceAccess = { 7: 'denied', 8: 'readable' }
+    rerender(<ChatHost refresh />)
+    expect(dialog).toHaveTextContent('正文/[[citation:43]]')
+    expect(dialog).not.toHaveTextContent('[[citation:42]]')
   })
 
   it('submits an interactive form rendered while the message is streaming', () => {

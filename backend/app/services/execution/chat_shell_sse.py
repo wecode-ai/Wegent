@@ -219,6 +219,16 @@ async def _dispatch_chat_shell_sse(
 
     recoverable = on_accepted is not None
     request_id = openai_request["metadata"]["request_id"]
+    evidence_headers = {}
+    if getattr(request, "enable_answer_evidence", False):
+        from app.core.config import settings
+
+        token = settings.INTERNAL_SERVICE_TOKEN.strip()
+        if not token:
+            raise ValueError(
+                "Web answer evidence requires the internal service credential"
+            )
+        evidence_headers["Authorization"] = f"Bearer {token}"
 
     # OpenAI client appends /responses to base_url, so we need to include /v1
     # e.g., base_url=http://127.0.0.1:8100/v1 -> POST http://127.0.0.1:8100/v1/responses
@@ -289,6 +299,7 @@ async def _dispatch_chat_shell_sse(
                 stream=True,
                 extra_headers={
                     **get_trace_context_for_propagation(),
+                    **evidence_headers,
                     "X-Request-ID": request_id,
                 },
                 extra_body={
@@ -399,6 +410,26 @@ async def _dispatch_chat_shell_sse(
                     )
 
                     if parsed_event:
+                        if (
+                            event_type
+                            == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value
+                        ):
+                            from app.services.knowledge.answer_evidence import (
+                                TrustedEvidence,
+                            )
+
+                            payload = event_data.get("response", {})
+                            if (
+                                "_answer_evidence" in payload
+                                and getattr(request, "enable_answer_evidence", False)
+                                and parsed_event.result is not None
+                            ):
+                                parsed_event.result["_answer_evidence"] = (
+                                    TrustedEvidence(
+                                        payload["_answer_evidence"],
+                                        user_id=request.user_id,
+                                    )
+                                )
                         log_fn = (
                             logger.debug
                             if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value

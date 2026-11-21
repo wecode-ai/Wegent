@@ -482,6 +482,7 @@
         "topics": "主题标签",
         "metaInfo": "元信息",
         "content": "文档内容",
+        "loadMoreFailed": "下一页加载失败。",
         "contentLoadFailed": "文档内容加载失败，请重试。",
         "protectedViewerUnavailable": "受保护文档预览不可用",
         "parsedContent": "解析内容",

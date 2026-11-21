@@ -791,6 +791,43 @@ def test_current_wegent_folder_uses_provider_subtree_semantics() -> None:
     )
 
 
+@pytest.mark.parametrize("explicit_ids", [None, [], [9]])
+def test_current_folder_preserves_explicit_selection_over_expanded_documents(
+    explicit_ids,
+) -> None:
+    request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="Selected folder",
+            type_data={
+                "knowledge_id": 12,
+                "scope_restricted": True,
+                "folder_ids": [3],
+                "document_ids": [9, 10],
+                "explicit_document_ids": explicit_ids,
+            },
+        )
+    ]
+
+    apply_selected_knowledge_context(
+        _KnowledgeMetadataDB(),
+        request,
+        SimpleNamespace(json={"spec": {}}),
+        current_contexts=contexts,
+    )
+
+    assert 'scope_type="folder" resource_id="3"' in request.selected_knowledge_prompt
+    assert request.selected_knowledge_prompt.count("<resource ") == 1 + len(
+        explicit_ids or []
+    )
+    assert 'resource_id="10"' not in request.selected_knowledge_prompt
+    assert (
+        'scope_type="document" resource_id="9"' in request.selected_knowledge_prompt
+    ) is bool(explicit_ids)
+
+
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

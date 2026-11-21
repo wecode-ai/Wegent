@@ -20,9 +20,25 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/apis/knowledge', () => ({
   getOrganizationNamespace: jest.fn(),
 }))
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: { id: 1 } }),
+}))
 
 jest.mock('@/features/knowledge/document/hooks', () => ({
   useKnowledgeBaseDetail: jest.fn(),
+}))
+jest.mock('@/features/knowledge/document/components/KnowledgeReadOnlyHistory', () => ({
+  KnowledgeReadOnlyHistory: ({
+    knowledgeBaseId,
+    taskId,
+  }: {
+    knowledgeBaseId: number
+    taskId: number
+  }) => (
+    <div data-testid="history-permission-gate">
+      {knowledgeBaseId}/{taskId}
+    </div>
+  ),
 }))
 
 const mockedGetOrganizationNamespace = getOrganizationNamespace as jest.MockedFunction<
@@ -136,6 +152,20 @@ describe('unavailable legacy ID targets', () => {
   it('reports an inaccessible or missing ID without redirecting', () => {
     render(<KnowledgeBaseCompatPage />)
     expect(screen.getByTestId('knowledge-url-not-found')).toBeInTheDocument()
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('checks the task binding for an inaccessible library without redirecting', () => {
+    mockSearchParams = new URLSearchParams('taskId=123')
+    mockedUseKnowledgeBaseDetail.mockReturnValue({
+      knowledgeBase: null,
+      loading: false,
+      error: null,
+      accessDenied: true,
+      refresh: jest.fn(),
+    })
+    render(<KnowledgeBaseCompatPage />)
+    expect(screen.getByTestId('history-permission-gate')).toHaveTextContent('42/123')
     expect(mockReplace).not.toHaveBeenCalled()
   })
 

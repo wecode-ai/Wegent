@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { X, ChevronDown, Paperclip, FileText, RefreshCw, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -47,6 +47,7 @@ interface ExportSelectModalProps {
   onClose: () => void
   /** All messages available for export */
   messages: SelectableMessage[]
+  presentContent?: (message: SelectableMessage) => string
   /** Task ID for DOCX export */
   taskId: number
   /** Task name for the export filename */
@@ -66,12 +67,15 @@ export default function ExportSelectModal({
   open,
   onClose,
   messages,
+  presentContent,
   taskId,
   taskName,
   exportFormat,
 }: ExportSelectModalProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
+  const presentContentRef = useRef(presentContent)
+  presentContentRef.current = presentContent
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set())
@@ -211,7 +215,7 @@ export default function ExportSelectModal({
    */
   const exportPdf = async (selectedMessages: SelectableMessage[]) => {
     // Load image data for attachments
-    const messagesWithImages: ExportMessage[] = await Promise.all(
+    const messagesWithImages = await Promise.all(
       selectedMessages.map(async msg => {
         let attachments: ExportAttachment[] | undefined
 
@@ -234,21 +238,23 @@ export default function ExportSelectModal({
           )
         }
 
-        return {
-          type: msg.type,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          botName: msg.botName,
-          userName: msg.userName,
-          teamName: msg.teamName,
-          attachments,
-        }
+        return { msg, attachments }
       })
     )
 
     await generateChatPdf({
       taskName: taskName || 'Chat Export',
-      messages: messagesWithImages,
+      messages: messagesWithImages.map(
+        ({ msg, attachments }): ExportMessage => ({
+          type: msg.type,
+          content: presentContentRef.current?.(msg) ?? msg.content,
+          timestamp: msg.timestamp,
+          botName: msg.botName,
+          userName: msg.userName,
+          teamName: msg.teamName,
+          attachments,
+        })
+      ),
     })
   }
 
@@ -278,7 +284,7 @@ export default function ExportSelectModal({
   /**
    * Perform the actual export operation
    */
-  const performExport = useCallback(async () => {
+  const performExport = async () => {
     try {
       // Filter selected messages and maintain order
       const selectedMessages = messages.filter(msg => selectedIds.has(msg.id))
@@ -309,12 +315,12 @@ export default function ExportSelectModal({
     } finally {
       setIsExporting(false)
     }
-  }, [selectedIds, messages, exportFormat, taskId, taskName, toast, t, onClose])
+  }
 
   /**
    * Confirm selection and export
    */
-  const handleConfirmExport = useCallback(() => {
+  const handleConfirmExport = () => {
     if (selectedIds.size === 0) {
       toast({
         variant: 'destructive',
@@ -334,7 +340,7 @@ export default function ExportSelectModal({
         performExport()
       }, 0)
     })
-  }, [selectedIds, toast, t, performExport])
+  }
 
   /**
    * Check if all messages are selected
@@ -381,6 +387,7 @@ export default function ExportSelectModal({
         {/* Message selection list */}
         <div className="flex-1 overflow-y-auto space-y-2 min-h-0 pr-1">
           {messages.map((msg, index) => {
+            const content = presentContent?.(msg) ?? msg.content
             const isSelected = selectedIds.has(msg.id)
             return (
               <div
@@ -413,8 +420,8 @@ export default function ExportSelectModal({
                     <span className="text-xs text-text-muted">{formatDateTime(msg.timestamp)}</span>
                   </div>
                   <p className="text-sm text-text-primary line-clamp-2">
-                    {msg.content.slice(0, 200)}
-                    {msg.content.length > 200 ? '...' : ''}
+                    {content.slice(0, 200)}
+                    {content.length > 200 ? '...' : ''}
                   </p>
                   {/* Show attachment indicator */}
                   {msg.attachments && msg.attachments.length > 0 && (

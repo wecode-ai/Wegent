@@ -48,6 +48,8 @@ async def dispatch_inprocess_chat(
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
+            user_id=request.user_id,
+            enable_answer_evidence=request.enable_answer_evidence,
         )
 
         # Create ResponsesAPIEmitter with bridge transport
@@ -99,6 +101,8 @@ class ChatShellBridgeTransport:
         task_id: int,
         subtask_id: int,
         message_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        enable_answer_evidence: bool = False,
     ):
         """Initialize the bridge transport.
 
@@ -114,6 +118,8 @@ class ChatShellBridgeTransport:
         self.task_id = task_id
         self.subtask_id = subtask_id
         self.message_id = message_id
+        self.user_id = user_id
+        self.enable_answer_evidence = enable_answer_evidence
 
     async def send(
         self,
@@ -151,6 +157,18 @@ class ChatShellBridgeTransport:
         )
 
         if parsed_event:
+            if (
+                event_type == "response.completed"
+                and self.user_id is not None
+                and self.enable_answer_evidence
+            ):
+                from app.services.knowledge.answer_evidence import TrustedEvidence
+
+                payload = data.get("response", {})
+                if "_answer_evidence" in payload and parsed_event.result is not None:
+                    parsed_event.result["_answer_evidence"] = TrustedEvidence(
+                        payload["_answer_evidence"], user_id=self.user_id
+                    )
             await self.emitter.emit(parsed_event)
 
         return {"status": "success"}

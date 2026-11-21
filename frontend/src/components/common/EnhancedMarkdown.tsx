@@ -46,6 +46,7 @@ interface EnhancedMarkdownProps {
   components?: Record<string, React.ComponentType<any>>
   /** Optional feature-local transforms; default Markdown rendering is unchanged. */
   rehypePlugins?: Options['rehypePlugins']
+  remarkPlugins?: Options['remarkPlugins']
 }
 
 type ContentPart =
@@ -597,6 +598,23 @@ function preprocessLatexSyntax(text: string): string {
   return result
 }
 
+export function prepareMarkdown(source: string) {
+  const { frontmatter, body } = extractFrontmatter(stripConnectorAuthMarkers(source))
+  const rawParts = splitArtifactBlocks(body)
+  const parts = rawParts.length > 0 ? rawParts : [{ type: 'markdown' as const, content: body }]
+  const contentParts = parts.flatMap(part => {
+    if (part.type === 'artifact') return [part]
+
+    const markdown = autolinkUrls(preprocessCjkEmphasis(preprocessLatexSyntax(part.content)))
+    return splitSpecialMarkdownBlocks(markdown)
+  })
+  const hasMath = contentParts.some(
+    part =>
+      (part.type === 'markdown' || part.type === 'latex') && containsMathFormulas(part.content)
+  )
+  return { frontmatter, contentParts, hasMath }
+}
+
 /**
  * Enhanced Markdown renderer with Mermaid diagram and LaTeX math formula support
  *
@@ -610,41 +628,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
   rehypePlugins: extraRehypePlugins,
+  remarkPlugins: extraRemarkPlugins,
 }: EnhancedMarkdownProps) {
-  // Connector skills end a turn with `connector_auth_required`/`connectorSlug`
-  // markers for the client's authorization card; they must never be rendered.
-  const visibleSource = useMemo(() => stripConnectorAuthMarkers(source), [source])
-
-  // Extract frontmatter before processing
-  const { frontmatter, body } = useMemo(() => extractFrontmatter(visibleSource), [visibleSource])
-
-  const contentParts = useMemo(() => {
-    const rawParts = splitArtifactBlocks(body)
-    const normalizedParts =
-      rawParts.length > 0 ? rawParts : [{ type: 'markdown' as const, content: body }]
-
-    return normalizedParts.flatMap(part => {
-      if (part.type === 'artifact') return [part]
-
-      const processedMarkdown = autolinkUrls(
-        preprocessCjkEmphasis(preprocessLatexSyntax(part.content))
-      )
-      return splitSpecialMarkdownBlocks(processedMarkdown)
-    })
-  }, [body])
-
-  // Check if source contains math formulas
-  const hasMath = useMemo(
-    () =>
-      contentParts.some(
-        part =>
-          (part.type === 'markdown' || part.type === 'latex') && containsMathFormulas(part.content)
-      ),
-    [contentParts]
-  )
+  const { frontmatter, contentParts, hasMath } = useMemo(() => prepareMarkdown(source), [source])
 
   // Default components with link handling and code block rendering
-  const defaultComponents = useMemo(
+  const baseComponents = useMemo(
     (): Components => ({
       // Merge smart components for attachment and image handling
       ...createSmartMarkdownComponents({ enableImagePreview: true }),
@@ -701,9 +690,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       },
       // Override pre to avoid double wrapping
       pre: ({ children }) => <>{children}</>,
-      ...components,
     }),
-    [components, theme]
+    [theme]
+  )
+  const markdownComponents = useMemo(
+    () => ({ ...baseComponents, ...components }),
+    [baseComponents, components]
   )
 
   // Configure remark/rehype plugins based on content
@@ -714,8 +706,9 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])
     }
+    if (extraRemarkPlugins) plugins.push(...extraRemarkPlugins)
     return plugins
-  }, [hasMath])
+  }, [hasMath, extraRemarkPlugins])
 
   const rehypePlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -744,7 +737,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
-      components={defaultComponents}
+      components={markdownComponents}
       urlTransform={urlTransform}
     >
       {content}

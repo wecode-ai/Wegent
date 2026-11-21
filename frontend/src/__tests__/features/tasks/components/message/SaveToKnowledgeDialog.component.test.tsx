@@ -8,6 +8,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ApiError } from '@/apis/client'
 import { createTextKnowledgeDocument } from '@/apis/knowledge'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { filterAnswerEvidenceMarkers } from '@/features/tasks/utils/answerEvidenceMarkers'
 import { SaveToKnowledgeDialog } from '@/features/tasks/components/message/SaveToKnowledgeDialog'
 import { knowledgeBase } from './knowledgeFixtures'
 import type {
@@ -22,15 +23,17 @@ const mockUser = { id: 7, user_name: 'tester' }
 jest.mock('next/dynamic', () => () => {
   function MockEditor({
     initialContent,
+    value,
     onChange,
   }: {
     initialContent: string
+    value?: string
     onChange?: (content: string) => void
   }) {
     return (
       <textarea
         data-testid="mock-markdown-editor"
-        value={initialContent}
+        value={value ?? initialContent}
         onChange={event => onChange?.(event.target.value)}
       />
     )
@@ -159,6 +162,59 @@ describe('SaveToKnowledgeDialog', () => {
     )
     expect(onCreated).toHaveBeenCalledWith(document, writable)
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('removes revoked markers from the open editor without replacing the edited draft', async () => {
+    const writable = knowledgeBase(2, 'Developer')
+    jest.mocked(knowledgeBaseApi.getAllGrouped).mockResolvedValue(groupedKnowledgeBases([writable]))
+    jest.mocked(createTextKnowledgeDocument).mockResolvedValue({ id: 42 } as KnowledgeDocument)
+    const citations = [
+      { citation_id: '42', knowledge_base_id: 7 },
+      { citation_id: '43', knowledge_base_id: 8 },
+    ]
+    const props = {
+      open: true,
+      onOpenChange: jest.fn(),
+      initialTitle: 'Original title',
+      initialContent: '原文[[citation:42]] 和 [[citation:43]]',
+      defaultKnowledgeBaseId: writable.id,
+      onCreated: jest.fn(),
+    }
+    const presentContent = (access: 'readable' | 'denied') => (content: string) =>
+      filterAnswerEvidenceMarkers(content, {
+        citations,
+        sourceAccess: { 7: access, 8: 'readable' },
+      })
+    const { rerender } = render(
+      <SaveToKnowledgeDialog {...props} presentContent={presentContent('readable')} />
+    )
+    const target = screen.getByRole('combobox', { name: 'knowledge-base-target' })
+    await waitFor(() => expect(target).toHaveValue('2'))
+    const editor = screen.getByTestId('mock-markdown-editor')
+    const title = screen.getByTestId('save-to-knowledge-title-input')
+    const edited = '用户改过的正文[[citation:42]] 和 [[citation:43]]'
+    const filtered = '用户改过的正文 和 [[citation:43]]'
+    fireEvent.change(editor, { target: { value: edited } })
+    fireEvent.change(title, { target: { value: 'Edited title' } })
+    expect(editor).toHaveValue(edited)
+
+    rerender(<SaveToKnowledgeDialog {...props} presentContent={presentContent('denied')} />)
+    expect(editor).toHaveValue(filtered)
+    expect(title).toHaveValue('Edited title')
+    expect(target).toHaveValue('2')
+    expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(1)
+
+    // A revoked marker stays out of this draft even if access later returns.
+    rerender(<SaveToKnowledgeDialog {...props} presentContent={presentContent('readable')} />)
+    expect(editor).toHaveValue(filtered)
+    fireEvent.click(screen.getByTestId('save-to-knowledge-submit-button'))
+    await waitFor(() =>
+      expect(createTextKnowledgeDocument).toHaveBeenCalledWith({
+        knowledge_base_id: writable.id,
+        name: 'Edited title',
+        content: filtered,
+      })
+    )
   })
 
   it('does not preselect a read-only default knowledge base', async () => {

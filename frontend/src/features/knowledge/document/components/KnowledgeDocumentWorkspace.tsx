@@ -17,14 +17,15 @@ import { ArrowLeft, Menu } from 'lucide-react'
 import client from '@/apis/client'
 import { Button } from '@/components/ui/button'
 import { KnowledgeAccessDialog } from './KnowledgeAccessDialog'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
-import { parseKbUrl } from '@/utils/knowledgeUrl'
+import { parseKbUrl, parseKnowledgeBaseId } from '@/utils/knowledgeUrl'
+import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
 import { useKnowledgeSidebar } from '../hooks/useKnowledgeSidebar'
 import {
   hasAdvancedKnowledgeBases,
@@ -38,6 +39,7 @@ import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { KnowledgeUrlStatus } from './KnowledgeUrlStatus'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
+import { KnowledgeReadOnlyHistory } from './KnowledgeReadOnlyHistory'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { useKnowledgeSourceViews } from '@/features/knowledge/knowledgeSourceViewRegistry'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
@@ -95,6 +97,7 @@ function KnowledgeDocumentSession({
   const [permissionRevision, setPermissionRevision] = useState(0)
   const { user } = useUser()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const parsedKbUrl = useMemo(() => {
     if (!pathname || pathname.startsWith('/knowledge/document/')) {
       return null
@@ -515,6 +518,27 @@ function KnowledgeDocumentSession({
     sidebar.selectedKb?.id === retainedKbId &&
     retainedKbId !== undefined &&
     (kbResolution?.status === 'loading' || kbResolution?.status === 'error')
+  const requestedKbId = parseKnowledgeBaseId(searchParams.get('kb'))
+  const historyTaskId = parseKnowledgeBaseId(getTaskQueryParam(searchParams))
+  const sourceUnavailable =
+    (requestedKbId === sidebar.detailRequest?.kbId && sidebar.detailRequest.status === 'error') ||
+    kbResolution?.status === 'not-found' ||
+    (kbResolution?.status === 'error' && !retainsDetail) ||
+    (!kbResolution &&
+      initialUrlSyncDone &&
+      sidebar.selectedKb?.id !== requestedKbId &&
+      !sidebar.allKnowledgeBases.some(kb => kb.id === requestedKbId))
+
+  if (requestedKbId !== null && historyTaskId !== null && sourceUnavailable) {
+    return (
+      <KnowledgeReadOnlyHistory
+        knowledgeBaseId={requestedKbId}
+        taskId={historyTaskId}
+        permissionRefreshKey={permissionRevision}
+      />
+    )
+  }
+
   const renderMainContent = () => {
     if (kbResolution && kbResolution.status !== 'resolved' && !retainsDetail) {
       return <KnowledgeUrlStatus status={kbResolution.status} onRetry={sidebar.refreshAll} />

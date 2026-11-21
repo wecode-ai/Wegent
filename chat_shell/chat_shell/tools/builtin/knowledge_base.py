@@ -921,6 +921,7 @@ class KnowledgeBaseTool(BaseTool):
                     "source_id": source_id,
                     "source_uri": record.get("source_uri"),
                     "source_name": record.get("source_name"),
+                    "source_chunk_id": record.get("source_chunk_id", ""),
                 }
             )
         return kb_chunks
@@ -1403,6 +1404,7 @@ class KnowledgeBaseTool(BaseTool):
                         "source_type": chunk.get("source_type"),
                         "source_uri": chunk.get("source_uri"),
                         "source_name": chunk.get("source_name"),
+                        "source_chunk_id": chunk.get("source_chunk_id", ""),
                     }
                 )
                 source_index += 1
@@ -1570,6 +1572,7 @@ class KnowledgeBaseTool(BaseTool):
                             "source_type": chunk.get("source_type"),
                             "source_uri": chunk.get("source_uri"),
                             "source_name": chunk.get("source_name"),
+                            "source_chunk_id": chunk.get("source_chunk_id", ""),
                         }
                     )
                     source_index += 1
@@ -1592,6 +1595,7 @@ class KnowledgeBaseTool(BaseTool):
                         "source_type": chunk.get("source_type"),
                         "source_uri": chunk.get("source_uri"),
                         "source_name": chunk.get("source_name"),
+                        "source_chunk_id": chunk.get("source_chunk_id", ""),
                     }
                 )
 
@@ -1600,6 +1604,11 @@ class KnowledgeBaseTool(BaseTool):
 
         # Limit total results
         all_chunks = all_chunks[:max_results]
+        from chat_shell.services.answer_evidence import active_evidence
+
+        registry = active_evidence.get()
+        if registry is not None and redact_source_titles:
+            all_chunks = [registry.offer(chunk) for chunk in all_chunks]
         referenced_indexes = {
             chunk.get("source_index")
             for chunk in all_chunks

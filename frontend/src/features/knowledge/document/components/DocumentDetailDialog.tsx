@@ -102,6 +102,7 @@ interface DocumentDetailDialogProps {
    * a document list (for example the chat preview) omit it.
    */
   onDocumentSynced?: (document: KnowledgeDocument) => void
+  onReadError?: (error: unknown) => void
 }
 
 export function DocumentDetailDialog({
@@ -117,6 +118,7 @@ export function DocumentDetailDialog({
   allowDownload = true,
   watermarkText,
   onDocumentSynced,
+  onReadError,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const downloadDocument = useKnowledgeDocumentDownload()
@@ -178,6 +180,7 @@ export function DocumentDetailDialog({
     kbId: knowledgeBaseId,
     docId: document?.id || 0,
     enabled: open && !!document,
+    onReadError,
   })
 
   // Check if document is editable

@@ -87,6 +87,19 @@ jest.mock('@/features/knowledge/document/components/KnowledgeDetailPanel', () =>
     </div>
   ),
 }))
+jest.mock('@/features/knowledge/document/components/KnowledgeReadOnlyHistory', () => ({
+  KnowledgeReadOnlyHistory: ({
+    knowledgeBaseId,
+    taskId,
+  }: {
+    knowledgeBaseId: number
+    taskId: number
+  }) => (
+    <div data-testid="history-permission-gate">
+      {knowledgeBaseId}/{taskId}
+    </div>
+  ),
+}))
 jest.mock('@/features/knowledge/code-wiki/CodeWikiReader', () => ({
   CodeWikiReader: ({
     wiki,
@@ -569,6 +582,15 @@ it('retries a failed initial link lookup and recovers the requested detail', asy
   expect(await screen.findByTestId('knowledge-url-error')).toBeInTheDocument()
   await userEvent.setup().click(screen.getByTestId('knowledge-url-retry'))
   expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Docs')
+})
+
+it('checks the task binding when a historical library is absent from the sidebar', async () => {
+  mockPathname = '/knowledge/default/Docs'
+  mockParams = new URLSearchParams({ kb: '70', taskId: '123' })
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
+  expect(await screen.findByTestId('history-permission-gate')).toHaveTextContent('70/123')
+  expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+  expect(getKnowledgeBase).not.toHaveBeenCalled()
 })
 
 it('retains the mounted detail through a same-scope refresh failure and retries', async () => {

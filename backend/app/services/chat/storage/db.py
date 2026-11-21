@@ -217,8 +217,18 @@ class DatabaseHandler:
     ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
+        from app.services.knowledge.answer_evidence import (
+            TrustedEvidence,
+            bind_answer_evidence,
+            public_result,
+            result_without_answer_evidence,
+        )
         from app.utils.thinking_sanitizer import sanitize_result_for_storage
 
+        original_result = result
+        trusted_completion = status == "COMPLETED" and isinstance(
+            (result or {}).get("_answer_evidence"), TrustedEvidence
+        )
         try:
             with _db_session() as db:
                 subtask = task_stores.subtask_store.get_basic_by_id(
@@ -280,6 +290,12 @@ class DatabaseHandler:
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 
                 if result is not None:
+                    if trusted_completion and subtask.role == SubtaskRole.ASSISTANT:
+                        result = bind_answer_evidence(db, subtask, result)
+                    elif status == "COMPLETED":
+                        result = result_without_answer_evidence(result)
+                    else:
+                        result = public_result(result)
                     # Preserve silent_exit fields if they were set by MCP tool
                     # MCP silent_exit tool directly updates subtask.result before this
                     if subtask.result and isinstance(subtask.result, dict):
@@ -362,6 +378,7 @@ class DatabaseHandler:
                             subtask_id,
                             expected_status,
                         )
+                        db.rollback()
                         return None
                 else:
                     task_stores.subtask_store.update_fields(
@@ -378,9 +395,22 @@ class DatabaseHandler:
                         raise LookupError(
                             "No assistant subtask for terminal task status"
                         )
-                    return update
+            if original_result is not None and result is not None:
+                original_result.clear()
+                original_result.update(result)
+            if terminal:
+                return update
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception as exc:
+            if trusted_completion:
+                logger.error(
+                    "Answer save unconfirmed: id=%s error_type=%s",
+                    subtask_id,
+                    type(exc).__name__,
+                )
+                raise TerminalPersistenceError(
+                    f"Could not save terminal status for subtask {subtask_id}"
+                ) from None
             logger.exception("Error updating subtask %s status", subtask_id)
             if status in _TERMINAL_STATUSES:
                 raise TerminalPersistenceError(

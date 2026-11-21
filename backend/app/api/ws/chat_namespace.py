@@ -1277,6 +1277,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
                             previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
+                            enable_answer_evidence=task.client_origin == "frontend",
                         )
                     except Exception as e:
                         logger.exception(
@@ -1699,9 +1700,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Access denied"}
 
-        db = SessionLocal()
         try:
-            dispatch_args_or_error = _prepare_chat_retry_dispatch(db, payload, user_id)
+            dispatch_args_or_error = await run_sync_in_executor(
+                _prepare_chat_retry_with_session, payload, user_id
+            )
         except ValueError as e:
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
@@ -1730,9 +1732,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 else f"Internal server error: {str(e)}"
             )
             return {"error": error_msg}
-        finally:
-            db.rollback()
-            db.close()
 
         if "error" in dispatch_args_or_error:
             return dispatch_args_or_error
@@ -1740,6 +1739,8 @@ class ChatNamespace(socketio.AsyncNamespace):
         try:
             await trigger_ai_response_unified(
                 namespace=self,
+                enable_answer_evidence=dispatch_args_or_error["task"].client_origin
+                == "frontend",
                 **dispatch_args_or_error,
             )
         except Exception as e:
@@ -1752,12 +1753,15 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
             try:
-                await _finalize_failed_ai_trigger(
-                    task_id=payload.task_id,
-                    assistant_subtask_id=dispatch_args_or_error["assistant_subtask"].id,
-                    error_message=format_error_message(e),
-                    error_code=classify_error(e),
-                )
+                if not getattr(e, "_frontend_error_emitted", False):
+                    await _finalize_failed_ai_trigger(
+                        task_id=payload.task_id,
+                        assistant_subtask_id=dispatch_args_or_error[
+                            "assistant_subtask"
+                        ].id,
+                        error_message=format_error_message(e),
+                        error_code=classify_error(e),
+                    )
             except Exception as finalize_error:
                 logger.error(
                     "[WS] chat:retry failed to persist trigger error: "
@@ -1967,6 +1971,18 @@ def _is_code_wiki_task(task: TaskResource) -> bool:
     metadata = task_json.get("metadata") or {}
     labels = metadata.get("labels") if isinstance(metadata, dict) else {}
     return isinstance(labels, dict) and labels.get("source") == "code_wiki"
+
+
+def _prepare_chat_retry_with_session(
+    payload: ChatRetryPayload, user_id: int
+) -> dict[str, Any]:
+    """Own the retry session entirely in the existing database worker pool."""
+    db = SessionLocal()
+    try:
+        return _prepare_chat_retry_dispatch(db, payload, user_id)
+    finally:
+        db.rollback()
+        db.close()
 
 
 def _prepare_chat_retry_dispatch(

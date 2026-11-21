@@ -93,13 +93,16 @@ export function finalizeStreamingBlocks(
 
 export function mergeBlocksForDone(
   existingMessageBlocks: MessageBlock[],
-  incomingBlocks: MessageBlock[]
+  incomingBlocks: MessageBlock[],
+  useSavedAnswer = false
 ): MessageBlock[] {
+  const normalizedIncomingBlocks = nestMessageBlocks(incomingBlocks)
+  if (useSavedAnswer) return normalizedIncomingBlocks
+
   const existingBlocks = finalizeStreamingBlocks(nestMessageBlocks(existingMessageBlocks), [
     'text',
     'thinking',
   ])
-  const normalizedIncomingBlocks = nestMessageBlocks(incomingBlocks)
 
   if (existingBlocks.length === 0) {
     return normalizedIncomingBlocks

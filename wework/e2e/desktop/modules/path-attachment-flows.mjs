@@ -31,6 +31,7 @@ import {
   mkdir,
   pathToFileURL,
   resultDir,
+  selectE2EModel,
   withTimeout,
   writeFile,
 } from './shared.mjs'
@@ -587,6 +588,8 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  // This flow can follow an app restart; do not inherit its native model default.
+  await selectE2EModel(control)
   await control.command('fill', composerSelector, {
     value: taskPrompt,
   })

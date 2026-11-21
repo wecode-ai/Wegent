@@ -48,6 +48,32 @@ def test_http_mode_does_not_mount_embedded_engine(monkeypatch):
     )
 
 
+@pytest.mark.parametrize(
+    "token,expected", [(None, 401), ("wrong", 401), ("unit-package-token", 200)]
+)
+def test_web_answer_adapter_requires_the_existing_internal_credential(
+    runtime, monkeypatch, token, expected
+):
+    from unittest.mock import MagicMock
+
+    from app.services.execution import web_answer_runtime
+
+    prepare = MagicMock(return_value=None)
+    monkeypatch.setattr(web_answer_runtime, "_prepare", prepare)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    response = runtime.post(
+        f"{PACKAGE_RUNTIME_PATH}/v1/answer-execution",
+        headers=headers,
+        json={"task_id": 9, "answer_id": 12, "actor_id": 7},
+    )
+    assert response.status_code == expected
+    if expected == 200:
+        assert response.json() == {"handled": False}
+        assert prepare.call_args.args[0].actor_id == 7
+    else:
+        prepare.assert_not_called()
+
+
 def test_image_runtime_in_http_mode_streams_the_agent_result(monkeypatch):
     from app.services.chat.storage.session import session_manager
     from app.services.execution.agents.image import image_agent
@@ -133,7 +159,8 @@ def test_embedded_engine_reuses_chat_shell_sse(runtime, monkeypatch):
 
     received = []
 
-    async def stream(request, request_id):
+    async def stream(request, request_id, *, enable_answer_evidence=False):
+        assert enable_answer_evidence is False
         received.append((request.metadata, request_id))
         yield ServerSentEvent(
             event="response.completed", data='{"type":"response.completed"}'

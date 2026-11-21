@@ -912,5 +912,33 @@
     "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
     "wikispaceLastSynced": "Last synced: {{time}}",
     "wikispaceNeverSynced": "Never synced"
+  },
+  "evidence": {
+    "citation_label": "{{title}} · Excerpt {{number}}",
+    "summary": "{{documents}} documents · {{fragments}} excerpts",
+    "select_fragment": "Select citation excerpt",
+    "fragment_number": "Excerpt {{number}}",
+    "title": "Evidence at answer time",
+    "panel_title": "Citation details",
+    "unavailable": "Evidence unavailable",
+    "close": "Close",
+    "read_failed": "Unable to read evidence. Try again.",
+    "read_denied": "You do not have access to this evidence.",
+    "source_denied": "One or more sources are no longer accessible.",
+    "answer_denied": "You do not have access to this answer.",
+    "visit_only": "Q&A only. Source excerpts and originals are unavailable.",
+    "permission_failed": "Unable to check source access.",
+    "partial_visit_only": "Some sources are available for Q&A only. Their excerpts and originals are unavailable.",
+    "retry": "Try again",
+    "loading": "Loading evidence…",
+    "open_original": "View original",
+    "current_original": "Current original",
+    "answer_fragment": "Excerpt from the answer",
+    "return_fragment": "Back to cited excerpt",
+    "original_changed": "The original has changed",
+    "original_loading": "Loading current original…",
+    "original_denied": "You do not have permission to view the current original",
+    "original_unavailable": "The current original is unavailable",
+    "original_failed": "Unable to open the current document. Try again."
   }
 }

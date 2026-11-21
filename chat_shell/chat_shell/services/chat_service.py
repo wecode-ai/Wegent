@@ -256,6 +256,13 @@ class ChatService(ChatInterface):
         add_span_event("process_chat_started", {"task_id": request.task_id})
 
         # Create chat context for resource management
+        from chat_shell.services.answer_evidence import (
+            EvidenceRegistry,
+            active_evidence,
+        )
+
+        evidence = EvidenceRegistry() if request.enable_answer_evidence else None
+        evidence_token = active_evidence.set(evidence)
         context = ChatContext(request)
         guidance_consumer: GuidanceConsumer | None = None
         on_tool_event = None
@@ -400,6 +407,7 @@ class ChatService(ChatInterface):
             chained_pre_model_hook = chain_pre_model_hooks(
                 context_guard,
                 guidance_consumer.create_pre_model_hook(),
+                *([evidence.observe] if evidence is not None else []),
             )
 
             add_span_event("building_agent_config")
@@ -411,6 +419,7 @@ class ChatService(ChatInterface):
                 streaming=True,
                 enable_clarification=request.enable_clarification,
                 enable_deep_thinking=request.enable_deep_thinking,
+                enable_answer_evidence=request.enable_answer_evidence,
                 skills=request.skills,
                 pre_model_hook=chained_pre_model_hook,
             )
@@ -575,6 +584,8 @@ class ChatService(ChatInterface):
                     )
                     state.context_metrics = final_snapshot.to_dict()
                 add_span_event("finalizing", {"total_tokens": token_count})
+                if evidence is not None:
+                    state.answer_evidence = evidence.confirmed()
                 await core.finalize()
 
             add_span_event("streaming_completed", {"total_tokens": token_count})
@@ -591,6 +602,7 @@ class ChatService(ChatInterface):
             add_span_event("cleaning_up_context")
             await context.cleanup()
             add_span_event("context_cleaned_up")
+            active_evidence.reset(evidence_token)
 
     async def resume(
         self, subtask_id: int, offset: int = 0

@@ -10,7 +10,9 @@ Generates formatted Word documents with markdown rendering and image embedding.
 import io
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
+from functools import lru_cache
 from typing import BinaryIO, List, Optional
 
 import emoji
@@ -29,6 +31,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.subtask_context import SubtaskContext
 from app.models.user import User
+from app.services.export.answer_evidence import filter_answer_evidence
 from app.stores.tasks import subtask_store
 from app.utils.prompt_utils import extract_display_prompt
 
@@ -55,7 +58,11 @@ def _sanitize_xml_text(text: str) -> str:
 
 
 def generate_task_docx(
-    task: Kind, db: Session, message_ids: Optional[List[int]] = None
+    task: Kind,
+    db: Session,
+    message_ids: Optional[List[int]] = None,
+    *,
+    viewer_id: int,
 ) -> io.BytesIO:
     """
     Generate a DOCX document from task data.
@@ -90,7 +97,7 @@ def generate_task_docx(
     _add_document_header(doc, task_title)
 
     # Add content
-    _add_task_content(doc, task, db, message_ids=message_ids)
+    _add_task_content(doc, task, db, message_ids=message_ids, viewer_id=viewer_id)
 
     # Add footer
     _add_document_footer(doc)
@@ -197,7 +204,12 @@ def _add_horizontal_rule(doc: Document):
 
 
 def _add_task_content(
-    doc: Document, task: Kind, db: Session, message_ids: Optional[List[int]] = None
+    doc: Document,
+    task: Kind,
+    db: Session,
+    message_ids: Optional[List[int]] = None,
+    *,
+    viewer_id: int,
 ):
     """Add task subtasks as messages, optionally filtered by message_ids"""
     subtasks = subtask_store.list_by_task_ordered(
@@ -210,11 +222,33 @@ def _add_task_content(
     # Get user for display name
     user = db.query(User).filter(User.id == task.user_id).first()
 
+    @lru_cache(maxsize=None)
+    def get_source_access(kb_id: int) -> str:
+        from app.services.share import knowledge_share_service
+
+        return knowledge_share_service.get_my_permission(
+            db, kb_id, viewer_id, task_id=task.id
+        ).source_access
+
     for subtask in subtasks:
-        _add_message(doc, subtask, task, user, db)
+        _add_message(
+            doc,
+            subtask,
+            task,
+            user,
+            db,
+            get_source_access,
+        )
 
 
-def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Session):
+def _add_message(
+    doc: Document,
+    subtask: Subtask,
+    task: Kind,
+    user: User,
+    db: Session,
+    get_source_access: Callable[[int], str] | None = None,
+):
     """Add a single message (user or AI)"""
     is_user = subtask.role.value == "USER"
 
@@ -274,6 +308,10 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
     content = content or ""
 
     # Remove special markers
+    if not is_user and get_source_access is not None:
+        content = filter_answer_evidence(
+            content.removeprefix("${$$}$"), subtask.result, get_source_access
+        )
     content = _clean_content(content)
 
     # Convert emoji to text

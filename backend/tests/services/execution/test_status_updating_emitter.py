@@ -350,6 +350,7 @@ async def test_emit_error_persists_partial_result_and_blocks():
         executor_name=None,
         executor_namespace=None,
         expected_status=None,
+        expected_device=None,
     )
     mock_session_manager.cleanup_streaming_state.assert_awaited_once_with(
         202, task_id=101
@@ -401,6 +402,7 @@ async def test_emit_error_merges_persisted_and_new_blocks():
         executor_name=None,
         executor_namespace=None,
         expected_status=None,
+        expected_device=None,
     )
 
 
@@ -742,6 +744,106 @@ async def test_done_event_forwards_finalized_result_to_wrapped_emitter():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["completed", "failed"])
+async def test_video_card_saves_json_and_forwards_without_private_evidence(
+    monkeypatch, terminal
+):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.services.chat.trigger import lifecycle
+    from app.services.execution.emitters import status_updating as module
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+
+    wrapped = AsyncMock()
+    emitter = module.StatusUpdatingEmitter(wrapped, task_id=101, subtask_id=202)
+    video_job = {
+        "card_type": "video_director_generation",
+        "query_url": "https://workflow.example.com/task/1",
+        "status": "polling",
+    }
+    blocks = [{"id": "card-1", "type": "card", "card_status": "pending"}]
+    runtime_result = {
+        "video_job": video_job,
+        "blocks": blocks,
+        "_answer_evidence": TrustedEvidence([], user_id=7),
+    }
+    monkeypatch.setattr(
+        module, "collect_completed_result", AsyncMock(return_value=runtime_result)
+    )
+    db = MagicMock()
+    monkeypatch.setattr(lifecycle, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "get_by_id",
+        lambda *a, **k: SimpleNamespace(id=202),
+    )
+    saved = []
+
+    def write_result(*args, **kwargs):
+        # Exercise the JSON serialization required by the actual storage column.
+        saved.append(json.loads(json.dumps(kwargs["result"])))
+
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store, "update_result", write_result
+    )
+
+    if terminal == "completed":
+        result = await emitter._update_status_completed(runtime_result)
+    else:
+        result = await emitter._update_status_failed("runtime ended")
+
+    assert result == {"video_job": video_job, "blocks": blocks}
+    assert saved == [result]
+    assert emitter._terminal_event_deferred
+    db.commit.assert_called_once()
+    assert "_answer_evidence" not in result
+
+
+@pytest.mark.asyncio
+async def test_video_card_unsaved_result_is_not_reported_as_success(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.services.chat.trigger import lifecycle
+    from app.services.execution.emitters import status_updating as module
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+
+    wrapped = AsyncMock()
+    emitter = module.StatusUpdatingEmitter(wrapped, task_id=101, subtask_id=202)
+    evidence = TrustedEvidence([], user_id=7)
+    runtime_result = {
+        "video_job": {
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
+            "status": "polling",
+        },
+        "_answer_evidence": evidence,
+    }
+    monkeypatch.setattr(
+        module, "collect_completed_result", AsyncMock(return_value=runtime_result)
+    )
+    db = MagicMock()
+    db.commit.side_effect = OSError("connection lost")
+    monkeypatch.setattr(lifecycle, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "get_by_id",
+        lambda *a, **k: SimpleNamespace(id=202),
+    )
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "update_result",
+        MagicMock(),
+    )
+    with pytest.raises(OSError, match="connection lost"):
+        await emitter.emit_done(101, 202, runtime_result)
+    assert runtime_result["_answer_evidence"] is evidence
+    db.rollback.assert_called_once()
+    wrapped.emit_done.assert_not_awaited()
+
+
 @pytest.mark.parametrize("write_error", [None, RuntimeError("database timeout")])
 async def test_uncommitted_done_is_not_forwarded(write_error):
     from app.services.execution.emitters import status_updating

@@ -9,6 +9,7 @@
 export { TaskStateMachine } from './TaskStateMachine'
 export { generateMessageId } from './TaskStateMachine.messageUtils'
 export type {
+  AnswerCitation,
   TaskStatus,
   MessageStatus,
   UnifiedMessage,

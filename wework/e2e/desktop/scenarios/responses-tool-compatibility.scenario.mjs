@@ -28,6 +28,7 @@ import {
 } from '../modules/shell-command-response.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 
 const MODEL = 'custom-responses-model'
 const MODEL_ID = 'responses-tool-compatibility'
@@ -39,8 +40,14 @@ const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
 
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
-export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
+export function createDesktopScenario({
+  electronUserDataDirectory,
+  workspacePath,
+  resultDir,
+  modelResponseTimeoutMs,
+}) {
   const requests = []
+  const completedRounds = new Set()
   let probeRequests = 0
   let nativeProbeRequests = 0
   let round = 1
@@ -225,6 +232,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       const id = `responses-response-${requests.length}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+      if (result && !result.sessionId) completedRounds.add(round)
       return true
     },
     async verify(control) {
@@ -286,6 +294,12 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           await control.command(
             'clickWhenEnabled',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+          )
+          await until(
+            () => completedRounds.has(round),
+            Boolean,
+            `Responses tool round ${round} did not return its verified result`,
+            modelResponseTimeoutMs
           )
           await control.command(
             'waitFor',

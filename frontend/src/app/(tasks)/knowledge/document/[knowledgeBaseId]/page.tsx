@@ -6,9 +6,13 @@
 
 import { useEffect } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { apiClient } from '@/apis/client'
+import { useUser } from '@/features/common/UserContext'
 import { Spinner } from '@/components/ui/spinner'
 import { KnowledgeUrlStatus } from '@/features/knowledge/document/components/KnowledgeUrlStatus'
+import { KnowledgeReadOnlyHistory } from '@/features/knowledge/document/components/KnowledgeReadOnlyHistory'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
 import { getOrganizationNamespace } from '@/apis/knowledge'
 import { buildKbUrl, parseKnowledgeBaseId } from '@/utils/knowledgeUrl'
 
@@ -29,14 +33,9 @@ function PageLoadingFallback() {
  *
  * Preserves all query parameters (taskId, doc, etc.) during redirect.
  */
-function KnowledgeBaseCompatContent() {
-  const params = useParams()
+function KnowledgeBaseCompatContent({ knowledgeBaseId }: { knowledgeBaseId: number | null }) {
   const searchParams = useSearchParams()
   const router = useRouter()
-
-  const knowledgeBaseId = params.knowledgeBaseId
-    ? parseKnowledgeBaseId(params.knowledgeBaseId as string)
-    : null
 
   const { knowledgeBase, loading, error, accessDenied, refresh } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
@@ -75,6 +74,14 @@ function KnowledgeBaseCompatContent() {
     }
   }, [knowledgeBaseId, knowledgeBase, router, searchParams])
 
+  const historyTaskId = parseKnowledgeBaseId(getTaskQueryParam(searchParams))
+  if (knowledgeBaseId && historyTaskId && accessDenied) {
+    return (
+      <div className="flex smart-h-screen min-h-0 bg-base">
+        <KnowledgeReadOnlyHistory knowledgeBaseId={knowledgeBaseId} taskId={historyTaskId} />
+      </div>
+    )
+  }
   if (!knowledgeBaseId || accessDenied || (!loading && !knowledgeBase && !error)) {
     return <KnowledgeUrlStatus status="not-found" onRetry={refresh} />
   }
@@ -83,6 +90,9 @@ function KnowledgeBaseCompatContent() {
 }
 
 export default function KnowledgeBaseCompatPage() {
-  // Wrap in Suspense is handled by Next.js for useSearchParams
-  return <KnowledgeBaseCompatContent />
+  const { knowledgeBaseId: id } = useParams()
+  const { user } = useUser()
+  const knowledgeBaseId = typeof id === 'string' ? parseKnowledgeBaseId(id) : null
+  const scope = JSON.stringify([user?.id, apiClient.getCacheScope(), knowledgeBaseId])
+  return <KnowledgeBaseCompatContent key={scope} knowledgeBaseId={knowledgeBaseId} />
 }

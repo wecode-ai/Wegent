@@ -42,6 +42,7 @@ export type TaskPuller = {
   refreshGroupTasks: () => void
   refreshPersonalTasks: () => void
   refreshSelectedTaskDetail: () => Promise<void>
+  denySelectedTaskAccess: (taskId: number) => boolean
   verifyTaskRuntime: (taskId?: number) => Promise<TaskRuntimeCheck | null>
   loadMore: () => void
   loadAllGroupTasks: () => Promise<void>
@@ -731,33 +732,39 @@ export function useTaskPuller(): TaskPuller {
 
   // Task lists are updated by WebSocket events and refreshed after runtime health checks.
 
+  const denySelectedTaskAccess = useCallback((taskId: number) => {
+    if (selectedTaskRef.current?.id !== taskId) return false
+    selectionEpochRef.current++
+    setAccessDenied(true)
+    setSelectedTaskDetail(null)
+    setTaskRuntimeSnapshot(null)
+    setIsRefreshing(false)
+    return true
+  }, [])
+
   const pullTaskDetail = useCallback(
     async (taskId: number): Promise<TaskDetail | null> => {
       const requestEpoch = selectionEpochRef.current
 
       try {
-        if (isCurrentSelection(taskId, requestEpoch)) {
-          setAccessDenied(false)
-        }
-
         const updatedTaskDetail = await taskApis.getTaskDetail(taskId)
         if (!isCurrentSelection(taskId, requestEpoch)) return null
 
+        setAccessDenied(false)
         setSelectedTaskDetail(updatedTaskDetail)
         return updatedTaskDetail
       } catch (error) {
         if (!isCurrentSelection(taskId, requestEpoch)) return null
 
         if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-          setAccessDenied(true)
-          setSelectedTaskDetail(null)
+          denySelectedTaskAccess(taskId)
           return null
         }
         console.error('[taskPuller] Failed to pull task detail:', error)
         return null
       }
     },
-    [isCurrentSelection]
+    [denySelectedTaskAccess, isCurrentSelection]
   )
 
   const refreshSelectedTaskDetail = async () => {
@@ -914,6 +921,7 @@ export function useTaskPuller(): TaskPuller {
     refreshGroupTasks,
     refreshPersonalTasks,
     refreshSelectedTaskDetail,
+    denySelectedTaskAccess,
     verifyTaskRuntime,
     loadMore,
     loadAllGroupTasks,

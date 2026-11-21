@@ -180,18 +180,18 @@ mod tests {
     #[test]
     fn checked_in_graph_preserves_all_legacy_revisions() {
         let graph = Graph::load().unwrap();
-        assert_eq!(graph.revisions.len(), 66);
-        assert_eq!(graph.head, "b1c2d3e4f5a6");
+        assert_eq!(graph.revisions.len(), 68);
+        assert_eq!(graph.head, "c6e8a1d4f902");
         assert_eq!(
             graph
                 .revisions
                 .iter()
                 .filter(|r| r.parents.len() > 1)
                 .count(),
-            6
+            7
         );
         let plan = graph.upgrade(&BTreeSet::new(), &graph.head).unwrap();
-        assert_eq!(plan.len(), 66);
+        assert_eq!(plan.len(), 68);
         let mut applied = BTreeSet::new();
         for revision in plan {
             assert!(revision.parents.iter().all(|p| applied.contains(p)));

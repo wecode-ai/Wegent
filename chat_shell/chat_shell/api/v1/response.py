@@ -15,6 +15,7 @@ Architecture:
 import asyncio
 import json
 import logging
+import secrets
 import time
 import uuid
 from typing import AsyncGenerator, Optional, Union
@@ -369,6 +370,8 @@ from shared.telemetry.decorators import trace_async_generator
 async def _stream_response(
     request: OpenAIResponsesRequest,
     request_id: str,
+    *,
+    enable_answer_evidence: bool = False,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """
     Stream response generator using ChatService.
@@ -414,6 +417,7 @@ async def _stream_response(
         "model_config": request.model_config_data or {},
     }
     execution_request = OpenAIRequestConverter.to_execution_request(openai_dict)
+    execution_request.enable_answer_evidence = enable_answer_evidence
 
     request_summary = _summarize_openai_input(request.input)
     logger.info(
@@ -591,8 +595,19 @@ async def create_response(request: OpenAIResponsesRequest, req: Request):
 
     set_request_context(request_id)
 
+    from chat_shell.core.config import settings
+
+    token = settings.backend_internal_token.strip()
+    enable_evidence = bool(
+        (request.metadata or {}).get("enable_answer_evidence") is True
+        and token
+        and secrets.compare_digest(
+            req.headers.get("Authorization", ""), f"Bearer {token}"
+        )
+    )
+
     return EventSourceResponse(
-        _stream_response(request, request_id),
+        _stream_response(request, request_id, enable_answer_evidence=enable_evidence),
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",

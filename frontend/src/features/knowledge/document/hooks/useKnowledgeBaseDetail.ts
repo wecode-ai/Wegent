@@ -24,7 +24,7 @@ export function useKnowledgeBaseDetail(options: UseKnowledgeBaseDetailOptions) {
   // This prevents brief flash of error/empty state before the effect fires
   const [loading, setLoading] = useState(autoLoad && !!knowledgeBaseId)
   const [error, setError] = useState<string | null>(null)
-  // Track access denied state for 403 errors
+  // Track libraries unavailable to the current viewer.
   const [accessDenied, setAccessDenied] = useState(false)
 
   const fetchKnowledgeBase = useCallback(async () => {
@@ -37,14 +37,11 @@ export function useKnowledgeBaseDetail(options: UseKnowledgeBaseDetailOptions) {
       const data = await getKnowledgeBase(knowledgeBaseId)
       setKnowledgeBase(data)
     } catch (err) {
-      // Check if it's a 403 Forbidden error (access denied)
-      if (err instanceof ApiError && err.status === 403) {
-        // 403 path: exclusive access denied state
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         setAccessDenied(true)
         setError(null)
         setKnowledgeBase(null)
       } else {
-        // Non-403 errors: set error state and clear other states
         setAccessDenied(false)
         setError(err instanceof Error ? err.message : 'Failed to fetch knowledge base')
         setKnowledgeBase(null)

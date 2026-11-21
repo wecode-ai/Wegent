@@ -482,6 +482,7 @@
         "topics": "Topics",
         "metaInfo": "Metadata",
         "content": "Document Content",
+        "loadMoreFailed": "Could not load the next page.",
         "contentLoadFailed": "Failed to load document content. Please retry.",
         "protectedViewerUnavailable": "Protected document viewer is unavailable",
         "parsedContent": "Parsed Content",

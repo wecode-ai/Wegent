@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import type { DocumentDetailResponse } from '@/types/knowledge'
 import { toast } from 'sonner'
@@ -28,6 +28,9 @@ interface UseDocumentDetailOptions {
   includeContent?: boolean
   includeSummary?: boolean
   enabled?: boolean
+  signal?: AbortSignal
+  onReadError?: (error: unknown) => void
+  onLoadMoreError?: (error: unknown) => void
 }
 
 // Omit content from detail to prevent confusion - use fullContent instead
@@ -80,6 +83,9 @@ export function useDocumentDetail({
   includeContent = true,
   includeSummary = true,
   enabled = true,
+  signal,
+  onReadError,
+  onLoadMoreError,
 }: UseDocumentDetailOptions): UseDocumentDetailReturn {
   const { t } = useTranslation('knowledge')
 
@@ -101,10 +107,12 @@ export function useDocumentDetail({
   const offsetRef = useRef(0)
   // Use ref for abort controller to cancel requests on unmount
   const abortControllerRef = useRef<AbortController | null>(null)
-  // The API client does not currently accept an AbortSignal, so use a
-  // monotonically increasing request id to prevent stale responses from
-  // overwriting a newer refresh.
+  // Invalidate late responses, including clients that cannot cancel transport.
   const fetchRequestIdRef = useRef(0)
+  const onReadErrorRef = useRef(onReadError)
+  onReadErrorRef.current = onReadError
+  const onLoadMoreErrorRef = useRef(onLoadMoreError)
+  onLoadMoreErrorRef.current = onLoadMoreError
 
   // Update ref when state changes
   useEffect(() => {
@@ -112,7 +120,7 @@ export function useDocumentDetail({
   }, [currentOffset])
 
   // Cleanup abort controller on unmount
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
       fetchRequestIdRef.current += 1
       if (abortControllerRef.current) {
@@ -126,6 +134,7 @@ export function useDocumentDetail({
    * Fetch document detail (initial load or full refresh)
    */
   const fetchDetail = useCallback(async () => {
+    if (signal?.aborted) return
     const requestId = ++fetchRequestIdRef.current
     // Cancel any pending request
     if (abortControllerRef.current) {
@@ -136,15 +145,21 @@ export function useDocumentDetail({
 
     try {
       setLoading(true)
+      setLoadingMore(false)
       setError(null)
 
-      const response = await knowledgeBaseApi.getDocumentDetail(kbId, docId, {
-        includeContent,
-        includeSummary,
-        offset: 0,
-        limit: MAX_CHARS_PER_REQUEST,
-      })
-      if (requestId !== fetchRequestIdRef.current) return
+      const response = await knowledgeBaseApi.getDocumentDetail(
+        kbId,
+        docId,
+        {
+          includeContent,
+          includeSummary,
+          offset: 0,
+          limit: MAX_CHARS_PER_REQUEST,
+        },
+        signal
+      )
+      if (signal?.aborted || requestId !== fetchRequestIdRef.current) return
 
       // Extract content from response and store separately
       // Content is excluded from detail to make fullContent the single source of truth
@@ -169,39 +184,47 @@ export function useDocumentDetail({
         setHasMoreContent(false)
       }
     } catch (err) {
-      if (requestId !== fetchRequestIdRef.current) return
+      if (signal?.aborted || requestId !== fetchRequestIdRef.current) return
       // Don't show error for aborted requests
       if (err instanceof Error && err.name === 'AbortError') {
         return
       }
+      onReadErrorRef.current?.(err)
       const errorMessage = err instanceof Error ? err.message : 'Failed to load document detail'
       setError(errorMessage)
-      toast.error(t('document.document.detail.contentLoadFailed'))
+      if (!signal) toast.error(t('document.document.detail.contentLoadFailed'))
     } finally {
       if (requestId === fetchRequestIdRef.current) setLoading(false)
     }
-  }, [kbId, docId, includeContent, includeSummary, t])
+  }, [kbId, docId, includeContent, includeSummary, signal, t])
 
   /**
    * Load more content (pagination)
    * Uses ref to prevent race conditions with stale closure values
    */
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMoreContent) return
+    if (signal?.aborted || loadingMore || !hasMoreContent) return
 
     // Use ref to get latest offset value
     const offset = offsetRef.current
+    const requestId = fetchRequestIdRef.current
 
     try {
       setLoadingMore(true)
 
-      const response = await knowledgeBaseApi.getDocumentDetail(kbId, docId, {
-        includeContent: true,
-        includeSummary: false, // Don't need summary on pagination
-        offset: offset,
-        limit: MAX_CHARS_PER_REQUEST,
-      })
+      const response = await knowledgeBaseApi.getDocumentDetail(
+        kbId,
+        docId,
+        {
+          includeContent: true,
+          includeSummary: false, // Don't need summary on pagination
+          offset: offset,
+          limit: MAX_CHARS_PER_REQUEST,
+        },
+        signal
+      )
 
+      if (signal?.aborted || requestId !== fetchRequestIdRef.current) return
       if (response.content) {
         // Append new content to existing content
         setFullContent(prev => prev + response.content)
@@ -220,12 +243,18 @@ export function useDocumentDetail({
         setDetail(prev => (prev ? { ...prev, truncated: stillHasMore } : null))
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load more content'
-      toast.error(errorMessage)
+      if (signal?.aborted || requestId !== fetchRequestIdRef.current) return
+      if (onLoadMoreErrorRef.current) {
+        onLoadMoreErrorRef.current(err)
+      } else {
+        onReadErrorRef.current?.(err)
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load more content'
+        toast.error(errorMessage)
+      }
     } finally {
-      setLoadingMore(false)
+      if (requestId === fetchRequestIdRef.current) setLoadingMore(false)
     }
-  }, [kbId, docId, hasMoreContent, loadingMore])
+  }, [kbId, docId, hasMoreContent, loadingMore, signal])
 
   /**
    * Load all remaining content (for editing truncated documents)

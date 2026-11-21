@@ -251,6 +251,8 @@ class OpenAIRequestConverter:
             "new_session": request.new_session,
             "collaboration_model": request.collaboration_model,
         }
+        if request.enable_answer_evidence:
+            metadata["enable_answer_evidence"] = True
         openai_request["metadata"] = metadata
 
         # Add model_config as a separate field for chat_shell to use

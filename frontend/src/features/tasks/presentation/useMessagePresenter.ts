@@ -15,6 +15,7 @@ import { useUser } from '@/features/common/UserContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { RetrievalSummaryPayload, SourceReference } from '@/types/socket'
+import type { AnswerCitation } from '../components/message/evidence/AnswerEvidenceMarkdown'
 import type { MessageBlock } from '../components/message/thinking/types'
 import type { UnifiedMessage, SyncOptions } from '@wegent/chat-core'
 
@@ -62,6 +63,8 @@ export interface DisplayMessage {
     thinking?: unknown[]
     workbench?: Record<string, unknown>
     shell_type?: string // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+    answer_generation_id?: string
+    answer_citations?: AnswerCitation[]
     sources?: SourceReference[] // RAG knowledge base sources
     retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // DeepSeek R1 reasoning content

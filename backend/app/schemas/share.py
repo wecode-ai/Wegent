@@ -10,7 +10,7 @@ Provides request/response schemas for share links and resource members.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -479,6 +479,19 @@ class MyKBPermissionResponse(BaseModel):
     pending_request: Optional[PendingRequestInfo] = Field(
         None,
         description="Pending permission request info if exists",
+    )
+
+
+class MyKBSourcePermissionResponse(MyKBPermissionResponse):
+    """Permission details for reading a source in the current task or answer."""
+
+    source_access: Literal["readable", "visit-only", "denied"] = Field(
+        "denied", description="Current viewer's source access for this knowledge base"
+    )
+    task_source_bound: bool | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Whether the requested task is readable and bound to this source",
     )
 
 

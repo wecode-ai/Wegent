@@ -7,7 +7,7 @@ const EXECUTOR_INDEPENDENT_SPEC =
 const STALLED_CHAT_SPEC = /tasks\/chat-stalled-execution\.spec\.ts/
 // Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
-  /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
+  /(tasks\/provider-native-(chat|dingtalk|state-and-contract|answer-evidence)|knowledge\/dingtalk-import)\.spec\.ts/
 
 /**
  * Playwright configuration for Wegent E2E testing

@@ -5,9 +5,13 @@
 'use client'
 
 import { AlertCircle, Download, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { fetchAttachmentFile, formatFileSize } from '@/apis/attachments'
+import {
+  fetchAttachmentFile,
+  formatFileSize,
+  type AttachmentDownloadScope,
+} from '@/apis/attachments'
 import { FilePreview } from '@/components/common/FilePreview'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -23,6 +27,8 @@ interface KnowledgeSourcePreviewProps {
   document: KnowledgeDocument
   active: boolean
   onDownload: () => void
+  onReadError?: (error: unknown) => void
+  attachmentScope?: AttachmentDownloadScope
   className?: string
 }
 
@@ -30,6 +36,8 @@ export function KnowledgeSourcePreview({
   document,
   active,
   onDownload,
+  onReadError,
+  attachmentScope,
   className,
 }: KnowledgeSourcePreviewProps) {
   const { t } = useTranslation('knowledge')
@@ -39,10 +47,14 @@ export function KnowledgeSourcePreview({
   const [renderError, setRenderError] = useState<Error | null>(null)
   const [retryKey, setRetryKey] = useState(0)
 
+  const isCurrent = attachmentScope?.isCurrent
   const tooLarge = isKnowledgeSourcePreviewTooLarge(document.file_size)
 
-  useEffect(() => {
-    if (!active || !document.attachment_id || tooLarge) {
+  const onReadErrorRef = useRef(onReadError)
+  onReadErrorRef.current = onReadError
+
+  useLayoutEffect(() => {
+    if (!active || !document.attachment_id || tooLarge || isCurrent?.() === false) {
       setFile(null)
       setLoading(false)
       setFetchError(null)
@@ -51,26 +63,47 @@ export function KnowledgeSourcePreview({
     }
 
     const controller = new AbortController()
+    const abort = () => controller.abort()
+    attachmentScope?.signal.addEventListener('abort', abort, { once: true })
     setFile(null)
     setLoading(true)
     setFetchError(null)
     setRenderError(null)
 
+    const current = () => !controller.signal.aborted && isCurrent?.() !== false
     fetchAttachmentFile(document.attachment_id, {
       filename: document.name,
       signal: controller.signal,
+      ...(attachmentScope ? { cache: 'no-store', apiBaseUrl: attachmentScope.apiBaseUrl } : {}),
     })
-      .then(setFile)
+      .then(file => {
+        if (current()) setFile(file)
+      })
       .catch(fetchError => {
-        if (controller.signal.aborted) return
+        if (!current()) return
+        onReadErrorRef.current?.(fetchError)
         setFetchError(fetchError instanceof Error ? fetchError : new Error(String(fetchError)))
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
+        if (current()) setLoading(false)
       })
 
-    return () => controller.abort()
-  }, [active, document.attachment_id, document.id, document.name, retryKey, tooLarge])
+    return () => {
+      attachmentScope?.signal.removeEventListener('abort', abort)
+      abort()
+    }
+  }, [
+    active,
+    document.attachment_id,
+    document.id,
+    document.name,
+    attachmentScope,
+    isCurrent,
+    retryKey,
+    tooLarge,
+  ])
+
+  if (isCurrent?.() === false) return null
 
   let content: ReactNode
   if (tooLarge) {

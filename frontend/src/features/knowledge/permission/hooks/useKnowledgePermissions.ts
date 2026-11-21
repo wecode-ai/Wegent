@@ -17,6 +17,7 @@ import type {
 
 interface UseKnowledgePermissionsOptions {
   kbId: number
+  taskId?: number
   includePendingRequests?: boolean
   onChanged?: () => void
   onAccessDenied?: () => void
@@ -37,10 +38,10 @@ const emptyState: PermissionState = {
 }
 
 export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions) {
-  const { kbId, includePendingRequests = false } = options
+  const { kbId, taskId, includePendingRequests = false } = options
   const { user } = useUser()
   const cacheScope = client.getCacheScope()
-  const scope = JSON.stringify([user?.id, cacheScope, kbId])
+  const scope = JSON.stringify([user?.id, cacheScope, kbId, taskId])
   const scopeRef = useRef(scope)
   scopeRef.current = scope
   const callbacks = useRef(options)
@@ -134,10 +135,14 @@ export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions)
     () =>
       read(
         'mine',
-        () => knowledgePermissionApi.getMyPermission(kbId),
+        () =>
+          knowledgePermissionApi.getMyPermission(
+            kbId,
+            taskId === undefined ? undefined : { taskId }
+          ),
         myPermission => setState(prev => ({ ...prev, myPermission }))
       ),
-    [read, kbId]
+    [read, kbId, taskId]
   )
   const fetchShareInfo = useCallback(
     () =>

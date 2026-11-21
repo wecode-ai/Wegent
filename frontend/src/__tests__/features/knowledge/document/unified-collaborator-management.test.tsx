@@ -35,6 +35,7 @@ jest.mock('@/features/common/UserContext', () => ({ useUser: () => ({ user: mock
 jest.mock('@/apis/client', () => ({
   __esModule: true,
   ApiError: class extends Error {},
+  apiClient: { getCacheScope: () => mockScope },
   default: { getCacheScope: () => mockScope },
 }))
 jest.mock('@/apis/knowledge-base', () => ({ knowledgeBaseApi: { getAllGrouped: jest.fn() } }))

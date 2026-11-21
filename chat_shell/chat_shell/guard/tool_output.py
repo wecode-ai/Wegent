@@ -168,6 +168,20 @@ def _split_compact(content: str) -> tuple[str, str, dict[str, int | float]]:
     return body, tool_name, footer_info
 
 
+def intact_tool_output_body(content: Any) -> str | None:
+    """Read a whole visible tool body without accepting a truncated envelope."""
+    if not isinstance(content, str):
+        return None
+    if not content.startswith(HEADER_PREFIX):
+        return content
+    header, separator, _ = content.partition("\n")
+    if not separator or not header.endswith("]"):
+        return None
+    if _parse_header(header).get("truncated") != "false":
+        return None
+    return _split_compact(content)[0]
+
+
 def _truncate_body(
     body: str, policy: TruncationPolicy, counter: TokenCounter
 ) -> tuple[str, int, bool, dict[str, int]]:

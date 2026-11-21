@@ -120,6 +120,14 @@ pub(crate) async fn after_commit(
     if turn.assistant_subtask_id == 0 {
         return Ok(());
     }
+    match super::python_answer::start(state, turn, user_id).await {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(error) => {
+            finalize_trigger_failure(state, turn, user_id, &error).await;
+            return Err(error);
+        }
+    }
     let state = Arc::clone(state);
     let turn = turn.clone();
     tokio::spawn(async move {
@@ -338,6 +346,9 @@ pub(crate) async fn trigger_existing(
     turn: &ChatTurn,
     user_id: i64,
 ) -> Result<(), FastApiError> {
+    if super::python_answer::start(state, turn, user_id).await? {
+        return Ok(());
+    }
     trigger_ai(state, turn, user_id).await
 }
 

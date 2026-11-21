@@ -57,10 +57,18 @@ export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
 }
 
 /** Return the effective reader capability used only for knowledge UI state. */
-export async function getDocumentProtection(id: number): Promise<DocumentProtection> {
-  return apiClient.get<DocumentProtection>(
-    `/knowledge-bases/${id}/document-protection?preview_watermark=true`
-  )
+export async function getDocumentProtection(
+  id: number,
+  signal?: AbortSignal
+): Promise<DocumentProtection> {
+  const endpoint = `/knowledge-bases/${id}/document-protection?preview_watermark=true`
+  return signal
+    ? apiClient.get<DocumentProtection>(endpoint, {
+        signal,
+        cache: 'no-store',
+        redirectOnUnauthorized: false,
+      })
+    : apiClient.get<DocumentProtection>(endpoint)
 }
 
 /**
@@ -222,7 +230,10 @@ export async function getDocument(
   documentId: number,
   signal?: AbortSignal
 ): Promise<KnowledgeDocument> {
-  return apiClient.get<KnowledgeDocument>(`/knowledge-documents/${documentId}`, { signal })
+  return apiClient.get<KnowledgeDocument>(`/knowledge-documents/${documentId}`, {
+    signal,
+    ...(signal ? { cache: 'no-store', redirectOnUnauthorized: false } : {}),
+  })
 }
 
 export interface CreateTextKnowledgeDocumentRequest {

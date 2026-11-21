@@ -97,6 +97,60 @@ def _make_request(subtask_id: int, request_id: str = ""):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_sse_evidence_requires_capability_and_uses_internal_credential(
+    monkeypatch, enabled
+):
+    from app.core.config import settings
+    from app.services.knowledge.answer_evidence import TrustedEvidence
+    from shared.models import ExecutionRequest
+
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-service-token")
+    request = ExecutionRequest(
+        task_id=1001, subtask_id=99, user_id=3, enable_answer_evidence=enabled
+    )
+    target = ExecutionTarget(
+        mode=CommunicationMode.SSE,
+        url="http://chat-shell",
+        namespace=None,
+        event="task:execute",
+        room=None,
+    )
+    emitter = AsyncMock()
+    calls = {}
+    event = _FakeEvent("response.completed")
+    event.model_dump = lambda: {
+        "type": "response.completed",
+        "response": {"output": [], "_answer_evidence": []},
+    }
+    sessions = AsyncMock()
+    sessions.register_stream.return_value = asyncio.Event()
+    sessions.is_cancelled.return_value = False
+    with (
+        patch.dict(
+            "sys.modules", {"openai": _build_fake_openai_module(calls, [event])}
+        ),
+        patch("app.services.chat.storage.session.session_manager", sessions),
+    ):
+        await ExecutionDispatcher()._dispatch_sse(request, target, emitter)
+
+    results = [
+        call.args[0].result
+        for call in emitter.emit.await_args_list
+        if call.args[0].result is not None
+    ]
+    assert len(results) == 1
+    if enabled:
+        assert calls["extra_headers"]["Authorization"] == "Bearer test-service-token"
+        assert calls["extra_body"]["metadata"]["enable_answer_evidence"] is True
+        assert isinstance(results[0]["_answer_evidence"], TrustedEvidence)
+    else:
+        assert "Authorization" not in calls["extra_headers"]
+        assert "enable_answer_evidence" not in calls["extra_body"]["metadata"]
+        assert "_answer_evidence" not in results[0]
+
+
+@pytest.mark.asyncio
 async def test_dispatch_sse_keeps_existing_metadata_request_id():
     dispatcher = ExecutionDispatcher()
     request = _make_request(subtask_id=99, request_id="backend-request-id")

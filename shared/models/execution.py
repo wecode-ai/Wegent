@@ -68,6 +68,8 @@ class ExecutionRequest:
     # === Task Identification ===
     task_id: int = 0
     subtask_id: int = 0
+    # Internal capability set only by the official Web chat entry.
+    enable_answer_evidence: bool = False
     subtask_next_id: Optional[int] = None  # From Task
     team_id: int = 0
     team_name: str = ""

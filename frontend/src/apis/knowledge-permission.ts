@@ -265,11 +265,19 @@ export const knowledgePermissionApi = {
   /**
    * Get current user's permission for a knowledge base
    */
-  getMyPermission: async (kbId: number): Promise<MyPermissionResponse> => {
-    const response = await client.get<MyPermissionResponse>(
-      `/share/KnowledgeBase/${kbId}/my-permission`
-    )
-    return response
+  getMyPermission: (
+    kbId: number,
+    scope?: { taskId?: number; signal?: AbortSignal }
+  ): Promise<MyPermissionResponse> => {
+    const query = new URLSearchParams()
+    if (scope?.taskId && scope.taskId > 0) query.set('task_id', String(scope.taskId))
+    const queryString = query.toString()
+    const suffix = queryString ? `?${queryString}` : ''
+    return client.get<MyPermissionResponse>(`/share/KnowledgeBase/${kbId}/my-permission${suffix}`, {
+      cache: 'no-store',
+      ...(scope ? { redirectOnUnauthorized: false } : {}),
+      ...(scope?.signal ? { signal: scope.signal } : {}),
+    })
   },
 
   /**

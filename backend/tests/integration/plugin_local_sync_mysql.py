@@ -88,7 +88,11 @@ def verify(engine, url):
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == tables
+        # The answer-evidence migration adds its own table, never plugin state.
+        assert set(inspect(engine).get_table_names()) == tables | {
+            "knowledge_citations"
+        }
+        tables = set(inspect(engine).get_table_names())
         assert "plugin_local_sync_operations" not in tables
         assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)

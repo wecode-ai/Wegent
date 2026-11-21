@@ -34,6 +34,7 @@ import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { ChatEvidenceHost } from '@/features/tasks/components/message/evidence/ChatEvidenceHost'
 import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -195,6 +196,8 @@ export function ChatPageDesktop() {
   // Workbench state for code tasks opened inside chat.
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(false)
   const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
+  const [evidencePanelOpen, setEvidencePanelOpen] = useState(false)
+  const showRightPanel = Boolean(rightPanelRequest && !evidencePanelOpen)
 
   // Toast for notifications
   const { toast } = useToast()
@@ -467,31 +470,38 @@ export function ChatPageDesktop() {
             className="flex min-h-0 flex-col transition-all duration-300 ease-in-out"
             data-testid="chat-page-main-pane"
             style={{
-              width: rightPanelRequest
+              width: showRightPanel
                 ? '400px'
                 : hasOpenTask && isCodeTaskOpen && isWorkbenchOpen
                   ? '60%'
                   : '100%',
-              maxWidth: rightPanelRequest ? '400px' : undefined,
+              maxWidth: showRightPanel ? '400px' : undefined,
               flexShrink: 0,
             }}
           >
-            <ChatArea
-              teams={visibleTeams}
-              isTeamsLoading={isTeamsLoading}
-              loadError={teams.length === 0 ? loadError : null}
-              rawTeamsEmpty={teams.length === 0}
-              selectedTeamForNewTask={_selectedTeamForNewTask}
-              showRepositorySelector={showRepositorySelector}
-              taskType={taskType}
-              teamModeFilter={teamModeFilter}
-              onShareButtonRender={handleShareButtonRender}
-              onRefreshTeams={handleRefreshTeams}
-              onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
-              disabledReason={disabledReason}
-              isSplitViewOpen={Boolean(rightPanelRequest)}
-              extension={{ teamEdit: teamEditExtension }}
-            />
+            <ChatEvidenceHost
+              taskKey={taskId}
+              canSplit={!isWorkbenchOpen}
+              otherPanelRequest={rightPanelRequest}
+              onPanelChange={setEvidencePanelOpen}
+            >
+              <ChatArea
+                teams={visibleTeams}
+                isTeamsLoading={isTeamsLoading}
+                loadError={teams.length === 0 ? loadError : null}
+                rawTeamsEmpty={teams.length === 0}
+                selectedTeamForNewTask={_selectedTeamForNewTask}
+                showRepositorySelector={showRepositorySelector}
+                taskType={taskType}
+                teamModeFilter={teamModeFilter}
+                onShareButtonRender={handleShareButtonRender}
+                onRefreshTeams={handleRefreshTeams}
+                onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
+                disabledReason={disabledReason}
+                isSplitViewOpen={showRightPanel}
+                extension={{ teamEdit: teamEditExtension }}
+              />
+            </ChatEvidenceHost>
           </div>
 
           {hasOpenTask && isCodeTaskOpen && !rightPanelRequest && (
@@ -520,10 +530,12 @@ export function ChatPageDesktop() {
           {rightPanelRequest && (
             <>
               <div
+                hidden={!showRightPanel}
                 className="pointer-events-none absolute inset-y-0 w-px bg-border"
                 style={{ left: '400px' }}
               />
               <div
+                hidden={!showRightPanel}
                 className="h-full min-w-0 flex-1 overflow-hidden bg-surface"
                 data-task-right-panel
                 data-testid="task-right-panel-container"

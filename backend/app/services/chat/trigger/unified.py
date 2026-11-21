@@ -102,6 +102,7 @@ async def trigger_ai_response_unified(
     enable_tools: bool = True,
     enable_deep_thinking: bool = True,
     previous_bot_id: Optional[int] = None,
+    enable_answer_evidence: bool = False,
 ) -> None:
     """Trigger AI response using unified execution architecture.
 
@@ -157,6 +158,13 @@ async def trigger_ai_response_unified(
         enable_tools=enable_tools,
         enable_deep_thinking=enable_deep_thinking,
         previous_bot_id=previous_bot_id,
+    )
+
+    # Only trusted Web entry callers opt in.
+    request.enable_answer_evidence = (
+        enable_answer_evidence
+        and not device_id
+        and _request_shell_type(request) == "Chat"
     )
 
     # 2. Dispatch task

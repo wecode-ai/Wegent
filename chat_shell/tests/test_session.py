@@ -77,6 +77,25 @@ class TestSessionManager:
 class TestStreamingCore:
     """Tests for StreamingCore."""
 
+    @pytest.mark.asyncio
+    async def test_default_completion_has_no_private_evidence_payload(self):
+        from chat_shell.services.streaming.core import StreamingCore, StreamingState
+        from shared.models import EmitterBuilder, GeneratorTransport
+
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        state = StreamingState(task_id=1, subtask_id=2, user_id=3)
+        state.append_content("API answer")
+
+        await StreamingCore(emitter=emitter, state=state).finalize()
+
+        response = next(
+            data["response"]
+            for event, data in transport.get_events()
+            if event == "response.completed"
+        )
+        assert "_answer_evidence" not in response
+
     @pytest.fixture
     def streaming_state(self):
         """Create streaming state."""

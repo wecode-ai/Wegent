@@ -29,10 +29,18 @@ import { useUser } from '@/features/common/UserContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { ChatEvidenceHost } from '@/features/tasks/components/message/evidence/ChatEvidenceHost'
+import {
+  isSourceHidden,
+  TaskSourceDecisions,
+  useTaskSourceDecisions,
+} from '@/features/tasks/components/message/evidence/sourceAccess'
+import { useIsDesktop, useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { KnowledgeSourcePanel } from './KnowledgeSourcePanel'
 import { knowledgeCapableTeams } from '../utils/knowledgeTeams'
 import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
+import { KnowledgeUrlStatus } from './KnowledgeUrlStatus'
 import { ArtifactWorkspacePanel } from '@/features/knowledge/artifact/components/ArtifactWorkspacePanel'
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
 import { KnowledgeAccessDialog } from './KnowledgeAccessDialog'
@@ -50,6 +58,8 @@ import type { Team } from '@/types/api'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
+import { parseKnowledgeBaseId } from '@/utils/knowledgeUrl'
+import { KnowledgeReadOnlyHistory } from './KnowledgeReadOnlyHistory'
 
 function KnowledgeChatArea(props: ComponentProps<typeof ChatArea>) {
   const [chatActions, setChatActions] = useState<ReactNode>(null)
@@ -113,7 +123,9 @@ export function KnowledgeDetailPanel({
   const { user } = useUser()
 
   // Task context - used to clear selected task when entering notebook mode
-  const { selectTask } = useTaskSession()
+  const { selectTask, selectedTask, selectedTaskDetail, denySelectedTaskAccess } = useTaskSession()
+  const isMobile = useIsMobile()
+  const isDesktop = useIsDesktop()
 
   // Team context for ChatArea
   const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
@@ -132,28 +144,35 @@ export function KnowledgeDetailPanel({
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<'sources' | 'chat' | 'generation'>(
     'chat'
   )
+  const handleEvidencePanelChange = useCallback((open: boolean) => {
+    if (open) setMobileWorkspaceTab('chat')
+  }, [])
   const [artifactPromptRequest, setArtifactPromptRequest] = useState<ArtifactPromptRequest | null>(
     null
   )
   const [capabilityDraftRequest, setCapabilityDraftRequest] =
     useState<KnowledgeCapabilityDraftRequest | null>(null)
 
-  // Fetch user permission for this knowledge base
-  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+  const searchParams = useSearchParams()
+  const taskIdFromUrl = useMemo(() => {
+    const taskId = getTaskQueryParam(searchParams)
+    if (taskId || typeof window === 'undefined') return taskId
+    return getTaskQueryParam(new URLSearchParams(window.location.search))
+  }, [searchParams])
+  const historyTaskId = currentView === 'notebook' ? parseKnowledgeBaseId(taskIdFromUrl) : null
+  const hasNotebookTask = historyTaskId !== null
+  const {
+    myPermission,
+    fetchMyPermission,
+    error: permissionError,
+  } = useKnowledgePermissions({
     kbId: selectedKb?.id || 0,
-    onAccessDenied: onAccessLost,
+    onAccessDenied: hasNotebookTask ? undefined : onAccessLost,
   })
 
-  // Fetch my permission when knowledge base is loaded
   useEffect(() => {
-    if (selectedKb) {
-      fetchMyPermission()
-    }
+    if (selectedKb) void fetchMyPermission()
   }, [selectedKb, fetchMyPermission, permissionRefreshKey, verifiedRole])
-
-  useEffect(() => {
-    if (myPermission && !myPermission.has_access) onAccessLost?.()
-  }, [myPermission, onAccessLost])
 
   const filteredTeams = useMemo(() => knowledgeCapableTeams(teams), [teams])
 
@@ -205,19 +224,36 @@ export function KnowledgeDetailPanel({
     })
   }, [selectedKb, user, myPermission, verifiedRole])
 
-  // Get search params to check for taskId in URL
-  // Support multiple parameter formats for compatibility
-  const searchParams = useSearchParams()
-  const taskIdFromUrl = useMemo(() => {
-    const fromSearchParams = getTaskQueryParam(searchParams)
-    if (fromSearchParams) return fromSearchParams
-    // Fallback for replaceState scenarios where useSearchParams hasn't synced yet
-    if (typeof window !== 'undefined') {
-      const browserParams = new URLSearchParams(window.location.search)
-      return getTaskQueryParam(browserParams)
-    }
-    return null
-  }, [searchParams])
+  const selectedKbId = selectedKb?.id
+  const taskId = selectedTaskDetail?.id ?? selectedTask?.id
+  const notebookScope = JSON.stringify([selectedKbId, taskId, taskIdFromUrl, permissionRefreshKey])
+  const taskSources = useTaskSourceDecisions(
+    currentView === 'notebook' ? taskId : undefined,
+    denySelectedTaskAccess,
+    currentView === 'notebook' && selectedKbId !== undefined
+      ? {
+          key: notebookScope,
+          knowledgeBaseId: selectedKbId,
+          directAccessDenied: myPermission?.has_access === false,
+        }
+      : undefined
+  )
+  const sourceHidden =
+    myPermission?.has_access === false ||
+    (selectedKbId !== undefined && isSourceHidden(taskSources.access[selectedKbId]))
+  const lostLibraryAccess = myPermission?.has_access === false && !hasNotebookTask
+  const canReadSources = myPermission?.has_access === true && !sourceHidden
+  const activeWorkspaceTab = canReadSources ? mobileWorkspaceTab : 'chat'
+
+  useEffect(() => {
+    if (lostLibraryAccess) onAccessLost?.()
+  }, [lostLibraryAccess, onAccessLost])
+
+  useEffect(() => {
+    if (!sourceHidden) return
+    setSourceDialogOpen(false)
+    sourceApplyContinuationRef.current = null
+  }, [sourceHidden])
   const initialDocumentId = useMemo(() => {
     const rawId = searchParams.get('documentId')
     if (!rawId) return undefined
@@ -270,6 +306,18 @@ export function KnowledgeDetailPanel({
     }
   }, [selectedKb?.id, currentView, selectTask])
 
+  if (sourceHidden && currentView === 'notebook') {
+    if (selectedKbId === undefined || historyTaskId === null) return null
+    return (
+      <KnowledgeReadOnlyHistory
+        knowledgeBaseId={selectedKbId}
+        taskId={historyTaskId}
+        permissionRefreshKey={permissionRefreshKey}
+      />
+    )
+  }
+  if (lostLibraryAccess) return null
+
   // In Notebook view, organize the workflow as sources -> conversation -> generation.
   if (selectedKb && currentView === 'notebook') {
     return (
@@ -277,135 +325,169 @@ export function KnowledgeDetailPanel({
         className="flex flex-1 flex-col overflow-hidden border-t border-border bg-base lg:flex-row"
         data-testid="knowledge-detail-notebook"
       >
-        <Tabs
-          value={mobileWorkspaceTab}
-          onValueChange={value => setMobileWorkspaceTab(value as 'sources' | 'chat' | 'generation')}
-          className="border-b border-border p-2 lg:hidden"
-        >
-          <TabsList className="grid h-11 w-full grid-cols-3">
-            <TabsTrigger
-              value="sources"
-              className="h-11"
-              data-testid="knowledge-mobile-sources-tab"
-            >
-              <Files className="mr-1.5 h-4 w-4" />
-              {t('artifact.mobile.sources')}
-            </TabsTrigger>
-            <TabsTrigger value="chat" className="h-11" data-testid="knowledge-mobile-chat-tab">
-              <MessageSquare className="mr-1.5 h-4 w-4" />
-              {t('artifact.mobile.chat')}
-            </TabsTrigger>
-            <TabsTrigger
-              value="generation"
-              className="h-11"
-              data-testid="knowledge-mobile-generation-tab"
-            >
-              <WandSparkles className="mr-1.5 h-4 w-4" />
-              {t('artifact.mobile.generation')}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        {canReadSources && (
+          <Tabs
+            value={mobileWorkspaceTab}
+            onValueChange={value =>
+              setMobileWorkspaceTab(value as 'sources' | 'chat' | 'generation')
+            }
+            className="border-b border-border p-2 lg:hidden"
+          >
+            <TabsList className="grid h-11 w-full grid-cols-3">
+              <TabsTrigger
+                value="sources"
+                className="h-11"
+                data-testid="knowledge-mobile-sources-tab"
+              >
+                <Files className="mr-1.5 h-4 w-4" />
+                {t('artifact.mobile.sources')}
+              </TabsTrigger>
+              <TabsTrigger value="chat" className="h-11" data-testid="knowledge-mobile-chat-tab">
+                <MessageSquare className="mr-1.5 h-4 w-4" />
+                {t('artifact.mobile.chat')}
+              </TabsTrigger>
+              <TabsTrigger
+                value="generation"
+                className="h-11"
+                data-testid="knowledge-mobile-generation-tab"
+              >
+                <WandSparkles className="mr-1.5 h-4 w-4" />
+                {t('artifact.mobile.generation')}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
 
-        <KnowledgeSourcePanel
-          key={`sources-${selectedKb.id}`}
-          knowledgeBase={selectedKb}
-          selectedDocumentIds={selectedDocumentIds}
-          availableDocumentCount={availableDocumentCount}
-          canUploadDocuments={canUploadDocuments}
-          canManageAllDocuments={canManageKb}
-          mobileVisible={mobileWorkspaceTab === 'sources'}
-          refreshToken={sourceRefreshToken}
-          groupInfo={groupInfo}
-          onGroupClick={onGroupClick}
-          isOrganization={groupInfo?.groupType === 'organization'}
-          initialDocPath={initialDocPath}
-          initialDocumentId={initialDocumentId}
-          onDocumentSelectionChange={setSelectedDocumentIds}
-          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
-          onSourcesChanged={() => setSourceRefreshToken(current => current + 1)}
-        />
+        {canReadSources && (
+          <KnowledgeSourcePanel
+            key={`sources-${selectedKb.id}`}
+            knowledgeBase={selectedKb}
+            selectedDocumentIds={selectedDocumentIds}
+            availableDocumentCount={availableDocumentCount}
+            canUploadDocuments={canUploadDocuments}
+            canManageAllDocuments={canManageKb}
+            mobileVisible={mobileWorkspaceTab === 'sources'}
+            refreshToken={sourceRefreshToken}
+            groupInfo={groupInfo}
+            onGroupClick={onGroupClick}
+            isOrganization={groupInfo?.groupType === 'organization'}
+            initialDocPath={initialDocPath}
+            initialDocumentId={initialDocumentId}
+            onDocumentSelectionChange={setSelectedDocumentIds}
+            onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
+            onSourcesChanged={() => setSourceRefreshToken(current => current + 1)}
+          />
+        )}
 
         <div
-          className={`${mobileWorkspaceTab === 'chat' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col lg:flex`}
-          data-testid="knowledge-workspace-chat"
+          className={`${activeWorkspaceTab === 'sources' ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 lg:flex`}
         >
-          <KnowledgeChatArea
-            key={selectedKb.id}
-            teams={filteredTeams}
-            isTeamsLoading={isTeamsLoading}
-            loadError={teams.length === 0 ? loadError : null}
-            rawTeamsEmpty={teams.length === 0}
-            showRepositorySelector={false}
-            taskType="knowledge"
-            knowledgeBaseId={selectedKb.id}
-            onRefreshTeams={handleRefreshTeams}
-            initialKnowledgeBase={{
-              id: selectedKb.id,
-              name: selectedKb.name,
-              namespace: selectedKb.namespace,
-              document_count: selectedKb.document_count,
-            }}
-            selectedDocumentIds={selectedDocumentIds}
-            guidedQuestions={selectedKb.guided_questions}
-            inputAlwaysAtBottom={true}
-            externalPromptRequest={artifactPromptRequest}
-            onExternalPromptConsumed={requestId => {
-              setArtifactPromptRequest(current =>
-                current?.requestId === requestId ? null : current
-              )
-            }}
-            externalDraftRequest={capabilityDraftRequest}
-            onExternalDraftConsumed={requestId => {
-              setCapabilityDraftRequest(current =>
-                current?.requestId === requestId ? null : current
-              )
-            }}
-            emptyStateContent={
-              <KnowledgeBaseSummaryCard
-                knowledgeBase={selectedKb}
-                onRefresh={handleRefreshKnowledgeBase}
-                canEditSummary={canManageKb}
-              />
-            }
-            // Note: Knowledge base binding is handled by the backend when creating the task
-            // via the knowledge_base_id parameter in the chat request.
-          />
+          <TaskSourceDecisions.Provider value={taskSources}>
+            <ChatEvidenceHost
+              mobile={isMobile}
+              canSplit={isDesktop}
+              taskKey={notebookScope}
+              suspended={!isDesktop && activeWorkspaceTab !== 'chat'}
+              onPanelChange={handleEvidencePanelChange}
+              rightCompanion={
+                canReadSources && (
+                  <ArtifactWorkspacePanel
+                    key={`generation-${selectedKb.id}`}
+                    knowledgeBaseId={selectedKb.id}
+                    selectedDocumentIds={selectedDocumentIds}
+                    refreshToken={sourceRefreshToken}
+                    mobileVisible={activeWorkspaceTab === 'generation'}
+                    onAdjustSources={openSourceDialog}
+                    onAvailableDocumentCountChange={setAvailableDocumentCount}
+                    onAskNode={request => {
+                      setArtifactPromptRequest(request)
+                      setMobileWorkspaceTab('chat')
+                    }}
+                    onCreatePptDraft={() => {
+                      setCapabilityDraftRequest({
+                        requestId: `presentation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                        message: t('artifact.presentationPrompt'),
+                      })
+                      setMobileWorkspaceTab('chat')
+                    }}
+                  />
+                )
+              }
+            >
+              <div
+                className={`${activeWorkspaceTab === 'chat' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col lg:flex`}
+                data-testid="knowledge-workspace-chat"
+              >
+                {!myPermission && permissionError && (
+                  <KnowledgeUrlStatus status="error" onRetry={fetchMyPermission} compact />
+                )}
+                <KnowledgeChatArea
+                  key={selectedKb.id}
+                  teams={filteredTeams}
+                  isTeamsLoading={isTeamsLoading}
+                  loadError={teams.length === 0 ? loadError : null}
+                  rawTeamsEmpty={teams.length === 0}
+                  showRepositorySelector={false}
+                  taskType="knowledge"
+                  knowledgeBaseId={selectedKb.id}
+                  onRefreshTeams={handleRefreshTeams}
+                  initialKnowledgeBase={
+                    canReadSources
+                      ? {
+                          id: selectedKb.id,
+                          name: selectedKb.name,
+                          namespace: selectedKb.namespace,
+                          document_count: selectedKb.document_count,
+                        }
+                      : undefined
+                  }
+                  selectedDocumentIds={canReadSources ? selectedDocumentIds : []}
+                  guidedQuestions={canReadSources ? selectedKb.guided_questions : undefined}
+                  inputAlwaysAtBottom={true}
+                  externalPromptRequest={canReadSources ? artifactPromptRequest : null}
+                  onExternalPromptConsumed={requestId => {
+                    setArtifactPromptRequest(current =>
+                      current?.requestId === requestId ? null : current
+                    )
+                  }}
+                  externalDraftRequest={canReadSources ? capabilityDraftRequest : null}
+                  onExternalDraftConsumed={requestId => {
+                    setCapabilityDraftRequest(current =>
+                      current?.requestId === requestId ? null : current
+                    )
+                  }}
+                  emptyStateContent={
+                    canReadSources && (
+                      <KnowledgeBaseSummaryCard
+                        knowledgeBase={selectedKb}
+                        onRefresh={handleRefreshKnowledgeBase}
+                        canEditSummary={canManageKb}
+                      />
+                    )
+                  }
+                  // Note: Knowledge base binding is handled by the backend when creating the task
+                  // via the knowledge_base_id parameter in the chat request.
+                />
+              </div>
+            </ChatEvidenceHost>
+          </TaskSourceDecisions.Provider>
         </div>
 
-        <ArtifactWorkspacePanel
-          key={`generation-${selectedKb.id}`}
-          knowledgeBaseId={selectedKb.id}
-          selectedDocumentIds={selectedDocumentIds}
-          refreshToken={sourceRefreshToken}
-          mobileVisible={mobileWorkspaceTab === 'generation'}
-          onAdjustSources={openSourceDialog}
-          onAvailableDocumentCountChange={setAvailableDocumentCount}
-          onAskNode={request => {
-            setArtifactPromptRequest(request)
-            setMobileWorkspaceTab('chat')
-          }}
-          onCreatePptDraft={() => {
-            setCapabilityDraftRequest({
-              requestId: `presentation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              message: t('artifact.presentationPrompt'),
-            })
-            setMobileWorkspaceTab('chat')
-          }}
-        />
-
-        <ArtifactSourceDialog
-          knowledgeBaseId={selectedKb.id}
-          open={sourceDialogOpen}
-          selectedDocumentIds={selectedDocumentIds}
-          availableDocumentCount={availableDocumentCount}
-          onOpenChange={setSourceDialogOpen}
-          onApply={documentIds => {
-            const continuation = sourceApplyContinuationRef.current
-            setSelectedDocumentIds(documentIds)
-            sourceApplyContinuationRef.current = null
-            continuation?.()
-          }}
-        />
+        {canReadSources && (
+          <ArtifactSourceDialog
+            knowledgeBaseId={selectedKb.id}
+            open={sourceDialogOpen}
+            selectedDocumentIds={selectedDocumentIds}
+            availableDocumentCount={availableDocumentCount}
+            onOpenChange={setSourceDialogOpen}
+            onApply={documentIds => {
+              const continuation = sourceApplyContinuationRef.current
+              setSelectedDocumentIds(documentIds)
+              sourceApplyContinuationRef.current = null
+              continuation?.()
+            }}
+          />
+        )}
       </div>
     )
   }

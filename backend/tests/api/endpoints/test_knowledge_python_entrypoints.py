@@ -134,7 +134,9 @@ def test_my_permission_returns_owner_and_missing_contract(
         f"/api/share/KnowledgeBase/{kb_id}/my-permission", headers=headers
     )
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
     assert response.json() == {
+        "source_access": "readable",
         "has_access": True,
         "is_creator": True,
         "role": "Owner",
@@ -145,6 +147,7 @@ def test_my_permission_returns_owner_and_missing_contract(
     )
     assert missing.status_code == 200
     assert missing.json() == {
+        "source_access": "denied",
         "has_access": False,
         "is_creator": False,
         "role": None,

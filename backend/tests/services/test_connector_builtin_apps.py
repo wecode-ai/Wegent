@@ -272,6 +272,9 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
 @pytest.mark.parametrize(
     "failed_slug", [definition.slug for definition in BUILTIN_CONNECTOR_APPS] + [None]
 )
+@pytest.mark.filterwarnings(
+    "error:Identity map already had an identity:sqlalchemy.exc.SAWarning"
+)
 def test_failed_bootstrap_rolls_back_apps_and_marker_and_can_retry(
     test_db: Session, failed_slug: str | None
 ) -> None:

@@ -4,7 +4,14 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type {
   TaskDetail,
@@ -34,6 +41,14 @@ import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTypewriter } from '@/hooks/useTypewriter'
 import MessageBubble, { type Message } from './MessageBubble'
+import {
+  getAnswerSourceContext,
+  getCopyableContentFromBlocks,
+  isVisitOnlyAnswer,
+  TaskSourceDecisions,
+  useTaskSourceDecisions,
+} from './evidence/sourceAccess'
+import { filterAnswerEvidenceMarkers } from '../../utils/answerEvidenceMarkers'
 import { PreserveExecutorToggle } from '../PreserveExecutorToggle'
 import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
@@ -226,6 +241,7 @@ function StreamingMessageBubble({
 }
 
 interface MessagesAreaProps {
+  readOnly?: boolean
   selectedTeam?: Team | null
   selectedRepo?: GitRepoInfo | null
   selectedBranch?: GitBranch | null
@@ -279,7 +295,13 @@ interface MessagesAreaProps {
   enableTaskMentions?: boolean
 }
 
+function getExportMessageContent(message: DisplayMessage): string {
+  const content = message.content || ''
+  return message.type === 'ai' && content.startsWith('${$$}$') ? content.slice(6) : content
+}
+
 function MessagesArea({
+  readOnly = false,
   selectedTeam,
   selectedRepo,
   selectedBranch,
@@ -330,6 +352,30 @@ function MessagesArea({
     pendingTaskId,
   })
 
+  const sourceDecisions = useContext(TaskSourceDecisions)
+  const taskId = currentTaskId ?? selectedTaskDetail?.id
+  const sourceAccess = sourceDecisions?.taskId === taskId ? sourceDecisions?.access : undefined
+  const presentAnswerContent = useCallback(
+    (msg: DisplayMessage, content: string) => {
+      if (msg.type !== 'ai') return content
+      const citations = msg.result?.answer_citations
+      const context = getAnswerSourceContext(
+        getCopyableContentFromBlocks(msg.result?.blocks ?? []) ||
+          msg.recoveredContent ||
+          msg.content,
+        citations,
+        msg.sources ?? msg.result?.sources ?? [],
+        msg.result?.retrieval_summary
+      )
+      return filterAnswerEvidenceMarkers(content, {
+        citations,
+        sourceAccess,
+        visitOnly: msg.subtaskStatus === 'COMPLETED' && isVisitOnlyAnswer(context, sourceAccess),
+      })
+    },
+    [sourceAccess]
+  )
+
   // Task share modal state
   const [showShareModal, setShowShareModal] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
@@ -338,7 +384,17 @@ function MessagesArea({
   // Export modal state
   const [showExportModal, setShowExportModal] = useState(false)
   const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf')
-  const [exportableMessages, setExportableMessages] = useState<SelectableMessage[]>([])
+  const [exportSnapshot, setExportSnapshot] = useState<{
+    taskId: number
+    messages: SelectableMessage[]
+  }>()
+  const presentExportContent = useCallback(
+    (entry: SelectableMessage) => {
+      const current = messages.find(msg => (msg.subtaskId?.toString() || msg.id) === entry.id)
+      return current ? presentAnswerContent(current, getExportMessageContent(current)) : ''
+    },
+    [messages, presentAnswerContent]
+  )
 
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false)
@@ -358,7 +414,16 @@ function MessagesArea({
   const [saveKnowledgeDraft, setSaveKnowledgeDraft] = useState<{
     title: string
     content: string
+    taskId?: number
+    messageId: string
+    generationId?: string
   } | null>(null)
+  const presentDraftContent = (content: string) => {
+    const message = messages.find(msg => msg.id === saveKnowledgeDraft?.messageId)
+    return message && message.result?.answer_generation_id === saveKnowledgeDraft?.generationId
+      ? presentAnswerContent(message, content)
+      : ''
+  }
   const [knowledgeDocumentToView, setKnowledgeDocumentToView] =
     useState<KnowledgeDocumentViewTarget | null>(null)
   const viewedKnowledgeBaseId = knowledgeDocumentToView?.knowledgeBase.id ?? null
@@ -712,7 +777,7 @@ function MessagesArea({
   // Prepare exportable messages and open export modal
   const prepareExport = useCallback(
     (format: ExportFormat) => {
-      if (!selectedTaskDetail?.id) {
+      if (!selectedTaskDetail?.id || selectedTaskDetail.id !== taskId) {
         toast({
           variant: 'destructive',
           title: t('shared-task:no_task_selected'),
@@ -726,12 +791,6 @@ function MessagesArea({
       const exportableMessages: SelectableMessage[] = messages
         .filter(msg => msg.status === 'completed') // Only export completed messages
         .map(msg => {
-          // Remove markdown prefix from AI messages if present
-          let content = msg.content || ''
-          if (msg.type === 'ai' && content.startsWith('${$$}$')) {
-            content = content.substring(6)
-          }
-
           // Only attachments are exportable. Knowledge base contexts are runtime metadata.
           let attachments: SelectableAttachment[] | undefined
 
@@ -760,7 +819,7 @@ function MessagesArea({
             id: msg.subtaskId?.toString() || msg.id,
             messageId: msg.messageId,
             type: msg.type,
-            content,
+            content: getExportMessageContent(msg),
             timestamp: msg.timestamp,
             botName: msg.botName || selectedTaskDetail?.team?.name || 'Bot',
             userName: msg.senderUserName || selectedTaskDetail?.user?.user_name,
@@ -779,11 +838,11 @@ function MessagesArea({
         return
       }
 
-      setExportableMessages(validMessages)
+      setExportSnapshot({ taskId: selectedTaskDetail.id, messages: validMessages })
       setExportFormat(format)
       setShowExportModal(true)
     },
-    [selectedTaskDetail, messages, toast, t]
+    [selectedTaskDetail, taskId, messages, toast, t]
   )
 
   // Handle PDF export - open modal
@@ -995,7 +1054,7 @@ function MessagesArea({
 
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
-    if (!selectedTaskDetail?.id || messages.length === 0) {
+    if (readOnly || !selectedTaskDetail?.id || messages.length === 0) {
       return null
     }
 
@@ -1149,6 +1208,7 @@ function MessagesArea({
       </div>
     )
   }, [
+    readOnly,
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
@@ -1223,6 +1283,8 @@ function MessagesArea({
 
   const handleSaveToKnowledge = useCallback(
     (messageIndex: number, content: string) => {
+      const message = messages[messageIndex]
+      if (!message) return
       setSaveKnowledgeDraft({
         title: deriveSaveToKnowledgeTitle(
           messages,
@@ -1230,9 +1292,12 @@ function MessagesArea({
           t('chat:saveToKnowledge.fallbackTitle')
         ),
         content,
+        taskId,
+        messageId: message.id,
+        generationId: message.result?.answer_generation_id,
       })
     },
-    [messages, t]
+    [messages, t, taskId]
   )
 
   const handleKnowledgeDocumentCreated = useCallback(
@@ -1355,7 +1420,7 @@ function MessagesArea({
                     theme={theme as 'light' | 'dark'}
                     t={t}
                     onSendMessage={onSendMessage}
-                    onAskUserSubmit={handleAskUserSubmit}
+                    onAskUserSubmit={readOnly ? undefined : handleAskUserSubmit}
                     index={index}
                     isGroupChat={isGroupChat}
                     isPendingConfirmation={isPendingConfirmation}
@@ -1459,30 +1524,31 @@ function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
-                  onAskUserSubmit={handleAskUserSubmit}
+                  onAskUserSubmit={readOnly ? undefined : handleAskUserSubmit}
                   isCurrentUserMessage={isCurrentUserMessage}
                   onRetry={onRetry}
                   onRetryWithModel={onRetryWithModel}
                   isGroupChat={isGroupChat}
                   isPendingConfirmation={isPendingConfirmation}
                   isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
-                  onEdit={handleEditMessage}
+                  onEdit={readOnly ? undefined : handleEditMessage}
                   onEditSave={handleEditSave}
                   onEditCancel={handleEditCancel}
                   mentionTasks={mentionTasks}
                   currentTaskId={currentTaskId}
                   enableTaskMentions={enableTaskMentions}
                   isLastAiMessage={isLastAiMessage}
-                  onRegenerate={!isGroupChat ? handleRegenerate : undefined}
+                  onRegenerate={!readOnly && !isGroupChat ? handleRegenerate : undefined}
                   isRegenerating={isRegenerating}
                   onUseAsReference={onUseAsReference}
                   onReEdit={onReEdit}
                   waitingMessage={waitingMessage}
                   taskType={selectedTaskDetail?.task_type}
-                  onForwardClick={handleForwardClick}
+                  onForwardClick={readOnly ? undefined : handleForwardClick}
                   onSaveToKnowledge={
-                    user ? content => handleSaveToKnowledge(index, content) : undefined
+                    !readOnly && user ? content => handleSaveToKnowledge(index, content) : undefined
                   }
+                  readOnly={readOnly}
                 />
               </div>
             )
@@ -1499,20 +1565,23 @@ function MessagesArea({
       />
 
       {/* Export Select Modal */}
-      {selectedTaskDetail?.id && (
-        <ExportSelectModal
-          open={showExportModal}
-          onClose={() => setShowExportModal(false)}
-          messages={exportableMessages}
-          taskId={selectedTaskDetail.id}
-          taskName={
-            selectedTaskDetail?.title || selectedTaskDetail?.prompt?.slice(0, 50) || 'Chat Export'
-          }
-          exportFormat={exportFormat}
-        />
-      )}
+      {selectedTaskDetail &&
+        selectedTaskDetail.id === taskId &&
+        exportSnapshot?.taskId === taskId && (
+          <ExportSelectModal
+            open={showExportModal}
+            onClose={() => setShowExportModal(false)}
+            messages={exportSnapshot.messages}
+            presentContent={presentExportContent}
+            taskId={selectedTaskDetail.id}
+            taskName={
+              selectedTaskDetail?.title || selectedTaskDetail?.prompt?.slice(0, 50) || 'Chat Export'
+            }
+            exportFormat={exportFormat}
+          />
+        )}
 
-      {saveKnowledgeDraft && (
+      {saveKnowledgeDraft && saveKnowledgeDraft.taskId === taskId && (
         <SaveToKnowledgeDialog
           open={true}
           onOpenChange={open => {
@@ -1520,6 +1589,7 @@ function MessagesArea({
           }}
           initialTitle={saveKnowledgeDraft.title}
           initialContent={saveKnowledgeDraft.content}
+          presentContent={presentDraftContent}
           defaultKnowledgeBaseId={defaultSaveKnowledgeBaseId}
           onCreated={handleKnowledgeDocumentCreated}
         />
@@ -1569,4 +1639,20 @@ function MessagesArea({
   )
 }
 
-export default React.memo(MessagesArea)
+function TaskScopedMessagesArea(props: MessagesAreaProps) {
+  const { denySelectedTaskAccess, selectedTaskDetail } = useTaskSession()
+  const sourceDecisions = useTaskSourceDecisions(
+    props.currentTaskId ?? selectedTaskDetail?.id,
+    denySelectedTaskAccess
+  )
+  return (
+    <TaskSourceDecisions.Provider value={sourceDecisions}>
+      <MessagesArea {...props} />
+    </TaskSourceDecisions.Provider>
+  )
+}
+
+export default React.memo(function ScopedMessagesArea(props: MessagesAreaProps) {
+  const workspaceSources = useContext(TaskSourceDecisions)
+  return workspaceSources ? <MessagesArea {...props} /> : <TaskScopedMessagesArea {...props} />
+})

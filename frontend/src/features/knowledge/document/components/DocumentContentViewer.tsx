@@ -59,14 +59,16 @@ interface DocumentContentViewerProps {
   content: string
   document: KnowledgeDocument
   knowledgeBaseId: number
-  knowledgeBaseName: string
-  knowledgeBaseNamespace: string
+  knowledgeBaseName?: string
+  knowledgeBaseNamespace?: string
   isOrganization: boolean
   protectedPreview: boolean
   watermarkText: string
   viewMode: ViewMode
+  allowInlineImage?: boolean
   hasMoreContent: boolean
   loadingMore: boolean
+  loadMoreFailed?: boolean
   contentLength?: number
   onLoadMore: () => void
   onOpenChange: (open: boolean) => void
@@ -82,8 +84,10 @@ export function DocumentContentViewer({
   protectedPreview,
   watermarkText,
   viewMode,
+  allowInlineImage = true,
   hasMoreContent,
   loadingMore,
+  loadMoreFailed = false,
   contentLength,
   onLoadMore,
   onOpenChange,
@@ -124,11 +128,15 @@ export function DocumentContentViewer({
 
   // Detect image documents: render the original image above the (Gemini-extracted)
   // text content so the user can see both the picture and its multimodal analysis.
-  const isImageDocType = isImageDocument(document)
+  const isImageDocType = allowInlineImage && isImageDocument(document)
+
+  const canResolveWikiLinks =
+    knowledgeBaseName !== undefined && knowledgeBaseNamespace !== undefined
 
   // Handle wiki link clicks
   const handleWikiLinkClick = useCallback(
     async (href: string) => {
+      if (knowledgeBaseName === undefined || knowledgeBaseNamespace === undefined) return
       const url = await resolveWikiLink(
         href,
         knowledgeBaseId,
@@ -244,6 +252,8 @@ export function DocumentContentViewer({
           )
         }
 
+        if (!canResolveWikiLinks) return <span>{children}</span>
+
         return (
           <button
             type="button"
@@ -303,7 +313,7 @@ export function DocumentContentViewer({
     }
     // Preserve the shared Markdown renderers for every non-DingTalk source.
     return linkPolicy.policy === 'legacy' ? { a: components.a } : components
-  }, [document.id, linkPolicy.policy, handleWikiLinkClick, t])
+  }, [document.id, linkPolicy.policy, canResolveWikiLinks, handleWikiLinkClick, t])
 
   const renderMarkdown = () => (
     <DocumentPreviewProtectionContext.Provider value={linkPreviewProtection}>
@@ -350,12 +360,20 @@ export function DocumentContentViewer({
   return (
     <div className="p-4 bg-surface rounded-lg border border-border">
       {/* Image document: show the original image above the extracted text content */}
-      <InlineImageViewer
-        document={document}
-        className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
-      />
+      {isImageDocType && (
+        <InlineImageViewer
+          document={document}
+          className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
+        />
+      )}
       {/* Content display */}
       {isMarkdownContent && viewMode === 'preview' ? renderMarkdown() : renderRaw()}
+
+      {loadMoreFailed && (
+        <p role="alert" className="mt-3 text-sm text-text-secondary">
+          {t('document.document.detail.loadMoreFailed')}
+        </p>
+      )}
 
       {/* Footer with length info and load more button */}
       <div className="mt-3 pt-3 border-t border-border text-xs text-text-muted flex items-center justify-between">
@@ -388,7 +406,9 @@ export function DocumentContentViewer({
                 })}
               </>
             ) : (
-              <>{t('document.document.detail.loadMore', { defaultValue: 'Load More' })}</>
+              t(loadMoreFailed ? 'common:actions.retry' : 'document.document.detail.loadMore', {
+                defaultValue: loadMoreFailed ? 'Retry' : 'Load More',
+              })
             )}
           </Button>
         )}

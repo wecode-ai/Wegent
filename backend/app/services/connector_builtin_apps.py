@@ -150,6 +150,8 @@ def _seed_builtin_connector_apps(db: Session) -> tuple[list[str], list[str]]:
             SimpleNamespace(id=0),
             commit=False,
         )
+        # Keep the inserted ORM identity; reloading a discarded instance loses
+        # its new-object rollback tracking and can leave a phantom identity.
         _set_builtin_loading_mode(app.row, keywords=definition.keywords)
         created.append(definition.slug)
     return created, updated

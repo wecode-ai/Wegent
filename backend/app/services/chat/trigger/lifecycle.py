@@ -501,17 +501,20 @@ async def persist_result_without_status(
     result: Dict[str, Any],
 ) -> None:
     """Persist result data while leaving the current subtask status unchanged."""
+    from app.services.knowledge.answer_evidence import public_result
+
+    sanitized_result = public_result(result)
     db = SessionLocal()
     try:
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             raise ValueError(f"Subtask {subtask_id} not found")
         task_stores.subtask_store.update_result(
-            db,
-            subtask=subtask,
-            result=result,
+            db, subtask=subtask, result=sanitized_result
         )
         db.commit()
+        result.clear()
+        result.update(sanitized_result)
     except Exception:
         db.rollback()
         raise
@@ -650,28 +653,22 @@ async def persist_completed_result(
 ) -> bool:
     """Persist a terminal result and clean up streaming state.
 
-    When ``expected_status`` is given the database update is conditional and
-    ``False`` is returned if the subtask already left that status, so callers
-    can drop a stale terminal event instead of overwriting a newer one.
+    Only a confirmed commit can trigger completion side effects or cleanup.
     """
     import app.services.chat.storage as chat_storage
     import app.services.chat.storage.db as chat_db
 
     normalized_status = status.upper()
 
-    update_kwargs = {
-        "result": result,
-        "error": error,
-        "executor_name": executor_name,
-        "executor_namespace": executor_namespace,
-    }
-
     persisted = await chat_db.db_handler.update_subtask_status(
         subtask_id,
         normalized_status,
-        **update_kwargs,
+        result=result,
+        error=error,
+        executor_name=executor_name,
+        executor_namespace=executor_namespace,
         expected_status=expected_status,
-        **({"expected_device": expected_device} if expected_device is not None else {}),
+        expected_device=expected_device,
     )
     if not persisted:
         return False

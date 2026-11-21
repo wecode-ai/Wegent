@@ -331,6 +331,18 @@ class MCPClient:
                     client.get_tools(server_name=server_name),
                     timeout=DEFAULT_STARTUP_TIMEOUT,
                 )
+                from chat_shell.services.answer_evidence import wrap_native_search
+
+                connection = self.connections[server_name]
+                tools = [
+                    wrap_native_search(
+                        tool,
+                        connection.get("url", ""),
+                        self.task_data.backend_url if self.task_data else "",
+                        server_name=server_name,
+                    )
+                    for tool in tools
+                ]
                 unavailable = threading.Event()
                 protected_tools = [
                     wrap_tool_with_protection(tool, unavailable=unavailable)

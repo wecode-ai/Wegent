@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -95,7 +96,6 @@ class ShareLink(Base):
     token_hash = Column(
         String(64),
         nullable=True,
-        unique=True,
         comment="SHA-256 hash of the share token",
     )
     token_version = Column(
@@ -152,6 +152,7 @@ class ShareLink(Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("token_hash", name="uniq_share_links_token_hash"),
         Index("idx_share_links_resource", "resource_type", "resource_id"),
         Index(
             "idx_share_links_active_resource",

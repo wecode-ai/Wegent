@@ -865,7 +865,11 @@ export interface MyPermissionSourcesResponse {
   }>
 }
 
+export type KnowledgeSourceAccess = 'readable' | 'visit-only' | 'denied'
+
 export interface MyPermissionResponse {
+  source_access?: KnowledgeSourceAccess
+  task_source_bound?: boolean
   has_access: boolean
   role: MemberRole | null
   is_creator: boolean

@@ -272,4 +272,23 @@ mod tests {
         }
         assert_eq!(untouched.get(), untouched_before);
     }
+
+    #[test]
+    fn answer_evidence_metadata_survives_task_and_subtask_result_refresh() {
+        let metadata = json!({
+            "value": "answer [[citation:9007199254740993]]",
+            "answer_generation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "answer_citations": [{
+                "citation_id": "9007199254740993", "title": "native document",
+                "knowledge_base_id": 7, "document_id": 11
+            }]
+        });
+        let mut task_result = raw(metadata.clone());
+        let mut subtask_result = raw(metadata.clone());
+        let mut results: Vec<&mut RawJson> = vec![&mut task_result, &mut subtask_result];
+        refresh_task_image_download_urls(&config(), &mut results, now()).expect("refreshes");
+        drop(results);
+        assert_eq!(json_of(task_result.get()), metadata);
+        assert_eq!(json_of(subtask_result.get()), metadata);
+    }
 }

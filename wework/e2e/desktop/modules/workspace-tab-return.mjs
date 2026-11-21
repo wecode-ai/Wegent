@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS, WORKBENCH_READY_TIMEOUT_MS, withTimeout } from './shared.mjs'
 import { setGoalDraftForTabTransfer, verifyTransferredGoalDraft } from './goal-draft-flows.mjs'
+import { until } from './plugin-regression-fixture.mjs'
 
 async function returnTab(control, detached, tabId, draft, waitForDraft) {
   const selector = `[data-testid="workspace-tab-select-${tabId}"]`
@@ -19,7 +20,13 @@ async function returnTab(control, detached, tabId, draft, waitForDraft) {
   control.activateWindow('main')
   await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await control.command('waitFor', composer, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
-  assert.equal(await control.command('getValue', composer), draft)
+  const restoredDraft = await until(
+    () => control.command('getValue', composer),
+    value => value === draft,
+    'The returned tab did not restore its exact composer draft',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(restoredDraft, draft)
   await verifyTransferredGoalDraft(control, `[data-testid="workspace-tab-content-${tabId}"]`)
   await waitForSnapshot(
     control,

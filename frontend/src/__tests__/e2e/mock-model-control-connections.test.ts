@@ -147,6 +147,47 @@ describe('mock model controls', () => {
     })
   }
 
+  it.each(['/v1/responses', '/v1/chat/completions', '/v1/messages'])(
+    'returns a scenario error for missing evidence at %s and remains available',
+    async endpoint => {
+      const matchText = `missing-evidence-${endpoint}`
+      await post('/tool-scenarios', {
+        matchText,
+        steps: [{ responseContent: '{{answer_evidence}}' }],
+      })
+      const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const response = await fetch(`${url}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'mock-evidence',
+            messages: [{ role: 'user', content: matchText }],
+            input: matchText,
+            stream: false,
+          }),
+        })
+        expect(response.status).toBe(500)
+        expect(await response.json()).toEqual({
+          error: {
+            type: 'tool_scenario_error',
+            message: 'Actual model request contains no complete answer evidence unit',
+          },
+        })
+        const health = await fetch(`${url}/health`)
+        expect(health.status).toBe(200)
+        expect((await health.json()).status).toBe('ok')
+      } finally {
+        errorLog.mockRestore()
+        const cleared = await fetch(
+          `${url}/tool-scenarios?matchText=${encodeURIComponent(matchText)}`,
+          { method: 'DELETE' }
+        )
+        expect(cleared.status).toBe(200)
+      }
+    }
+  )
+
   async function pendingResponses(matchText: string) {
     const response = await fetch(`${url}/stream-rules`)
     expect(response.status).toBe(200)

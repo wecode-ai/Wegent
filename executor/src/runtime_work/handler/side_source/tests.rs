@@ -34,6 +34,9 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 thread_path: None,
                 workspace_path: root.path().to_string_lossy().into_owned(),
             };
+            // Establish transport readiness before timing source lookup, as other
+            // native-history RPC fixtures do. Windows starts a PowerShell child.
+            handler.codex_app_server.ensure_started().await.unwrap();
             let ready = tokio::time::timeout(
                 // Match the production side-source wait; Windows app-server startup can
                 // exceed five seconds on a loaded runner.

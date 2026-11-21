@@ -233,6 +233,15 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
           collapseWhenIdle={collapseWhenIdle && !alwaysShowComposerToolbar}
           isDraggingFiles={isDraggingFiles}
           formProps={{
+            ...{
+              'data-composer-readiness': true,
+              'data-composer-model-ready': isModelSelectionReady,
+              'data-composer-has-text': hasText,
+              'data-composer-attachment-count': attachments.length,
+              'data-composer-uploading-count': uploadingCount,
+              'data-composer-disabled': disabled,
+              'data-composer-submit-disabled': submitDisabled,
+            },
             onDragEnter: handleDragOver,
             onDragOver: handleDragOver,
             onDragLeave: event => {
