@@ -867,7 +867,9 @@ const server = http.createServer((req, res) => {
           responseContent,
           model,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
-          streamRule?.doneDelayMs ?? 0
+          streamRule?.doneDelayMs ?? 0,
+          undefined,
+          streamRule?.holdDone ? responseGate : undefined
         )
       } else {
         writeAnthropicJsonResponse(res, responseContent, model)
