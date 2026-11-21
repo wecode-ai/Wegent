@@ -539,7 +539,7 @@ async fn manual_calendar_run_routes_immediately_and_reuses_its_original_receipt(
     let (_, run) = handler.automation_store.start_manual_run("once").unwrap();
     assert_eq!(run.trigger, "manual");
     let entry = handler.automation_store.get("once").unwrap();
-    let prepared = handler
+    let (prepared, _) = handler
         .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
         .await
         .unwrap();
@@ -611,7 +611,7 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
     let mut settings = store.personal_stand_in(7, "device").unwrap();
     settings["primary"]["enabled"] = json!(false);
     store.save_personal_stand_in(7, "device", settings).unwrap();
-    let prepared = handler
+    let (prepared, _) = handler
         .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
         .await
         .unwrap();
@@ -642,7 +642,7 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         });
         settings["primary"]["modelOptions"][effort_key] = json!("high");
         store.save_personal_stand_in(7, "device", settings).unwrap();
-        let explicit = handler
+        let (explicit, _) = handler
             .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
             .await
             .unwrap();
@@ -709,7 +709,7 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         .unwrap()
         .remove("supportedReasoningEfforts");
     fs::write(root.path().join("model_list.json"), model_list.to_string()).unwrap();
-    let without_capabilities = handler
+    let (without_capabilities, _) = handler
         .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
         .await
         .unwrap();
@@ -797,7 +797,7 @@ async fn memory_review_due_skips_empty_history_and_routes_changed_history_indepe
         assert_eq!(snapshot["events"][0]["id"], run.id);
         assert_eq!(snapshot["events"][0]["kind"], "schedule_due");
         assert_eq!(snapshot["events"][0]["arrangement"], true);
-        let prepared = handler
+        let (prepared, _) = handler
             .prepare_stand_in_schedule(entry, json!({"message":entry.prompt}))
             .await
             .unwrap();
@@ -839,7 +839,7 @@ async fn calendar_due_enters_personal_intake_with_contents_and_saved_route_polic
             .unwrap()
             .1;
         let entry = handler.automation_store.get("once").unwrap();
-        let prepared = handler
+        let (prepared, _) = handler
             .prepare_stand_in_schedule(&entry, json!({"message":entry.prompt}))
             .await
             .unwrap();

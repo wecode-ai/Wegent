@@ -112,6 +112,9 @@ impl RuntimeWorkRpcHandler {
         if origin["initiatedBy"] != "stand_in" {
             return Ok(());
         }
+        if origin["type"] == "stand_in_schedule" {
+            return Ok(());
+        }
         let Some(user) = origin["userId"].as_i64() else {
             return Ok(());
         };
