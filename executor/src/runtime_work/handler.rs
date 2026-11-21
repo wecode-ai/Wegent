@@ -1338,12 +1338,14 @@ fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     {
         return false;
     }
+    // Task inventory remains readable while worktrees and queued turns recover.
     !matches!(
         method,
         "runtime.tasks.running_count"
             | "runtime.python.has_demand"
             | "runtime.stand_in.assignment_tasks"
             | "runtime.tasks.get"
+            | "runtime.tasks.list"
             | "runtime.composer.catalog.read"
             | "runtime.worktrees.capabilities"
             | "runtime.worktrees.preflight"

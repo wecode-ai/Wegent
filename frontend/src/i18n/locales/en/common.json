@@ -1360,6 +1360,7 @@
     "batch_updating": "Batch updating..."
   },
   "models": {
+    "group_icons_load_failed": "Could not load group icons",
     "label": "Model",
     "title": "Model Management",
     "description": "Manage your AI model configurations",

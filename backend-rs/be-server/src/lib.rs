@@ -194,6 +194,7 @@ pub(crate) use wegent_mcp_providers::{mcp_user_service, user_mcp_oauth};
 pub use wegent_media::media_policy;
 mod method_call_anon;
 mod method_login;
+mod model_primary_group_icons;
 mod models_error_recommendations;
 use wegent_models as models_unified;
 pub use wegent_onboarding::new_user_resources;

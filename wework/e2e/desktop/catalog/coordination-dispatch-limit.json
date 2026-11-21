@@ -1,0 +1,8 @@
+{
+  "order": 38600,
+  "ci": {
+    "core": { "order": 40600, "shard": 3, "position": 11600 }
+  },
+  "scenario": "./scenarios/coordination-dispatch-limit.scenario.mjs",
+  "scenarioOnly": true
+}

@@ -331,6 +331,37 @@ mod tests {
     }
 
     #[test]
+    fn calendar_review_reuses_native_reviewer_and_preserves_target_requirements() {
+        let launch = CodexLaunchConfig::default();
+        for (ask, expected) in [(false, "auto_review"), (true, "user")] {
+            let independent: ExecutionRequest = serde_json::from_value(json!({
+                "origin":{"type":"stand_in_schedule","initiatedBy":"stand_in","askBeforeAct":ask}
+            }))
+            .unwrap();
+            assert_eq!(
+                thread_start_params(&independent, &launch)["approvalsReviewer"],
+                expected
+            );
+
+            let mut continuation: ExecutionRequest = serde_json::from_value(json!({
+                "standInSchedule":{"continuation":true,"askBeforeAct":ask}
+            }))
+            .unwrap();
+            assert_eq!(
+                turn_start_params("thread", &continuation, &launch, vec![])["approvalsReviewer"],
+                expected
+            );
+            continuation
+                .extra
+                .insert("standInDelegation".into(), json!({"askBeforeAct":true}));
+            assert_eq!(
+                turn_start_params("thread", &continuation, &launch, vec![])["approvalsReviewer"],
+                "user"
+            );
+        }
+    }
+
+    #[test]
     fn source_permission_catalog_keeps_the_selected_boundary_on_config_reload() {
         for (kind, ask) in [
             ("connection_work", false),

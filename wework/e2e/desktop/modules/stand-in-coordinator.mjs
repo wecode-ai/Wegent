@@ -2,6 +2,8 @@ import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { verifyStandInScheduleActivity } from './stand-in-schedule-activity.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
 import {
   createLocalCollaborationProject,
@@ -26,6 +28,7 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 /** Extends the registered profile checkpoint with project isolation and existing scheduling. */
 export function createStandInCoordinatorVerification({
   captureScreenshot,
+  resultDir,
   uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
@@ -161,6 +164,14 @@ export function createStandInCoordinatorVerification({
       await captureScreenshot(control, '23c-calendar-updated-and-paused.png')
       await control.command('click', `[data-testid="automation-detail-toggle-${schedule.id}"]`)
       await control.command('waitFor', '[data-testid="automation-detail-panel"]', { text: '活跃' })
+      const beforeRun = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      const calendarPolicy = beforeRun.primary.calendar.policy
+      const saveCalendarPolicy = async policy => {
+        const settings = await rpc('runtime.stand_in.personal.get', { userId: USER })
+        settings.primary.calendar.policy = policy
+        await rpc('runtime.stand_in.personal.save', { userId: USER, settings })
+      }
+      await saveCalendarPolicy({ ...calendarPolicy, askBeforeAct: false })
       await control.command('click', `[data-testid="automation-detail-actions-${schedule.id}"]`)
       await control.command('click', '[data-testid="automation-run-now-button"]')
       await control.command('waitFor', '[data-testid="automation-run-history"]', {
@@ -169,8 +180,20 @@ export function createStandInCoordinatorVerification({
       })
       const runs = await rpc('runtime.automation_runs.list', { automationId: schedule.id })
       assert.ok(runs.items.some(row => row.status === 'succeeded'))
+      await saveCalendarPolicy(calendarPolicy)
       await captureScreenshot(control, '24-schedule-executed.png')
       const run = runs.items.find(row => row.status === 'succeeded')
+      const log = await readFile(join(resultDir, 'executor.log'), 'utf8')
+      assert.ok(
+        log
+          .split('\n')
+          .some(
+            line =>
+              line.includes(`codex source sandbox applied task_id=${run.taskId} `) &&
+              line.includes(String.raw`reviewer="\"auto_review\""`)
+          ),
+        'The native Codex session must apply the saved Calendar AI approval policy'
+      )
       await control.command('click', `[data-testid="automation-run-open-${run.id}"]`)
       await control.command('waitFor', 'body', {
         text: 'STAND_IN_SCHEDULE_VERIFIED',
