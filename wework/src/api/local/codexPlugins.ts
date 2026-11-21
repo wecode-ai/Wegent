@@ -3616,6 +3616,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           itemMarketplaceId,
       }
       const localMarketplace = isLocalMarketplacePath(marketplace.path)
+      const marketplacePath =
+        localMarketplace && isPersonalMarketplaceId(marketplace.id)
+          ? codexMarketplaceManifestSource(marketplace.path)
+          : marketplace.path
       const installNames = localMarketplace
         ? [pluginInstallName(item, true)]
         : await resolveRemoteInstallPluginNames(marketplace, item)
@@ -3626,7 +3630,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         const pluginName = installNames[index]
         try {
           installResult = await codexAppServerRequest('plugin/install', {
-            marketplacePath: localMarketplace ? marketplace.path : null,
+            marketplacePath: localMarketplace ? marketplacePath : null,
             remoteMarketplaceName: localMarketplace ? null : marketplace.id,
             pluginName,
           })
