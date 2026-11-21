@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { fetchJson, resultDir } from './shared.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS, fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
@@ -136,8 +136,99 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     managed,
     'Installing other plugins must preserve the existing plugin and its sync generation'
   )
-  await cleanupPluginUpgradeFixtures(env, parallelInstalls, PLUGIN_SYNC_TIMEOUT_MS)
+  setPhase('plugin-upgrade-from-management')
+  const managementPluginId = parallelInstalls[0].plugin.metadata.labels.id
+  await request(`/plugins/installed/${managementPluginId}?device_id=${deviceId}`, 'PUT', {
+    updatePolicy: 'manual',
+  })
   await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="plugins-manage-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `[data-testid="installed-plugin-row-${managementPluginId}"]`, {
+    timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
+  })
+  const managementRelease = await env.publishPluginRelease({
+    slug: `${pluginKey}-alpha`,
+    version: newVersion,
+    skills: { [sharedSkill]: newContent },
+  })
+  await control.command('click', '[data-testid="plugin-management-surface-marketplaces"]')
+  await control.command('click', '[data-testid="plugin-management-surface-wework"]')
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="installed-plugin-update-${managementPluginId}"]`,
+    { timeoutMs: PLUGIN_SYNC_TIMEOUT_MS }
+  )
+  await control.command('clickWhenEnabled', '[data-testid="plugin-management-update-confirm"]', {
+    timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
+  })
+  await waitForValue(
+    () => request(`/plugins/marketplace?device_id=${deviceId}`),
+    snapshot =>
+      snapshot.items.some(
+        item =>
+          String(item.id) === String(managementRelease.pluginId) &&
+          item.currentDeviceInstallation?.actualReleaseId === managementRelease.releaseId &&
+          item.currentDeviceInstallation?.state === 'installed'
+      ),
+    'Updating from management did not install the confirmed release on the current device',
+    PLUGIN_SYNC_TIMEOUT_MS
+  )
+  setPhase('plugin-management-rejects-stale-confirmation')
+  const competingId = parallelInstalls[1].plugin.metadata.labels.id
+  const competingPath = `/plugins/installed/${competingId}?device_id=${deviceId}`
+  await request(competingPath, 'PUT', { updatePolicy: 'manual' })
+  const competingSlug = `${pluginKey}-beta`
+  await env.publishPluginRelease({ slug: competingSlug, version: newVersion })
+  await control.command('click', '[data-testid="plugin-management-surface-marketplaces"]')
+  await control.command('click', '[data-testid="plugin-management-surface-wework"]')
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="installed-plugin-update-${competingId}"]`,
+    {
+      timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', '[data-testid="plugin-management-update-confirm"]', {
+    text: 'v' + newVersion,
+    timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
+  })
+  const conflictingRelease = await env.publishPluginRelease({
+    slug: competingSlug,
+    version: '0.4.1',
+  })
+  await request(competingPath, 'PUT', { releaseId: conflictingRelease.releaseId })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-management-update-confirm"]', {
+    timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    '[data-testid="plugin-operation-notice"][data-notice-kind="error"]',
+    {
+      text: '可用版本已变化',
+      timeoutMs: PLUGIN_SYNC_TIMEOUT_MS,
+    }
+  )
+  const updatedFixtures = await request(`/plugins/installed?device_id=${deviceId}`)
+  const updated = [managementPluginId, competingId].map(id =>
+    updatedFixtures.items.find(item => item.metadata.labels.id === id)
+  )
+  assert.deepEqual(
+    updated.map(plugin => plugin?.spec.releaseId),
+    [managementRelease.releaseId, conflictingRelease.releaseId]
+  )
+  const deviceCatalog = await request(`/plugins/marketplace?device_id=${deviceId}`)
+  const competingDevice = deviceCatalog.items.find(
+    item => String(item.id) === String(conflictingRelease.pluginId)
+  )?.currentDeviceInstallation
+  assert.equal(competingDevice?.actualReleaseId, conflictingRelease.releaseId)
+  await cleanupPluginUpgradeFixtures(
+    env,
+    updated.map(plugin => ({ plugin })),
+    PLUGIN_SYNC_TIMEOUT_MS
+  )
+  await control.command('click', '[data-testid="plugin-management-back-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`, {
     timeoutMs: 30000,
   })
