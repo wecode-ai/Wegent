@@ -169,15 +169,14 @@ impl GlobalCapabilityStore {
     ) -> Result<(), CapabilitySyncError> {
         let relocated =
             object_map(manifest.get("plugin_runtime_relocated_owners")).unwrap_or_default();
+        let entry = &manifest["plugins"][&spec.key];
         let pending = self
             .plugin_runtime_targets(spec)
             .into_iter()
             .filter(|(path, field)| {
-                let historical = manifest
-                    .get("plugins")
-                    .and_then(|plugins| plugins.get(&spec.key))
-                    .filter(|entry| entry.get("managed").and_then(Value::as_bool) == Some(true))
-                    .and_then(|entry| entry.get("runtime"))
+                let historical = (entry["managed"] == true)
+                    .then(|| entry.get("runtime"))
+                    .flatten()
                     .and_then(|runtime| runtime.get(*field))
                     .and_then(Value::as_str)
                     .map(Path::new)
@@ -205,22 +204,22 @@ impl GlobalCapabilityStore {
                 ));
             }
         }
-        if pending.iter().any(|(path, _)| exists(path)) {
-            let staging = tempfile::tempdir()?;
-            let template = staging.path().join("runtime");
-            copy_dir_atomic(package, &template)?;
-            ensure_dual_plugin_manifests(&template)?;
-            ensure_plugin_hook_permissions(&template)?;
-            for (path, field) in &pending {
-                if exists(path)
-                    && !same_runtime_contents(path, &template)?
-                    && !self.matches_verified_legacy_contents(spec, path, package)?
-                    && !self.relocated_runtime_matches_previous(spec, path, field, manifest)?
-                {
-                    return Err(CapabilitySyncError::invalid_payload(
-                        "Retained plugin destination is occupied by unrelated data; preserving it",
-                    ));
-                }
+        for (path, field) in &pending {
+            if !exists(path) {
+                continue;
+            }
+            let evidence = if entry.is_null() {
+                marketplace_sources::retained_runtime_receipt(manifest, spec, path, field)
+                    .unwrap_or(entry)
+            } else {
+                entry
+            };
+            if !self.matches_managed_package_copy(path, spec, package, evidence)?
+                && !self.relocated_runtime_matches_previous(spec, path, field, manifest)?
+            {
+                return Err(CapabilitySyncError::invalid_payload(
+                    "Retained plugin destination is occupied by unrelated data; preserving it",
+                ));
             }
         }
         for (path, _) in pending {
@@ -274,13 +273,7 @@ impl GlobalCapabilityStore {
         // package before replacing it with the new package.
         let package = self.verified_plugin_package(hash)?;
         validate_package_identity(&package.path, &previous)?;
-        let staging = tempfile::tempdir()?;
-        let template = staging.path().join("runtime");
-        copy_dir_atomic(&package.path, &template)?;
-        ensure_dual_plugin_manifests(&template)?;
-        ensure_plugin_hook_permissions(&template)?;
-        Ok(same_runtime_contents(path, &template)?
-            || self.matches_verified_legacy_contents(&previous, path, &package.path)?)
+        self.matches_managed_package_copy(path, &previous, &package.path, entry)
     }
 
     pub(in crate::local::capabilities) fn can_remove_personal_marketplace_plugin(
@@ -346,14 +339,7 @@ impl GlobalCapabilityStore {
         let Ok(package) = self.verified_plugin_package(hash) else {
             return false;
         };
-        let Ok(staging) = tempfile::tempdir() else {
-            return false;
-        };
-        let template = staging.path().join("runtime");
-        copy_dir_atomic(&package.path, &template)
-            .and_then(|()| ensure_dual_plugin_manifests(&template).map(|_| ()))
-            .and_then(|()| ensure_plugin_hook_permissions(&template))
-            .and_then(|()| same_runtime_contents(&target, &template))
+        self.matches_runtime_copy(&target, &package.path, entry)
             .unwrap_or(false)
     }
 

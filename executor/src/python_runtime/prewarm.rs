@@ -45,27 +45,37 @@ fn installed_plugins_need_python() -> bool {
     let Ok(shared) = crate::services::workbench::workbench_root() else {
         return false;
     };
-    let mut roots = managed_roots(&manifest, &shared.join("shared/plugins"));
-    roots.extend(native_roots(&crate::agents::wework_codex_home()));
-    roots.into_iter().any(|root| package_needs_python(&root))
+    managed_plugins_need_python(&manifest, &shared.join("shared/plugins"))
+        || native_roots(&crate::agents::wework_codex_home())
+            .into_iter()
+            .any(|root| package_needs_python(&root))
 }
 
-fn managed_roots(manifest: &Path, shared: &Path) -> HashSet<PathBuf> {
+fn managed_plugins_need_python(manifest: &Path, shared: &Path) -> bool {
     let Some(parent) = manifest.parent() else {
-        return HashSet::new();
+        return false;
     };
     let Some(value) = read_json(manifest) else {
-        return HashSet::new();
+        return false;
     };
     value["plugins"]
         .as_object()
         .into_iter()
         .flat_map(|plugins| plugins.values())
         .filter(|plugin| plugin["enabled"] != false)
-        .filter_map(|plugin| {
-            crate::local::plugin_catalog::managed_plugin_root(parent, shared, plugin).ok()
+        .any(|plugin| {
+            let Ok(root) =
+                crate::local::plugin_catalog::managed_plugin_root(parent, shared, plugin)
+            else {
+                return false;
+            };
+            // Publication records this path only for a projected Python MCP.
+            let projected_mcp = plugin["managed"] == true
+                && plugin["runtime"]["managed_mcp_python"]
+                    .as_str()
+                    .is_some_and(|path| Path::new(path).is_absolute());
+            projected_mcp || package_needs_python(&root)
         })
-        .collect()
 }
 
 fn native_roots(home: &Path) -> HashSet<PathBuf> {
@@ -254,12 +264,42 @@ mod tests {
                 serde_json::to_vec(&serde_json::json!({"plugins":plugins})).unwrap(),
             )
             .unwrap();
-            assert_eq!(
-                managed_roots(&manifest, &shared)
-                    .iter()
-                    .any(|root| package_needs_python(root)),
-                expected
-            );
+            assert_eq!(managed_plugins_need_python(&manifest, &shared), expected);
+        }
+    }
+
+    #[test]
+    fn projected_mcp_requests_python_without_relying_on_the_script_scan() {
+        let home = tempfile::tempdir().unwrap();
+        let capabilities = home.path().join("capabilities");
+        let package = capabilities.join("store/plugins/python");
+        let scripts = package.join("a/b/c/d/e/f/g/h/i");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir(package.join(".codex-plugin")).unwrap();
+        fs::write(
+            package.join(".codex-plugin/plugin.json"),
+            r#"{"name":"python"}"#,
+        )
+        .unwrap();
+        fs::write(scripts.join("probe.py"), "pass\n").unwrap();
+        assert!(!package_needs_python(&package));
+        let manifest = capabilities.join("manifest-v2.json");
+        let shared = home.path().join("shared/plugins");
+        let interpreter = home.path().join("managed-runtimes/python/bin/python3");
+        assert!(!interpreter.exists());
+        for enabled in [true, false] {
+            fs::write(
+                &manifest,
+                serde_json::to_vec(&serde_json::json!({
+                    "plugins":{"python":{
+                        "managed":true,"enabled":enabled,"store_path":"store/plugins/python",
+                        "runtime":{"managed_mcp_python":interpreter}
+                    }}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(managed_plugins_need_python(&manifest, &shared), enabled);
         }
     }
 }
