@@ -45,6 +45,7 @@ pub(crate) struct ControlContext {
     pub request: ExecutionRequest,
     pub device_id: String,
     pub task_id: String,
+    pub use_runtime_backend: bool,
 }
 
 impl std::fmt::Debug for ControlContext {
@@ -75,6 +76,7 @@ impl ControlContext {
             request: request.clone(),
             device_id,
             task_id,
+            use_runtime_backend: false,
         })
     }
 }
