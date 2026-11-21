@@ -358,11 +358,22 @@ async function verifyStalePersonalDeletePreview({ cloud, control, request, root 
   const { marketplace } = JSON.parse(await control.command('getBundledPluginUpdates', 'body'))
   const manifest = join(marketplace.path, 'plugins', name, '.codex-plugin', 'plugin.json')
   const original = await readFile(manifest)
+  await control.command('uninstallInstalledPlugin', 'body', {
+    value: `${name}@wework-personal`,
+  })
+  assert.deepEqual(await readFile(manifest), original, 'Fixture uninstall changed the local source')
 
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await refreshPluginInventory(control)
+  assert.equal(
+    (await inventory(control)).sharedInventory.installedPlugins.some(
+      plugin => plugin.pluginKey === name
+    ),
+    false,
+    'The deletion preview must start from a source with no local installation'
+  )
   await control.command('fill', testId('plugins-search-input'), { value: name })
   await control.command(
     'clickWhenEnabled',
@@ -375,7 +386,10 @@ async function verifyStalePersonalDeletePreview({ cloud, control, request, root 
   )
   const dialog = testId('delete-personal-plugin-dialog')
   await control.command('waitFor', dialog)
-  assert.match(await control.command('getText', dialog), /本地插件源码|local source/i)
+  assert.match(
+    await control.command('getText', dialog),
+    /将永久删除.*本地插件源码|Permanently delete the local source/i
+  )
 
   const published = await uploadVersionFixture({
     request,
