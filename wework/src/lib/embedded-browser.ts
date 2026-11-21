@@ -305,7 +305,7 @@ function startElectronBrowserEventListening(): void {
     if (event.type !== 'browser.event') return
     const browserEvent = event.payload as unknown as ElectronBrowserHostEvent
     if (browserEvent.type === 'agent-cursor' && import.meta.env.VITE_WEWORK_E2E === 'true') {
-      const cursor = browserEvent.payload as EmbeddedBrowserAgentCursorEvent
+      const cursor = browserEvent.payload
       logRuntimeTaskCreateStage('browser-cursor-received', {
         eventSequence: event.sequence,
         label: cursor.label,
