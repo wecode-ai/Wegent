@@ -17,6 +17,7 @@ impl GlobalCapabilityStore {
             plugin_store_dir_override: None,
             shared_packages: false,
             codex_only_plugins: env::var("WEGENT_PLUGIN_RUNTIME_TARGET").as_deref() == Ok("codex"),
+            managed_mcp_python: None,
             workbench_root_override: None,
         }
     }
@@ -28,6 +29,12 @@ impl GlobalCapabilityStore {
 
     pub fn with_shared_packages(mut self) -> Self {
         self.shared_packages = true;
+        self
+    }
+
+    pub(in crate::local) fn with_managed_mcp_python(mut self, python: Option<PathBuf>) -> Self {
+        self.managed_mcp_python =
+            python.filter(|path| path.is_absolute() && path.to_str().is_some());
         self
     }
 
@@ -304,6 +311,7 @@ impl GlobalCapabilityStore {
                 || !runtime_path.join(".claude-plugin/plugin.json").is_file();
             if !runtime_path.is_dir() || runtime_path.is_symlink() || missing_native_manifest {
                 copy_dir_atomic(&store_path, &runtime_path)?;
+                self.prepare_runtime_copy(&runtime_path)?;
                 restored.push(key.clone());
             }
             ensure_dual_plugin_manifests(&runtime_path)?;
@@ -366,8 +374,7 @@ impl GlobalCapabilityStore {
         let runtime_path = self.plugin_runtime_link(spec);
         if !reused.contains(&runtime_path) {
             copy_dir_atomic(store_path, &runtime_path)?;
-            ensure_dual_plugin_manifests(&runtime_path)?;
-            ensure_plugin_hook_permissions(&runtime_path)?;
+            self.prepare_runtime_copy(&runtime_path)?;
         }
         self.install_marketplace_metadata_at(spec, &runtime_path, timestamp, reused)?;
         upsert_installed_plugin_at(&self.plugins_dir, spec, &runtime_path, timestamp)?;
