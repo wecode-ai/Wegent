@@ -175,8 +175,12 @@ where
             engine.cancel_pending(&task_id, subtask_id.as_deref());
             log_executor_event("task execution stop confirmed", &fields);
             fields.push(("callback_event", "response.incomplete".to_owned()));
+            let cancelled_at = current_epoch_ms();
+            let builder = state
+                .builder
+                .with_timing_boundary("agentFinishedAt", cancelled_at);
             match sink
-                .send(state.builder.response_cancelled("Task cancelled"))
+                .send(builder.response_cancelled("Task cancelled"))
                 .await
             {
                 Ok(()) => {
@@ -361,5 +365,10 @@ mod tests {
         assert_eq!(events[1].event_type, "response.incomplete");
         assert_eq!(events[1].data["response"]["status"], "cancelled");
         assert_eq!(events[1].data["response"]["error"]["code"], "cancelled");
+        let timing = &events[1].data["timing"];
+        assert!(
+            timing["agentFinishedAt"].as_i64().unwrap()
+                >= timing["agentStartedAt"].as_i64().unwrap()
+        );
     }
 }

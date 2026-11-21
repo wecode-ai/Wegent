@@ -473,7 +473,7 @@ class DockerExecutor(Executor):
         if timeout is not None:
             request_kwargs["timeout"] = timeout
 
-        self._record_timing(task, taskDispatchedAt=_current_epoch_ms())
+        self._record_timing(task, taskDispatchedAt=_current_epoch_ms(), replace=True)
         return self.requests.post(endpoint, json=task, **request_kwargs)
 
     def _create_new_container(
@@ -594,7 +594,9 @@ class DockerExecutor(Executor):
             raise
 
     @staticmethod
-    def _record_timing(task: Dict[str, Any], **boundaries: int) -> None:
+    def _record_timing(
+        task: Dict[str, Any], replace: bool = False, **boundaries: int
+    ) -> None:
         """Record executor wall-time boundaries in the task payload."""
         if not boundaries:
             return
@@ -607,7 +609,10 @@ class DockerExecutor(Executor):
             timing = {}
             metadata["timing"] = timing
         for key, value in boundaries.items():
-            timing.setdefault(key, value)
+            if replace:
+                timing[key] = value
+            else:
+                timing.setdefault(key, value)
         _record_stage_durations(timing, boundaries)
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:

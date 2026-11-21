@@ -730,6 +730,31 @@ class TestDockerExecutor:
         },
         clear=False,
     )
+    def test_dispatch_retry_replaces_dispatch_boundaries_together(
+        self, executor, sample_task
+    ):
+        """A retried dispatch keeps its boundary and duration from one attempt."""
+        sample_task.setdefault("metadata", {})["timing"] = {
+            "instanceReadyAt": 100,
+            "taskDispatchedAt": 200,
+            "dispatchDurationMs": 100,
+        }
+
+        executor._record_timing(sample_task, taskDispatchedAt=500, replace=True)
+
+        timing = sample_task["metadata"]["timing"]
+        assert timing["taskDispatchedAt"] == 500
+        assert timing["dispatchDurationMs"] == 400
+
+    @patch.dict(
+        os.environ,
+        {
+            "EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES": "2",
+            "EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL": "0",
+            "EXECUTOR_INITIAL_DISPATCH_TIMEOUT": "1",
+        },
+        clear=False,
+    )
     def test_dispatch_initial_task_retries_then_succeeds(self, executor, sample_task):
         """Test initial dispatch retries on transient request errors."""
         success_response = MagicMock()

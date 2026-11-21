@@ -122,6 +122,14 @@ const localizedStatusResponse: TaskTimingResponse = {
   ],
 }
 
+const interiorGapResponse: TaskTimingResponse = {
+  ...timingResponse,
+  spans: [
+    { ...timingResponse.spans[0], start_at_ms: 5_000, end_at_ms: 9_000, duration_ms: 4_000 },
+    { ...timingResponse.spans[1], start_at_ms: 15_000, end_at_ms: 17_000, duration_ms: 2_000 },
+  ],
+}
+
 function renderPanel() {
   return render(
     <TaskTimingPanel panelProps={{ taskId: 42 }} onClose={jest.fn()} embedded={false} />
@@ -267,6 +275,47 @@ describe('TaskTimingPanel', () => {
     const statuses = screen.getAllByTestId('task-timing-span-status')
     expect(statuses[0]).toHaveTextContent('timing.status.running')
     expect(statuses[1]).toHaveTextContent('untranslated_status')
+  })
+
+  it('marks interior unobserved intervals on the shared timeline', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(interiorGapResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-triage')
+    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+
+    const gap = screen.getByTestId('task-timing-interior-gap')
+    expect(Number.parseFloat(gap.style.left)).toBeCloseTo((6 / 18) * 100, 10)
+    expect(Number.parseFloat(gap.style.width)).toBeCloseTo((6 / 18) * 100, 10)
+    expect(screen.getByTestId('task-timing-interior-gap-label')).toHaveTextContent(
+      'timing.timeline.interior_gap:6s'
+    )
+  })
+
+  it('does not invent absolute timestamps when no timeline anchor exists', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue({
+      ...timingResponse,
+      session_start_at_ms: null,
+      session_end_at_ms: null,
+      spans: [
+        {
+          ...timingResponse.spans[0],
+          start_at_ms: null,
+          end_at_ms: null,
+          duration_ms: 12_000,
+        },
+      ],
+    })
+    renderPanel()
+
+    await screen.findByTestId('task-timing-triage')
+    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+
+    const times = screen.getAllByText('--')
+    expect(times.length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByTestId('task-timing-span-bar')).toHaveStyle({ width: '0%' })
   })
 
   it('uses semantic theme classes and a responsive layout', async () => {

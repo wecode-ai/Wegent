@@ -275,6 +275,7 @@
       "empty": "No spans",
       "span_meta": "{{kind}} · Turn {{turn}} · {{duration}}",
       "leading_gap": "Leading unobserved · {{duration}}",
+      "interior_gap": "Unobserved · {{duration}}",
       "trailing_gap": "Trailing unobserved · {{duration}}"
     },
     "status": {

@@ -163,6 +163,21 @@ test.describe('Agent conversation regression', () => {
     const secondRequest = await waitForCapturedModelRequest(request, followUpPrompt)
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+
+    const timingResponse = await request.get(`/api/tasks/${taskId}/timing`, {
+      headers: authHeaders(),
+    })
+    expect(timingResponse.status(), await timingResponse.text()).toBe(200)
+    const timing = (await timingResponse.json()) as {
+      has_spans: boolean
+      spans: Array<{ kind: string; start_at_ms: number | null; end_at_ms: number | null }>
+    }
+    expect(timing.has_spans).toBe(true)
+    expect(timing.spans.length).toBeGreaterThan(0)
+    const agent = timing.spans.find(span => span.kind === 'agent')
+    expect(agent).toBeDefined()
+    expect(agent!.start_at_ms).not.toBeNull()
+    expect(agent!.end_at_ms).not.toBeNull()
   })
 
   test('handoff mention injects the referenced task and keeps the bubble clean', async ({

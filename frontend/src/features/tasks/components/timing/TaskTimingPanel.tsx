@@ -32,8 +32,8 @@ type FetchState =
 type TaskTimingPanelProps = TaskRightPanelComponentProps<{ taskId: number }>
 
 interface TimelineBounds {
-  start: number
-  end: number
+  start?: number
+  end?: number
   observedStart?: number
   observedEnd?: number
 }
@@ -287,8 +287,18 @@ function TimelineDetails({ data }: { data: TaskTimingResponse }) {
   const { t } = useTranslation('tasks')
   const { spans } = data
   const bounds = useTimelineBounds(data)
-  const leadingGap = bounds.observedStart === undefined ? 0 : bounds.observedStart - bounds.start
-  const trailingGap = bounds.observedEnd === undefined ? 0 : bounds.end - bounds.observedEnd
+  const gaps = useMemo(() => unobservedIntervals(data, bounds), [data, bounds])
+  const leadingGap =
+    bounds.start !== undefined && gaps[0]?.start === bounds.start ? gaps[0].end - gaps[0].start : 0
+  const trailingGap =
+    bounds.end !== undefined && gaps.length > 0 && gaps.at(-1)?.end === bounds.end
+      ? gaps.at(-1)!.end - gaps.at(-1)!.start
+      : 0
+  const interiorGaps = gaps.filter(
+    (gap, index) =>
+      !(bounds.start !== undefined && index === 0 && gap.start === bounds.start) &&
+      !(bounds.end !== undefined && gap.end === bounds.end)
+  )
 
   return (
     <div className="mt-2 space-y-3" data-testid="task-timing-timeline-details">
@@ -312,6 +322,14 @@ function TimelineDetails({ data }: { data: TaskTimingResponse }) {
           style={{ width: percent(trailingGap, bounds) }}
           data-testid="task-timing-trailing-gap"
         />
+        {interiorGaps.map(gap => (
+          <span
+            key={`gap-${gap.start}-${gap.end}`}
+            className="absolute inset-y-0 bg-border"
+            style={gapPosition(gap, bounds)}
+            data-testid="task-timing-interior-gap"
+          />
+        ))}
       </div>
       <div className="flex flex-wrap gap-2">
         {leadingGap > 0 ? (
@@ -330,6 +348,15 @@ function TimelineDetails({ data }: { data: TaskTimingResponse }) {
             {t('timing.timeline.trailing_gap', { duration: formatDuration(trailingGap) })}
           </span>
         ) : null}
+        {interiorGaps.map(gap => (
+          <span
+            key={`gap-label-${gap.start}-${gap.end}`}
+            className="rounded bg-surface px-2 py-1 text-xs text-text-muted"
+            data-testid="task-timing-interior-gap-label"
+          >
+            {t('timing.timeline.interior_gap', { duration: formatDuration(gap.end - gap.start) })}
+          </span>
+        ))}
       </div>
 
       {spans.map(span => (
@@ -438,12 +465,12 @@ function useTimelineBounds(data: TaskTimingResponse): TimelineBounds {
     }
 
     const hasObservedSpans = Number.isFinite(observedStart) && Number.isFinite(observedEnd)
-    const fallbackStart = hasObservedSpans ? observedStart : 0
-    const fallbackEnd = hasObservedSpans ? observedEnd : 1
+    const fallbackStart = hasObservedSpans ? observedStart : undefined
+    const fallbackEnd = hasObservedSpans ? observedEnd : undefined
     const start = sessionStart ?? fallbackStart
     const end = sessionEnd ?? fallbackEnd
 
-    if (end < start) {
+    if (start === undefined || end === undefined || end < start) {
       return { start, end: start, observedStart: undefined, observedEnd: undefined }
     }
     return {
@@ -455,10 +482,43 @@ function useTimelineBounds(data: TaskTimingResponse): TimelineBounds {
   }, [data])
 }
 
+function unobservedIntervals(
+  data: TaskTimingResponse,
+  bounds: TimelineBounds
+): Array<{ start: number; end: number }> {
+  if (bounds.start === undefined || bounds.end === undefined) return []
+  const intervals = data.spans
+    .map(span => {
+      if (span.start_at_ms === null || span.start_at_ms === undefined) return undefined
+      const fallbackEnd =
+        span.duration_ms === null || span.duration_ms === undefined
+          ? span.start_at_ms
+          : span.start_at_ms + span.duration_ms
+      return [span.start_at_ms, span.end_at_ms ?? fallbackEnd] as const
+    })
+    .filter((interval): interval is readonly [number, number] => interval !== undefined)
+    .filter(([start, end]) => end > start)
+    .map(([start, end]) => [Math.max(start, bounds.start!), Math.min(end, bounds.end!)])
+    .filter(([start, end]) => end > start)
+    .sort((left, right) => left[0] - right[0])
+
+  const gaps: Array<{ start: number; end: number }> = []
+  let cursor = bounds.start
+  for (const [start, end] of intervals) {
+    if (start > cursor) gaps.push({ start: cursor, end: start })
+    cursor = Math.max(cursor, end)
+  }
+  if (cursor < bounds.end) gaps.push({ start: cursor, end: bounds.end })
+  return gaps
+}
+
 function barPosition(
   span: TaskTimingResponse['spans'][number],
   bounds: TimelineBounds
 ): { left: string; width: string } {
+  if (bounds.start === undefined || bounds.end === undefined || span.start_at_ms == null) {
+    return { left: '0%', width: '0%' }
+  }
   const start = span.start_at_ms ?? bounds.start
   const fallbackEnd =
     span.duration_ms === null || span.duration_ms === undefined ? start : start + span.duration_ms
@@ -473,8 +533,18 @@ function barPosition(
 }
 
 function percent(durationMs: number, bounds: TimelineBounds): string {
+  if (bounds.start === undefined || bounds.end === undefined) return '0%'
   const scale = Math.max(bounds.end - bounds.start, 1)
   return `${Math.max(Math.min(durationMs / scale, 1), 0) * 100}%`
+}
+
+function gapPosition(gap: { start: number; end: number }, bounds: TimelineBounds) {
+  if (bounds.start === undefined || bounds.end === undefined) return { left: '0%', width: '0%' }
+  const scale = Math.max(bounds.end - bounds.start, 1)
+  return {
+    left: `${((gap.start - bounds.start) / scale) * 100}%`,
+    width: `${((gap.end - gap.start) / scale) * 100}%`,
+  }
 }
 
 function validTimestamp(timestampMs?: number | null): number | undefined {

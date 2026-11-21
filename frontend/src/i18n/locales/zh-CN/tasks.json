@@ -271,6 +271,7 @@
       "empty": "暂无 Span",
       "span_meta": "{{kind}} · 轮次 {{turn}} · {{duration}}",
       "leading_gap": "前段未观测 · {{duration}}",
+      "interior_gap": "未观测 · {{duration}}",
       "trailing_gap": "后段未观测 · {{duration}}"
     },
     "status": {
