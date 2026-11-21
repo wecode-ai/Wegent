@@ -456,7 +456,7 @@ fn valid_collaboration(source: &Value) -> bool {
         && source["allProjects"].is_boolean()
         && source
             .get("includeIndependentIssues")
-            .is_none_or(Value::is_boolean)
+            .map_or(true, Value::is_boolean)
         && validate_projects(&source["projects"])
         && validate_projects(&source["excludedProjects"])
         && source["tags"].as_array().is_some_and(|tags| {
