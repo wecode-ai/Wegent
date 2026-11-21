@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { resolveElectronBinary } from './electron-binary.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
@@ -58,12 +58,12 @@ export async function verifyMacosLogStartup({ resources, environment, root }) {
     } catch (error) { console.error(error.stack); app.exit(1); }
   `
   )
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const launchArguments = resolveElectronLaunchArguments()
   const childEnvironment = { ...environment, HOME: root }
   delete childEnvironment.ELECTRON_RUN_AS_NODE
   const { stdout } = await promisify(execFile)(
-    require('electron'),
+    electronBinary,
     [scriptPath, JSON.stringify({ resources, root }), ...launchArguments],
     { env: childEnvironment, timeout: 30_000, maxBuffer: 1024 * 1024 }
   )
