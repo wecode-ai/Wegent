@@ -132,7 +132,12 @@ export function createDesktopScenario(options) {
     assert.equal(String(context.cloud_project_id), String(project.id))
     return {
       bind,
-      projectId: String(project.id),
+      origin: {
+        type: 'board_task',
+        projectStore: 'cloud',
+        cloudProjectId: String(project.id),
+        loopItemId: String(issue.id),
+      },
       unbind: async () => {
         await backend(path, { method: 'DELETE', body: task, status: 204 })
         await backend(`${path}?${query}`, { status: 404 })
@@ -310,7 +315,7 @@ export function createDesktopScenario(options) {
           workspacePath,
           runtime: 'codex',
           message: prompt,
-          ...(binding && { cloudProjectId: binding.projectId }),
+          ...(binding && { cloudProjectId: binding.origin.cloudProjectId, origin: binding.origin }),
           executionRequest: {
             task_id: taskId,
             subtask_id: `${taskId}-initial`,
@@ -338,7 +343,7 @@ export function createDesktopScenario(options) {
           workbenchReadyTimeoutMs
         )
         if (binding) {
-          assert.equal(before.task.runtimeHandle.cloudProjectId, binding.projectId)
+          assert.deepEqual(before.task.runtimeHandle.origin, binding.origin)
           await verifyCloudCancellation(control, address, binding, readTask)
           continue
         }
