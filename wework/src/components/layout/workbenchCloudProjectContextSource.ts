@@ -291,20 +291,20 @@ export function createWorkbenchCloudProjectContextSource(
             '关联项目空间失败'
           ),
         })
-      logRuntimeTaskCreateStage('project-space-context-failed', {
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        error: error instanceof Error ? error.message : String(error),
-        elapsedMs: Math.round(performance.now() - started),
-        causes:
-          error instanceof AggregateError
-            ? error.errors.map(cause => (cause instanceof Error ? cause.message : String(cause)))
-            : undefined,
-      })
-      console.warn('[Wework] Failed to resolve project-space context for task', {
-        task: address,
-        error,
-      })
+      logRuntimeTaskCreateStage(
+        'project-space-context-failed',
+        {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          error: error instanceof Error ? error.message : String(error),
+          elapsedMs: Math.round(performance.now() - started),
+          causes:
+            error instanceof AggregateError
+              ? error.errors.map(cause => (cause instanceof Error ? cause.message : String(cause)))
+              : undefined,
+        },
+        'warn'
+      )
     }
   }
   const bindPending = () => {

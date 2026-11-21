@@ -538,21 +538,21 @@ jobs:
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
       - name: Compare idle workbench CPU
-        if: hashFiles('.ci-artifacts/wework-cpu-benchmarks/idle-executor-requests.json') != ''
+        if: "!cancelled() && hashFiles('.ci-artifacts/wework-cpu-benchmarks/idle-executor-requests.json') != ''"
         uses: ./.github/actions/compare-wework-cpu-benchmark
         with:
           checkpoint: idle-executor-requests
           save-cache: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
 
       - name: Compare streaming conversation CPU
-        if: hashFiles('.ci-artifacts/wework-cpu-benchmarks/streaming-conversation-switching.json') != ''
+        if: "!cancelled() && hashFiles('.ci-artifacts/wework-cpu-benchmarks/streaming-conversation-switching.json') != ''"
         uses: ./.github/actions/compare-wework-cpu-benchmark
         with:
           checkpoint: streaming-conversation-switching
           save-cache: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
 
       - name: Compare Executor stream recovery CPU
-        if: hashFiles('.ci-artifacts/wework-cpu-benchmarks/executor-stream-recovery.json') != ''
+        if: "!cancelled() && hashFiles('.ci-artifacts/wework-cpu-benchmarks/executor-stream-recovery.json') != ''"
         uses: ./.github/actions/compare-wework-cpu-benchmark
         with:
           checkpoint: executor-stream-recovery
