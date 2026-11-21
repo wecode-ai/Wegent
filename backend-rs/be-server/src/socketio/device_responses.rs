@@ -337,7 +337,7 @@ async fn deliver_remote_terminal(
     crate::internal_callback::publish_terminal_callback(redis, event)
         .await
         .map_err(|error| error.to_string())?;
-    completion::acknowledge_delivery(&ctx, task_id, subtask_id, delivery)
+    completion::acknowledge_delivery(&ctx.storage(), task_id, subtask_id, delivery)
         .await
         .map_err(|error| error.to_string())
 }
@@ -736,7 +736,7 @@ pub(super) async fn forward_local_task_callbacks(
     source: Option<&Value>,
     event: &crate::internal_callback::event::ExecutionEvent,
 ) {
-    let card = crate::internal_callback::dingtalk_card::DingTalkCardTransport::from_process(state);
+    let card = crate::internal_callback::dingtalk_card::from_process(&state.mysql);
     forward_local_task_callbacks_with_transport(
         state,
         device_id,
@@ -782,8 +782,9 @@ async fn forward_local_task_callbacks_with_transport(
         tracing::info!(task_key, "skipping stale IM runtime event");
         return;
     }
+    let telegram = crate::internal_callback::dingtalk_card::ChannelCredentials(&state.mysql);
     let delivery = channel::RuntimeChannelDelivery {
-        state,
+        telegram: &telegram,
         redis,
         card,
         source_message_id: source

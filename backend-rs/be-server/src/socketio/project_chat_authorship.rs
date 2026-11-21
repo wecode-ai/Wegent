@@ -136,80 +136,11 @@ fn apply_private_source_access(
     }
 }
 
-pub(crate) fn shared_message_payload(view: &Value) -> Value {
-    let mut shared = view.clone();
-    if let Some(metadata) = view.get("metadata") {
-        shared["metadata"] = json!(shared_metadata(metadata, false));
-    }
-    if private_execution_message(view["type"].as_str().unwrap_or_default(), &view["metadata"]) {
-        shared["content"] = json!("");
-        if view["type"] == "text" {
-            shared["type"] = json!("agent_chunk");
-        }
-    }
-    shared["runtimeAddress"] = Value::Null;
-    shared["traceState"] = json!(
-        if view.get("traceRef").is_some_and(|value| !value.is_null()) {
-            "restricted"
-        } else {
-            "history-unavailable"
-        }
-    );
-    shared
-}
+pub(crate) use wegent_project_coordination::project_chat_message::shared_message_payload;
 
-fn private_execution_message(message_type: &str, metadata: &Value) -> bool {
-    matches!(message_type, "agent_status" | "agent_chunk") || metadata["kind"] == "task_ai_subagent"
-}
-
-fn shared_metadata(metadata: &Value, include_runtime: bool) -> serde_json::Map<String, Value> {
-    const SHARED_KEYS: &[&str] = &[
-        "mentions",
-        "stand_in_reply_to",
-        "collaboration_public_reply",
-        "collaboration_turn_start",
-        "collaboration_guidance",
-        "collaboration_execution_activity_id",
-        "execution_dispatch",
-        "activity_type",
-        "dispatch_role",
-        "manager_display_name",
-        "run_status",
-        "summary",
-        "evidence_refs",
-        "next_action",
-        "publish_policy",
-        "imported_from",
-        "history_import",
-        "member_assistant_result",
-        "runtime_event_sequence",
-    ];
-    const RUNTIME_KEYS: &[&str] = &[
-        "run_id",
-        "execution_id",
-        "executor_type",
-        "backend_task_id",
-        "execution_url",
-        "model",
-        "runtime_event_sequence",
-        "contentMode",
-        "runtime_turn_id",
-        "workflow_task_title",
-    ];
-    SHARED_KEYS
-        .iter()
-        .chain(if include_runtime {
-            RUNTIME_KEYS.iter()
-        } else {
-            [].iter()
-        })
-        .filter_map(|key| {
-            metadata
-                .get(*key)
-                .map(|value| ((*key).into(), value.clone()))
-        })
-        .collect()
-}
+use wegent_project_coordination::project_chat_message::{
+    private_execution_message, shared_metadata,
+};
 
 #[cfg(test)]
 mod tests {

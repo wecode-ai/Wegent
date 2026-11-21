@@ -10,7 +10,7 @@ description = "Shared plugin installation storage and canonical device reconcili
 brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
 chrono = { workspace = true, features = ["clock"] }
 wegent-backend-persistence = { workspace = true }
-wegent-devices = { workspace = true }
+wegent-device-identity = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,6 +1,14 @@
 //! Reuses the Backend Rust CI MySQL fixture and real HTTP authentication.
-use super::*;
+use brz_mysql::FromMysqlRow;
+use serde_json::{Value, json};
 use std::sync::Arc;
+use wegent_runtime_observations::test_support::{canonical_hash, command};
+
+#[derive(FromMysqlRow)]
+struct Document {
+    id: i64,
+    json: Value,
+}
 
 #[tokio::test]
 #[ignore = "requires disposable WEGENT_TEST_MYSQL_ADDRESS; invoked by Backend Rust CI"]
@@ -274,7 +282,7 @@ async fn verify_http(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         anyhow::ensure!(stopped.status().as_u16()==200);
         anyhow::ensure!(command(mysql,981002,&json!({"action":"claim"})).await?["lease"].is_null());
         let late_observer=json!({"deviceId":"owned-device","consumerKey":"late-ui","generation":"late-activation","source":attach("observer")["subscription"]["source"]});
-        let late_id=state::hash(&json!(["observer","owned-device","late-ui","late-activation"]));
+        let late_id=canonical_hash(&json!(["observer","owned-device","late-ui","late-activation"]));
         let stopped=post("/api/runtime-observations/command",&user,json!({"action":"stop_observer","observerId":late_id,"generation":"late-activation","observer":late_observer,"initialCheckpoint":{"cursor":77}})).await?;
         anyhow::ensure!(stopped.status().as_u16()==200);
         let late=post("/api/runtime-observations/command",&user,json!({"action":"observe","observer":late_observer,"initialCheckpoint":{"cursor":77}})).await?;

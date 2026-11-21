@@ -1,4 +1,6 @@
 //! Populated historical upgrades run on the existing disposable MySQL service.
+use std::collections::BTreeSet;
+
 use super::*;
 use serde_json::{Value, json};
 
@@ -10,7 +12,9 @@ async fn sql(mysql: &MysqlService, statements: &[&str]) -> Result<()> {
 }
 async fn data(mysql: &MysqlService, query: &str) -> Result<Vec<Value>> {
     Ok(mysql
-        .with_transaction(async |tx| super::super::rows::query(tx, query, ()).await)
+        .with_transaction(async |tx| {
+            wegent_database_migrations::test_support::query(tx, query, ()).await
+        })
         .await?)
 }
 async fn target(mysql: &MysqlService, revision: &str) -> Result<()> {
@@ -19,7 +23,7 @@ async fn target(mysql: &MysqlService, revision: &str) -> Result<()> {
 async fn item(mysql: &MysqlService, value: Value) -> Result<()> {
     mysql
         .with_transaction(async |tx| {
-            super::super::rows::insert(tx, "loop_items", &value).await?;
+            wegent_database_migrations::test_support::insert(tx, "loop_items", &value).await?;
             Ok(())
         })
         .await?;
@@ -174,7 +178,7 @@ async fn startup_prepares_schema_and_releases_lock_on_migration_failure() -> Res
 async fn staged_builtin_is_packaged_and_published_to_marketplace() -> Result<()> {
     isolated(async |mysql| {
         upgrade(mysql).await?;
-        let root=std::env::temp_dir().join(format!("wegent-staged-{}",super::super::rows::uuid()));
+        let root=std::env::temp_dir().join(format!("wegent-staged-{}",wegent_database_migrations::test_support::uuid()));
         let source=root.join("source/.codex-plugin");
         std::fs::create_dir_all(&source)?;
         std::fs::write(source.join("plugin.json"),r#"{"name":"wegent-sites","version":"1.0.0","description":"staged fixture"}"#)?;
@@ -213,14 +217,14 @@ async fn historical_integer_ids_and_member_constraints_preserve_rows() -> Result
             "INSERT INTO subtasks VALUES (456,123,NULL,0)",
             "INSERT INTO resource_members (resource_type,resource_id,user_id,role,status) VALUES ('Task',123,7,'Owner','approved')",
         ]).await?;
-        mysql.with_transaction(async |tx| super::super::schema_changes::bigint_ids(tx,false).await).await?;
+        mysql.with_transaction(async |tx| wegent_database_migrations::test_support::bigint_ids(tx,false).await).await?;
         sql(mysql,&["INSERT INTO tasks VALUES (3000000000)","INSERT INTO subtasks VALUES (3000000000,3000000000,456,0)"]).await?;
-        mysql.with_transaction(async |tx| super::super::schema_changes::members(tx,false).await).await?;
+        mysql.with_transaction(async |tx| wegent_database_migrations::test_support::members(tx,false).await).await?;
         assert_eq!(data(mysql,"SELECT JSON_OBJECT('id',entity_id,'type',entity_type,'role',role) AS data FROM resource_members").await?,vec![json!({"id":"7","type":"user","role":"Owner"})]);
         assert!(mysql.execute("INSERT INTO resource_members(resource_type,resource_id,user_id,entity_type,entity_id) VALUES ('Task',123,7,'user','7')",()).await.is_err());
         sql(mysql,&["DELETE FROM subtasks WHERE id=3000000000","DELETE FROM tasks WHERE id=3000000000"]).await?;
-        mysql.with_transaction(async |tx| super::super::schema_changes::members(tx,true).await).await?;
-        mysql.with_transaction(async |tx| super::super::schema_changes::bigint_ids(tx,true).await).await?;
+        mysql.with_transaction(async |tx| wegent_database_migrations::test_support::members(tx,true).await).await?;
+        mysql.with_transaction(async |tx| wegent_database_migrations::test_support::bigint_ids(tx,true).await).await?;
         assert_eq!(data(mysql,"SELECT JSON_OBJECT('id',id,'task',task_id,'parent',parent_id) AS data FROM subtasks").await?,vec![json!({"id":456,"task":123,"parent":null})]);
         Ok(())
     }).await
@@ -259,8 +263,8 @@ async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
             data(mysql, "SELECT JSON_OBJECT('version',token_version,'hash',token_hash) AS data FROM share_links WHERE resource_id IN (4,5) ORDER BY id").await?,
             vec![json!({"version": 1, "hash": null}), json!({"version": 1, "hash": null})],
         );
-        let hash = crate::share_access::token_hash("late-a+=");
-        let row: Option<crate::share_access::TaskShareLink> = mysql
+        let hash = wegent_identity::share_token::token_hash("late-a+=");
+        let row: Option<wegent_task_views::share_access::TaskShareLink> = mysql
             .fetch_optional(
                 "SELECT resource_id,created_by_user_id,token_version FROM share_links WHERE (token_hash=? OR (token_hash IS NULL AND token_version=1 AND SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256)=?)) AND is_active=true",
                 (hash.clone(), hash),
@@ -269,7 +273,7 @@ async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
         let row = row.expect("late legacy writer must remain discoverable");
         assert_eq!(row.resource_id, 4);
         assert_eq!(row.token_version, 1);
-        assert!(crate::share_access::legacy_viewer(row.token_version, None).is_err());
+        assert!(wegent_identity::share_token::legacy_viewer(row.token_version, None).is_err());
         sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,token_version,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('TaskShare',6,'opaque-new',SHA2('opaque-new',256),2,0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
         assert_eq!(
             data(mysql, "SELECT JSON_OBJECT('version',token_version) AS data FROM share_links WHERE share_token='opaque-new'").await?,
@@ -288,7 +292,7 @@ async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
                 .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
                     reason: "secure share migration is missing".into(),
                 })?;
-            legacy::execute(tx, revision, true).await?;
+            wegent_database_migrations::test_support::execute_revision(tx, revision, true).await?;
             Ok(())
         })
         .await?;

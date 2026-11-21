@@ -8,13 +8,13 @@ use brz_mysql::{
     FromMysqlCol, FromMysqlRow, Json, Mysql, MysqlError, MysqlResult, MysqlRow, MysqlTransaction,
 };
 use brz_redis::Redis;
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
 use serde_json::{Value, json};
 
-use crate::socketio::project_chat_messages::{
-    MessageRow, database_timestamp, message_view, shared_message_payload,
-};
+use crate::socketio::project_chat_messages::{database_timestamp, shared_message_payload};
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
+
+pub(crate) use wegent_project_coordination::project_chat_message::Message;
 
 const TERMINAL: &[&str] = &["succeeded", "failed", "cancelled", "skipped"];
 
@@ -58,57 +58,6 @@ struct Run {
 struct Subtask {
     result: Option<Json<Value>>,
     error_message: Option<String>,
-}
-
-#[derive(Debug, Clone, FromMysqlRow)]
-pub(crate) struct Message {
-    pub(crate) id: i64,
-    pub(crate) message_id: String,
-    pub(crate) client_message_id: String,
-    pub(crate) project_id: String,
-    pub(crate) task_id: String,
-    pub(crate) sender_type: String,
-    pub(crate) sender_id: String,
-    pub(crate) sender_name: String,
-    pub(crate) message_type: String,
-    pub(crate) content: String,
-    pub(crate) metadata: Json<Value>,
-    pub(crate) trigger_message_id: String,
-    pub(crate) reply_to_message_id: String,
-    pub(crate) thread_root_message_id: String,
-    pub(crate) agent_id: String,
-    pub(crate) runtime_device_id: String,
-    pub(crate) runtime_task_id: String,
-    pub(crate) status: String,
-    pub(crate) created_at: NaiveDateTime,
-    pub(crate) updated_at: NaiveDateTime,
-}
-
-impl Message {
-    pub(crate) fn view(&self) -> Value {
-        message_view(&MessageRow {
-            id: self.id,
-            message_id: self.message_id.clone(),
-            client_message_id: self.client_message_id.clone(),
-            project_id: self.project_id.clone(),
-            task_id: self.task_id.clone(),
-            sender_type: self.sender_type.clone(),
-            sender_id: self.sender_id.clone(),
-            sender_name: self.sender_name.clone(),
-            message_type: self.message_type.clone(),
-            content: self.content.clone(),
-            metadata: Some(self.metadata.clone()),
-            trigger_message_id: self.trigger_message_id.clone(),
-            reply_to_message_id: self.reply_to_message_id.clone(),
-            thread_root_message_id: self.thread_root_message_id.clone(),
-            agent_id: self.agent_id.clone(),
-            runtime_device_id: self.runtime_device_id.clone(),
-            runtime_task_id: self.runtime_task_id.clone(),
-            status: self.status.clone(),
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        })
-    }
 }
 
 #[derive(Debug)]

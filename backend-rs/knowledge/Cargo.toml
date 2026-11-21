@@ -17,9 +17,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 wegent-access.workspace = true
-wegent-attachments.workspace = true
 wegent-backend-config.workspace = true
 wegent-backend-persistence.workspace = true
+wegent-directory.workspace = true
 wegent-http-compat.workspace = true
 wegent-identity.workspace = true
 wegent-knowledge-access.workspace = true

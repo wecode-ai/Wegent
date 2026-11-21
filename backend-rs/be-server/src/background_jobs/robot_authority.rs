@@ -108,7 +108,7 @@ async fn require_on(
         Some(issue) => issue,
         None => {
             fetched = issues::load_execution_issue(
-                app,
+                &app.project_issues(),
                 &project,
                 &row.loop_item_id,
                 row.assigner_user_id,

@@ -52,7 +52,7 @@ pub(super) async fn compile_request(
             json!({})
         } else {
             let agent = authority::agent(
-                app,
+                &app.mysql,
                 &row.cloud_project_id,
                 agent_id,
                 row.assigner_user_id,
@@ -67,7 +67,7 @@ pub(super) async fn compile_request(
             }
         }
         request = profile::build(
-            app,
+            &app.mysql,
             &issue,
             row.id,
             &queue::Admission {
@@ -278,7 +278,7 @@ async fn member_profiles(
             .map(str::to_owned)
             .or_else(|| member["id"].as_i64().map(|id| id.to_string()))
             .context("Collaboration Agent identity is unavailable")?;
-        let agent = groups::resolve_agent(app, &row.cloud_project_id, &id).await?;
+        let agent = groups::resolve_agent(&app.mysql, &row.cloud_project_id, &id).await?;
         let (_, aliases) = agents
             .entry(agent.id.clone())
             .or_insert_with(|| (agent.clone(), BTreeSet::from([agent.id])));
@@ -287,7 +287,7 @@ async fn member_profiles(
     let mut result = Vec::with_capacity(agents.len());
     for (agent_id, (agent, aliases)) in agents {
         let visible_agent = authority::agent(
-            app,
+            &app.mysql,
             &row.cloud_project_id,
             &agent_id,
             row.assigner_user_id,
@@ -322,7 +322,7 @@ async fn member_profiles(
             .expect("group origin object")
             .shift_remove("comment_continue_task_id");
         let mut request = profile::build(
-            app,
+            &app.mysql,
             &issue,
             row.id,
             &queue::Admission {

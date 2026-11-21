@@ -27,8 +27,8 @@ use crate::socketio::chat_session::ChatSession;
 use crate::socketio::chat_trigger::ChatTurn;
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
-use crate::task_detail_api::assembly::extract_display_prompt;
 use crate::task_store::task_update_timestamp;
+use wegent_task_views::task_detail_api::assembly::extract_display_prompt;
 
 use super::chat_support::{access_denied, error_ack, expired, internal_error};
 
@@ -52,7 +52,8 @@ pub(crate) async fn retry(
     } else {
         "web"
     };
-    let mut observation = crate::chat_metrics::RequestObservation::new(entrypoint);
+    let mut observation =
+        wegent_execution_completion::chat_metrics::RequestObservation::new(entrypoint);
     let Some(payload) = RetryPayload::parse(&data) else {
         return Ok(Reply::payload(error_ack("Invalid payload")));
     };

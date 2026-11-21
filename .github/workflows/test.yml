@@ -271,7 +271,7 @@ jobs:
           GIT_INBOX_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
         run: |
           set -o pipefail
-          cargo test --locked --lib git_connection_inbox::store::redis_tests -- --ignored --test-threads=1 \
+          cargo test --locked -p wegent-git-inbox --lib store::redis_tests -- --ignored --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/git-inbox-redis.log
 
       - name: Verify native MySQL schema lifecycle and initialization
@@ -319,23 +319,23 @@ jobs:
           EXECUTOR_MANAGER_URL: http://127.0.0.1:1
         run: |
           set -o pipefail
-          cargo test --locked --lib plugins_installed::local_sync::mysql_tests -- --ignored --nocapture \
+          cargo test --locked -p wegent-backend-rs --lib plugin_runtime_gateway_tests::local_sync_mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-local-sync-mysql.log
-          cargo test --locked --lib plugin_account_auth::local_http::mysql_tests -- --ignored --nocapture \
+          cargo test --locked -p wegent-backend-rs --lib plugin_runtime_gateway_tests::native_auth_mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-native-auth-mysql.log
 
       - name: Verify plugin write leases with real Redis replication and MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
+          cargo test --locked -p wegent-plugin-runtime --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
 
       - name: Verify plugin batch reads with MySQL
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
+          cargo test --locked -p wegent-plugin-runtime --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-installed-list-mysql.log
           cargo test --locked --lib batch_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-batch-reads-mysql.log
@@ -360,7 +360,7 @@ jobs:
           set -o pipefail
           cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
-          cargo test --locked --lib loop_tasks::human_requests::mysql_tests -- --ignored \
+          cargo test --locked -p wegent-project-participation --lib human_requests::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/human-requests-mysql.log
 
       - name: Verify batched project roster permission compatibility with MySQL
@@ -428,7 +428,7 @@ jobs:
         working-directory: backend-rs
         run: |
           set -o pipefail
-          cargo test --locked --lib apps_installed::refresh_mysql_tests -- --ignored --test-threads=1 \
+          cargo test --locked -p wegent-connector-apps --lib apps_installed::refresh_mysql_tests -- --ignored --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/connector-refresh-mysql.log
 
       - name: Upload Rust backend test evidence

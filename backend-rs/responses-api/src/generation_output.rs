@@ -17,7 +17,7 @@ use serde_json::Value;
 use super::http_error::HttpError;
 use super::output_builder::{OutputItem, ToolOrTextBlock};
 use crate::config::AuthConfig;
-use wegent_attachments::public_link::{build_public_attachment_download_url, public_base_url};
+use wegent_attachment_links::{build_public_attachment_download_url, public_base_url};
 
 /// `VIDEO_DOWNLOAD_URL_EXPIRES_SECONDS`
 /// (`app/services/openapi/output_builder.py`).

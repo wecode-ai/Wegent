@@ -1,11 +1,11 @@
 //! Publish packaged system plugins into the Kind-backed marketplace.
 
-use crate::background_jobs::plugins::{metadata, package};
 use anyhow::{Context, Result, ensure};
 use brz_mysql::{FromMysqlRow, Json, MysqlService, MysqlTransaction};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use wegent_plugin_package as package;
 
 const BUILTINS: &[&str] = &["wegent-sites", "weibo-miniapp-h5-develop-agent"];
 
@@ -123,9 +123,9 @@ fn load(directory: &Path, name: &str) -> Result<Plugin> {
             },
         );
     }
-    let components = metadata::components(&files, "", &codex)?;
+    let components = package::components(&files, "", &codex)?;
     let interface = if codex["interface"].is_object() {
-        metadata::interface(&files, "", &codex["interface"])?
+        package::interface(&files, "", &codex["interface"])?
     } else {
         Value::Null
     };

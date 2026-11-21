@@ -5,4 +5,7 @@ pub mod members;
 pub mod permissions;
 pub mod repository;
 
+mod agents;
 pub mod bindings;
+mod chat_agents;
+mod handler;

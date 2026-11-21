@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 use wegent_backend_config as config;
-use wegent_backend_persistence::sql_support;
+pub use wegent_device_identity as device_identity;
 use wegent_http_compat as http_compat;
 use wegent_identity::auth;
 use wegent_python_compat::json_compat;
@@ -16,18 +16,20 @@ use wegent_resource_store::crd;
 use wegent_task_store::task_store;
 
 pub mod cloud_device_deletion;
+pub mod device_command;
 pub mod device_commands;
-pub mod device_identity;
 pub mod device_identity_lock;
 pub mod device_online_state;
 pub mod device_presence;
 pub mod device_running_tasks;
+pub mod device_upgrade;
 pub mod devices;
 pub mod executor_version;
 
 pub struct DevicesState {
     pub mysql: brz_mysql::MysqlService,
     pub redis: Option<brz_redis::RedisService>,
+    pub socketio_rpc: Option<Arc<wegent_socket_events::socketio_rpc::SocketIoRpc>>,
     pub task_store: Arc<dyn task_store::TaskStore>,
     pub cloud_runtime_features: Arc<dyn devices::CloudRuntimeFeatures>,
     pub executor_version: executor_version::ExecutorVersionService,
@@ -55,4 +57,6 @@ pub fn registered_routes() -> Vec<(&'static str, u16)> {
         .collect()
 }
 
+pub mod runner_catalog;
 pub mod runtime_features;
+mod runtime_profiles;

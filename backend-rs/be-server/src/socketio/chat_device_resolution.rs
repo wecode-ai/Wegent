@@ -20,8 +20,8 @@ use crate::device_identity::{
     DeviceKindRow, DeviceType, KINDS_DEVICE_QUERY, identity_from_device,
     resolve_owned_device_alias_on,
 };
-use crate::projects;
 use wegent_backend_persistence::mysql_query::MysqlQuery;
+use wegent_legacy_projects::project_config_on;
 
 /// The Source's `HTTPException(409, ...)` detail for an ambiguous historical
 /// App device (`task_device_resolution.py:109/130`).
@@ -138,9 +138,7 @@ async fn extract_project_device_id<Q: MysqlQuery>(
     if project_id == 0 {
         return Ok(None);
     }
-    let Some(config) =
-        projects::project_config_on(query, user_id, project_id, client_origin).await?
-    else {
+    let Some(config) = project_config_on(query, user_id, project_id, client_origin).await? else {
         return Ok(None);
     };
     if let Some(execution) = config.get("execution").filter(|value| value.is_object()) {

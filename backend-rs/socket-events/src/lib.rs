@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod callback_sequencer;
+pub mod skill_registry;
 pub mod socketio_emit;
 pub mod socketio_rpc;
 

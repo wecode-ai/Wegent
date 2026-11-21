@@ -1,24 +1,13 @@
 //! Issue and activity timestamps retain their instant through real MySQL writes.
 
 use brz_mysql::{Json, Mysql, MysqlTransaction};
-use chrono::{DateTime, Utc};
-use serde_json::{Value, json};
+use chrono::Utc;
+use serde_json::json;
 
 use super::{execution_aggregate, runtime_projection};
 use crate::background_jobs::project::{completion::Message, store};
 
-pub(crate) fn assert_current(value: &Value, since: DateTime<Utc>) {
-    let instant = DateTime::parse_from_rfc3339(value.as_str().unwrap()).unwrap();
-    assert!(
-        instant >= since - chrono::Duration::seconds(1),
-        "timestamp moved backwards: {value}, expected >= {since}"
-    );
-    // Legacy DATETIME columns retain whole seconds only.
-    assert!(
-        instant <= Utc::now() + chrono::Duration::seconds(1),
-        "timestamp moved forwards: {value}"
-    );
-}
+pub(crate) use wegent_runtime_execution::runtime_projection::assert_current;
 
 pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
     let since = Utc::now();

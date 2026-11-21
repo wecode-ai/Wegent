@@ -53,7 +53,7 @@ impl ReadOnlyMysql {
 
 pub async fn seed(mysql: &MysqlService) {
     mysql
-        .execute(include_str!("../fixtures/loop_items_nullable.sql"), ())
+        .execute(wegent_backend_test_support::LOOP_ITEMS_NULLABLE_SQL, ())
         .await
         .unwrap();
     for statement in include_str!("../fixtures/assignment_access.sql")

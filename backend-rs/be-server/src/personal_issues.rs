@@ -387,7 +387,6 @@ async fn create_issue_record(
                     notices.push(
                         notifications::create_on(
                             tx,
-                            state,
                             i64::from(recipient),
                             i64::from(user_id),
                             "issue_shared",
