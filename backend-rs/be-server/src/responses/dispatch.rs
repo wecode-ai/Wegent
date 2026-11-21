@@ -158,6 +158,14 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     MemorySave(crate::responses::create::memory_context::SaveRequest),
     /// An automatic handoff is acknowledged only after its destination accepts.
     Pipeline(Box<DispatchJob<M, R>>, oneshot::Sender<Result<(), String>>),
+    /// A device turn accepted after its callback reader exists. The supervisor
+    /// owns submission so dropping the client stream cannot cancel the
+    /// transition from PENDING to RUNNING or the later `task:execute` publish.
+    Device {
+        request: Box<ExecutionRequest>,
+        device_route: String,
+        consumer: Box<ConsumerState<M, R>>,
+    },
 }
 
 /// The production job type (`AppState`'s specialization).
@@ -189,6 +197,16 @@ impl<M: Mysql, R: Redis> DispatchJob<M, R> {
                 subtask_id: 0,
                 request_id: String::new(),
                 target: "memory".to_string(),
+            },
+            Self::Device {
+                request,
+                device_route,
+                ..
+            } => JobContext {
+                task_id: request.task_id,
+                subtask_id: request.subtask_id,
+                request_id: request.request_id.clone(),
+                target: format!("device:{device_route}"),
             },
         }
     }
@@ -360,6 +378,49 @@ where
         DispatchJob::Pipeline(..) => unreachable!("nested pipeline dispatch"),
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;
+        }
+        DispatchJob::Device {
+            mut request,
+            device_route,
+            consumer,
+        } => {
+            let Some(app) = consumer.app.upgrade() else {
+                finalize_executor_failure(
+                    &consumer,
+                    request.task_id,
+                    request.subtask_id,
+                    request.user_id,
+                    request.message_id,
+                    (
+                        "Application stopped before device dispatch",
+                        "EXECUTOR_DISPATCH_FAILED",
+                    ),
+                )
+                .await;
+                tracing::warn!(
+                    task_id = request.task_id,
+                    subtask_id = request.subtask_id,
+                    "application stopped before device dispatch"
+                );
+                return;
+            };
+            // Keep ownership of a rejected submission until recovery can index it.
+            let retry_index_write = true;
+            if let Err(error) = super::create::seam::dispatch_responses_device(
+                &app,
+                &mut request,
+                &device_route,
+                retry_index_write,
+            )
+            .await
+            {
+                tracing::warn!(
+                    task_id = request.task_id,
+                    subtask_id = request.subtask_id,
+                    ?error,
+                    "background device dispatch failed"
+                );
+            }
         }
     }
 }

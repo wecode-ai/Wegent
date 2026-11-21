@@ -11,8 +11,7 @@ use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
 use super::{
-    ExecutionRequest, build_failure_message, is_subtask_not_dispatchable, mark_subtask_running,
-    recover_before_dispatch, routing,
+    ExecutionRequest, build_failure_message, mark_subtask_running, recover_before_dispatch, routing,
 };
 
 /// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
@@ -212,21 +211,77 @@ pub(crate) async fn dispatch_responses_device(
     state: &AppState,
     request: &mut ExecutionRequest,
     device_route: &str,
+    retry_index_write: bool,
 ) -> Result<(), FastApiError> {
     recover_before_dispatch(state, request, Some(device_route)).await?;
-    if let Err(error) = dispatch_device_turn(state, request, None, device_route).await {
-        if !is_subtask_not_dispatchable(&error) {
-            crate::responses::dispatch::finalize_executor_failure(
-                &crate::responses::dispatch::ConsumerState::from_app(state),
-                request.task_id,
-                request.subtask_id,
-                request.user_id,
-                request.message_id,
-                (build_failure_message(&error), "dispatch_error"),
-            )
-            .await;
-        }
-        return Err(error);
+    let dispatched = dispatch_device_turn(state, request, None, device_route).await;
+    if let Err(error) = &dispatched {
+        settle_responses_device_failure(
+            state,
+            request,
+            build_failure_message(error),
+            retry_index_write,
+        )
+        .await;
     }
-    Ok(())
+    dispatched
+}
+
+pub(crate) async fn settle_responses_device_failure(
+    state: &AppState,
+    request: &ExecutionRequest,
+    message: &str,
+    retry_index_write: bool,
+) {
+    if state.redis.is_some() {
+        crate::internal_callback::process_device_dispatch_failure(
+            state,
+            request.task_id,
+            request.subtask_id,
+            request.message_id,
+            message,
+            retry_index_write,
+        )
+        .await;
+    } else {
+        use crate::responses::dispatch::{ConsumerState, finalize_executor_failure};
+        finalize_executor_failure(
+            &ConsumerState::from_app(state),
+            request.task_id,
+            request.subtask_id,
+            request.user_id,
+            request.message_id,
+            (message, "EXECUTOR_DISPATCH_FAILED"),
+        )
+        .await;
+    }
+}
+
+/// Admit a device Responses turn to the startup-owned supervisor after the
+/// callback reader exists. The request path can then be cancelled without
+/// cancelling the RUNNING transition or the subsequent `task:execute` emit.
+pub(crate) fn enqueue_responses_device(
+    state: &AppState,
+    request: &ExecutionRequest,
+    device_route: &str,
+) -> Result<(), FastApiError> {
+    if state
+        .responses_dispatch
+        .submit(crate::responses::dispatch::DefaultDispatchJob::Device {
+            request: Box::new(request.clone()),
+            device_route: device_route.to_owned(),
+            consumer: Box::new(crate::responses::dispatch::ConsumerState::from_app(state)),
+        })
+    {
+        return Ok(());
+    }
+    tracing::error!(
+        task_id = request.task_id,
+        subtask_id = request.subtask_id,
+        "device dispatch queue unavailable"
+    );
+    Err(FastApiError::detail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Device dispatch queue unavailable",
+    ))
 }

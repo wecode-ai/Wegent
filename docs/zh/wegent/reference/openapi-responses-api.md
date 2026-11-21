@@ -48,7 +48,7 @@ POST /api/v1/responses
 | `model` | string | 是 | 智能体标识符。格式：`namespace#team_name` 或 `namespace#team_name#model_id` |
 | `input` | string \| array | 是 | 用户输入提示或对话历史 |
 | `stream` | boolean | 否 | 启用流式输出（默认：`false`） |
-| `background` | boolean | 否 | 后台执行并立即返回排队响应；为 `true` 时不返回 SSE（默认：`false`） |
+| `background` | boolean | 否 | 后台执行；未绑定设备的 Chat Shell 立即返回 `in_progress`，设备和其它执行器请求立即返回 `queued`；为 `true` 时不返回 SSE（默认：`false`） |
 | `execution` | object | 否 | 执行配置；传统 executor 设备使用 `type: "wegent"` |
 | `execution.device_id` | string | 否 | `execution.type="wegent"` 时指定传统 executor 设备；省略时沿用默认执行方式或任务已有设备绑定 |
 | `previous_response_id` | string | 否 | 用于后续对话的前一个响应 ID |
@@ -80,7 +80,7 @@ curl -N -X POST "https://your-domain/api/v1/responses" \
   }'
 ```
 
-SSE 使用下文列出的 `response.created`、`response.output_text.delta`、`response.completed` 或 `response.failed` 等现有事件。`stream:false` 或 `background:true` 返回 `queued` 响应，结果仍可通过 `GET /api/v1/responses/{response_id}` 获取。省略 `execution` 不改变现有执行方式。
+SSE 使用下文列出的 `response.created`、`response.output_text.delta`、`response.completed` 或 `response.failed` 等现有事件。`stream:false` 的设备请求返回 `queued`；`background:true` 时，未绑定设备的 Chat Shell 返回 `in_progress`，设备和其他执行器请求返回 `queued`。两种情况的结果都可继续通过 `GET /api/v1/responses/{response_id}` 获取。省略 `execution` 不改变现有执行方式。
 
 #### MCP 二进制输出
 
@@ -262,7 +262,7 @@ MCP 工具（例如抓取图片的工具）会以 base64 返回媒体内容，�
 
 #### 响应行为
 
-响应行为取决于 Team 的 Shell 类型、设备绑定和 `background`。`background:true` 优先于 `stream:true`，返回排队响应。
+响应行为取决于 Team 的 Shell 类型、设备绑定和 `background`。`background:true` 优先于 `stream:true`；未绑定设备的 Chat Shell 返回 `in_progress`，设备和其他执行器请求返回 `queued`。
 
 | Shell 类型 | 流式支持 | 响应模式 |
 |------------|----------|----------|
@@ -367,7 +367,8 @@ POST /api/v1/responses/{response_id}/cancel
 #### 行为
 
 - **Chat Shell 任务**：停止模型请求并保存部分内容
-- **Executor 任务**：调用 executor_manager 进行取消
+- **传统 executor 设备**：向绑定设备发送 `task:cancel`，并提交取消结果
+- **其他 Executor 任务**：调用 executor_manager 进行取消
 
 #### 请求示例
 
@@ -470,8 +471,8 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 
 | 状态 | 描述 |
 |------|------|
-| `queued` | 任务已排队等待执行（非流式设备或执行器请求，以及后台请求） |
-| `in_progress` | 任务正在运行 |
+| `queued` | 任务已排队等待执行（非流式设备或执行器请求，以及后台设备或执行器请求） |
+| `in_progress` | 任务正在运行，包括未绑定设备的 Chat Shell 后台请求 |
 | `completed` | 任务成功完成 |
 | `failed` | 任务失败并带有错误 |
 | `cancelled` | 任务已取消 |
@@ -552,5 +553,5 @@ data: {"type":"response.completed","response":{"id":"resp_123","status":"complet
 - 默认情况下，API 调用使用"干净模式"，不启用服务端增强功能
 - CRD 中配置的 Bot/Ghost MCP 工具始终可用
 - 使用 `wegent_chat_bot` 工具启用完整的服务端能力
-- 流式输出支持 Chat Shell 和传统 executor 任务；设置 `background:true` 时返回排队响应
+- 流式输出支持 Chat Shell 和传统 executor 任务；设置 `background:true` 时，未绑定设备的 Chat Shell 返回 `in_progress`，设备和其他执行器请求返回 `queued`
 - 默认返回 `mcp_call` 的原始输出；将 `omit_mcp_binary_output` 设为 `true` 后，其中的图片、音频、视频等媒体负载（base64）会被替换为摘要占位符，例如 `<image/jpeg payload omitted: 2048 bytes>`，非媒体输出原样返回，模型调用时仍使用完整原始内容

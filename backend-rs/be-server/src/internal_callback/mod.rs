@@ -17,6 +17,7 @@
 pub(crate) mod block_frames;
 pub(crate) mod channel;
 pub(crate) mod completion;
+mod device_dispatch;
 pub(crate) mod dingtalk_card;
 pub(crate) mod dingtalk_stream;
 pub(crate) mod emitter;
@@ -145,6 +146,25 @@ pub(crate) async fn process_dispatch_failure(
     process_event(state, event, (None, None), true).await
 }
 
+/// Record a device dispatch failure before consulting MySQL so recovery can
+/// re-evaluate the committed outcome if the initial writer read fails.
+pub(crate) async fn process_device_dispatch_failure(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    message_id: Option<i64>,
+    message: &str,
+    retry_index_write: bool,
+) {
+    let mut event = event::ExecutionEvent::new(event::EventType::Error, task_id, subtask_id);
+    event.message_id = message_id;
+    event.error = Some(message.to_owned());
+    event.error_code = Some("EXECUTOR_DISPATCH_FAILED".to_owned());
+    if let Err(error) = recovery::settle_device_dispatch(state, &event, retry_index_write).await {
+        tracing::warn!(%error, task_id, subtask_id, "device dispatch terminal settlement failed");
+    }
+}
+
 async fn process_event(
     state: &AppState,
     mut event: event::ExecutionEvent,
@@ -188,7 +208,8 @@ async fn process_event(
                 defer_advance,
             )),
         )
-        .await;
+        .await
+        .map(|_| ());
     }
 
     if let Err(error) = session::publish_callback_event(redis, event.subtask_id, &event).await {
@@ -205,7 +226,7 @@ async fn deliver_terminal_callback(
     status: &str,
     executor: (Option<&str>, Option<&str>),
     defer_advance: bool,
-) -> Result<(), FastApiError> {
+) -> Result<bool, FastApiError> {
     let pending_event = defer_advance.then(|| {
         let mut saved = event.to_value();
         saved["executor_name"] = json!(executor.0);
@@ -253,7 +274,7 @@ async fn deliver_terminal_callback(
         replay_source,
     }) = completion
     else {
-        return Ok(());
+        return Ok(false);
     };
     if let Some(source) = replay_source {
         *event = event::ExecutionEvent::from_value(&source);
@@ -306,12 +327,12 @@ async fn deliver_terminal_callback(
     if let Some(advance) = advance {
         if defer_advance {
             // The recovery worker waits for admission outside the SSE consumer pool.
-            return Ok(());
+            return Ok(false);
         }
         Box::pin(pipeline::dispatch_next(state, advance)).await?;
     }
 
-    session::publish_terminal_callback(redis, event)
+    let published = session::publish_terminal_callback(redis, event)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "terminal callback channel publish failed");
@@ -334,7 +355,7 @@ async fn deliver_terminal_callback(
     {
         tracing::warn!(%error, "could not retire terminal delivery from recovery index");
     }
-    Ok(())
+    Ok(published)
 }
 
 async fn prepare_interactive_form_event(
