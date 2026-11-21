@@ -8,7 +8,7 @@ use std::{
     env, fs,
     path::{Component, Path, PathBuf},
     process::Stdio,
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -65,8 +65,7 @@ struct BrowserAuthSession {
 
 static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>>> =
     OnceLock::new();
-static MARKETPLACE_AUTH: LazyLock<std::sync::Mutex<MarketplaceAuth>> =
-    LazyLock::new(Default::default);
+static MARKETPLACE_AUTH: OnceLock<std::sync::Mutex<MarketplaceAuth>> = OnceLock::new();
 
 const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 
@@ -74,6 +73,10 @@ const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 struct MarketplaceAuth {
     removals: HashMap<PathBuf, MarketplaceRemovalPhase>,
     qr_operations: HashMap<Uuid, (PathBuf, watch::Receiver<()>)>,
+}
+
+fn marketplace_auth() -> &'static std::sync::Mutex<MarketplaceAuth> {
+    MARKETPLACE_AUTH.get_or_init(Default::default)
 }
 
 enum MarketplaceRemovalPhase {
@@ -101,7 +104,7 @@ pub(super) struct MarketplaceRemoval(PathBuf);
 
 impl MarketplaceRemoval {
     pub(super) fn begin(cache: PathBuf) -> Result<Self, AppIpcError> {
-        let mut auth = MARKETPLACE_AUTH.lock().unwrap();
+        let mut auth = marketplace_auth().lock().unwrap();
         let Entry::Vacant(entry) = auth.removals.entry(cache.clone()) else {
             return Err(AppIpcError::new(
                 "marketplace_management_failed",
@@ -113,7 +116,7 @@ impl MarketplaceRemoval {
     }
 
     pub(super) fn begin_cleanup(&self, codex_home: &Path) {
-        *MARKETPLACE_AUTH
+        *marketplace_auth()
             .lock()
             .unwrap()
             .removals
@@ -123,7 +126,7 @@ impl MarketplaceRemoval {
     }
 
     pub(super) fn cleaning_marketplaces(codex_home: &Path) -> Vec<String> {
-        MARKETPLACE_AUTH
+        marketplace_auth()
             .lock()
             .unwrap()
             .removals
@@ -139,7 +142,7 @@ impl MarketplaceRemoval {
         &self,
         deadline: tokio::time::Instant,
     ) -> Result<(), AppIpcError> {
-        let pending: Vec<_> = MARKETPLACE_AUTH
+        let pending: Vec<_> = marketplace_auth()
             .lock()
             .unwrap()
             .qr_operations
@@ -166,7 +169,7 @@ impl MarketplaceRemoval {
 
 impl Drop for MarketplaceRemoval {
     fn drop(&mut self) {
-        MARKETPLACE_AUTH.lock().unwrap().removals.remove(&self.0);
+        marketplace_auth().lock().unwrap().removals.remove(&self.0);
     }
 }
 
@@ -177,7 +180,7 @@ struct QrAuthOperation {
 
 impl QrAuthOperation {
     fn begin(plugin_root: &Path) -> Result<Self, AppIpcError> {
-        let mut auth = MARKETPLACE_AUTH.lock().unwrap();
+        let mut auth = marketplace_auth().lock().unwrap();
         let root = canonical_plugin_root(plugin_root)?;
         auth.check_removal(&root)?;
         let id = Uuid::new_v4();
@@ -189,7 +192,7 @@ impl QrAuthOperation {
 
 impl Drop for QrAuthOperation {
     fn drop(&mut self) {
-        MARKETPLACE_AUTH
+        marketplace_auth()
             .lock()
             .unwrap()
             .qr_operations
@@ -850,7 +853,7 @@ async fn start_browser_auth(
     // Check removal and register the task under the same lock used to cancel sessions.
     let mut sessions = browser_auth_sessions().lock().await;
     let session_root = canonical_plugin_root(&plugin_root)?;
-    MARKETPLACE_AUTH
+    marketplace_auth()
         .lock()
         .unwrap()
         .check_removal(&session_root)?;
