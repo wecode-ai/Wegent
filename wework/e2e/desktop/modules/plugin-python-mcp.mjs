@@ -166,6 +166,8 @@ export function createPluginPythonMcp({
         packageRoot,
       })
       const device = await cloud.waitForConnectedAppDevice()
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('waitFor', testId('plugins-button'))
       const fixture = await installFixture(
         cloud,
         control,
