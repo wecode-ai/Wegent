@@ -125,7 +125,10 @@ async function verifyUninstallDuringImport(cloud, control, name) {
     await control.command('navigate', 'body', { value: '/plugins/manage' })
     const actions = `button[data-testid^="installed-plugin-actions-"][aria-label$=" ${name}"]`
     await control.command('clickWhenEnabled', actions)
-    await control.command('clickWhenEnabled', 'button[data-testid^="installed-plugin-uninstall-"]')
+    await control.command(
+      'clickWhenEnabled',
+      '[role="menuitem"][data-testid^="installed-plugin-uninstall-"]'
+    )
     await control.command('clickWhenEnabled', testId('plugin-uninstall-confirm-button'))
     const notice = `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
     await control.command('waitFor', notice)
