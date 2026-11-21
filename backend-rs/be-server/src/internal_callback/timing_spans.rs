@@ -34,7 +34,8 @@ const CLOSE_WAITING_USER_SQL: &str = "UPDATE task_timing_spans \
         end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \
         duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms) \
     WHERE task_id = ? \
-        AND kind = 'waiting_user' AND status = 'waiting'";
+        AND kind = 'waiting_user' AND status = 'waiting' \
+        AND start_at_ms IS NOT NULL AND ? >= start_at_ms";
 
 const CLOSE_TOOL_SPAN_SQL: &str = "UPDATE task_timing_spans \
     SET end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \
@@ -223,13 +224,24 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         .or_else(|| event.data.get("block_id"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let occurred_at = event.data.get("occurred_at_ms").and_then(Value::as_i64);
+    let occurred_at = event
+        .data
+        .get("occurred_at_ms")
+        .or_else(|| {
+            event
+                .data
+                .get("updates")
+                .and_then(|updates| updates.get("occurred_at_ms"))
+        })
+        .and_then(Value::as_i64);
     if agent_id.is_empty() || occurred_at.is_none() {
         return Vec::new();
     }
+    let updates = event.data.get("updates").cloned().unwrap_or_default();
     let status: &'static str = event
         .data
         .get("status")
+        .or_else(|| updates.get("status"))
         .and_then(Value::as_str)
         .and_then(|status| match status {
             "running" => Some("running"),
@@ -256,6 +268,8 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
             .data
             .get("agent_path")
             .or_else(|| event.data.get("agent_name"))
+            .or_else(|| updates.get("agent_path"))
+            .or_else(|| updates.get("agent_name"))
             .and_then(Value::as_str)
             .unwrap_or(agent_id)
             .to_string(),
@@ -293,7 +307,7 @@ async fn close_waiting_user_span<M: Mysql>(
     mysql
         .execute(
             CLOSE_WAITING_USER_SQL,
-            (start_at_ms, start_at_ms, event.task_id),
+            (start_at_ms, start_at_ms, event.task_id, start_at_ms),
         )
         .await?;
     Ok(())
@@ -709,7 +723,7 @@ mod tests {
             .filter(|write| write.sql.contains("UPDATE task_timing_spans"))
             .collect();
         assert_eq!(close_writes.len(), 2);
-        assert!(close_writes.iter().all(|write| write.args == 3));
+        assert!(close_writes.iter().all(|write| write.args == 4));
         assert!(
             close_writes
                 .iter()
@@ -918,6 +932,28 @@ mod tests {
             }),
         );
         assert!(event_timing_spans(&event).is_empty());
+    }
+
+    #[test]
+    fn subagent_block_updates_use_the_update_timestamp() {
+        let event = block_event(
+            super::super::event::EventType::BlockUpdated,
+            json!({
+                "block_id": "subagent-worker-1",
+                "updates": {
+                    "status": "done",
+                    "occurred_at_ms": 250
+                }
+            }),
+        );
+        let spans = event_timing_spans(&event);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(
+            spans[0].span_id,
+            "task-7-subtask-11-subagent-subagent-worker-1"
+        );
+        assert_eq!(spans[0].status, "completed");
+        assert_eq!(spans[0].end_at_ms, Some(250));
     }
 
     #[test]

@@ -416,7 +416,9 @@ impl ResponsesEventBuilder {
         summary: Option<&str>,
         parent_tool_use_id: Option<&str>,
     ) -> EventEnvelope {
-        let mut updates = json!({});
+        let mut updates = json!({
+            "occurred_at_ms": current_epoch_millis()
+        });
         if let Some(status) = status {
             updates["status"] = json!(status);
         }

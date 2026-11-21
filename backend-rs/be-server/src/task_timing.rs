@@ -21,7 +21,8 @@ async fn get_task_timing(
     let session = SessionBoundaries::from_task_row(task.repo_row());
     let owner_user_id = task.user_id();
     let spans = load_spans(state, task_id).await?;
-    Ok(aggregate(task_id, owner_user_id, session, spans))
+    let now_at_ms = chrono::Utc::now().timestamp_millis();
+    Ok(aggregate(task_id, owner_user_id, session, spans, now_at_ms))
 }
 
 #[derive(Debug, brz_mysql::FromMysqlRow)]
@@ -208,6 +209,7 @@ fn aggregate(
     owner_user_id: i64,
     session: SessionBoundaries,
     rows: Vec<TimingSpanRow>,
+    now_at_ms: i64,
 ) -> TaskTimingResponse {
     let spans: Vec<SpanView> = rows
         .iter()
@@ -231,7 +233,7 @@ fn aggregate(
         })
         .collect();
 
-    let window = session_window(&session, &rows);
+    let window = session_window(&session, &rows, now_at_ms);
     let wall_time_ms = window.map(|(start, end)| (end - start).max(0));
     let has_spans = !spans.is_empty();
     let triage = triage_categories(&spans, window);
@@ -252,18 +254,23 @@ fn aggregate(
     }
 }
 
-fn session_window(session: &SessionBoundaries, rows: &[TimingSpanRow]) -> Option<(i64, i64)> {
+fn session_window(
+    session: &SessionBoundaries,
+    rows: &[TimingSpanRow],
+    now_at_ms: i64,
+) -> Option<(i64, i64)> {
     let first = session
         .start_at_ms
         .or_else(|| rows.iter().filter_map(|row| row.start_at_ms).min())?;
     let last = session
         .end_at_ms
-        .or_else(|| {
+        .unwrap_or_else(|| {
             rows.iter()
                 .filter_map(|row| row.end_at_ms.or(row.start_at_ms))
+                .map(|end| end.max(now_at_ms))
                 .max()
+                .unwrap_or(now_at_ms)
         })
-        .unwrap_or(first)
         .max(first);
     Some((first, last))
 }
@@ -291,28 +298,34 @@ mod timestamp_tests {
 }
 
 fn triage_categories(spans: &[SpanView], window: Option<(i64, i64)>) -> Vec<TimingCategory> {
-    let tool_intervals = clip_intervals(intervals_by_kinds(spans, &["tool"]), window);
-    let subagent_intervals = clip_intervals(intervals_by_kinds(spans, &["subagent"]), window);
+    let tool_intervals = clip_intervals(intervals_by_kinds(spans, &["tool"], window), window);
+    let subagent_intervals =
+        clip_intervals(intervals_by_kinds(spans, &["subagent"], window), window);
+    let waiting_intervals =
+        clip_intervals(intervals_by_kinds(spans, &["waiting_user"], window), window);
     let child_intervals = merge_intervals(&subagent_intervals, &tool_intervals);
     let exclusive_subagent_intervals = subtract_intervals(&subagent_intervals, &tool_intervals);
     let agent_intervals = subtract_intervals(
-        &clip_intervals(intervals_by_kinds(spans, &["agent"]), window),
+        &clip_intervals(intervals_by_kinds(spans, &["agent"], window), window),
         &child_intervals,
     );
     let mut categories = vec![
         category("tool", union_ms(&tool_intervals)),
         category("subagent", union_ms(&exclusive_subagent_intervals)),
         category("agent", union_ms(&agent_intervals)),
-        category(
-            "waiting_user",
-            union_by_kinds(spans, &["waiting_user"], window),
-        ),
+        category("waiting_user", union_ms(&waiting_intervals)),
         category(
             "runtime",
-            union_by_kinds(spans, &["queue", "provision"], window),
+            union_ms(&subtract_intervals(
+                &clip_intervals(
+                    intervals_by_kinds(spans, &["queue", "provision"], window),
+                    window,
+                ),
+                &waiting_intervals,
+            )),
         ),
     ];
-    let observed = union_ms(&clip_intervals(observable_intervals(spans), window));
+    let observed = union_ms(&clip_intervals(observable_intervals(spans, window), window));
     if let Some((start, end)) = window {
         let wall_time_ms = (end - start).max(0);
         categories.push(category("gap", (wall_time_ms - observed).max(0)));
@@ -325,35 +338,35 @@ fn coverage_categories(spans: &[SpanView], window: Option<(i64, i64)>) -> Vec<Ti
         category(
             "agent",
             union_ms(&clip_intervals(
-                intervals_by_kinds(spans, &["agent", "subagent"]),
+                intervals_by_kinds(spans, &["agent", "subagent"], window),
                 window,
             )),
         ),
         category(
             "tool",
             union_ms(&clip_intervals(
-                intervals_by_kinds(spans, &["tool"]),
+                intervals_by_kinds(spans, &["tool"], window),
                 window,
             )),
         ),
         category(
             "subagent",
             union_ms(&clip_intervals(
-                intervals_by_kinds(spans, &["subagent"]),
+                intervals_by_kinds(spans, &["subagent"], window),
                 window,
             )),
         ),
         category(
             "waiting_user",
             union_ms(&clip_intervals(
-                intervals_by_kinds(spans, &["waiting_user"]),
+                intervals_by_kinds(spans, &["waiting_user"], window),
                 window,
             )),
         ),
         category(
             "runtime",
             union_ms(&clip_intervals(
-                intervals_by_kinds(spans, &["queue", "provision"]),
+                intervals_by_kinds(spans, &["queue", "provision"], window),
                 window,
             )),
         ),
@@ -362,10 +375,6 @@ fn coverage_categories(spans: &[SpanView], window: Option<(i64, i64)>) -> Vec<Ti
 
 fn category(kind: &'static str, duration_ms: i64) -> TimingCategory {
     TimingCategory { kind, duration_ms }
-}
-
-fn union_by_kinds(spans: &[SpanView], kinds: &[&str], window: Option<(i64, i64)>) -> i64 {
-    union_ms(&clip_intervals(intervals_by_kinds(spans, kinds), window))
 }
 
 fn clip_intervals(intervals: Vec<(i64, i64)>, window: Option<(i64, i64)>) -> Vec<(i64, i64)> {
@@ -382,7 +391,11 @@ fn clip_intervals(intervals: Vec<(i64, i64)>, window: Option<(i64, i64)>) -> Vec
         .collect()
 }
 
-fn intervals_by_kinds(spans: &[SpanView], kinds: &[&str]) -> Vec<(i64, i64)> {
+fn intervals_by_kinds(
+    spans: &[SpanView],
+    kinds: &[&str],
+    window: Option<(i64, i64)>,
+) -> Vec<(i64, i64)> {
     spans
         .iter()
         .filter(|span| kinds.contains(&span.kind.as_str()))
@@ -391,7 +404,8 @@ fn intervals_by_kinds(spans: &[SpanView], kinds: &[&str]) -> Vec<(i64, i64)> {
             let end = span
                 .end_at_ms
                 .filter(|end| *end >= start)
-                .or_else(|| span.duration_ms.map(|duration| start + duration))?;
+                .or_else(|| span.duration_ms.map(|duration| start + duration))
+                .unwrap_or_else(|| window.map(|(_, end)| end).unwrap_or(start));
             Some((start, end))
         })
         .collect()
@@ -441,7 +455,7 @@ fn normalized_intervals(intervals: &[(i64, i64)]) -> Vec<(i64, i64)> {
     normalized
 }
 
-fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
+fn observable_intervals(spans: &[SpanView], window: Option<(i64, i64)>) -> Vec<(i64, i64)> {
     spans
         .iter()
         .filter_map(|span| {
@@ -449,7 +463,8 @@ fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
             let end = span
                 .end_at_ms
                 .filter(|end| *end >= start)
-                .or_else(|| span.duration_ms.map(|duration| start + duration))?;
+                .or_else(|| span.duration_ms.map(|duration| start + duration))
+                .unwrap_or_else(|| window.map(|(_, end)| end).unwrap_or(start));
             Some((start, end))
         })
         .collect()
@@ -595,7 +610,7 @@ mod tests {
         }));
         row.actor_label = "bash".to_string();
 
-        let suspect = &aggregate(1, 7, session(None, None), vec![row]).top_suspects[0];
+        let suspect = &aggregate(1, 7, session(None, None), vec![row], 1_000).top_suspects[0];
         assert_eq!(suspect.label, "pnpm test");
         assert_eq!(suspect.suggestion, "inspect_registry");
     }
@@ -603,7 +618,7 @@ mod tests {
     #[test]
     fn parallel_spans_do_not_double_wall_time() {
         let rows = vec![span("subagent", 0, 10), span("subagent", 0, 10)];
-        let response = aggregate(1, 7, session(None, None), rows);
+        let response = aggregate(1, 7, session(None, None), rows, 20);
         let subagent = response
             .coverage
             .iter()
@@ -615,7 +630,7 @@ mod tests {
     #[test]
     fn triage_separates_tool_and_agent() {
         let rows = vec![span("agent", 0, 20), span("tool", 5, 15)];
-        let response = aggregate(1, 7, session(None, None), rows);
+        let response = aggregate(1, 7, session(None, None), rows, 20);
         assert_eq!(response.wall_time_ms, Some(20));
         let get = |kind: &str| {
             response
@@ -637,7 +652,7 @@ mod tests {
             span("subagent", 5, 15),
             span("tool", 6, 10),
         ];
-        let response = aggregate(1, 7, session(None, None), rows);
+        let response = aggregate(1, 7, session(None, None), rows, 20);
         let get = |kind: &str| {
             response
                 .triage
@@ -655,7 +670,7 @@ mod tests {
     #[test]
     fn task_boundaries_define_session_wall_time() {
         let rows = vec![span("agent", 20, 50), span("tool", 0, 30)];
-        let response = aggregate(1, 7, session(Some(10), Some(100)), rows);
+        let response = aggregate(1, 7, session(Some(10), Some(100)), rows, 1_000);
         assert_eq!(response.wall_time_ms, Some(90));
         let get = |kind: &str| {
             response
@@ -678,7 +693,49 @@ mod tests {
     #[test]
     fn running_task_uses_creation_time_as_start() {
         let rows = vec![span("agent", 20, 50)];
-        let response = aggregate(1, 7, session(Some(10), None), rows);
-        assert_eq!(response.wall_time_ms, Some(40));
+        let response = aggregate(1, 7, session(Some(10), None), rows, 100);
+        assert_eq!(response.wall_time_ms, Some(90));
+    }
+
+    #[test]
+    fn running_task_wall_time_grows_to_the_request_time() {
+        let rows = vec![span("agent", 20, 50)];
+        let response = aggregate(1, 7, session(Some(10), None), rows, 1_000);
+        assert_eq!(response.wall_time_ms, Some(990));
+    }
+
+    #[test]
+    fn running_task_open_spans_cover_until_the_request_time() {
+        let mut open = span("agent", 20, 50);
+        open.end_at_ms = None;
+        open.duration_ms = None;
+        let rows = vec![open];
+        let response = aggregate(1, 7, session(Some(10), None), rows, 1_000);
+        let get = |kind: &str| {
+            response
+                .triage
+                .iter()
+                .find(|item| item.kind == kind)
+                .unwrap()
+                .duration_ms
+        };
+        assert_eq!(get("agent"), 980);
+        assert_eq!(get("gap"), 10);
+    }
+
+    #[test]
+    fn resumed_runtime_time_excludes_waiting_user_overlap() {
+        let rows = vec![span("waiting_user", 10, 20), span("provision", 10, 20)];
+        let response = aggregate(1, 7, session(Some(10), Some(20)), rows, 1_000);
+        let get = |kind: &str| {
+            response
+                .triage
+                .iter()
+                .find(|item| item.kind == kind)
+                .unwrap()
+                .duration_ms
+        };
+        assert_eq!(get("waiting_user"), 10);
+        assert_eq!(get("runtime"), 0);
     }
 }
