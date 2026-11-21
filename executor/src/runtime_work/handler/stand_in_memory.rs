@@ -543,7 +543,9 @@ mod tests {
         let wire = &transport["additionalContext"];
         assert!(wire.get("wework.stand-in").is_none());
         assert!(wire.get("wework.execution-policy").is_none());
-        assert_eq!(wire.as_object().unwrap().len(), 2);
+        assert_eq!(wire.as_object().unwrap().len(), 3);
+        assert_eq!(wire["wework.execution"]["kind"], "application");
+        assert_eq!(wire["wework.host-policy.z-manifest"]["kind"], "application");
         assert_eq!(wire["wework.stand-in.memories"]["kind"], "untrusted");
         let full = transport["developerInstructions"].as_str().unwrap();
         assert!(

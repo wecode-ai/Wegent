@@ -404,6 +404,43 @@ test('PR waits observe a failure already present at activation and on later poll
   )
 })
 
+test('a pending PR refreshes its aggregate after 15 seconds and emits the terminal status', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const f = fixture('github')
+  f.state.nativeStatus = { statusCheckRollup: { state: 'PENDING' } }
+  const provider = createProvider('github')
+  const registry = { call: (_id, operation, input) => provider[operation](f.ctx, input) }
+  const source = { ...(await f.discover([pr(1)])), observeCurrentStatus: true }
+  const collect = checkpoint =>
+    collectObservation(registry, source.providerId, { source, checkpoint })
+  const startedAt = Date.now()
+  const pending = await collect({})
+  assert.equal(pending.nextPollAt, startedAt)
+  assert.equal(pending.resourceStates[0].data.statusCheckRollup.state, 'PENDING')
+  t.mock.timers.tick(1_000)
+  const checks = await collect(pending.nextCheckpoint)
+  assert.equal(f.calls.at(-1).operation, 'checks')
+  assert.equal(checks.nextPollAt, startedAt + 15_000)
+
+  t.mock.timers.tick(13_999)
+  const early = await collect(checks.nextCheckpoint)
+  assert.deepEqual(early.events, [])
+  t.mock.timers.tick(1)
+  const stillPending = await collect(early.nextCheckpoint)
+  assert.equal(stillPending.resourceStates[0].data.statusCheckRollup.state, 'PENDING')
+  assert.equal(stillPending.nextPollAt, startedAt + 30_000)
+  assert.equal(stillPending.nextCheckpoint.pendingStatusChecks, false)
+
+  f.state.nativeStatus.statusCheckRollup.state = 'SUCCESS'
+  const done = await collect(early.nextCheckpoint)
+  assert.equal(f.calls.at(-1).operation, 'change_request_status')
+  assert.equal(done.resourceStates[0].data.statusCheckRollup.state, 'SUCCESS')
+  assert.equal(done.events[0].external.eventType, 'tracked.status')
+  assert.equal(done.events[0].external.payload.statusCheckRollup.state, 'SUCCESS')
+  assert.equal(done.nextPollAt, undefined)
+  assert.equal(done.nextCheckpoint.nextCheckAt, Date.now() + 60_000)
+})
+
 test('a later check timeout leaves the committed PR status readable', async () => {
   const f = fixture('github')
   f.state.changed = true

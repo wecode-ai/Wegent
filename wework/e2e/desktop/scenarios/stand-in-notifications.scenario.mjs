@@ -286,10 +286,22 @@ export function createDesktopScenario({
             y: status.top + status.height / 2,
           },
         }
-        await control.command('clickAt', 'body', { value: JSON.stringify(points[target]) })
-        await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
-          visible: false,
+        const hitText = await control.command('clickAt', 'body', {
+          value: JSON.stringify(points[target]),
         })
+        try {
+          await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+            visible: false,
+          })
+        } catch (error) {
+          console.error('[stand-in-notifications] row hit did not dismiss inbox', {
+            target,
+            point: points[target],
+            bounds,
+            hitText: hitText?.slice(0, 300),
+          })
+          throw error
+        }
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
         assert.equal(
           await control.command(

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
+import { DataBuilders } from '../../fixtures/data-builders'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 
 type PublicModel = {
@@ -95,5 +96,27 @@ test.describe('Public model write authorization', () => {
     const deleteResponse = await adminApi.delete(`/api/models/${createdModelId}`)
     expect([200, 204]).toContain(deleteResponse.status)
     createdModelId = null
+  })
+
+  test('shares saved primary group icons with users and restricts changes to admins', async () => {
+    const endpoint = '/api/models/primary-group-icons'
+    const group = DataBuilders.uniqueName('e2e-primary-group-icon')
+    try {
+      const saved = await adminApi.put(endpoint, { group: ` ${group} `, icon: 'globe' })
+      expect(saved.status).toBe(200)
+      const denied = await regularApi.put(endpoint, { group, icon: 'cpu' })
+      expect(denied.status).toBe(403)
+
+      const icons = await regularApi.get<Record<string, string>>(endpoint)
+      expect(icons.status).toBe(200)
+      expect(icons.data?.[group]).toBe('globe')
+    } finally {
+      const reset = await adminApi.put(endpoint, { group, icon: null })
+      expect(reset.status).toBe(200)
+    }
+
+    const icons = await regularApi.get<Record<string, string>>(endpoint)
+    expect(icons.status).toBe(200)
+    expect(icons.data?.[group]).toBeUndefined()
   })
 })

@@ -447,14 +447,29 @@ fn opening_existing_database_adds_indexes_without_backfilling_payloads() {
             .execute_batch(
                 "DROP TABLE stand_in_history_refs; DROP TABLE stand_in_history;
              DROP INDEX ix_stand_in_history_retention; DROP INDEX ix_stand_in_live_work;
+             DROP INDEX ix_stand_in_recent_actions; DROP INDEX ix_stand_in_recent_suggestions;
              INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at)
              VALUES ('legacy-pending','stand_in_event',json_object('status','pending','userId',7),
-                     CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
+                     CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+                    ('legacy-suggestion','stand_in_action',
+                     json_object('id','legacy-suggestion','userId',7,'kind','suggest_action'),
+                     CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+                    ('legacy-cancelled','stand_in_action',
+                     json_object('id','legacy-cancelled','userId',7,'kind','suggest_action','status','cancelled'),
+                     CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+                    ('legacy-foreign','stand_in_action',json_object('userId',8,'kind','suggest_action'),
+                     CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+                    ('legacy-broken','stand_in_action','not JSON',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);",
             )
             .unwrap();
     }
     drop(store);
     let store = LocalTaskStore::open(&path).unwrap();
+    let actions = store.recent_stand_in_actions(7, 50).unwrap();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0]["id"], "legacy-suggestion");
+    assert_eq!(actions[1]["id"], "legacy-cancelled");
+    assert_eq!(store.recent_stand_in_suggestions(7).unwrap(), actions[..1]);
     assert!(store.stand_in_has_due_work(7).unwrap());
     assert!(!store.stand_in_has_due_work(8).unwrap());
     assert!(store.unfinished_arrangement_users().unwrap().is_empty());

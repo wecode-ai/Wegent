@@ -7,7 +7,7 @@ import type {
 } from '@/types/api'
 import {
   acquirePluginDeviceSync,
-  marketplaceNeedsDeviceSync,
+  marketplaceItemNeedsDeviceSync,
 } from '@/features/plugins/pluginDeviceAutoSync'
 
 export interface PluginAutoUpdateProgress {
@@ -33,11 +33,15 @@ export interface PluginAutoUpdateResult {
   failures: PluginAutoUpdateFailure[]
 }
 
+type PluginSyncTarget = Pick<
+  PluginAutoUpdateBatchResponse['updated'][number],
+  'installedPluginId' | 'version'
+>
+
 interface PluginAutoUpdateDependencies {
   updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
   syncPlugin: (installedPluginId: number) => Promise<PluginDeviceSyncResponse>
-  syncDevice: () => Promise<PluginDeviceSyncResponse>
-  syncWhenNoUpdates?: boolean
+  readPendingInstalls?: () => Promise<PluginSyncTarget[]>
   onProgress?: (progress: PluginAutoUpdateProgress) => void
 }
 
@@ -48,7 +52,6 @@ interface CurrentDevicePluginAutoUpdateDependencies {
   listMarketplacePlugins: (deviceId: string) => Promise<PluginMarketplaceListResponse>
   updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
   syncPlugin: (deviceId: string, installedPluginId: number) => Promise<PluginDeviceSyncResponse>
-  syncDevice: (deviceId: string) => Promise<PluginDeviceSyncResponse>
 }
 
 export interface CurrentDevicePluginAutoUpdateResult {
@@ -99,8 +102,7 @@ function hasFailedReleaseGap(item: PluginUpdateState): boolean {
 export async function runPluginAutoUpdate({
   updateBatch,
   syncPlugin,
-  syncDevice,
-  syncWhenNoUpdates = false,
+  readPendingInstalls,
   onProgress,
 }: PluginAutoUpdateDependencies): Promise<PluginAutoUpdateResult> {
   const attempt = beginOperation('plugin.auto_update')
@@ -108,12 +110,11 @@ export async function runPluginAutoUpdate({
     const result = await runPluginAutoUpdatePass({
       updateBatch,
       syncPlugin,
-      syncDevice,
-      syncWhenNoUpdates,
+      readPendingInstalls,
       onProgress,
     })
     if (result.failedCount > 0) attempt.fail('confirm')
-    else if (result.updatedCount > 0 || syncWhenNoUpdates) attempt.succeed()
+    else if (result.updatedCount > 0 || readPendingInstalls) attempt.succeed()
     else attempt.cancel()
     return result
   } catch (error) {
@@ -125,8 +126,7 @@ export async function runPluginAutoUpdate({
 async function runPluginAutoUpdatePass({
   updateBatch,
   syncPlugin,
-  syncDevice,
-  syncWhenNoUpdates = false,
+  readPendingInstalls,
   onProgress,
 }: PluginAutoUpdateDependencies): Promise<PluginAutoUpdateResult> {
   let processedCount = 0
@@ -138,10 +138,12 @@ async function runPluginAutoUpdatePass({
       if (batch.remainingCount > 0) {
         throw new PluginAutoUpdateConfirmationError('Plugin auto-update made no progress')
       }
-      if (processedCount > 0 || !syncWhenNoUpdates) {
-        return { updatedCount, failedCount: failures.length, failures }
+      if (processedCount === 0 && readPendingInstalls) {
+        for (const item of await readPendingInstalls()) {
+          const failure = await syncPluginUpdate(item, syncPlugin)
+          if (failure) failures.push(failure)
+        }
       }
-      failures.push(...collectDeviceSyncFailures(await syncDevice()))
       return { updatedCount, failedCount: failures.length, failures }
     }
     if (batch.updated.length === 0) {
@@ -150,29 +152,9 @@ async function runPluginAutoUpdatePass({
 
     for (const [index, item] of batch.updated.entries()) {
       processedCount += 1
-      const installedPluginId =
-        Number.isSafeInteger(item?.installedPluginId) && item.installedPluginId > 0
-          ? item.installedPluginId
-          : 0
-      const version = typeof item?.version === 'string' ? item.version : ''
-      try {
-        if (!installedPluginId || !version.trim()) {
-          throw new Error('Invalid plugin auto-update item')
-        }
-        const failure = pluginSyncFailure(item, await syncPlugin(installedPluginId))
-        if (failure) failures.push(failure)
-        else updatedCount += 1
-      } catch (error) {
-        failures.push({
-          installedPluginId,
-          pluginName: installedPluginId ? `Plugin ${installedPluginId}` : 'Invalid plugin update',
-          version,
-          stage: null,
-          errorCode: null,
-          message: errorMessage(error),
-          retryable: null,
-        })
-      }
+      const failure = await syncPluginUpdate(item, syncPlugin, true)
+      if (failure) failures.push(failure)
+      else updatedCount += 1
       onProgress?.({
         processedCount,
         updatedCount,
@@ -200,7 +182,6 @@ export async function runCurrentDevicePluginAutoUpdate({
   listMarketplacePlugins,
   updateBatch,
   syncPlugin,
-  syncDevice,
 }: CurrentDevicePluginAutoUpdateDependencies): Promise<CurrentDevicePluginAutoUpdateResult | null> {
   const local: { deviceId?: string; partial?: boolean } = localSync
     ? {}
@@ -217,7 +198,6 @@ export async function runCurrentDevicePluginAutoUpdate({
     if (local.partial) {
       throw new Error('Plugin auto-update requires a complete local plugin inventory')
     }
-    const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
     let deviceSyncPerformed = false
     const updateResult = await runPluginAutoUpdate({
       updateBatch,
@@ -225,15 +205,10 @@ export async function runCurrentDevicePluginAutoUpdate({
         deviceSyncPerformed = true
         return syncPlugin(deviceId, installedPluginId)
       },
-      syncDevice: () => {
-        deviceSyncPerformed = true
-        return syncDevice(deviceId)
+      readPendingInstalls: async () => {
+        const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
+        return pendingPluginSyncTargets(marketplace?.items ?? [])
       },
-      syncWhenNoUpdates: Boolean(
-        marketplace &&
-        (marketplaceNeedsDeviceSync(marketplace.items) ||
-          marketplace.items.some(marketplaceItemNeedsPluginAutoUpdate))
-      ),
     })
     return { deviceId, ...updateResult, deviceSyncPerformed }
   } finally {
@@ -242,7 +217,7 @@ export async function runCurrentDevicePluginAutoUpdate({
 }
 
 function pluginSyncFailure(
-  update: PluginAutoUpdateBatchResponse['updated'][number],
+  update: PluginSyncTarget,
   deviceResult: PluginDeviceSyncResponse
 ): PluginAutoUpdateFailure | null {
   const item = deviceResult.sync.plugins.find(
@@ -264,36 +239,46 @@ function pluginSyncFailure(
   }
 }
 
-function collectDeviceSyncFailures(
-  deviceResult: PluginDeviceSyncResponse
-): PluginAutoUpdateFailure[] {
-  const failures = deviceResult.sync.plugins
-    .filter(item => item.status === 'failed' || item.status === 'error')
-    .map(item => ({
-      installedPluginId: Number(item.id) || 0,
-      pluginName: item.name?.trim() || `Plugin ${item.id || ''}`.trim(),
-      version: '',
-      stage: item.stage?.trim() || null,
-      errorCode: item.error_code?.trim() || null,
-      message: item.error?.trim() || 'Device rejected the plugin update',
-      retryable: item.retryable ?? null,
-    }))
-  if (failures.length > 0 || deviceResult.sync.success) return failures
-  const message = deviceResult.sync.errors
-    .map(error => String(error.error || ''))
-    .filter(Boolean)
-    .join('; ')
-  return [
-    {
-      installedPluginId: 0,
-      pluginName: 'Plugin sync',
-      version: '',
+export function pendingPluginSyncTargets(items: PluginMarketplaceItem[]): PluginSyncTarget[] {
+  return items.flatMap(item => {
+    const retryRelease =
+      hasFailedReleaseGap(item) && !marketplaceItemHasPausedPluginAutoUpdate(item)
+    if (!marketplaceItemNeedsDeviceSync(item) && !retryRelease) {
+      return []
+    }
+    const installedPluginId = Number(item.installedPluginId)
+    return Number.isSafeInteger(installedPluginId) && installedPluginId > 0
+      ? [{ installedPluginId, version: item.version ?? '' }]
+      : []
+  })
+}
+
+async function syncPluginUpdate(
+  item: PluginSyncTarget,
+  syncPlugin: PluginAutoUpdateDependencies['syncPlugin'],
+  requireVersion = false
+): Promise<PluginAutoUpdateFailure | null> {
+  const installedPluginId =
+    Number.isSafeInteger(item?.installedPluginId) && item.installedPluginId > 0
+      ? item.installedPluginId
+      : 0
+  const version = typeof item?.version === 'string' ? item.version : ''
+  try {
+    if (!installedPluginId || (requireVersion && !version.trim())) {
+      throw new Error('Invalid plugin auto-update item')
+    }
+    return pluginSyncFailure(item, await syncPlugin(installedPluginId))
+  } catch (error) {
+    return {
+      installedPluginId,
+      pluginName: installedPluginId ? `Plugin ${installedPluginId}` : 'Invalid plugin update',
+      version,
       stage: null,
       errorCode: null,
-      message: message || 'Device rejected plugin synchronization',
+      message: errorMessage(error),
       retryable: null,
-    },
-  ]
+    }
+  }
 }
 
 function errorMessage(error: unknown): string {
