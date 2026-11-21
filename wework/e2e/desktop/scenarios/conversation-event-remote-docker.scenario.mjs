@@ -342,11 +342,6 @@ export function createDesktopScenario(options) {
           'The remote model must arm a real source wait',
           workbenchReadyTimeoutMs
         )
-        if (binding) {
-          assert.deepEqual(before.task.runtimeHandle.origin, binding.origin)
-          await verifyCloudCancellation(control, address, binding, readTask)
-          continue
-        }
         const originalGoal =
           phase === 'ordinary' ? null : (await rpc('runtime.tasks.goal.get', { address })).goal
         const armedRequests = modelRequests
@@ -369,6 +364,11 @@ export function createDesktopScenario(options) {
           'The real source must complete a collection before stable waiting is shown',
           workbenchReadyTimeoutMs
         )
+        if (binding) {
+          assert.deepEqual(before.task.runtimeHandle.origin, binding.origin)
+          await verifyCloudCancellation(control, address, binding, readTask)
+          continue
+        }
         const nativeTurns = async () => {
           const result = await rpc('runtime.tasks.transcript', { address, refresh: true })
           await writeFile(
