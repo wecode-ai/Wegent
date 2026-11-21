@@ -24,7 +24,6 @@ import { KnowledgeBaseForm, useKnowledgeBaseFormNavigation } from './KnowledgeBa
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { KnowledgeBaseDefaultViewSetting } from './KnowledgeBaseDefaultViewSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
-import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
@@ -99,21 +98,12 @@ export function EditKnowledgeBaseDialog({
   const [executionModelTouched, setExecutionModelTouched] = useState(false)
   const [summaryModelError, setSummaryModelError] = useState('')
   const {
-    multimodalAnalysisEnabled,
-    multimodalVideoPrompt,
-    multimodalImagePrompt,
     loadFromKB: loadMultimodalFromKB,
     validate: validateMultimodal,
     clearError: clearMultimodalError,
     buildSubmitFields: buildMultimodalSubmitFields,
     formProps: multimodalFormProps,
   } = useMultimodalKBConfig()
-  // Gate prompt overrides by the global pipeline switch, the same way
-  // buildMultimodalSubmitFields() gates multimodal_analysis_enabled. Otherwise
-  // saving a previously-enabled KB after the switch is turned off would send
-  // enabled=false alongside the (non-blank) prompt text.
-  const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
-  const effectiveMultimodalEnabled = multimodalFeatureEnabled && multimodalAnalysisEnabled
   const [error, setError] = useState('')
   const navigation = useKnowledgeBaseFormNavigation()
   const { selectSection } = navigation
@@ -310,6 +300,7 @@ export function EditKnowledgeBaseDialog({
       // Filter out empty guided questions
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
       const kb = fullKnowledgeBase
+      const multimodalFields = buildMultimodalSubmitFields()
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
@@ -318,15 +309,10 @@ export function EditKnowledgeBaseDialog({
         dingtalk_auto_sync_enabled: dingtalkAutoSyncEnabled,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
-        ...buildMultimodalSubmitFields(),
-        // For edit, send "" (never null) so the backend always applies the value:
-        // a blank string clears the override (revert to system default).
-        multimodal_analysis_video_prompt: effectiveMultimodalEnabled
-          ? multimodalVideoPrompt || ''
-          : '',
-        multimodal_analysis_image_prompt: effectiveMultimodalEnabled
-          ? multimodalImagePrompt || ''
-          : '',
+        ...multimodalFields,
+        // The update API clears an override with an empty string.
+        multimodal_analysis_video_prompt: multimodalFields.multimodal_analysis_video_prompt ?? '',
+        multimodal_analysis_image_prompt: multimodalFields.multimodal_analysis_image_prompt ?? '',
         guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,

@@ -295,7 +295,19 @@ export function CreateKnowledgeBaseDialog({
         setRetrievalProfile(profile.retrieval_config)
         setRetrievalDrafts(
           drafts =>
-            new Map([...drafts].map(([key, draft]) => [key, { ...draft, config: undefined }]))
+            new Map(
+              [...drafts].map(([key, draft]) => {
+                const rebased = { ...draft, config: undefined }
+                // Keep the displayed mode paired with an explicitly selected retriever.
+                if (draft.overrides?.retriever_name && draft.config?.retrieval_mode) {
+                  rebased.overrides = {
+                    ...draft.overrides,
+                    retrieval_mode: draft.config.retrieval_mode,
+                  }
+                }
+                return [key, rebased]
+              })
+            )
         )
       })
       .catch(() => undefined)

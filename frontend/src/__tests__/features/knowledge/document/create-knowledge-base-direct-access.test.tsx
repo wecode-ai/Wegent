@@ -48,7 +48,7 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onRetrievalConfigChange,
     onRetrievalConfigUserChange,
   }: {
-    navigation: { selectSection: (section: 'retrieval') => void }
+    navigation: { selectSection: (section: 'basic' | 'retrieval') => void }
     documentSyncSetting?: import('react').ReactNode
     locationSection?: import('react').ReactNode
     typeSection?: import('react').ReactNode
@@ -66,6 +66,9 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       {typeSection}
       <button type="button" onClick={() => navigation.selectSection('retrieval')}>
         open retrieval
+      </button>
+      <button type="button" onClick={() => navigation.selectSection('basic')}>
+        open basic
       </button>
       <output data-testid="retrieval-threshold">{retrievalConfig.score_threshold}</output>
       <button type="button" onClick={() => onNameChange('Private docs')}>
@@ -196,6 +199,63 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     fireEvent.click(screen.getByTestId('submit-create-kb'))
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
+        retrieval_config: {
+          retriever_name: 'vector-store',
+          retriever_namespace: 'default',
+          retrieval_mode: 'vector',
+        },
+      })
+    )
+  })
+
+  it('keeps an inactive space’s normalized mode when the default profile arrives', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    let resolveProfile!: (value: unknown) => void
+    mockedGetKnowledgeBaseRetrievalProfile
+      .mockImplementationOnce(() => new Promise(() => undefined))
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveProfile = resolve
+          })
+      )
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+        showGroupSelector
+        defaultGroupId="one"
+        availableGroups={[
+          { id: 'one', name: 'team-one', displayName: 'Team One', type: 'group', canCreate: true },
+          { id: 'two', name: 'team-two', displayName: 'Team Two', type: 'group', canCreate: true },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
+    fireEvent.click(screen.getByRole('button', { name: 'select vector retriever' }))
+    fireEvent.click(screen.getByRole('button', { name: 'open basic' }))
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(await screen.findByTestId('create-space-option-two'))
+    fireEvent.click(screen.getByRole('button', { name: 'open retrieval' }))
+    await act(async () =>
+      resolveProfile({
+        version: 1,
+        health: { status: 'valid', fallback_reason: null },
+        retrieval_config: { retrieval_mode: 'hybrid', score_threshold: 0.8 },
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'open basic' }))
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(await screen.findByTestId('create-space-option-one'))
+    expect(screen.getByTestId('retrieval-threshold')).toHaveTextContent('0.8')
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedGroupId: 'one',
         retrieval_config: {
           retriever_name: 'vector-store',
           retriever_namespace: 'default',

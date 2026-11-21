@@ -60,19 +60,6 @@ jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled', (
   useMultimodalFeatureEnabled: () => false,
 }))
 
-jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalKBConfig', () => ({
-  useMultimodalKBConfig: () => ({
-    multimodalAnalysisEnabled: false,
-    multimodalVideoPrompt: null,
-    multimodalImagePrompt: null,
-    loadFromKB: jest.fn(),
-    validate: () => true,
-    clearError: jest.fn(),
-    buildSubmitFields: () => ({}),
-    formProps: {},
-  }),
-}))
-
 const knowledgeBase: KnowledgeBase = {
   id: 101,
   name: 'Hidden Docs',
@@ -90,6 +77,40 @@ const knowledgeBase: KnowledgeBase = {
 }
 
 describe('EditKnowledgeBaseDialog direct access requirement', () => {
+  it('preserves saved multimodal prompts when the global pipeline is off', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const savedConfig = {
+      multimodal_analysis_enabled: true,
+      multimodal_analysis_model_ref: {
+        name: 'gemini',
+        namespace: 'default',
+        type: 'public' as const,
+      },
+      multimodal_analysis_video_prompt: 'Summarize the video.',
+      multimodal_analysis_image_prompt: 'Describe the image.',
+    }
+    jest.mocked(getKnowledgeBase).mockResolvedValue({ ...knowledgeBase, ...savedConfig })
+    render(
+      <EditKnowledgeBaseDialog
+        open
+        knowledgeBase={knowledgeBase}
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('knowledge-base-direct-access-read'))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          direct_access_requirement: 'read',
+          ...savedConfig,
+        })
+      )
+    )
+  })
+
   it('keeps a later editor intact when an earlier view conversion resolves', async () => {
     const first = { ...knowledgeBase, kb_type: 'notebook' as const }
     const second = { ...first, id: 102, name: 'Other Docs' }
