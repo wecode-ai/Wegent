@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { BookOpen, Code2, Database, FileText } from 'lucide-react'
+import { Code2, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,7 @@ import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/Generat
 import { ScheduledUpdateSettings } from '@/features/knowledge/code-wiki/ScheduledUpdateSettings'
 import { KnowledgeBaseForm, useKnowledgeBaseFormNavigation } from './KnowledgeBaseForm'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
+import { KnowledgeBaseDefaultViewSetting } from './KnowledgeBaseDefaultViewSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
@@ -30,6 +31,7 @@ import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getKnowledgeBase, type updateKnowledgeBaseType } from '@/apis/knowledge'
 import { codeWikiApi } from '@/apis/code-wiki'
+import { documentViewOf } from '@/types/knowledge'
 import type {
   DirectAccessRequirement,
   KnowledgeBase,
@@ -387,7 +389,6 @@ export function EditKnowledgeBaseDialog({
 
   const kb = fullKnowledgeBase
   const kbType = convertedView ?? kb?.kb_type ?? 'notebook'
-  const isNotebook = kbType === 'notebook'
 
   // Handle default opening view update success
   const handleTypeConverted = (updatedKb: KnowledgeBase) => {
@@ -497,35 +498,11 @@ export function EditKnowledgeBaseDialog({
                       )}
                     </>
                   ) : (
-                    <SimpleConfigRow
-                      label={tKnowledge('document.knowledgeBase.type')}
-                      align="start"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="flex items-center gap-2 text-sm text-text-primary">
-                          {isNotebook ? (
-                            <BookOpen className="h-4 w-4" />
-                          ) : (
-                            <Database className="h-4 w-4" />
-                          )}
-                          {tKnowledge(
-                            isNotebook
-                              ? 'document.knowledgeBase.typeNotebook'
-                              : 'document.knowledgeBase.typeClassic'
-                          )}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowConvertDialog(true)}
-                          className="min-h-11 min-w-11"
-                          data-testid="edit-kb-default-view"
-                        >
-                          {tKnowledge('document.knowledgeBase.changeDefaultView')}
-                        </Button>
-                      </div>
-                    </SimpleConfigRow>
+                    <KnowledgeBaseDefaultViewSetting
+                      value={documentViewOf(kbType) ?? 'notebook'}
+                      onSelect={() => setShowConvertDialog(true)}
+                      changeTestId="edit-kb-default-view"
+                    />
                   )
                 }
                 generationSection={

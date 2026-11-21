@@ -34,6 +34,7 @@ import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hoo
 interface KnowledgeBaseFormProps {
   disabled?: boolean
   editableSection?: Section
+  basicSectionRequired?: boolean
   navigation: ReturnType<typeof useKnowledgeBaseFormNavigation>
   kindSection?: ReactNode
   locationSection?: ReactNode
@@ -132,6 +133,7 @@ export function useKnowledgeBaseFormNavigation() {
 export function KnowledgeBaseForm({
   disabled,
   editableSection,
+  basicSectionRequired,
   navigation,
   kindSection,
   locationSection,
@@ -299,7 +301,7 @@ export function KnowledgeBaseForm({
             maxLength={500}
             rows={3}
             data-testid="kb-description-input"
-            className="bg-base"
+            className="bg-base px-4 placeholder:text-text-muted"
           />
         </SimpleConfigRow>
         {locationSection}
@@ -602,6 +604,17 @@ export function KnowledgeBaseForm({
                     )}
                   >
                     {t(`document.formSections.${title}`)}
+                    {section === 'basic' && basicSectionRequired && (
+                      <>
+                        <span className="ml-1 text-red-400" aria-hidden="true">
+                          *
+                        </span>
+                        <span className="sr-only">
+                          {' '}
+                          {t('document.formSections.containsRequiredFields')}
+                        </span>
+                      </>
+                    )}
                   </button>
                 )
               })}

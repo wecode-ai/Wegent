@@ -156,22 +156,37 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
       />
     )
 
-    const changeView = await screen.findByTestId('edit-kb-default-view')
+    await screen.findByTestId('edit-kb-default-view')
     const mainForm = within(screen.getByTestId('knowledge-base-form'))
-    fireEvent.click(changeView)
-    const confirmation = screen.getByRole('dialog', {
-      name: 'document.knowledgeBase.changeDefaultView',
-    })
-    fireEvent.click(within(confirmation).getByRole('button', { name: 'common:actions.confirm' }))
-    expect(await mainForm.findByText('document.knowledgeBase.typeClassic')).toBeVisible()
-    fireEvent.click(changeView)
-    const nextConfirmation = screen.getByRole('dialog', {
-      name: 'document.knowledgeBase.changeDefaultView',
-    })
+    const getConfirmation = () =>
+      screen.getByRole('dialog', {
+        name: 'document.knowledgeBase.changeDefaultView',
+      })
+    const savedCount = jest.mocked(updateKnowledgeBaseType).mock.calls.length
+    expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+
+    fireEvent.click(mainForm.getByTestId('edit-kb-default-view'))
     fireEvent.click(
-      within(nextConfirmation).getByRole('button', { name: 'common:actions.confirm' })
+      within(getConfirmation()).getByRole('button', { name: 'common:actions.cancel' })
     )
-    expect(await mainForm.findByText('document.knowledgeBase.typeNotebook')).toBeVisible()
+    expect(updateKnowledgeBaseType).toHaveBeenCalledTimes(savedCount)
+    expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+
+    fireEvent.click(mainForm.getByTestId('edit-kb-default-view'))
+    fireEvent.click(
+      within(getConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
+    )
+    await waitFor(() =>
+      expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeClassic')
+    )
+
+    fireEvent.click(mainForm.getByTestId('edit-kb-default-view'))
+    fireEvent.click(
+      within(getConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
+    )
+    await waitFor(() =>
+      expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+    )
     expect(updateKnowledgeBaseType).toHaveBeenLastCalledWith(knowledgeBase.id, 'notebook')
   })
 

@@ -250,8 +250,6 @@
         "emptyCode": "No code knowledge bases"
       },
       "currentDefaultView": "Current Default Opening View",
-      "convertToNotebook": "Open Workspace by Default",
-      "convertToClassic": "Open Document Management by Default",
       "changeDefaultView": "Change Default View",
       "changeDefaultViewConfirm": "This only changes the default view used when opening the knowledge base. Existing content and permissions are unchanged.",
       "defaultViewUpdateSuccess": "Default opening view updated",
@@ -783,6 +781,7 @@
     },
     "formSections": {
       "basic": "Basic Information",
+      "containsRequiredFields": "Contains required fields",
       "navigation": "Knowledge base settings",
       "accessSettings": "Access Settings",
       "contentProcessing": "Content Processing",

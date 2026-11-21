@@ -250,8 +250,6 @@
         "emptyCode": "暂无代码知识库"
       },
       "currentDefaultView": "当前默认打开方式",
-      "convertToNotebook": "默认打开工作台",
-      "convertToClassic": "默认打开文档管理",
       "changeDefaultView": "修改默认打开方式",
       "changeDefaultViewConfirm": "仅修改下次打开知识库时默认进入的视图，不影响已有内容和权限。",
       "defaultViewUpdateSuccess": "默认打开方式已更新",
@@ -783,6 +781,7 @@
     },
     "formSections": {
       "basic": "基本信息",
+      "containsRequiredFields": "含必填项",
       "navigation": "知识库设置",
       "accessSettings": "访问设置",
       "contentProcessing": "内容处理",

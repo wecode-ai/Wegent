@@ -5,7 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Code2, Database, FileText } from 'lucide-react'
+import { Code2, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -36,6 +36,7 @@ import {
   useCodeWikiRepository,
   type CodeWikiSourceDraft,
 } from '@/features/knowledge/code-wiki/CodeWikiSourceFields'
+import { documentViewOf } from '@/types/knowledge'
 import type {
   DirectAccessRequirement,
   KnowledgeBaseCreate,
@@ -52,6 +53,7 @@ import { KnowledgeBaseForm, useKnowledgeBaseFormNavigation } from './KnowledgeBa
 import { useCreationLocationRefresh } from '../hooks/useCreationLocationRefresh'
 import { KnowledgeCreateSpaceSelect } from './KnowledgeCreateSpaceSelect'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
+import { KnowledgeBaseDefaultViewSetting } from './KnowledgeBaseDefaultViewSetting'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
@@ -302,11 +304,6 @@ export function CreateKnowledgeBaseDialog({
     }
   }, [open, retrievalActive])
 
-  // Update selectedKbType when KB type changes (keep summaryEnabled unchanged)
-  const handleKbTypeChange = (newType: KnowledgeBaseType) => {
-    setSelectedKbType(newType)
-  }
-
   const needsLocationVerification = showGroupSelector
     ? selectedGroupId !== 'personal'
     : scope === 'group' || scope === 'organization'
@@ -474,8 +471,6 @@ export function CreateKnowledgeBaseDialog({
     }
   }
 
-  // Determine if this is a notebook type
-  const isNotebook = selectedKbType === 'notebook'
   const ragModeOptions: RagConfigMode[] = ['auto', 'disabled']
 
   return (
@@ -535,6 +530,7 @@ export function CreateKnowledgeBaseDialog({
         </div>
         <KnowledgeBaseForm
           navigation={navigation}
+          basicSectionRequired
           kindSection={
             <div className={`grid gap-3 ${kindOptions.length > 1 ? 'sm:grid-cols-2' : ''}`}>
               {kindOptions.map(([option, Icon, label]) => (
@@ -794,54 +790,11 @@ export function CreateKnowledgeBaseDialog({
                   />
                 </>
               ) : (
-                /* KB Type selector - subtle style */
-                <SimpleConfigRow label={t('knowledge:document.knowledgeBase.type')} align="start">
-                  <div className="space-y-2">
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => handleKbTypeChange(isNotebook ? 'classic' : 'notebook')}
-                        className="min-h-11 min-w-11 text-xs text-text-muted hover:text-primary transition-colors"
-                        data-testid="switch-kb-type"
-                      >
-                        {isNotebook
-                          ? t('knowledge:document.knowledgeBase.convertToClassic')
-                          : t('knowledge:document.knowledgeBase.convertToNotebook')}
-                      </button>
-                    </div>
-                    <div
-                      className={`flex items-center gap-3 p-3 rounded-md border ${
-                        isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
-                      }`}
-                    >
-                      <div
-                        className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
-                          isNotebook
-                            ? 'bg-primary/10 text-primary'
-                            : 'bg-surface text-text-secondary'
-                        }`}
-                      >
-                        {isNotebook ? (
-                          <BookOpen className="w-4 h-4" />
-                        ) : (
-                          <Database className="w-4 h-4" />
-                        )}
-                      </div>
-                      <div>
-                        <div className="font-medium text-sm">
-                          {isNotebook
-                            ? t('knowledge:document.knowledgeBase.typeNotebook')
-                            : t('knowledge:document.knowledgeBase.typeClassic')}
-                        </div>
-                        <div className="text-xs text-text-muted">
-                          {isNotebook
-                            ? t('knowledge:document.knowledgeBase.notebookDesc')
-                            : t('knowledge:document.knowledgeBase.classicDesc')}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </SimpleConfigRow>
+                <KnowledgeBaseDefaultViewSetting
+                  value={documentViewOf(selectedKbType) ?? 'notebook'}
+                  onSelect={setSelectedKbType}
+                  changeTestId="switch-kb-type"
+                />
               )}
             </>
           }

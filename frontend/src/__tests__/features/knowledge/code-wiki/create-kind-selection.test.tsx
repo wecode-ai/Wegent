@@ -312,6 +312,29 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.getByTestId('code-wiki-language')).toBeVisible()
   })
 
+  it('submits the selected default document view', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    expect(screen.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+    const documentView = screen.getByTestId('switch-kb-type')
+    expect(documentView).toHaveTextContent('typeClassic')
+    fireEvent.click(documentView)
+    expect(documentView).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.change(screen.getByTestId('kb-name-input'), { target: { value: 'Docs' } })
+    fireEvent.click(screen.getByTestId('knowledge-summary-section-trigger'))
+    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(screen.getByTestId('submit-create-kb'))
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kb_type: 'classic',
+        })
+      )
+    )
+  })
+
   it('offers both ways to name a repository', () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
