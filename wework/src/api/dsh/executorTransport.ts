@@ -1,3 +1,8 @@
+import {
+  scheduleDshRequest,
+  executorRequestPriority,
+  type DshRequestPriority,
+} from './backgroundRequests'
 import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
@@ -56,6 +61,7 @@ interface DshExecutorErrorBody {
 
 export interface DshExecutorRequestOptions {
   signal?: AbortSignal
+  priority?: DshRequestPriority
 }
 
 export class DshExecutorTransportError extends Error {
@@ -78,7 +84,11 @@ export class DshExecutorTransportError extends Error {
   }
 }
 
-export async function describeDshExecutor(): Promise<DshExecutorDescription> {
+export function describeDshExecutor(): Promise<DshExecutorDescription> {
+  return readDshExecutorDescription()
+}
+
+async function readDshExecutorDescription(): Promise<DshExecutorDescription> {
   const response = await fetch(EXECUTOR_BASE_PATH, {
     // Read live identity without serializing on Chromium HTTP cache entries.
     cache: 'no-store',
@@ -110,7 +120,19 @@ export async function describeDshExecutor(): Promise<DshExecutorDescription> {
   return body.executor
 }
 
-export async function requestDshExecutor<T>(
+export function requestDshExecutor<T>(
+  method: string,
+  params: Record<string, unknown> = {},
+  options: DshExecutorRequestOptions = {}
+): Promise<T> {
+  return scheduleDshRequest(
+    options.priority ?? executorRequestPriority(method, params),
+    () => performDshExecutorRequest<T>(method, params, options),
+    isCancellableRuntimeRead(method) ? options.signal : undefined
+  )
+}
+
+async function performDshExecutorRequest<T>(
   method: string,
   params: Record<string, unknown> = {},
   options: DshExecutorRequestOptions = {}

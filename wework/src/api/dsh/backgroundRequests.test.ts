@@ -1,0 +1,64 @@
+import { scheduleDshRequest } from './backgroundRequests'
+import { createTestWebLocks } from '@/test/web-locks'
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => (resolve = done))
+  return { promise, resolve }
+}
+
+test('two stalled background requests leave foreground work independent across clients', async () => {
+  const locks = createTestWebLocks()
+  const first = deferred()
+  const second = deferred()
+  const entered = vi.fn()
+  const run = (hold: Promise<void>) =>
+    scheduleDshRequest(
+      'background',
+      async () => {
+        entered()
+        await hold
+      },
+      undefined,
+      locks
+    )
+  const pending = [run(first.promise), run(second.promise), run(Promise.resolve())]
+  await vi.waitFor(() => expect(entered).toHaveBeenCalledTimes(2))
+  await expect(
+    scheduleDshRequest('foreground', async () => 'uploaded', undefined, locks)
+  ).resolves.toBe('uploaded')
+  second.resolve()
+  await vi.waitFor(() => expect(entered).toHaveBeenCalledTimes(3))
+  first.resolve()
+  await Promise.all(pending)
+})
+
+test('queued cancellation never dispatches and failures release capacity', async () => {
+  const locks = createTestWebLocks()
+  const hold = deferred()
+  const pending = [0, 1].map(() =>
+    scheduleDshRequest('background', () => hold.promise, undefined, locks)
+  )
+  const abort = new AbortController()
+  const dispatch = vi.fn()
+  const cancelled = scheduleDshRequest('background', dispatch, abort.signal, locks)
+  const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+  abort.abort()
+  await rejected
+  expect(dispatch).not.toHaveBeenCalled()
+  hold.resolve()
+  await Promise.all(pending)
+  await expect(
+    scheduleDshRequest(
+      'background',
+      async () => {
+        throw new Error('offline')
+      },
+      undefined,
+      locks
+    )
+  ).rejects.toThrow('offline')
+  await expect(
+    scheduleDshRequest('background', async () => 'recovered', undefined, locks)
+  ).resolves.toBe('recovered')
+})

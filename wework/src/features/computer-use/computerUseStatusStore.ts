@@ -1,19 +1,21 @@
+import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { getComputerUseStatus, type ComputerUseStatus } from '@/desktop/computerUse'
 
-/** Poll the host at a fixed cadence while sharing one in-flight status read. */
+/** Read once on subscription, then follow host state changes. */
 export function createComputerUseStatusStore() {
-  let status: ComputerUseStatus | null = null
+  let status: Pick<ComputerUseStatus, 'currentTool'> | null = null
   let pending: object | null = null
   let revision = 0
+  let pendingUpdates = 0
   const listeners = new Set<() => void>()
   let initial: ReturnType<typeof setTimeout> | undefined
-  let timer: ReturnType<typeof setInterval> | undefined
-  const publish = (next: ComputerUseStatus) => {
+  let unsubscribe: (() => void) | undefined
+  const publish = (next: Pick<ComputerUseStatus, 'currentTool'>) => {
     status = next
     listeners.forEach(listener => listener())
   }
   const load = async () => {
-    if (pending || !listeners.size) return
+    if (!listeners.size || pending) return
     const request = {}
     pending = request
     const current = ++revision
@@ -27,18 +29,42 @@ export function createComputerUseStatusStore() {
       if (pending === request) pending = null
     }
   }
+  const observeHost = () => {
+    unsubscribe ??= subscribeDesktopHostEvents(event => {
+      if (event.type !== 'computerUse.changed') return
+      const { currentTool } = event.payload
+      if (currentTool !== null && typeof currentTool !== 'string') return
+      revision++
+      publish({ currentTool })
+    })
+  }
+  const releaseHost = () => {
+    if (listeners.size || pendingUpdates) return
+    unsubscribe?.()
+    unsubscribe = undefined
+  }
   return {
     getSnapshot: () => status,
-    update(next: ComputerUseStatus) {
-      if (!listeners.size) return
-      revision++
-      publish(next)
+    async updateFrom(operation: () => Promise<ComputerUseStatus>) {
+      pendingUpdates++
+      observeHost()
+      const current = revision
+      try {
+        const next = await operation()
+        if (revision === current) {
+          revision++
+          publish(next)
+        }
+      } finally {
+        pendingUpdates--
+        releaseHost()
+      }
     },
     subscribe(listener: () => void) {
       listeners.add(listener)
       if (listeners.size === 1) {
+        observeHost()
         initial = setTimeout(() => void load(), 0)
-        timer = setInterval(() => void load(), 1000)
       }
       return () => {
         listeners.delete(listener)
@@ -46,9 +72,11 @@ export function createComputerUseStatusStore() {
           revision++
           pending = null
           clearTimeout(initial)
-          clearInterval(timer)
+          releaseHost()
         }
       }
     },
   }
 }
+
+export const computerUseStatusStore = createComputerUseStatusStore()
