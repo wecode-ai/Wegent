@@ -185,7 +185,7 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
             data-testid="task-timing-wall-time"
           >
             {t('timing.summary.wall_time', {
-              duration: formatDuration(data.wall_time_ms ?? 0),
+              duration: formatDuration(data.wall_time_ms),
             })}
           </span>
         </div>
@@ -382,7 +382,7 @@ function TimelineDetails({ data }: { data: TaskTimingResponse }) {
                 {t('timing.timeline.span_meta', {
                   kind: span.kind,
                   turn: span.turn_id,
-                  duration: formatDuration(span.duration_ms ?? 0),
+                  duration: formatDuration(span.duration_ms),
                 })}
               </p>
             </div>
@@ -551,7 +551,8 @@ function validTimestamp(timestampMs?: number | null): number | undefined {
   return timestampMs === null || timestampMs === undefined ? undefined : timestampMs
 }
 
-function formatDuration(durationMs: number): string {
+function formatDuration(durationMs?: number | null): string {
+  if (durationMs === null || durationMs === undefined) return '--'
   if (durationMs < 1000) return `${Math.max(durationMs, 0)}ms`
   const seconds = Math.floor(durationMs / 1000)
   if (seconds < 60) return `${seconds}s`

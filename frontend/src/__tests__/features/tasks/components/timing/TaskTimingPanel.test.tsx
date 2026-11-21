@@ -130,6 +130,25 @@ const interiorGapResponse: TaskTimingResponse = {
   ],
 }
 
+const unknownDurationResponse: TaskTimingResponse = {
+  ...timingResponse,
+  wall_time_ms: null,
+  top_suspects: [
+    {
+      ...timingResponse.top_suspects[0],
+      duration_ms: null,
+    },
+  ],
+  spans: [
+    {
+      ...timingResponse.spans[0],
+      start_at_ms: null,
+      end_at_ms: null,
+      duration_ms: null,
+    },
+  ],
+}
+
 function renderPanel() {
   return render(
     <TaskTimingPanel panelProps={{ taskId: 42 }} onClose={jest.fn()} embedded={false} />
@@ -316,6 +335,23 @@ describe('TaskTimingPanel', () => {
     const times = screen.getAllByText('--')
     expect(times.length).toBeGreaterThanOrEqual(2)
     expect(screen.getByTestId('task-timing-span-bar')).toHaveStyle({ width: '0%' })
+  })
+
+  it('shows unknown durations as missing rather than zero', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(unknownDurationResponse)
+    renderPanel()
+
+    expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
+    expect(screen.getByTestId('task-timing-wall-time')).toHaveTextContent(
+      'timing.summary.wall_time:--'
+    )
+    expect(screen.getByTestId('task-timing-suspect')).toHaveTextContent('--')
+
+    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+    expect(screen.getByTestId('task-timing-span')).toHaveTextContent(
+      'timing.timeline.span_meta:agent,11,--'
+    )
   })
 
   it('uses semantic theme classes and a responsive layout', async () => {

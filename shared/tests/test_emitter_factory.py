@@ -508,6 +508,60 @@ class TestRedisTransport:
 
 class TestResponsesAPIEmitter:
     @pytest.mark.asyncio
+    async def test_lifecycle_events_carry_agent_timing_boundaries(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        with patch(
+            "shared.models.responses_api_emitter.time.time",
+            side_effect=[1_000.000, 1_001.000, 1_002.000, 1_003.000],
+        ):
+            await emitter.start()
+            await emitter.done(content="done")
+
+        events = dict(transport.get_events())
+        assert events["response.created"]["timing"] == {"agentStartedAt": 1_000_000}
+        assert events["response.completed"]["timing"] == {
+            "agentStartedAt": 1_000_000,
+            "agentFinishedAt": 1_001_000,
+        }
+
+    @pytest.mark.asyncio
+    async def test_all_terminal_events_close_started_agent_timing(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        for emit_terminal, expected_event in [
+            (lambda: emitter.done(content="done"), "response.completed"),
+            (lambda: emitter.incomplete(), "response.incomplete"),
+            (lambda: emitter.error("failed"), "error"),
+        ]:
+            with patch(
+                "shared.models.responses_api_emitter.time.time",
+                side_effect=[1_000.000, 1_001.000],
+            ):
+                await emitter.start()
+                await emit_terminal()
+
+            terminal = transport.get_events()[-1]
+            assert terminal[0] == expected_event
+            assert terminal[1]["timing"] == {
+                "agentStartedAt": 1_000_000,
+                "agentFinishedAt": 1_001_000,
+            }
+
+    @pytest.mark.asyncio
+    async def test_terminal_timing_is_omitted_without_start_event(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.error("failed before start")
+
+        error = transport.get_events()[-1]
+        assert error[0] == "error"
+        assert "timing" not in error[1]
+
+    @pytest.mark.asyncio
     async def test_done_merges_completion_provider_fields(self):
         transport = GeneratorTransport()
         emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()

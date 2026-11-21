@@ -93,6 +93,7 @@ class ResponsesAPIEmitter:
         self.builder = ResponsesAPIEventBuilder(subtask_id, model)
         self._tool_contexts: dict[str, dict[str, Any]] = {}
         self._completion_fields_provider: Optional[CompletionFieldsProvider] = None
+        self._agent_started_at_ms: Optional[int] = None
 
     def set_completion_fields_provider(
         self,
@@ -105,6 +106,15 @@ class ResponsesAPIEmitter:
             "set" if provider is not None else "cleared",
             self.subtask_id,
         )
+
+    def _add_terminal_timing(self, data: dict[str, Any]) -> None:
+        """Add agent boundaries to a terminal event without inventing a start."""
+        if self._agent_started_at_ms is None:
+            return
+        data["timing"] = {
+            "agentStartedAt": self._agent_started_at_ms,
+            "agentFinishedAt": int(time.time() * 1000),
+        }
 
     # ============================================================
     # Response Lifecycle Events
@@ -119,7 +129,10 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        started_at_ms = int(time.time() * 1000)
+        self._agent_started_at_ms = started_at_ms
         data = self.builder.response_created(shell_type)
+        data["timing"] = {"agentStartedAt": started_at_ms}
         return await self._emit(ResponsesAPIStreamEvents.RESPONSE_CREATED.value, data)
 
     async def in_progress(self) -> Any:
@@ -200,6 +213,7 @@ class ResponsesAPIEmitter:
             silent_exit_reason=silent_exit_reason,
             **extra_fields,
         )
+        self._add_terminal_timing(data)
         return await self._emit(ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value, data)
 
     async def incomplete(self, reason: str = "cancelled", content: str = "") -> Any:
@@ -218,6 +232,7 @@ class ResponsesAPIEmitter:
         await self.flush()
 
         data = self.builder.response_incomplete(reason, content)
+        self._add_terminal_timing(data)
         return await self._emit(
             ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value, data
         )
@@ -238,6 +253,7 @@ class ResponsesAPIEmitter:
         await self.flush()
 
         data = self.builder.error(message, code)
+        self._add_terminal_timing(data)
         return await self._emit(ResponsesAPIStreamEvents.ERROR.value, data)
 
     # ============================================================
