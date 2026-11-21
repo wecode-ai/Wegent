@@ -41,7 +41,7 @@ fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
             assert!(params["developerInstructions"]
                 .as_str()
                 .unwrap()
-                .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+                .contains(effective_instructions::OMITTED_MCP_CONTEXT));
         }
         let request = ExecutionRequest {
             mcp_servers: Vec::new(),
@@ -4073,7 +4073,7 @@ fn invalid_control_context_preserves_independent_managed_mcps() {
         assert!(params["developerInstructions"]
             .as_str()
             .unwrap()
-            .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+            .contains(effective_instructions::OMITTED_MCP_CONTEXT));
     }
 }
 

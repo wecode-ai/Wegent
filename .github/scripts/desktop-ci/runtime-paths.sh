@@ -425,7 +425,7 @@ classify_path() {
     wework/e2e/desktop/scenarios/collaboration-template-lifecycle.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-templates.scenario.mjs | \
       packages/collaboration/src/templates/* | \
-      backend-rs/src/collaboration_templates/* | \
+      backend-rs/be-server/src/collaboration_templates/* | \
       backend-rs/init_data/04-collaboration-templates.yaml | \
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"

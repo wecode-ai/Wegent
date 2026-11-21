@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import BackgroundTasks, Request
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from app.api.endpoints.openapi_responses import (
     _model_category_from_kind,
     _resolve_requested_model,
     _task_to_response_object,
+    cancel_response,
     create_response,
 )
 from app.core.security import get_password_hash
@@ -2280,6 +2282,116 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.finish_response_cancel.assert_awaited_once_with(
             running_subtask.id, "intent"
         )
+
+    @patch(
+        "app.services.adapters.task_kinds.operations.TaskOperationsMixin.cancel_task"
+    )
+    @patch("app.services.chat.storage.session_manager")
+    def test_cancel_response_routes_device_bound_chat_shell_to_cancel_service(
+        self,
+        mock_session_manager,
+        mock_cancel_task,
+        test_api_key,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """A device-bound Responses turn must not take the Chat SSE branch."""
+        task_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "task-device-running",
+                "namespace": "default",
+                "labels": {"source": "chat_shell"},
+            },
+            "spec": {
+                "title": "Running device task",
+                "prompt": "Hello",
+                "teamRef": {"name": "test-team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                "device_id": "device-old-route",
+            },
+            "status": {
+                "status": "RUNNING",
+                "progress": 50,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+            },
+        }
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="task-device-running",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+        running_subtask = Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=test_team.id,
+            title="Assistant response",
+            bot_ids=[1],
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="user-7",
+            executor_name="device-device-old-route",
+            prompt="",
+            status=SubtaskStatus.RUNNING,
+            progress=50,
+            message_id=1,
+            parent_id=0,
+            error_message="",
+            completed_at=datetime(1970, 1, 1, 0, 0, 0),
+            result=None,
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        )
+        test_db.add(running_subtask)
+        test_db.commit()
+        mock_cancel_task.return_value = {
+            "message": "Cancel request accepted",
+            "status": "CANCELLING",
+        }
+        mock_session_manager.get_streaming_content = AsyncMock(return_value="partial")
+        mock_session_manager.finish_response_cancel = AsyncMock()
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": f"/api/v1/responses/resp_{task.id}/cancel",
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "root_path": "",
+                "query_string": b"",
+            }
+        )
+        request.state.user = test_user
+        request.state.api_key_name = "test"
+
+        async def invoke():
+            return await cancel_response(
+                request,  # type: ignore[arg-type]
+                f"resp_{task.id}",
+                BackgroundTasks(),
+                db=test_db,
+                current_user=test_user,
+            )
+
+        result = asyncio.run(invoke())
+
+        mock_cancel_task.assert_awaited_once()
+        mock_session_manager.response_cancel.prepare.assert_not_called()
+        mock_session_manager.finish_response_cancel.assert_not_awaited()
+        assert result.status in {"cancelled", "in_progress"}
 
     @patch("app.services.chat.storage.session_manager")
     def test_cancel_response_chat_shell_group_member_success(

@@ -106,6 +106,7 @@ from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
     MAX_KNOWLEDGE_LIST_LIMIT,
+    DocumentPreviewNotReadyError,
     knowledge_orchestrator,
 )
 from app.services.knowledge.retrieval_profile import get_profile
@@ -163,6 +164,12 @@ def _raise_document_detail_http_error(error: ValueError) -> None:
     """
     if isinstance(error, CustomHTTPException):
         raise error
+    if isinstance(error, DocumentPreviewNotReadyError):
+        raise CustomHTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+            error_code="document_preview_not_ready",
+        ) from error
 
     error_msg = str(error)
     lower = error_msg.lower()
@@ -685,6 +692,7 @@ def update_knowledge_base(
             knowledge_base_id=knowledge_base_id,
             name=data.name,
             description=data.description,
+            kb_type=data.kb_type,
             direct_access_requirement=data.direct_access_requirement,
             allow_document_download=data.allow_document_download,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),

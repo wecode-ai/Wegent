@@ -14,7 +14,7 @@ import client, { ApiError } from '@/apis/client'
 import { useTranslation } from '@/hooks/useTranslation'
 import { collectNavigationKnowledge, type NavigationKnowledgeBase } from '../navigation'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { getKnowledgeBase, updateKnowledgeBaseType } from '@/apis/knowledge'
+import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
 import { documentViewOf } from '@/types/knowledge'
 import type {
@@ -90,7 +90,7 @@ export interface UseKnowledgeSidebarReturn {
   retrySelectedKb: () => void
   selectKb: (kb: KnowledgeBase) => void
   syncKnowledgeBase: (kb: KnowledgeBase) => void
-  saveKnowledgeBaseView: typeof updateKnowledgeBaseType
+  saveKnowledgeBaseSettings: typeof updateKnowledgeBase
   viewRefreshErrors: number[]
   retryViewRefresh: (id: number) => Promise<void>
   selectGroup: (groupId: string) => void
@@ -709,8 +709,10 @@ export function useKnowledgeSidebar({
     [scope, syncSavedView]
   )
 
-  const saveKnowledgeBaseView = useCallback<typeof updateKnowledgeBaseType>(
-    async (id, type) => {
+  const saveKnowledgeBaseSettings = useCallback<typeof updateKnowledgeBase>(
+    async (id, data) => {
+      if (!data.kb_type) return updateKnowledgeBase(id, data)
+
       const saves = viewSaves.current
       const existing = saves.get(id)
       const save = existing ?? { pending: 0, revision: 0, overlapping: false }
@@ -721,7 +723,7 @@ export function useKnowledgeSidebar({
 
       const currentScope = () => scopeRef.current === scope && viewSaves.current === saves
       try {
-        const updated = await updateKnowledgeBaseType(id, type)
+        const updated = await updateKnowledgeBase(id, data)
         if (currentScope() && !save.overlapping) syncSavedView(id, updated)
         return updated
       } finally {
@@ -857,7 +859,7 @@ export function useKnowledgeSidebar({
     },
     selectKb,
     syncKnowledgeBase,
-    saveKnowledgeBaseView,
+    saveKnowledgeBaseSettings,
     viewRefreshErrors,
     retryViewRefresh,
     selectGroup,

@@ -95,19 +95,6 @@ export async function deleteKnowledgeBase(
   )
 }
 
-/**
- * Update the knowledge base default opening view.
- * @param id Knowledge base ID
- * @param kbType New default view value: 'notebook' or 'classic'
- * @returns Updated knowledge base
- */
-export async function updateKnowledgeBaseType(
-  id: number,
-  kbType: 'notebook' | 'classic'
-): Promise<KnowledgeBase> {
-  return apiClient.patch<KnowledgeBase>(`/knowledge-bases/${id}/type`, { kb_type: kbType })
-}
-
 // ============== Knowledge Document APIs ==============
 
 /** Parameters for listing documents in a knowledge base */

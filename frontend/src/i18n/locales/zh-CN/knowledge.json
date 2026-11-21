@@ -250,10 +250,6 @@
         "emptyCode": "暂无代码知识库"
       },
       "currentDefaultView": "当前默认打开方式",
-      "changeDefaultView": "修改默认打开方式",
-      "changeDefaultViewConfirm": "仅修改下次打开知识库时默认进入的视图，不影响已有内容和权限。",
-      "defaultViewUpdateSuccess": "默认打开方式已更新",
-      "defaultViewUpdateFailed": "默认打开方式更新失败",
       "targetGroup": "归属",
       "selectGroup": "选择分组",
       "kindDocument": "文档",
@@ -349,7 +345,8 @@
           "processingFailed": "文档处理失败，请重试。",
           "externalImportFailed": "外部文档导入失败，请稍后重试。",
           "externalSourceMissing": "来源文档已删除，无法继续同步。",
-          "externalSourceUnavailable": "来源文档不可访问，无法继续同步。"
+          "externalSourceUnavailable": "来源文档不可访问，无法继续同步。",
+          "dingtalkAuthorizationRequired": "钉钉授权已失效，请重新授权后重试同步。"
         },
         "model": "模型"
       },
@@ -481,6 +478,7 @@
         "metaInfo": "元信息",
         "content": "文档内容",
         "contentLoadFailed": "文档内容加载失败，请重试。",
+        "previewNotReady": "文档内容暂不可预览。",
         "protectedViewerUnavailable": "受保护文档预览不可用",
         "parsedContent": "解析内容",
         "sourceFile": "原始文件",
@@ -1063,13 +1061,9 @@
     "creation": {
       "refreshingLocations": "正在刷新创建位置…",
       "refreshLocationsFailed": "刷新创建位置失败，请重试。",
-      "created": "库已创建",
-      "createdDescription": "知识库已保存。现在可以给人员或团队授权，也可稍后配置。",
       "authorize": "授权",
       "authorizing": "授权中…",
       "authorized": "授权已完成",
-      "finishLater": "完成／稍后配置",
-      "refreshFailed": "库已创建，列表刷新失败，请重试刷新。",
       "authorizationFailed": "授权失败，可只重试失败项。",
       "unconfirmed": "授权结果尚未确认，重试前将先核验已有授权。",
       "roleConflict": "已有授权的角色不同，请先在权限管理中核对。",
@@ -1379,7 +1373,6 @@
       "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
       "modelPlaceholder": "选择模型",
       "modelRequired": "请选择生成模型",
-      "created": "代码 Wiki 已创建，正在生成内容。",
       "scheduleNotConfigured": "代码 Wiki 已创建，但定期更新未保存；可进入 Wiki 后重新配置。",
       "scheduledUpdate": "定期更新",
       "scheduledUpdateHint": "首次生成会在创建后立即开始；也可以启用后续定期检查。"

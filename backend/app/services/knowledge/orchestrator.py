@@ -220,6 +220,11 @@ class _WegentRetrievalConfigAdapter:
         )
 
 
+class DocumentPreviewNotReadyError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("Document content is not ready for preview")
+
+
 class KnowledgeOrchestrator:
     """
     Knowledge base operations orchestrator.
@@ -917,7 +922,7 @@ class KnowledgeOrchestrator:
         if document.source_type != DocumentSourceType.EXTERNAL.value:
             return
         if not document.attachment_id:
-            raise ValueError("Document content is not ready for preview")
+            raise DocumentPreviewNotReadyError()
 
     @report_single_read
     def read_document_content(
@@ -975,7 +980,7 @@ class KnowledgeOrchestrator:
         # An attachment ID alone does not prove that stored text is readable.
         # Use total length, not page length: a valid EOF page can be empty.
         if document.source_type == "external" and result["total_length"] == 0:
-            raise ValueError("Document content is not ready for preview")
+            raise DocumentPreviewNotReadyError()
 
         return DocumentContentReadResponse(
             document_id=result["id"],
@@ -1100,6 +1105,7 @@ class KnowledgeOrchestrator:
         exempt_calls_before_check: Optional[int] = None,
         multimodal_update_fields: Optional[Dict[str, Any]] = None,
         dingtalk_auto_sync_enabled: Optional[bool] = None,
+        kb_type: Optional[Literal["notebook", "classic"]] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -1135,6 +1141,8 @@ class KnowledgeOrchestrator:
         # Build update data with only provided fields to preserve unset-vs-clear semantics
         # Only include fields that were explicitly provided (not None)
         update_fields = {}
+        if kb_type is not None:
+            update_fields["kb_type"] = kb_type
         if name is not None:
             update_fields["name"] = name
         if description is not None:

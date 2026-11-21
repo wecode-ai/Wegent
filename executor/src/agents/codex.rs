@@ -4549,6 +4549,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         runtime_capabilities::mcp_environment::AVAILABILITY_INSTRUCTIONS,
+        "Do not give unsolicited updates about connector startup or availability. If an unavailable connector limited the requested work, explain the impact in the final reply. Answer direct questions about connector status.",
         host_skills::INSTRUCTIONS,
         if crate::python_runtime::managed_python_bridge_configured() {
             crate::plugin_python::INSTRUCTIONS

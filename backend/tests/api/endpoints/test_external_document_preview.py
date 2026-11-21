@@ -110,26 +110,35 @@ def test_unavailable_attachment_does_not_return_empty_success(
     )
 
     assert response.status_code == 400
+    assert response.json()["error_code"] == "document_preview_not_ready"
     assert response.json()["detail"] == "Document content is not ready for preview"
 
 
+@pytest.mark.parametrize("scoped", [True, False], ids=["knowledge-base", "standalone"])
 def test_placeholder_cannot_be_previewed(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
     external_document: KnowledgeDocument,
+    scoped: bool,
 ) -> None:
     external_document.attachment_id = 0
     external_document.index_status = DocumentIndexStatus.QUEUED
     test_db.commit()
 
+    path = (
+        f"/api/knowledge-bases/{external_document.kind_id}/documents/{external_document.id}/detail"
+        if scoped
+        else f"/api/knowledge-documents/{external_document.id}/detail"
+    )
     response = test_client.get(
-        f"/api/knowledge-documents/{external_document.id}/detail",
+        path,
         headers={"Authorization": f"Bearer {test_token}"},
         params={"include_summary": False},
     )
 
     assert response.status_code == 400
+    assert response.json()["error_code"] == "document_preview_not_ready"
     assert response.json()["detail"] == "Document content is not ready for preview"
 
 

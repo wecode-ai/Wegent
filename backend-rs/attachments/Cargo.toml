@@ -1,0 +1,49 @@
+[package]
+name = "wegent-attachments"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Attachment upload, download, and metadata"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chardetng.workspace = true
+chrono = { workspace = true, features = ["clock", "serde"] }
+csv.workspace = true
+encoding_rs.workspace = true
+flate2 = { workspace = true, features = ["zlib"] }
+futures-util = { workspace = true, features = ["std"] }
+getrandom.workspace = true
+jsonwebtoken.workspace = true
+libz-sys.workspace = true
+md-5.workspace = true
+regex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing.workspace = true
+turbojpeg = { workspace = true, features = ["cmake"] }
+wegent-backend-config.workspace = true
+wegent-crypto.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-knowledge-access.workspace = true
+wegent-media.workspace = true
+wegent-python-compat.workspace = true
+wegent-storage.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+wegent-backend-test-support.workspace = true
+wegent-identity = { workspace = true, features = ["test-support"] }
+wegent-task-store = { workspace = true, features = ["test-support"] }

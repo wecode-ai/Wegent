@@ -138,6 +138,31 @@ def test_creation_is_refused_without_repository_access(
     assert "read access" in response.json()["detail"]
 
 
+def test_settings_update_cannot_convert_code_wiki(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    kind_services_use_test_db,
+):
+    with patch(
+        "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
+        return_value={"has_access": True},
+    ):
+        created = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
+    assert created.status_code == 201
+    path = f"/api/knowledge-bases/{created.json()['id']}"
+
+    updated = test_client.put(
+        path, json={"kb_type": "classic", "name": "Changed"}, headers=auth_headers
+    )
+
+    assert updated.status_code == 400
+    assert updated.json()["detail"] == "Cannot change the opening view of a code wiki"
+    current = test_client.get(path, headers=auth_headers)
+    assert current.status_code == 200
+    assert current.json()["kb_type"] == "code_wiki"
+    assert current.json()["name"] == PAYLOAD["name"]
+
+
 def test_creation_requires_authentication(test_client: TestClient):
     response = test_client.post(CREATE_URL, json=PAYLOAD)
 

@@ -1,0 +1,11 @@
+[package]
+name = "wegent-execution-events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Execution event protocol shared by HTTP and Socket.IO"
+
+[dependencies]
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }

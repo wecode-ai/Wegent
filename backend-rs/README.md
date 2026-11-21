@@ -1,9 +1,12 @@
 # Wegent backend-rs
 
 `backend-rs` contains the open-source Wegent Rust APIs and the hybrid listener.
-It is a library plus a small executable built from `AppState`, `Application`,
-and the reusable hybrid runtime. Generic streaming proxy and upgrade behavior
-live in `brz-http-gateway`.
+Its Cargo workspace contains `be-server` and sibling domain libraries.
+`be-server` assembles `AppState`, `Application`, and the hybrid runtime.
+Each domain library owns its service dependencies and route registration.
+Generic streaming proxy and upgrade behavior live in `brz-http-gateway`.
+The root `Cargo.toml` pins dependency versions in `[workspace.dependencies]`.
+Member manifests inherit those versions and select the features they need.
 
 The route configuration selects the migrated public APIs. Requests without a
 matching method and path continue to the Python backend. The checked-in

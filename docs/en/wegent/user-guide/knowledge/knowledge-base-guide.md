@@ -83,11 +83,11 @@ See [Knowledge Base Types](./knowledge-base-types.md) for detailed comparison.
 
 ---
 
-### Space and Authorization After Creation
+### Space and Creation Result
 
 New libraries default to personal space. Choose another space where you can create libraries under More settings. If you have filtered by a team where you can create, the dialog selects that team and explains that team permissions are inherited. If creation is unavailable there, explicitly choose personal space or another authorized space.
 
-After creation, Library created confirms that the library is saved. Authorize people, teams, or other supported targets immediately, or finish later; closing authorization does not delete the library. Retry only failed grants. If a result is uncertain, existing grants are verified before another write. A failed list refresh can be retried separately without creating another library. Existing role choices and permission restrictions still apply.
+After the library is created, the dialog closes and the current list refreshes. If the refresh fails, select **Retry** in the list. To add collaborators, open **Permission Details** for the library.
 
 ---
 
@@ -257,7 +257,7 @@ Knowledge bases support fine-grained access control through the Share Service ar
 
 ### Managing Members
 
-The library list's **Permission Details**, ordinary library details, CodeWiki document management, and the **Library created** entry use one permission dialog. Opening it preserves the document list and its position; closing it restores focus to the entry. On mobile, open permission details from the list's **More** menu.
+The library list's **Permission Details**, ordinary library details, and CodeWiki document management use one permission dialog. Opening it preserves the document list and its position; closing it restores focus to the entry. On mobile, open permission details from the list's **More** menu.
 
 1. View authorization objects and their permissions. Managers can also view pending requests.
 2. Click **Add collaborator**, select people by username or email, or search for groups.
@@ -265,8 +265,6 @@ The library list's **Permission Details**, ordinary library details, CodeWiki do
 4. Click **Authorize**. Partial success leaves only failed targets for retry; uncertain results are checked against existing grants first.
 
 Users who can directly access the library can inspect their effective permission and sources, the creator, owning-space inheritance rules, and all approved authorization objects. Readers have no editing or removal controls and do not load approval requests. Managers can continue changing explicit grant roles, removing members, and reviewing requests in the same dialog. The creator is an identity and inherited rules are not editable or removable member records. Inherited rules do not expand every group member or imply that all members have the same role.
-
-After creation, **Finish / Configure later** keeps the library. A failed list refresh can be retried separately without creating the library again or repeating grants.
 
 ### Group Authorization
 

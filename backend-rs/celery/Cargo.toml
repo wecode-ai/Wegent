@@ -1,0 +1,17 @@
+[package]
+name = "wegent-celery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Celery protocol-v2 publication over Redis"
+
+[dependencies]
+base64 = { workspace = true }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+getrandom = { workspace = true }
+md-5 = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+wegent-python-compat = { workspace = true }

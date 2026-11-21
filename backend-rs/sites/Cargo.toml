@@ -1,0 +1,24 @@
+[package]
+name = "wegent-sites"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Sites catalogue routes and upstream integration"
+
+[dependencies]
+chrono = { workspace = true, features = ["clock", "serde"] }
+anyhow = { workspace = true }
+brz-json = { workspace = true }
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+url = { workspace = true }
+tracing = { workspace = true }
+wegent-backend-config = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-identity = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
