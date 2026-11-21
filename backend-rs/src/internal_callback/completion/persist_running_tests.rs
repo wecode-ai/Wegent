@@ -586,7 +586,7 @@ async fn verify_device_dispatch_terminal_race(
     let schema: Schema = writer.fetch_one("SELECT DATABASE() AS name", ()).await?;
     let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
     let replica = MysqlRows::start_results(|sql| {
-        if sql.contains("FROM `tasks`") {
+        if sql.starts_with("SELECT id, user_id, kind, name, namespace, json, is_active") {
             let task = vec![
                 ("id", MysqlValue::I64(12)),
                 ("user_id", MysqlValue::I32(7)),

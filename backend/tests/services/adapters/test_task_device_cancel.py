@@ -116,7 +116,11 @@ def _session_local(test_db: Session):
 
 
 def _cancel_detail(task: TaskResource, status: str) -> dict:
-    return {"status": status, "updated_at": datetime.now()}
+    return {
+        "status": status,
+        "updated_at": datetime.now(),
+        "device_id": task.json["spec"]["device_id"],
+    }
 
 
 def _add_approved_member(db: Session, task_id: int, user_id: int) -> None:
@@ -286,7 +290,7 @@ async def test_pending_device_cancel_finalizes_without_emitting_to_the_device(
         ),
         patch.object(session_manager, "publish_callback_event", publish_callback),
         patch(
-            "app.services.chat.operations.cancel.publish_task_cancelled_events",
+            "app.services.adapters.task_kinds.device_cancel.publish_task_cancelled_events",
             publish_completed,
         ),
         patch("app.core.socketio.get_sio", return_value=sio),

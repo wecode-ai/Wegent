@@ -1172,7 +1172,7 @@ class TaskOperationsMixin:
         if not task_dict:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        device_id = self._device_execution_id(db, task_id)
+        device_id = (task_dict.get("device_id") or "").strip()
         if device_id:
             from .device_cancel import cancel_device_task
 
@@ -1231,16 +1231,6 @@ class TaskOperationsMixin:
             return await self._cancel_executor_task(
                 db, task_id, user_id, background_task_runner
             )
-
-    @staticmethod
-    def _device_execution_id(db: Session, task_id: int) -> Optional[str]:
-        """Read the Task's immutable traditional-device placement."""
-        task = task_stores.task_store.get_active_task(db, task_id=task_id)
-        if not task or not task.json:
-            return None
-        task_crd = Task.model_validate(task.json)
-        device_id = (task_crd.spec.device_id or "").strip()
-        return device_id or None
 
     def _is_chat_shell_task(self, db: Session, task_id: int) -> bool:
         """Check if a task is a Chat Shell task."""
