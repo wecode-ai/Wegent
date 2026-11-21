@@ -729,9 +729,12 @@ export function createDesktopScenario({
       assert.equal(published[0].assistant_name, reviewerName)
       assert.equal(published[0].author_id, userId)
       await click(control, selector(`independent-issue-${issue.id}`))
-      await wait(control, `${dialog} article`, { text: reviewReply, visible: true })
-      await wait(control, `${dialog} article`, { text: reviewerName, visible: true })
-      await wait(control, `${dialog} article [role="img"][aria-label]`, { visible: true })
+      const reviewArticle = `${dialog} article:has([role="img"][aria-label])`
+      await wait(control, reviewArticle, { text: reviewReply })
+      await control.command('scrollIntoView', reviewArticle, { visible: true })
+      await wait(control, reviewArticle, { text: reviewReply, visible: true })
+      await wait(control, reviewArticle, { text: reviewerName, visible: true })
+      await wait(control, `${reviewArticle} [role="img"][aria-label]`, { visible: true })
       await captureScreenshot(control, '12-assigned-independent-issue-assistant-reply.png')
     },
   }

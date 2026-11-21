@@ -976,7 +976,12 @@ impl RuntimeWorkRpcHandler {
                     })
             }
             .ok_or_else(|| {
-                AppIpcError::new("permission_denied", "Work source is no longer connected")
+                let message = if independent {
+                    "Independent Issue work is no longer connected"
+                } else {
+                    "Work project is no longer connected"
+                };
+                AppIpcError::new("permission_denied", message)
             })?;
             let issue_id = origin["loopItemId"].as_str().unwrap_or_default();
             let mut issue = self.read_stand_in_issue(store, user, origin).await?;
