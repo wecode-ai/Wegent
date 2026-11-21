@@ -15,6 +15,8 @@
     "packages/collaboration/src/conversation/useConversationVirtualizer.*",
     "packages/collaboration/src/conversation/useConversationScrollController.*",
     "wework/e2e/desktop/modules/streaming-conversation-switching.mjs",
+    "wework/e2e/desktop/modules/background-window-refresh.mjs",
+    "wework/src/desktop/workbenchWindowActivity.ts",
     "wework/e2e/desktop/modules/streaming-text-composer-layout.mjs",
     "wework/e2e/desktop/modules/streaming-text-scrollbar.mjs",
     "wework/e2e/desktop/modules/streaming-text-rich-task-switch.mjs",

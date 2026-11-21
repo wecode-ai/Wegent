@@ -667,7 +667,11 @@ function observeElementTypography(
   const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
   resize?.observe(element)
   const mutation = typeof MutationObserver === 'undefined' ? null : new MutationObserver(update)
-  mutation?.observe(root, { attributes: true, attributeFilter: ['style', 'class'] })
+  const themeScope = element.closest('.collaboration-theme')
+  const styleChanges = { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] }
+  mutation?.observe(root, styleChanges)
+  mutation?.observe(element, styleChanges)
+  if (themeScope) mutation?.observe(themeScope, styleChanges)
   const fontsLoaded = () => {
     if (!active) return
     advanceFontRevision()
@@ -675,10 +679,10 @@ function observeElementTypography(
     queueMicrotask(update)
   }
   fonts?.addEventListener('loadingdone', fontsLoaded)
+  update()
   return {
     element,
     propertyKey: JSON.stringify(propertyNames),
-    update,
     stop() {
       active = false
       resize?.disconnect()
@@ -726,7 +730,6 @@ export function useElementTypography(
         publish
       )
     }
-    binding.current.update()
   })
   useLayoutEffect(
     () => () => {
