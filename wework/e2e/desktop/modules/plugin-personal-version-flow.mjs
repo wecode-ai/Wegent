@@ -329,6 +329,7 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         }
         await waitForAuthorCloudInstall(cloud, listing)
         await assertPersonalSourceUnchanged(source)
+        await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
       }
     } finally {
       const installed = await accountPlugin(cloud, name)
