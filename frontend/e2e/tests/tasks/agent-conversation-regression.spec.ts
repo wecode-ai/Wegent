@@ -182,7 +182,7 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
 
-    const timingResponse = await request.get(`/api/tasks/${taskId}/timing`, {
+    const timingResponse = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/timing`, {
       headers: authHeaders(),
     })
     expect(timingResponse.status(), await timingResponse.text()).toBe(200)
