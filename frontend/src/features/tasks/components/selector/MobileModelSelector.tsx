@@ -23,6 +23,9 @@ import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import { ModelCapabilityDescription } from '@/components/model-select/ModelCapabilityDescription'
 import { ModelSelectionGuideLink } from '@/components/model-select/ModelSelectionGuideLink'
+import { ModelPrimaryGroupIcon } from '@/components/model-select/ModelPrimaryGroupIcon'
+import { ModelGroupIconLoadError } from '@/components/model-select/ModelGroupIconLoadError'
+import { useModelPrimaryGroupIcons } from '@/components/model-select/useModelPrimaryGroupIcons'
 import {
   buildModelCascadeGroups,
   getModelDisplayName,
@@ -117,7 +120,7 @@ export default function MobileModelSelector({
   const [searchValue, setSearchValue] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [step, setStep] = useState<MobileModelStep>('primary')
-  const [activeGroupName, setActiveGroupName] = useState('')
+  const [activeGroupKey, setActiveGroupKey] = useState<string | null>()
   const [activeSubGroupName, setActiveSubGroupName] = useState('')
 
   useEffect(() => {
@@ -144,6 +147,12 @@ export default function MobileModelSelector({
     [t]
   )
 
+  const modelGroup = modelSelection.displayModelGroup?.trim()
+  const groupIcons = useModelPrimaryGroupIcons(
+    Boolean(modelGroup) ||
+      (isOpen && modelSelection.filteredModels.some(model => model.modelGroup?.trim()))
+  )
+
   const cascadeGroups = useMemo(
     () =>
       buildModelCascadeGroups(modelSelection.filteredModels, {
@@ -156,13 +165,12 @@ export default function MobileModelSelector({
   useEffect(() => {
     if (!isOpen || cascadeGroups.length === 0) return
 
-    const selectedGroupName =
-      modelSelection.selectedModel && modelSelection.selectedModel.name !== DEFAULT_MODEL_NAME
-        ? getGroupName(modelSelection.selectedModel, groupLabels.ungrouped)
-        : ''
+    const selectedGroupKey = modelSelection.selectedModel
+      ? modelSelection.displayModelGroup?.trim() || null
+      : undefined
     const nextGroup =
-      cascadeGroups.find(group => group.name === activeGroupName) ??
-      cascadeGroups.find(group => group.name === selectedGroupName) ??
+      cascadeGroups.find(group => group.configuredName === activeGroupKey) ??
+      cascadeGroups.find(group => group.configuredName === selectedGroupKey) ??
       cascadeGroups[0]
     const selectedSubGroupName =
       modelSelection.selectedModel && modelSelection.selectedModel.name !== DEFAULT_MODEL_NAME
@@ -173,20 +181,21 @@ export default function MobileModelSelector({
       nextGroup.subGroups.find(subGroup => subGroup.name === selectedSubGroupName) ??
       nextGroup.subGroups[0]
 
-    setActiveGroupName(nextGroup.name)
+    setActiveGroupKey(nextGroup.configuredName)
     setActiveSubGroupName(nextSubGroup?.name ?? '')
   }, [
-    activeGroupName,
+    activeGroupKey,
     activeSubGroupName,
     cascadeGroups,
     groupLabels.uncategorized,
     groupLabels.ungrouped,
     isOpen,
+    modelSelection.displayModelGroup,
     modelSelection.selectedModel,
   ])
 
   const activeGroup =
-    cascadeGroups.find(group => group.name === activeGroupName) ?? cascadeGroups[0]
+    cascadeGroups.find(group => group.configuredName === activeGroupKey) ?? cascadeGroups[0]
   const activeSubGroup =
     activeGroup?.subGroups.find(subGroup => subGroup.name === activeSubGroupName) ??
     activeGroup?.subGroups[0]
@@ -288,11 +297,11 @@ export default function MobileModelSelector({
 
         return (
           <button
-            key={group.name}
+            key={group.configuredName === null ? 'ungrouped:' : `group:${group.configuredName}`}
             type="button"
             data-testid={`mobile-model-primary-group-${group.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
             onClick={() => {
-              setActiveGroupName(group.name)
+              setActiveGroupKey(group.configuredName)
               setActiveSubGroupName(group.subGroups[0]?.name ?? '')
               setStep('secondary')
             }}
@@ -303,7 +312,14 @@ export default function MobileModelSelector({
             )}
           >
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[15px] text-text-primary">{group.name}</div>
+              <div className="flex min-w-0 items-center gap-1.5 text-[15px] text-text-primary">
+                <ModelPrimaryGroupIcon
+                  group={group.configuredName}
+                  icon={group.configuredName ? groupIcons.icons?.[group.configuredName] : undefined}
+                  decorative
+                />
+                <span className="truncate">{group.name}</span>
+              </div>
               <div className="mt-0.5 text-[13px] text-[#8e8e93]">{group.count}</div>
             </div>
             <ChevronRight className="ml-3 h-5 w-5 flex-shrink-0 text-[#8e8e93]" />
@@ -392,8 +408,12 @@ export default function MobileModelSelector({
                 <span className="block truncate text-sm font-medium text-text-primary">
                   {t('common:models.label', '模型')}
                 </span>
-                <span className="mt-0.5 block truncate text-xs text-text-muted">
-                  {modelSelection.getDisplayText()}
+                <span className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-text-muted">
+                  <span className="min-w-0 truncate">{modelSelection.getDisplayText()}</span>
+                  <ModelPrimaryGroupIcon
+                    group={modelGroup}
+                    icon={modelGroup ? groupIcons.icons?.[modelGroup] : undefined}
+                  />
                 </span>
               </span>
               {isDisabled ? (
@@ -403,8 +423,12 @@ export default function MobileModelSelector({
               )}
             </>
           ) : (
-            <span className="flex-1 truncate text-xs min-w-0">
-              {modelSelection.getDisplayText()}
+            <span className="flex min-w-0 items-center gap-1 text-xs">
+              <span className="min-w-0 flex-1 truncate">{modelSelection.getDisplayText()}</span>
+              <ModelPrimaryGroupIcon
+                group={modelGroup}
+                icon={modelGroup ? groupIcons.icons?.[modelGroup] : undefined}
+              />
             </span>
           )}
         </button>
@@ -452,6 +476,8 @@ export default function MobileModelSelector({
             />
           </div>
         </div>
+
+        {groupIcons.failed && <ModelGroupIconLoadError onRetry={groupIcons.retry} />}
 
         {/* Model list - iOS grouped style */}
         <div
