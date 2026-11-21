@@ -500,6 +500,7 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     verify_chat_cancel_waits_for_runtime_then_falls_back(writer, &app).await?;
     verify_cancel_callback_order(writer, &app).await?;
     verify_device_dispatch_terminal_race(writer, &app).await?;
+    verify_device_dispatch_retries_failed_terminal_read(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
 }
 
@@ -661,6 +662,61 @@ async fn verify_device_dispatch_terminal_race(
         callback_statuses(writer).await?,
         ("CANCELLED".into(), "CANCELLED".into())
     );
+    Ok(())
+}
+
+async fn verify_device_dispatch_retries_failed_terminal_read(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    reset_callback_state(writer, "RUNNING").await?;
+    terminal_callback(app, "done", "committed before the read failed")
+        .await
+        .unwrap();
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    let mut subscription = redis.subscribe("callback:channel:43").await?;
+    // Force the writer's terminal projection to fail, while the offline
+    // submission check can still read the users and devices tables.
+    writer
+        .execute(
+            "ALTER TABLE subtasks RENAME COLUMN error_message TO unavailable_error_message",
+            (),
+        )
+        .await?;
+    dispatch_to_offline_device(app).await;
+    writer
+        .execute(
+            "ALTER TABLE subtasks RENAME COLUMN unavailable_error_message TO error_message",
+            (),
+        )
+        .await?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), subscription.next_message())
+            .await
+            .is_err(),
+        "a failed writer read must not publish a synthetic failure"
+    );
+
+    crate::internal_callback::recovery::retry_device_dispatch(app, 12, 43).await?;
+    let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
+        .await??
+        .expect("terminal recovery replays the committed callback");
+    let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
+    assert_eq!(event["type"], "done");
+    assert_eq!(event["result"]["value"], "committed before the read failed");
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("COMPLETED".into(), "COMPLETED".into())
+    );
+
+    crate::internal_callback::recovery::retry_device_dispatch(app, 12, 43).await?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), subscription.next_message())
+            .await
+            .is_err(),
+        "successful recovery retires the pending device dispatch"
+    );
+    subscription.unsubscribe().await?;
     Ok(())
 }
 

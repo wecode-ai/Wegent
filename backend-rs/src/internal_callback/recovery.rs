@@ -16,6 +16,7 @@ use super::{completion, deliver_terminal_callback, event::ExecutionEvent, tables
 
 const QUEUE: &str = "wegent:terminal-delivery:pending:rust";
 const EVENTS: &str = "{wegent:terminal-delivery:pending:rust}:events";
+const DEVICE_DISPATCH_PREFIX: &str = "device-dispatch:";
 const RETRY_SECONDS: i64 = 5;
 const MAX_RECOVERIES: usize = 8;
 
@@ -25,15 +26,23 @@ pub(super) async fn track(
     subtask_id: i64,
     event: Option<&Value>,
 ) -> brz_redis::RedisResult<()> {
-    let member = format!("{task_id}:{subtask_id}");
-    let score = next_attempt().to_string();
+    track_member(redis, &format!("{task_id}:{subtask_id}"), event).await
+}
+
+async fn track_member(
+    redis: &RedisService,
+    member: &str,
+    event: Option<&Value>,
+) -> brz_redis::RedisResult<()> {
     if let Some(event) = event {
+        let score = next_attempt().to_string();
+        let payload = event.to_string();
         redis
             .eval::<_, _, _, i64>(
                 "redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
              return redis.call('HSETNX', KEYS[2], ARGV[1], ARGV[3])",
                 [QUEUE, EVENTS],
-                [member, score, event.to_string()],
+                [member, score.as_str(), payload.as_str()],
             )
             .await?;
     } else {
@@ -47,15 +56,38 @@ pub(super) async fn retire(
     task_id: i64,
     subtask_id: i64,
 ) -> brz_redis::RedisResult<()> {
+    retire_member(redis, &format!("{task_id}:{subtask_id}")).await
+}
+
+async fn retire_member(redis: &RedisService, member: &str) -> brz_redis::RedisResult<()> {
     redis
         .eval::<_, _, _, i64>(
             "redis.call('HDEL', KEYS[2], ARGV[1])
          return redis.call('ZREM', KEYS[1], ARGV[1])",
             [QUEUE, EVENTS],
-            [format!("{task_id}:{subtask_id}")],
+            [member],
         )
         .await?;
     Ok(())
+}
+
+fn device_dispatch_member(task_id: i64, subtask_id: i64) -> String {
+    format!("{DEVICE_DISPATCH_PREFIX}{task_id}:{subtask_id}")
+}
+
+pub(super) async fn settle_device_dispatch(
+    state: &AppState,
+    event: &ExecutionEvent,
+) -> anyhow::Result<()> {
+    let redis = state
+        .redis
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("device dispatch recovery requires Redis"))?;
+    // Keep a separate record so ordinary callback delivery cannot retire a
+    // pending replay for a Responses subscriber.
+    let member = device_dispatch_member(event.task_id, event.subtask_id);
+    track_member(redis, &member, Some(&event.to_value())).await?;
+    recover(state, &member).await
 }
 
 fn next_attempt() -> i64 {
@@ -114,7 +146,8 @@ async fn due(redis: &RedisService, limit: usize) -> brz_redis::RedisResult<Vec<S
 }
 
 async fn recover(state: &AppState, member: &str) -> anyhow::Result<()> {
-    let Some((task_id, subtask_id)) = member.split_once(':') else {
+    let device_dispatch = member.strip_prefix(DEVICE_DISPATCH_PREFIX);
+    let Some((task_id, subtask_id)) = device_dispatch.unwrap_or(member).split_once(':') else {
         return Ok(());
     };
     let task_id: i64 = task_id.parse()?;
@@ -133,9 +166,37 @@ async fn recover(state: &AppState, member: &str) -> anyhow::Result<()> {
         subtask_id,
         delivery,
         || anyhow::anyhow!("terminal delivery lease unavailable"),
-        recover_locked(state, redis, task_id, subtask_id),
+        async {
+            if device_dispatch.is_some() {
+                recover_device_dispatch_locked(state, redis, member).await
+            } else {
+                recover_locked(state, redis, task_id, subtask_id).await
+            }
+        },
     )
     .await
+}
+
+async fn recover_device_dispatch_locked(
+    state: &AppState,
+    redis: &RedisService,
+    member: &str,
+) -> anyhow::Result<()> {
+    if let Some(raw) = redis.hget::<_, _, String>(EVENTS, member).await? {
+        let event = ExecutionEvent::from_value(&serde_json::from_str(&raw)?);
+        super::device_dispatch::settle_locked(state, redis, &event).await?;
+    }
+    retire_member(redis, member).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) async fn retry_device_dispatch(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+) -> anyhow::Result<()> {
+    recover(state, &device_dispatch_member(task_id, subtask_id)).await
 }
 
 async fn recover_locked(

@@ -20,8 +20,6 @@
 //! The supervisor keeps every task handle, reaps completed tasks, and logs a
 //! panicking or early-exiting task with its task/subtask/request identity, so
 //! a background failure is never invisible.
-pub(crate) mod device_terminal;
-
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;

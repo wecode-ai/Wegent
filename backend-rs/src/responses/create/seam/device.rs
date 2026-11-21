@@ -215,9 +215,11 @@ pub(crate) async fn dispatch_responses_device(
     recover_before_dispatch(state, request, Some(device_route)).await?;
     let dispatched = dispatch_device_turn(state, request, None, device_route).await;
     if let Err(error) = &dispatched {
-        crate::responses::dispatch::device_terminal::settle_dispatch_error(
+        crate::internal_callback::process_device_dispatch_failure(
             state,
-            request,
+            request.task_id,
+            request.subtask_id,
+            request.message_id,
             build_failure_message(error),
         )
         .await;

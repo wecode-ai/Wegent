@@ -5,38 +5,24 @@
 //! Settle device submission failures against the committed assistant turn.
 
 use brz_mysql::{MysqlResult, MysqlRow, MysqlTransaction};
+use brz_redis::RedisService;
 use serde_json::Value;
 
-use crate::internal_callback::{
+use crate::state::AppState;
+
+use super::{
     completion::{self, StoredTerminal},
     event::{EventType, ExecutionEvent},
     session,
 };
-use crate::state::AppState;
 
-use super::ExecutionRequest;
-
-/// Replay the committed winner, or settle the turn if device dispatch did not start.
-pub(crate) async fn settle_dispatch_error(
+/// Replay the committed winner, or settle the turn if device dispatch failed.
+pub(super) async fn settle_locked(
     app: &AppState,
-    request: &ExecutionRequest,
-    message: &str,
-) {
-    if let Err(error) = settle(app, request, message).await {
-        tracing::warn!(
-            %error,
-            task_id = request.task_id,
-            subtask_id = request.subtask_id,
-            "device dispatch terminal settlement failed"
-        );
-    }
-}
-
-async fn settle(app: &AppState, request: &ExecutionRequest, message: &str) -> anyhow::Result<()> {
-    let Some(redis) = app.redis.as_ref() else {
-        return Ok(());
-    };
-    let (task_id, subtask_id) = (request.task_id, request.subtask_id);
+    redis: &RedisService,
+    failure: &ExecutionEvent,
+) -> anyhow::Result<()> {
+    let (task_id, subtask_id) = (failure.task_id, failure.subtask_id);
     let (task_table, subtask_table) =
         completion::resolve_tables(Some(app), crate::internal_callback::tables(app), task_id)
             .await?;
@@ -46,14 +32,14 @@ async fn settle(app: &AppState, request: &ExecutionRequest, message: &str) -> an
         Some(terminal) => replay_event(task_id, subtask_id, terminal),
         None => {
             let cancelling = cancellation_requested(app, &task_table, task_id).await?;
-            if submit_terminal(app, request, message, cancelling).await? {
+            if submit_terminal(app, redis, failure, cancelling).await? {
                 return Ok(());
             }
             // A failure cannot replace a cancellation intent that committed
             // between the writer read and the terminal transaction.
             if !cancelling
                 && cancellation_requested(app, &task_table, task_id).await?
-                && submit_terminal(app, request, message, true).await?
+                && submit_terminal(app, redis, failure, true).await?
             {
                 return Ok(());
             }
@@ -65,7 +51,7 @@ async fn settle(app: &AppState, request: &ExecutionRequest, message: &str) -> an
                 Some(terminal) => replay_event(task_id, subtask_id, terminal),
                 // A deleted or superseded turn cannot be settled in MySQL.
                 // Its active SSE reader still needs the submission failure.
-                None => failure_event(request, message),
+                None => failure.clone(),
             }
         }
     };
@@ -75,30 +61,30 @@ async fn settle(app: &AppState, request: &ExecutionRequest, message: &str) -> an
 
 async fn submit_terminal(
     app: &AppState,
-    request: &ExecutionRequest,
-    message: &str,
+    redis: &RedisService,
+    failure: &ExecutionEvent,
     cancelling: bool,
 ) -> anyhow::Result<bool> {
-    let event = if cancelling {
+    let (mut event, status) = if cancelling {
         let mut event =
-            ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
+            ExecutionEvent::new(EventType::Cancelled, failure.task_id, failure.subtask_id);
         event.result = Some(serde_json::json!({}));
-        event.message_id = request.message_id;
-        event
+        event.message_id = failure.message_id;
+        (event, "CANCELLED")
     } else {
-        failure_event(request, message)
+        (failure.clone(), "FAILED")
     };
-    crate::internal_callback::process_dispatch_failure(app, event)
-        .await
-        .map_err(|error| anyhow::anyhow!("device terminal delivery is pending recovery: {error:?}"))
-}
-
-fn failure_event(request: &ExecutionRequest, message: &str) -> ExecutionEvent {
-    let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
-    event.message_id = request.message_id;
-    event.error = Some(message.to_owned());
-    event.error_code = Some("EXECUTOR_DISPATCH_FAILED".to_owned());
-    event
+    // Recovery already records this work and will re-read the winner on retry.
+    Box::pin(super::deliver_terminal_callback(
+        app,
+        redis,
+        &mut event,
+        status,
+        (None, None),
+        false,
+    ))
+    .await
+    .map_err(|error| anyhow::anyhow!("device terminal delivery is pending recovery: {error:?}"))
 }
 
 async fn cancellation_requested(

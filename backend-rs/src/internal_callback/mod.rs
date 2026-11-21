@@ -17,6 +17,7 @@
 pub(crate) mod block_frames;
 pub(crate) mod channel;
 pub(crate) mod completion;
+mod device_dispatch;
 pub(crate) mod dingtalk_card;
 pub(crate) mod dingtalk_stream;
 pub(crate) mod emitter;
@@ -122,9 +123,7 @@ pub(crate) async fn process_execution_event(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> Result<(), FastApiError> {
-    process_event(state, event, (executor_name, executor_namespace), false)
-        .await
-        .map(|_| ())
+    process_event(state, event, (executor_name, executor_namespace), false).await
 }
 
 pub(crate) async fn process_background_shell_event(
@@ -138,17 +137,32 @@ pub(crate) async fn process_background_shell_event(
         true,
     )
     .await
-    .map(|_| ())
 }
 
-/// Queue a locally generated outcome so a worker can retry its terminal write.
-///
-/// Returns whether this call published a terminal callback frame.
+/// Queue a locally generated failure so a worker can retry its terminal write.
 pub(crate) async fn process_dispatch_failure(
     state: &AppState,
     event: event::ExecutionEvent,
-) -> Result<bool, FastApiError> {
+) -> Result<(), FastApiError> {
     process_event(state, event, (None, None), true).await
+}
+
+/// Record a device dispatch failure before consulting MySQL so recovery can
+/// re-evaluate the committed outcome if the initial writer read fails.
+pub(crate) async fn process_device_dispatch_failure(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    message_id: Option<i64>,
+    message: &str,
+) {
+    let mut event = event::ExecutionEvent::new(event::EventType::Error, task_id, subtask_id);
+    event.message_id = message_id;
+    event.error = Some(message.to_owned());
+    event.error_code = Some("EXECUTOR_DISPATCH_FAILED".to_owned());
+    if let Err(error) = recovery::settle_device_dispatch(state, &event).await {
+        tracing::warn!(%error, task_id, subtask_id, "device dispatch terminal settlement failed");
+    }
 }
 
 async fn process_event(
@@ -156,7 +170,7 @@ async fn process_event(
     mut event: event::ExecutionEvent,
     executor: (Option<&str>, Option<&str>),
     defer_advance: bool,
-) -> Result<bool, FastApiError> {
+) -> Result<(), FastApiError> {
     let terminal_status = completion::terminal_status(&event.event_type);
     let Some(redis) = state.redis.as_ref() else {
         if terminal_status.is_some() {
@@ -167,7 +181,7 @@ async fn process_event(
             );
             return Err(FastApiError::internal());
         }
-        return Ok(false);
+        return Ok(());
     };
 
     prepare_interactive_form_event(&state.interactive_form, &mut event).await;
@@ -194,14 +208,15 @@ async fn process_event(
                 defer_advance,
             )),
         )
-        .await;
+        .await
+        .map(|_| ());
     }
 
     if let Err(error) = session::publish_callback_event(redis, event.subtask_id, &event).await {
         tracing::warn!(%error, "callback channel publish failed");
     }
     channel::forward_event_to_channel_callbacks(redis, event.task_id, &event).await;
-    Ok(false)
+    Ok(())
 }
 
 async fn deliver_terminal_callback(
