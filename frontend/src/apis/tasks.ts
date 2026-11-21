@@ -232,7 +232,7 @@ export interface TaskTimingTopSuspect {
   span_id: string
   label: string
   category: string
-  duration_ms: number
+  duration_ms?: number | null
   status: string
   suggestion: string
 }

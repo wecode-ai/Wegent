@@ -136,7 +136,7 @@ const unknownDurationResponse: TaskTimingResponse = {
   top_suspects: [
     {
       ...timingResponse.top_suspects[0],
-      duration_ms: null,
+      duration_ms: undefined,
     },
   ],
   spans: [
@@ -144,7 +144,7 @@ const unknownDurationResponse: TaskTimingResponse = {
       ...timingResponse.spans[0],
       start_at_ms: null,
       end_at_ms: null,
-      duration_ms: null,
+      duration_ms: undefined,
     },
   ],
 }
