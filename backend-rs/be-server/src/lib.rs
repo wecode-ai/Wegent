@@ -276,6 +276,7 @@ pub(crate) use wegent_execution_runtime::{task_run_metric_hooks, task_run_metric
 mod task_share_api;
 use wegent_capabilities::task_skills;
 mod task_source_group;
+mod task_timing;
 use wegent_identity::task_token;
 pub use wegent_task_store::message_pair;
 pub use wegent_task_store::owned_statements as tasks_search_statements;

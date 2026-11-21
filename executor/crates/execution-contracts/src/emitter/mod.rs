@@ -38,6 +38,7 @@ pub struct ResponsesEventBuilder {
     executor_name: Option<String>,
     executor_namespace: Option<String>,
     executor_session: Option<Value>,
+    timing: Option<Value>,
     validation_id: Option<String>,
     // Clones belong to one execution; the prepared engine publishes data for
     // the runner's final callback without sharing state between requests.
@@ -63,6 +64,7 @@ impl ResponsesEventBuilder {
             executor_name: None,
             executor_namespace: None,
             executor_session: None,
+            timing: None,
             validation_id: None,
             completed_file_change_fields: Arc::new(Mutex::new(None)),
         }
@@ -93,6 +95,11 @@ impl ResponsesEventBuilder {
         self
     }
 
+    pub fn with_timing(mut self, timing: Option<Value>) -> Self {
+        self.timing = timing.filter(|value| value.is_object());
+        self
+    }
+
     pub fn with_validation_id(mut self, validation_id: Option<&str>) -> Self {
         self.validation_id = validation_id
             .map(str::trim)
@@ -110,6 +117,16 @@ impl ResponsesEventBuilder {
             data["shell_type"] = json!(shell_type);
         }
         self.envelope("response.created", data)
+    }
+
+    pub fn with_timing_boundary(mut self, key: &str, value: i64) -> Self {
+        if !self.timing.as_ref().is_some_and(Value::is_object) {
+            self.timing = Some(json!({}));
+        }
+        if let Some(timing) = self.timing.as_mut().and_then(Value::as_object_mut) {
+            timing.insert(key.to_owned(), json!(value));
+        }
+        self
     }
 
     pub fn response_completed(&self, content: &str) -> EventEnvelope {
@@ -375,7 +392,8 @@ impl ResponsesEventBuilder {
         let mut updates = json!({
             "tool_input": input,
             "tool_output": output,
-            "status": if is_error { "error" } else { "done" }
+            "status": if is_error { "error" } else { "done" },
+            "completedAt": current_epoch_millis()
         });
         if let Some(parent_tool_use_id) = parent_tool_use_id {
             updates["parent_tool_use_id"] = json!(parent_tool_use_id);
@@ -398,7 +416,9 @@ impl ResponsesEventBuilder {
         summary: Option<&str>,
         parent_tool_use_id: Option<&str>,
     ) -> EventEnvelope {
-        let mut updates = json!({});
+        let mut updates = json!({
+            "occurred_at_ms": current_epoch_millis()
+        });
         if let Some(status) = status {
             updates["status"] = json!(status);
         }
@@ -459,6 +479,10 @@ impl ResponsesEventBuilder {
 
     /// Build a typed envelope for an adapter-specific response event.
     pub fn envelope(&self, event_type: &str, data: Value) -> EventEnvelope {
+        let mut data = data;
+        if let Some(timing) = &self.timing {
+            data["timing"] = timing.clone();
+        }
         EventEnvelope {
             event_type: event_type.to_owned(),
             task_id: self.task_id.clone(),

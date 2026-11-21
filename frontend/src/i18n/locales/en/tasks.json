@@ -226,6 +226,64 @@
     "tooltip_preserved": "Executor is preserved and will not be cleaned up",
     "tooltip_not_preserved": "Click to preserve executor from cleanup"
   },
+  "timing": {
+    "action": "Timing analysis",
+    "title": "Timing analysis",
+    "subtitle": "Task execution time triage",
+    "close": "Close timing analysis",
+    "loading": {
+      "title": "Loading timing data",
+      "description": "Timing comes only from observed execution spans."
+    },
+    "empty": {
+      "title": "No timing data",
+      "description": "This task has no observed timing spans yet."
+    },
+    "error": {
+      "title": "Failed to load timing",
+      "retry": "Retry"
+    },
+    "errors": {
+      "load_failed": "Timing data could not be loaded."
+    },
+    "summary": {
+      "title": "Triage",
+      "wall_time": "Session {{duration}}",
+      "tool": "Command / tool",
+      "subagent": "Subagent",
+      "agent": "Agent / model",
+      "waiting_user": "Waiting for user",
+      "runtime": "Infra",
+      "gap": "Unobserved"
+    },
+    "suspects": {
+      "title": "Top suspects",
+      "empty": "No dominant timing suspects were found.",
+      "meta": "{{category}} · {{status}}"
+    },
+    "suggestions": {
+      "inspect_registry": "Check registry/mirror or network",
+      "inspect_git": "Check repository network or proxy",
+      "inspect_tool": "Inspect the specific command execution logs",
+      "inspect_subagent": "Inspect the subagent critical path",
+      "inspect_model": "Inspect model and orchestration time",
+      "confirm_waiting": "Confirm whether it is still waiting for the user",
+      "inspect_infra": "Contact Infra about queueing or environment preparation"
+    },
+    "timeline": {
+      "title": "Timeline details",
+      "empty": "No spans",
+      "span_meta": "{{kind}} · Turn {{turn}} · {{duration}}",
+      "leading_gap": "Leading unobserved · {{duration}}",
+      "interior_gap": "Unobserved · {{duration}}",
+      "trailing_gap": "Trailing unobserved · {{duration}}"
+    },
+    "status": {
+      "completed": "Completed",
+      "running": "Running",
+      "failed": "Failed"
+    }
+  },
   "preview": {
     "title": "Subscription Preview",
     "task_name": "Task Name",

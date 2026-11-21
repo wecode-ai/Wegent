@@ -472,16 +472,22 @@ mod tests {
         let row = repo::TaskRow {
             user_id: 3983,
             json: opaque(serde_json::json!({"spec": {"currentStage": 7}})),
+            created_at: None,
+            completed_at: None,
         };
         assert_eq!(current_stage_index(None, &row, 2), 1);
         let row = repo::TaskRow {
             user_id: 3983,
             json: opaque(serde_json::json!({"spec": {"currentStage": null}})),
+            created_at: None,
+            completed_at: None,
         };
         assert_eq!(current_stage_index(None, &row, 2), 0);
         let row = repo::TaskRow {
             user_id: 3983,
             json: opaque(serde_json::json!({"spec": {}})),
+            created_at: None,
+            completed_at: None,
         };
         assert_eq!(current_stage_index(None, &row, 3), 0);
     }

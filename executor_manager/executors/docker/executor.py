@@ -60,6 +60,69 @@ from shared.utils.task_identity import build_task_identity_env
 logger = setup_logger(__name__)
 
 
+def _record_stage_durations(timing: Dict[str, Any], boundaries: Dict[str, int]) -> None:
+    """Derive same-clock durations from adjacent observed boundaries."""
+    timing.update(_stage_durations(timing, boundaries))
+
+
+def _stage_durations(
+    timing: Dict[str, Any], boundaries: Dict[str, int]
+) -> Dict[str, int]:
+    """Return same-clock stage durations available from observed boundaries."""
+    durations: Dict[str, int] = {}
+
+    def set_duration(key: str, start: Any, end: Any) -> None:
+        value = _duration(start, end)
+        if value is not None:
+            durations.setdefault(key, value)
+
+    def boundary(*names: str) -> Any:
+        for name in names:
+            value = boundaries.get(name, timing.get(name))
+            if value is not None:
+                return value
+        return None
+
+    set_duration("queueDurationMs", timing.get("enqueuedAt"), timing.get("dequeuedAt"))
+    set_duration(
+        "dispatchWaitMs", timing.get("dequeuedAt"), boundary("instanceCreateStartedAt")
+    )
+    set_duration(
+        "provisionDurationMs",
+        boundary("instanceCreateStartedAt", "instanceReadyAt"),
+        boundary("taskDispatchedAt"),
+    )
+    set_duration(
+        "createDurationMs",
+        boundary("instanceCreateStartedAt"),
+        timing.get("instanceCreateFinishedAt"),
+    )
+    set_duration(
+        "waitReadyDurationMs",
+        timing.get("instanceCreateFinishedAt"),
+        boundary("instanceReadyAt"),
+    )
+    set_duration(
+        "dispatchDurationMs",
+        boundary("instanceReadyAt"),
+        boundary("taskDispatchedAt"),
+    )
+    return durations
+
+
+def _duration(start: Any, end: Any) -> Optional[int]:
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return None
+    if end < start:
+        return None
+    return int(end - start)
+
+
+def _current_epoch_ms() -> int:
+    """Return the current epoch time in milliseconds."""
+    return int(time.time() * 1000)
+
+
 class DockerExecutor(Executor):
     """Docker executor for running tasks in Docker containers"""
 
@@ -311,6 +374,7 @@ class DockerExecutor(Executor):
         """Execute task in existing container"""
         executor_name = status["executor_name"]
         ready_info = self.wait_instance_ready(executor_name)
+        self._record_timing(task, instanceReadyAt=_current_epoch_ms())
         dispatch_result = self.dispatch_task_to_instance(
             task, executor_name, ready_info
         )
@@ -409,6 +473,7 @@ class DockerExecutor(Executor):
         if timeout is not None:
             request_kwargs["timeout"] = timeout
 
+        self._replace_timing(task, taskDispatchedAt=_current_epoch_ms())
         return self.requests.post(endpoint, json=task, **request_kwargs)
 
     def _create_new_container(
@@ -418,11 +483,14 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
+        self._reset_attempt_timing(task, instanceCreateStartedAt=_current_epoch_ms())
         self.create_instance(task, task_info, executor_name)
+        self._record_timing(task, instanceCreateFinishedAt=_current_epoch_ms())
 
         if not is_sandbox_task:
             try:
                 ready_info = self.wait_instance_ready(executor_name)
+                self._record_timing(task, instanceReadyAt=_current_epoch_ms())
                 if not prepare_only:
                     self.dispatch_task_to_instance(task, executor_name, ready_info)
             except Exception:
@@ -524,6 +592,52 @@ class DockerExecutor(Executor):
                     valid=False,
                 )
             raise
+
+    @staticmethod
+    def _record_timing(task: Dict[str, Any], **boundaries: int) -> None:
+        """Record executor wall-time boundaries in the task payload."""
+        if not boundaries:
+            return
+        timing = task.setdefault("metadata", {}).get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+            task["metadata"]["timing"] = timing
+        for key, value in boundaries.items():
+            timing.setdefault(key, value)
+        _record_stage_durations(timing, boundaries)
+
+    @staticmethod
+    def _replace_timing(task: Dict[str, Any], **boundaries: int) -> None:
+        """Replace boundary values and derive durations from the same attempt."""
+        if not boundaries:
+            return
+        timing = task.setdefault("metadata", {}).get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+            task["metadata"]["timing"] = timing
+        for key, value in boundaries.items():
+            timing[key] = value
+        _record_stage_durations(timing, boundaries)
+
+    @staticmethod
+    def _reset_attempt_timing(task: Dict[str, Any], **boundaries: int) -> None:
+        """Replace attempt-local boundaries when a new container is created."""
+        timing = task.setdefault("metadata", {}).get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+            task["metadata"]["timing"] = timing
+        for key in (
+            "instanceCreateStartedAt",
+            "instanceCreateFinishedAt",
+            "instanceReadyAt",
+            "taskDispatchedAt",
+            "createDurationMs",
+            "waitReadyDurationMs",
+            "provisionDurationMs",
+            "dispatchDurationMs",
+        ):
+            timing.pop(key, None)
+        DockerExecutor._replace_timing(task, **boundaries)
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait for a Docker container instance to become ready."""

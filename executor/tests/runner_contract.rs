@@ -107,6 +107,41 @@ async fn background_runner_propagates_validation_id_to_all_callbacks() {
 }
 
 #[tokio::test]
+async fn background_runner_preserves_and_completes_timing_metadata() {
+    let sink = RecordingSink::default();
+    let runner = BackgroundTaskRunner::new(
+        FakeEngine {
+            outcome: ExecutionOutcome::Completed {
+                content: "done".to_owned(),
+            },
+        },
+        sink.clone(),
+    );
+    let mut request = task_request();
+    request.extra.insert(
+        "timing".to_owned(),
+        json!({"enqueuedAt": 1, "dequeuedAt": 2, "taskDispatchedAt": 3}),
+    );
+
+    runner.submit(request).await;
+    let events = sink.wait_for_events(2).await;
+
+    for event in &events {
+        assert_eq!(
+            event.data["timing"]["enqueuedAt"],
+            json!(1),
+            "{} should inherit executor-manager timing",
+            event.event_type
+        );
+    }
+    let timing = &events[1].data["timing"];
+    assert_eq!(timing["dequeuedAt"], json!(2));
+    assert_eq!(timing["taskDispatchedAt"], json!(3));
+    assert!(timing["agentStartedAt"].as_i64().unwrap() >= 3);
+    assert!(timing["agentFinishedAt"].as_i64().unwrap() >= 3);
+}
+
+#[tokio::test]
 async fn background_runner_emits_silent_completed_event_for_waiting_user_input() {
     let sink = RecordingSink::default();
     let runner = BackgroundTaskRunner::new(
