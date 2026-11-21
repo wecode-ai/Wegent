@@ -694,7 +694,8 @@ describe('useModelSelection', () => {
 
   it('uses the refreshed group of a selected catalog model', async () => {
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
-    const modelLoad = mockDeferredModelsLoad([{ ...mockModel, modelGroup: 'original' }])
+    const groupedModel = { ...mockModel, type: 'public' as const, modelGroup: 'original' }
+    const modelLoad = mockDeferredModelsLoad([groupedModel])
     const { result } = renderHook(() =>
       useModelSelection({
         teamId: 1,
@@ -707,7 +708,7 @@ describe('useModelSelection', () => {
     await waitFor(() => expect(result.current.displayModelGroup).toBe('original'))
 
     jest.mocked(modelApis.getUnifiedModels).mockResolvedValue({
-      data: [{ ...mockModel, modelGroup: 'updated' }],
+      data: [{ ...groupedModel, modelGroup: 'updated' }],
     })
     await act(async () => {
       await result.current.refreshModels()
