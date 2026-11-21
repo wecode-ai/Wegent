@@ -254,10 +254,18 @@ class ResponsesDeviceCancel(unittest.TestCase):
         self.assertEqual((result["status"], output_text(result)), (status, reply))
 
     def test_cancel_before_device_dispatch(self) -> None:
+        seed = f"Start a real device conversation for {self.marker}"
+        saved_reply = f"First reply for {self.marker}"
+        self.model_reply(seed, saved_reply)
+        with self.stream(seed) as frames:
+            response_id = self.created(frames)
+            task_id = int(response_id[5:])
+            self.assert_finish(frames, response_id, saved_reply)
+
         prompt = f"Must not reach the model for {self.marker}"
         with self.observe() as traffic, SessionLocal() as lock:
-            # Hold only the owner-row lock used by real device binding. The
-            # Responses stream and Python cancel endpoint can still run.
+            # A follow-up skips source-group setup, which also locks the owner.
+            # Hold the owner-row lock to pause device binding before dispatch.
             self.assertEqual(
                 lock.scalar(
                     text("SELECT id FROM users WHERE id = :id FOR UPDATE"),
@@ -265,9 +273,8 @@ class ResponsesDeviceCancel(unittest.TestCase):
                 ),
                 self.user_id,
             )
-            with self.stream(prompt) as frames:
-                response_id = self.created(frames)
-                task_id = int(response_id[5:])
+            with self.stream(prompt, response_id) as frames:
+                self.created(frames, response_id)
                 turn = self.assistant(task_id)
                 self.assertEqual(turn["status"], "PENDING")
                 self.cancel(response_id)
@@ -278,24 +285,24 @@ class ResponsesDeviceCancel(unittest.TestCase):
                 traffic.find(device_event("task:execute", task_id), timeout=1)
             )
         self.assertEqual(self.assistant(task_id)["status"], "CANCELLED")
-        self.assert_retrieved(response_id, "cancelled", "")
+        self.assert_retrieved(response_id, "cancelled", saved_reply)
         captures = self.checked(self.model.get("/captured-requests"))
         self.assertFalse(
             any(
-                item["method"] == "POST" and item["url"].startswith("/v1/")
+                item["method"] == "POST" and prompt in json.dumps(item["body"])
                 for item in captures
             ),
             "The cancelled pending turn reached the model",
         )
 
-    def hold_reply(self, prompt: str, reply: str) -> None:
+    def model_reply(self, prompt: str, reply: str, *, hold: bool = False) -> None:
         self.checked(
             self.model.post(
                 "/stream-rules",
                 json={
                     "matchText": prompt,
                     "responseContent": reply,
-                    "holdDone": True,
+                    "holdDone": hold,
                     "chunkDelayMs": 0,
                 },
             )
@@ -319,8 +326,8 @@ class ResponsesDeviceCancel(unittest.TestCase):
         followup = f"Continue the same device conversation with a new full answer for {self.marker}"
         partial = f"保留部分回复 {self.marker}"
         finished = f"新轮次完整回复 {self.marker}"
-        self.hold_reply(prompt, partial)
-        self.hold_reply(followup, finished)
+        self.model_reply(prompt, partial, hold=True)
+        self.model_reply(followup, finished, hold=True)
 
         with self.observe() as traffic, self.stream(prompt) as frames:
             response_id = self.created(frames)
