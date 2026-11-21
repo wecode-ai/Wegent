@@ -58,6 +58,11 @@ export function createStandInRoleDirectoryResource(
               const profile = await api.personalGet(userId, device)
               if (signal.aborted) return
               loaded = true
+              for (const route of profile.delegationRoutes ?? []) {
+                if (discovered.has(route.executionDeviceId)) continue
+                discovered.add(route.executionDeviceId)
+                pending.push(route.executionDeviceId)
+              }
               const keyFor = (role: StandInRole) =>
                 role.migrationSource ?? JSON.stringify([profile.executionDeviceId, userId, role.id])
               const profileKeys = new Set(profile.roles.map(keyFor))

@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  ACTIVE_COMPOSER_SELECTOR,
-  ACTIVE_WORKBENCH_SELECTOR,
-  selectE2EModel,
-} from './shared.mjs'
+import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR, selectE2EModel } from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
 import { assistantMessage, latestModelInputText } from './response-protocol.mjs'
 
@@ -52,7 +48,18 @@ export function createConversationAuthModelFixture({ slug, qrPrompt, ghResumePro
       const state = [...cases.values()]
         .reverse()
         .find(item => (continuation ? requestText : latest).includes(item.prompt))
-      if (!state) return null
+      if (!state) {
+        if (requestText.includes(qrPrompt)) {
+          console.info('[plugin-conversation-auth] unmatched authorization inference', {
+            matchedInRequest: [...cases.entries()]
+              .filter(([, item]) => requestText.includes(item.prompt))
+              .map(([name]) => name),
+            lastInputRole: body.input?.at?.(-1)?.role,
+            lastInputType: body.input?.at?.(-1)?.type,
+          })
+        }
+        return null
+      }
       if (continuation) {
         state.continuations.push(continuation)
         return [assistantMessage(`${state.prompt} completed`)]
@@ -150,7 +157,10 @@ export async function verifyConversationQrAuthorization({
       () => state.requests,
       count => count === 1,
       10_000,
-      'The first plugin message waited for authorization before reaching the model'
+      () =>
+        `The first plugin message did not reach its model fixture exactly once: ${JSON.stringify(
+          [...authModel.cases.entries()].map(([caseName, item]) => [caseName, item.requests])
+        )}`
     )
     assert.equal(await control.command('getValue', ACTIVE_COMPOSER_SELECTOR), '')
     await assertNoCard('Plugin message was checked before the model returned an auth error')

@@ -566,6 +566,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "standInDelegation"
                 | "standInOwnerRequest"
                 | "standInReportTo"
+                | "standInRoleResultRoot"
                 | "standInSchedule"
                 | "standInSourceBindings"
                 | "team_id"

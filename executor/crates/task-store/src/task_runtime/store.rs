@@ -23,6 +23,7 @@ mod empty_write_tests;
 pub mod execution_workspace;
 mod human_requests;
 mod stand_in_dispatches;
+mod stand_in_role_requests;
 pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
@@ -140,6 +141,12 @@ pub enum TaskRuntimeError {
     TaskNotFound,
     #[error("task changed")]
     VersionConflict,
+    #[error("This request reached its specialist task limit")]
+    StandInRoleRequestLimit,
+    #[error("This delegation branch or request has been cancelled")]
+    StandInRoleRequestCancelled,
+    #[error("A prerequisite must be an existing task in this delegation scope")]
+    StandInRoleDependencyInvalid,
     #[error("This fact or its evidence was forgotten or corrected; do not reconstruct it")]
     MemorySuppressed,
     #[error("task provider '{0}' is not implemented yet")]

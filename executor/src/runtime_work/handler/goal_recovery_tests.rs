@@ -342,75 +342,101 @@ fn goal_activation_binds_and_retains_the_route_until_the_goal_stops() {
 }
 
 #[test]
-fn timed_out_goal_activation_retains_its_route_until_native_state_confirms_stop() {
+fn timed_out_goal_resume_or_activation_retains_its_route_until_native_state_confirms_stop() {
     run_goal_test(async {
         let _timeout = ScalarEnv::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
-        let (mut handler, root, mut request) = setup("goal-model-route-ambiguous-activation");
-        let thread = "11111111-1111-4111-8111-111111111111";
-        request.model_config = json!({"model_id":"goal-route-model",
+        for (method, compact) in [
+            ("thread_resume", false),
+            ("thread_goal_set", false),
+            ("thread_resume", true),
+        ] {
+            let (mut handler, root, mut request) = setup("goal-model-route-ambiguous-activation");
+            let thread = "11111111-1111-4111-8111-111111111111";
+            request.model_config = json!({"model_id":"goal-route-model",
             "base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"});
-        handler.store.update_task("task-1", |link| {
-            link.thread_id = Some(thread.into());
-            link.goal_status = Some("blocked".into());
-            store_runtime_execution_request(&mut link.runtime_handle, &request);
-        });
-        handler.retain_runtime_model_config("task-1", &request.model_config);
-        block_goal_admission(&handler);
-        install_native_history(&mut handler, &root, vec![], None);
-        fs::write(root.join("thread_goal_set.hold"), "").unwrap();
-        fs::write(
-            root.join("thread_goal_set.json"),
-            json!({"goal":{"status":"active"}}).to_string(),
-        )
-        .unwrap();
-        fs::write(root.join("thread_goal_set.notifications.jsonl"), json!({
+            handler.store.update_task("task-1", |link| {
+                link.thread_id = Some(thread.into());
+                link.goal_status = Some("blocked".into());
+                store_runtime_execution_request(&mut link.runtime_handle, &request);
+            });
+            handler.retain_runtime_model_config("task-1", &request.model_config);
+            block_goal_admission(&handler);
+            install_native_history(&mut handler, &root, vec![], None);
+            let pending = if compact { "defer" } else { "hold" };
+            fs::write(root.join(format!("{method}.{pending}")), "").unwrap();
+            fs::write(
+                root.join("thread_goal_set.json"),
+                json!({"goal":{"status":"active"}}).to_string(),
+            )
+            .unwrap();
+            fs::write(
+                root.join("thread_goal_get.json"),
+                json!({"goal":{"status":"blocked"}}).to_string(),
+            )
+            .unwrap();
+            let notification_method = if compact { "test_fence" } else { method };
+            fs::write(root.join(format!("{notification_method}.notifications.jsonl")), json!({
             "method":"thread/goal/updated", "params":{"threadId":thread,"goal":{"status":"active"}}
         }).to_string() + "\n").unwrap();
-        let result = handler
-            .set_task_goal(json!({"taskId":"task-1","status":"active"}))
-            .await
-            .unwrap();
-        assert_eq!(result["accepted"], false);
-        assert!(
-            result["error"].as_str().unwrap().contains("timed out"),
-            "{result}"
-        );
-        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
-            .goal_model_route
-            .is_some());
-        fs::remove_file(root.join("thread_goal_set.hold")).unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while handler
-                .local_task_link("task-1")
-                .unwrap()
-                .goal_status
-                .as_deref()
-                != Some("active")
-            {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+            let result = if compact {
+                handler
+                    .compact_task(json!({"taskId":"task-1","modelConfig":request.model_config}))
+                    .await
+            } else {
+                handler
+                    .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+                    .await
             }
-        })
-        .await
-        .unwrap();
-        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
-            .goal_model_route
-            .is_some());
-        fs::write(
-            root.join("thread_goal_get.json"),
-            json!({"goal":{"status":"complete"}}).to_string(),
-        )
-        .unwrap();
-        let confirmed = handler
-            .get_task_goal(json!({"taskId":"task-1"}))
+            .unwrap();
+            assert_eq!(result["accepted"], false);
+            assert!(
+                result["error"].as_str().unwrap().contains("timed out"),
+                "{result}"
+            );
+            assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+                .goal_model_route
+                .is_some());
+            fs::remove_file(root.join(format!("{method}.{pending}"))).unwrap();
+            if compact {
+                fs::write(root.join("test_fence.json"), "{}").unwrap();
+                handler
+                    .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+                    .await
+                    .unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while handler
+                    .local_task_link("task-1")
+                    .unwrap()
+                    .goal_status
+                    .as_deref()
+                    != Some("active")
+                {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
             .await
             .unwrap();
-        assert_eq!(confirmed["goal"]["status"], "complete");
-        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
-            .goal_model_route
-            .is_none());
-        handler.persist_current_turn_state().await.unwrap();
-        handler.codex_app_server.restart().await;
-        let _ = fs::remove_dir_all(root);
+            assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+                .goal_model_route
+                .is_some());
+            fs::write(
+                root.join("thread_goal_get.json"),
+                json!({"goal":{"status":"complete"}}).to_string(),
+            )
+            .unwrap();
+            let confirmed = handler
+                .get_task_goal(json!({"taskId":"task-1"}))
+                .await
+                .unwrap();
+            assert_eq!(confirmed["goal"]["status"], "complete");
+            assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+                .goal_model_route
+                .is_none());
+            handler.persist_current_turn_state().await.unwrap();
+            handler.codex_app_server.restart().await;
+            let _ = fs::remove_dir_all(root);
+        }
     });
 }
 

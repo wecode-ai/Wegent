@@ -201,6 +201,10 @@ mod stand_in_processing;
 mod stand_in_proposal_continuations;
 mod stand_in_read_sources;
 mod stand_in_review;
+mod stand_in_role_cancellation;
+mod stand_in_role_delegation;
+mod stand_in_role_dependencies;
+mod stand_in_role_results;
 mod stand_in_schedules;
 mod stand_in_source_tasks;
 mod stand_in_task_results;
@@ -550,6 +554,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
+    transcript_transfer_cleanup: Arc<super::transcript_transport::TransferCleanup>,
     #[cfg(test)]
     transcript_test_workers: Option<Arc<tokio::sync::Semaphore>>,
     device_id: String,
@@ -682,7 +687,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
-    goal_model_route: Option<Arc<crate::agents::LocalProxyRegistration>>,
+    goal_model_route: Option<crate::agents::ModelActionRegistration>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
@@ -945,6 +950,7 @@ impl RuntimeWorkRpcHandler {
             );
         }
         let handler = Self {
+            transcript_transfer_cleanup: Arc::default(),
             #[cfg(test)]
             transcript_test_workers: None,
             device_id,

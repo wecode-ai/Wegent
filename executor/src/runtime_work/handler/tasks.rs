@@ -1065,6 +1065,40 @@ impl RuntimeWorkRpcHandler {
         self.send_message_with_task_gate(payload, false, true).await
     }
 
+    pub(super) async fn send_stand_in_role_result(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        let user = payload["userId"].as_i64().ok_or_else(|| {
+            AppIpcError::new("permission_denied", "Assistant result has no owner")
+        })?;
+        if !self.local_task_link(&task).is_some_and(|link| {
+            super::stand_in_role_delegation::owned_role_task(&link, user, &self.device_id)
+                && !matches!(link.status.as_str(), "archived" | "cancelled")
+        }) {
+            return Ok(json!({"success": false, "accepted": false, "code": "owner_unavailable"}));
+        }
+        self.send_message_with_activity_checks(payload, true, false, true, None)
+            .await
+    }
+
+    pub(super) async fn send_stand_in_role_retry(
+        &self,
+        payload: Value,
+        attempt: u64,
+    ) -> Result<Value, AppIpcError> {
+        let task = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let gate = self.task_send_gate(&task);
+        let _guard = gate.lock().await;
+        self.send_message_with_activity_checks(payload, false, false, false, Some(attempt))
+            .await
+    }
+
     pub(super) async fn send_message_from_owner(
         &self,
         payload: Value,
@@ -1084,7 +1118,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, owner_input, from_event)
+        self.send_message_with_activity_checks(payload, false, owner_input, from_event, None)
             .await
     }
 
@@ -1153,7 +1187,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, false, false)
+        self.send_message_with_activity_checks(payload, false, false, false, None)
             .await
     }
 
@@ -1165,7 +1199,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, false, false)
+        self.send_message_with_activity_checks(payload, true, false, false, None)
             .await
     }
 
@@ -1175,6 +1209,7 @@ impl RuntimeWorkRpcHandler {
         activity: bool,
         owner_input: bool,
         from_event: bool,
+        role_retry_attempt: Option<u64>,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1396,6 +1431,14 @@ impl RuntimeWorkRpcHandler {
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
             restore_origin(&mut request, &link.runtime_handle);
+            if let Some(attempt) = role_retry_attempt {
+                let delegation = request
+                    .extra
+                    .get_mut("standInDelegation")
+                    .filter(|delegation| delegation["roleDelegation"].is_object())
+                    .ok_or_else(super::stand_in_role_delegation::denied)?;
+                delegation["attempt"] = json!(attempt);
+            }
             self.refresh_identity_conversation_origin(&mut request, link)?;
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
@@ -1572,7 +1615,9 @@ impl RuntimeWorkRpcHandler {
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         let turn = SpawnTurnRequest {
-            task_kind: None,
+            // A verified retry already restored its origin and advanced only the attempt.
+            // Rebinding at admission would replace it with the preceding attempt.
+            task_kind: role_retry_attempt.map(|_| RuntimeTaskKind::StandIn),
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
@@ -2325,6 +2370,11 @@ impl RuntimeWorkRpcHandler {
         };
 
         let mut request = runtime_model_request(&link, &payload)?;
+        crate::runtime_work::api_context::bind_task_identity(
+            &mut request,
+            &self.device_id,
+            &link.local_task_id,
+        );
         self.apply_backend_connection(&mut request);
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
@@ -2358,15 +2408,61 @@ impl RuntimeWorkRpcHandler {
         );
         self.ensure_notification_router().await;
         let thread_path = runtime_thread_path_from_link(link);
-        // Retain the registered inference route until native compaction settles.
-        let (thread_id, _model_route) = match client
-            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
-            .await
-        {
-            Ok(context) => context,
+        let mut registration = None;
+        let resumed = {
+            let gate = self.task_send_gate(&format!("goal-status:{local_task_id}"));
+            let _guard = gate.lock().await;
+            let _mutation = self.begin_goal_status_mutation(local_task_id);
+            client
+                .resume_thread_for_model_action(
+                    &request,
+                    thread_id,
+                    thread_path.as_deref(),
+                    |prepared| {
+                        self.retain_goal_model_route(thread_id, prepared.clone());
+                        registration = prepared;
+                    },
+                )
+                .await
+        };
+        let thread_id = match resumed {
+            Ok(thread_id) => thread_id,
+            // An ambiguous resume may still activate a Goal. An inactive read
+            // issued before that resume settles cannot release its registration.
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
+        let result = self
+            .run_context_compaction(client, link, local_task_id, thread_id.clone())
+            .await;
+        // Settle the shared registration only from a current native Goal snapshot.
+        // The local registration also covers compaction if a Goal stops mid-action.
+        if registration.is_some() {
+            let projection = self.begin_goal_status_read(local_task_id);
+            if let Ok(snapshot) = client
+                .request("thread/goal/get", json!({"threadId": thread_id}))
+                .await
+            {
+                if let Some(goal) = snapshot.get("goal") {
+                    projection.apply_if_current(|| {
+                        self.hydrate_runtime_task_goal_status(
+                            local_task_id,
+                            string_field(goal, "status"),
+                        );
+                    });
+                }
+            }
+        }
+        result
+    }
+
+    async fn run_context_compaction(
+        &self,
+        client: &CodexAppServerClient,
+        link: &RuntimeTaskLink,
+        local_task_id: &str,
+        thread_id: String,
+    ) -> Result<Value, AppIpcError> {
         let previous_turn_id = match self
             .read_codex_recent_turns_with_client(client, &thread_id)
             .await

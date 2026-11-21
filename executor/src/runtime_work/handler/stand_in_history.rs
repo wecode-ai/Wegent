@@ -203,6 +203,36 @@ impl RuntimeWorkRpcHandler {
             {
                 return Err(denied());
             }
+            if origin["roleDelegation"].is_object() {
+                if role["enabled"] != true
+                    || delegation["roleDelegation"] != origin["roleDelegation"]
+                {
+                    return Err(denied());
+                }
+                let mut tasks = HashSet::from([identity.task_id.clone()]);
+                tasks.extend(
+                    self.local_task_links(false)
+                        .into_iter()
+                        .filter(|link| {
+                            let child = &link.runtime_handle["origin"];
+                            super::stand_in_role_delegation::owned_role_task(
+                                link,
+                                identity.user,
+                                &self.device_id,
+                            ) && child["sourceTaskId"] == identity.task_id
+                                && child["roleDelegation"]["root"]
+                                    == origin["roleDelegation"]["root"]
+                        })
+                        .map(|link| link.local_task_id),
+                );
+                return Ok(ReadScope {
+                    source: None,
+                    role: role.clone(),
+                    coordinator_tasks: Some(tasks),
+                    can_orchestrate: false,
+                    window: None,
+                });
+            }
 
             let parent = self
                 .local_task_link(origin["sourceTaskId"].as_str().ok_or_else(denied)?)
