@@ -1,11 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  SelectContent,
-  SelectItem,
-  SelectRoot,
-  SelectTrigger,
-} from '@wegent/collaboration/controls/SelectParts'
-import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { getUiTheme, UI_THEME_CATALOGUE } from '@wegent/collaboration/theme'
 import type { CSSProperties } from 'react'
 import { resolveAppearanceThemeVariables } from './applyAppearance'
@@ -17,7 +11,10 @@ export function ThemeSelector({ mode }: { mode: ResolvedAppearanceMode }) {
   const { appearance, setAppearance } = useAppearance()
   const selectedId = mode === 'light' ? appearance.lightThemeId : appearance.darkThemeId
   const selected = getUiTheme(selectedId, mode)
-  const themes = UI_THEME_CATALOGUE.filter(theme => theme.variants[mode])
+  const themes = UI_THEME_CATALOGUE.filter(theme => theme.variants[mode]).map(theme => ({
+    value: theme.id,
+    label: theme.label,
+  }))
   const label =
     mode === 'light'
       ? t('workbench.appearance_light_theme', '浅色配色')
@@ -31,29 +28,19 @@ export function ThemeSelector({ mode }: { mode: ResolvedAppearanceMode }) {
     <div className="min-w-0 space-y-3">
       <label className="grid gap-2 text-sm text-text-primary">
         <span>{label}</span>
-        <SelectRoot
-          value={normalizeSelectValue(selectedId)}
-          onValueChange={selectedValue => {
-            if (selectedValue !== null)
-              return setAppearance({
-                [mode === 'light' ? 'lightThemeId' : 'darkThemeId']: selectedValue,
-                themeOverrides: { [mode]: {} },
-              })
-          }}
-        >
-          <SelectTrigger
-            aria-label={label}
-            className="wework-native-select h-11 w-full text-base"
-            data-testid={`appearance-theme-select-${mode}`}
-          />
-          <SelectContent>
-            {themes.map(theme => (
-              <SelectItem key={theme.id} value={String(theme.id)}>
-                {theme.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </SelectRoot>
+        <SelectField
+          value={selectedId}
+          options={themes}
+          onChange={themeId =>
+            setAppearance({
+              [mode === 'light' ? 'lightThemeId' : 'darkThemeId']: themeId,
+              themeOverrides: { [mode]: {} },
+            })
+          }
+          accessibleLabel={label}
+          className="wework-native-select h-11 w-full text-base"
+          testId={`appearance-theme-select-${mode}`}
+        />
       </label>
       <div
         aria-hidden="true"
