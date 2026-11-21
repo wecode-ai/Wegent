@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from executor_manager.common.errors import ExecutorConfigError
 from executor_manager.executors.base import Executor
 
 
@@ -95,7 +96,7 @@ class TestExecutorDispatcher:
 
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", "invalid json"):
-            with pytest.raises(ValueError, match="Invalid JSON"):
+            with pytest.raises(ExecutorConfigError, match="Invalid JSON"):
                 from executor_manager.executors.dispatcher import ExecutorDispatcher
 
     def test_load_executors_invalid_import_path(self):
@@ -176,7 +177,7 @@ class TestExecutorDispatcher:
                 ExecutorDispatcher, "_executors", {"custom": MockExecutor()}
             ):
                 with pytest.raises(
-                    ValueError, match="Default 'docker' executor not found"
+                    ExecutorConfigError, match="Default 'docker' executor not found"
                 ):
                     ExecutorDispatcher.get_executor("unknown_type")
 

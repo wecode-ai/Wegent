@@ -7,6 +7,7 @@ import json
 import os
 from typing import Any, Dict
 
+from executor_manager.common.errors import ExecutorConfigError
 from executor_manager.config.config import EXECUTOR_CONFIG
 from shared.logger import setup_logger
 
@@ -71,16 +72,16 @@ class ExecutorDispatcher:
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON in EXECUTOR_CONFIG environment variable: {e}"
             logger.error(error_msg)
-            raise ValueError(error_msg)
+            raise ExecutorConfigError(error_msg) from e
         except Exception as e:
             error_msg = f"Error loading executors from environment: {e}"
             logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise ExecutorConfigError(error_msg) from e
 
         if not executors:
             error_msg = "No executors were loaded from configuration"
             logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            raise ExecutorConfigError(error_msg)
 
         return executors
 
@@ -103,7 +104,7 @@ class ExecutorDispatcher:
                 logger.error(
                     f"Default 'docker' executor not found in available executors: {list(cls._executors.keys())}"
                 )
-                raise ValueError(f"Default 'docker' executor not found")
+                raise ExecutorConfigError("Default 'docker' executor not found")
             return cls._executors["docker"]
 
         logger.info(

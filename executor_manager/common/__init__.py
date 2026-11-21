@@ -10,11 +10,14 @@ from executor_manager.common.config import (
     TimeoutConfig,
     get_config,
 )
+from executor_manager.common.errors import ExecutorConfigError, ExecutorErrorCode
 from executor_manager.common.redis_factory import RedisClientFactory
 from executor_manager.common.singleton import SingletonMeta
 
 __all__ = [
     "SingletonMeta",
+    "ExecutorConfigError",
+    "ExecutorErrorCode",
     "RedisConfig",
     "TimeoutConfig",
     "RetryConfig",
