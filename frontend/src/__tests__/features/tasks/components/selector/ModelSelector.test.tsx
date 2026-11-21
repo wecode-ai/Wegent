@@ -157,9 +157,12 @@ describe('ModelSelector', () => {
     mockIsMobile = false
   })
 
-  it('shows the configured primary group icon without the group name', async () => {
+  it('retries group icons without closing the picker and shows only the icon beside the model', async () => {
     const selectedModel = { ...mockModel, modelGroup: 'Domestic' }
-    jest.mocked(getModelPrimaryGroupIcons).mockResolvedValue({ Domestic: 'globe' })
+    jest
+      .mocked(getModelPrimaryGroupIcons)
+      .mockRejectedValueOnce(new Error('Icons temporarily unavailable'))
+      .mockResolvedValue({ Domestic: 'globe' })
     mockModelSelectionOverrides = {
       displayModelGroup: selectedModel.modelGroup,
       filteredModels: [selectedModel, { ...mockAdvancedModel, modelGroup: 'Overseas' }],
@@ -174,13 +177,14 @@ describe('ModelSelector', () => {
     )
 
     const trigger = screen.getByTestId('model-selector')
-    const groupMark = screen.getByRole('img', { name: 'Domestic' })
-    await waitFor(() => expect(groupMark.querySelector('svg')).toHaveClass('lucide-globe'))
-    const triggerIcon = groupMark.querySelector('svg')
     expect(trigger).toHaveTextContent(selectedModel.displayName!)
     expect(trigger).not.toHaveTextContent('Domestic')
 
     await userEvent.click(trigger)
+    await userEvent.click(await screen.findByTestId('model-group-icons-retry'))
+    const groupMark = screen.getByRole('img', { name: 'Domestic' })
+    await waitFor(() => expect(groupMark.querySelector('svg')).toHaveClass('lucide-globe'))
+    const triggerIcon = groupMark.querySelector('svg')
     const domestic = screen.getByTestId('model-primary-group-Domestic')
     const overseasIcon = screen.getByTestId('model-primary-group-Overseas').querySelector('svg')
     await waitFor(() => expect(domestic.querySelector('svg')).toHaveClass('lucide-globe'))

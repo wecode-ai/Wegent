@@ -21,6 +21,7 @@ import { ModelCapabilityIcons } from './ModelCapabilityIcons'
 import { ModelCapabilityDescription } from './ModelCapabilityDescription'
 import { ModelSelectionGuideLink } from './ModelSelectionGuideLink'
 import { ModelPrimaryGroupIcon } from './ModelPrimaryGroupIcon'
+import { ModelGroupIconLoadError } from './ModelGroupIconLoadError'
 import { useModelPrimaryGroupIcons } from './useModelPrimaryGroupIcons'
 
 export interface ModelCascadeLabels {
@@ -52,6 +53,7 @@ interface ModelCascadeContentProps<T extends GroupableModel> {
   onSelectModel: (model: T) => void
   onSelectSpecialOption?: (key: string) => void
   getModelKey?: (model: T) => string
+  primaryGroupIcons?: ReturnType<typeof useModelPrimaryGroupIcons>
   renderModelBadges?: (model: T) => React.ReactNode
   renderModelActions?: (model: T) => React.ReactNode
   footer?: React.ReactNode
@@ -117,6 +119,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
   onSelectModel,
   onSelectSpecialOption,
   getModelKey = defaultModelKey,
+  primaryGroupIcons,
   renderModelBadges,
   renderModelActions,
   footer = <ModelSelectionGuideLink className="mx-auto my-2 px-3" />,
@@ -131,10 +134,11 @@ export function ModelCascadeContent<T extends GroupableModel>({
       }),
     [models, labels.uncategorized, labels.ungrouped]
   )
-  const groupIcons = useModelPrimaryGroupIcons(
-    groups.some(group => group.name !== labels.ungrouped)
+  const localGroupIcons = useModelPrimaryGroupIcons(
+    !primaryGroupIcons && groups.some(group => group.configuredName !== null)
   )
-  const [activeGroupName, setActiveGroupName] = useState<string>('')
+  const groupIcons = primaryGroupIcons ?? localGroupIcons
+  const [activeGroupKey, setActiveGroupKey] = useState<string | null>()
   const [activeSubGroupName, setActiveSubGroupName] = useState<string>('')
   const [mobileStep, setMobileStep] = useState<MobileCascadeStep>('primary')
   const selectedModelOptionRef = useRef<HTMLButtonElement | null>(null)
@@ -142,15 +146,15 @@ export function ModelCascadeContent<T extends GroupableModel>({
 
   useEffect(() => {
     if (groups.length === 0) {
-      setActiveGroupName('')
+      setActiveGroupKey(undefined)
       setActiveSubGroupName('')
       return
     }
 
-    const selectedGroupName = getModelGroupName(selectedModel, labels)
+    const selectedGroupKey = selectedModel ? selectedModel.modelGroup?.trim() || null : undefined
     const nextGroup =
-      groups.find(group => group.name === activeGroupName) ??
-      groups.find(group => group.name === selectedGroupName) ??
+      groups.find(group => group.configuredName === activeGroupKey) ??
+      groups.find(group => group.configuredName === selectedGroupKey) ??
       groups[0]
     const selectedSubGroupName = getModelSubGroupName(selectedModel, labels)
     const nextSubGroup =
@@ -158,9 +162,9 @@ export function ModelCascadeContent<T extends GroupableModel>({
       nextGroup.subGroups.find(subGroup => subGroup.name === selectedSubGroupName) ??
       nextGroup.subGroups[0]
 
-    setActiveGroupName(nextGroup.name)
+    setActiveGroupKey(nextGroup.configuredName)
     setActiveSubGroupName(nextSubGroup?.name ?? '')
-  }, [activeGroupName, activeSubGroupName, groups, labels, selectedModel])
+  }, [activeGroupKey, activeSubGroupName, groups, labels, selectedModel])
 
   useEffect(() => {
     if (groups.length === 0) {
@@ -168,7 +172,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
     }
   }, [groups.length])
 
-  const activeGroup = groups.find(group => group.name === activeGroupName) ?? groups[0]
+  const activeGroup = groups.find(group => group.configuredName === activeGroupKey) ?? groups[0]
   const activeSubGroup =
     activeGroup?.subGroups.find(subGroup => subGroup.name === activeSubGroupName) ??
     activeGroup?.subGroups[0]
@@ -373,11 +377,11 @@ export function ModelCascadeContent<T extends GroupableModel>({
 
         return (
           <button
-            key={group.name}
+            key={group.configuredName === null ? 'ungrouped:' : `group:${group.configuredName}`}
             type="button"
             data-testid={`model-mobile-primary-group-${sanitizeTestId(group.name)}`}
             onClick={() => {
-              setActiveGroupName(group.name)
+              setActiveGroupKey(group.configuredName)
               setActiveSubGroupName(group.subGroups[0]?.name ?? '')
               setMobileStep('secondary')
             }}
@@ -389,8 +393,8 @@ export function ModelCascadeContent<T extends GroupableModel>({
           >
             <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-text-primary">
               <ModelPrimaryGroupIcon
-                group={group.name === labels.ungrouped ? undefined : group.name}
-                icon={groupIcons?.[group.name]}
+                group={group.configuredName}
+                icon={group.configuredName ? groupIcons.icons?.[group.configuredName] : undefined}
                 decorative
               />
               <span className="truncate">{group.name}</span>
@@ -526,6 +530,8 @@ export function ModelCascadeContent<T extends GroupableModel>({
         </div>
       </div>
 
+      {groupIcons.failed && <ModelGroupIconLoadError onRetry={groupIcons.retry} />}
+
       {models.length === 0 && specialOptions.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-text-muted">{labels.noModels}</div>
       ) : isSearching ? (
@@ -564,15 +570,17 @@ export function ModelCascadeContent<T extends GroupableModel>({
               </div>
               {specialOptions.map(renderSpecialOption)}
               {groups.map(group => {
-                const isActive = group.name === activeGroup?.name
+                const isActive = group.configuredName === activeGroup?.configuredName
 
                 return (
                   <button
-                    key={group.name}
+                    key={
+                      group.configuredName === null ? 'ungrouped:' : `group:${group.configuredName}`
+                    }
                     type="button"
                     data-testid={`model-primary-group-${sanitizeTestId(group.name)}`}
                     onClick={() => {
-                      setActiveGroupName(group.name)
+                      setActiveGroupKey(group.configuredName)
                       setActiveSubGroupName(group.subGroups[0]?.name ?? '')
                     }}
                     className={cn(
@@ -583,8 +591,12 @@ export function ModelCascadeContent<T extends GroupableModel>({
                   >
                     <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
                       <ModelPrimaryGroupIcon
-                        group={group.name === labels.ungrouped ? undefined : group.name}
-                        icon={groupIcons?.[group.name]}
+                        group={group.configuredName}
+                        icon={
+                          group.configuredName
+                            ? groupIcons.icons?.[group.configuredName]
+                            : undefined
+                        }
                         decorative
                       />
                       <span className="truncate">{group.name}</span>

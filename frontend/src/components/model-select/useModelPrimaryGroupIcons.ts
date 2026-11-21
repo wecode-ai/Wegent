@@ -11,21 +11,25 @@ import {
 export function useModelPrimaryGroupIcons(enabled: boolean) {
   const [icons, setIcons] = useState<ModelPrimaryGroupIcons>()
 
+  const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+
   useEffect(() => {
     if (!enabled) return
     let active = true
+    setFailed(false)
     getModelPrimaryGroupIcons().then(
       result => {
         if (active) setIcons(result)
       },
       () => {
-        if (active) setIcons(undefined)
+        if (active) setFailed(true)
       }
     )
     return () => {
       active = false
     }
-  }, [enabled])
+  }, [attempt, enabled])
 
-  return icons
+  return { icons, failed: enabled && failed, retry: () => setAttempt(value => value + 1) }
 }

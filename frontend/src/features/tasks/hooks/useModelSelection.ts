@@ -722,6 +722,15 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   // Return
   // -------------------------------------------------------------------------
+  const catalogSelection =
+    selectedModel &&
+    models.find(
+      model =>
+        model.name === selectedModel.name &&
+        model.type === selectedModel.type &&
+        (model.namespace ?? 'default') === (selectedModel.namespace ?? 'default')
+    )
+
   return {
     // State
     selectedModel,
@@ -743,7 +752,7 @@ export function useModelSelection({
         ? getBoundModelDisplayNames().length === 1
           ? boundDefaultModel?.modelGroup
           : undefined
-        : selectedModel?.modelGroup,
+        : (catalogSelection ?? selectedModel)?.modelGroup,
 
     // Actions
     selectModel,

@@ -692,6 +692,29 @@ describe('useModelSelection', () => {
     expect(result.current.selectedModel?.name).toBe('hidden-public-model')
   })
 
+  it('uses the refreshed group of a selected catalog model', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([{ ...mockModel, modelGroup: 'original' }])
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: mockModel.name,
+        selectedTeam: mockTeam,
+      })
+    )
+    await modelLoad.resolve()
+    await waitFor(() => expect(result.current.displayModelGroup).toBe('original'))
+
+    jest.mocked(modelApis.getUnifiedModels).mockResolvedValue({
+      data: [{ ...mockModel, modelGroup: 'updated' }],
+    })
+    await act(async () => {
+      await result.current.refreshModels()
+    })
+    expect(result.current.displayModelGroup).toBe('updated')
+  })
+
   it('keeps a typed recorded task model when a refresh hides it from the catalog', async () => {
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
     const modelLoad = mockDeferredModelsLoad([mockModel])

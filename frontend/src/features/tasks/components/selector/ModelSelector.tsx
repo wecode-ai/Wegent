@@ -305,7 +305,10 @@ export default function ModelSelector({
   }, [isOpen])
 
   const modelGroup = modelSelection.displayModelGroup?.trim()
-  const groupIcons = useModelPrimaryGroupIcons(Boolean(modelGroup))
+  const groupIcons = useModelPrimaryGroupIcons(
+    Boolean(modelGroup) ||
+      (isOpen && modelSelection.filteredModels.some(model => model.modelGroup?.trim()))
+  )
 
   const selectedCascadeModel =
     modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
@@ -412,7 +415,7 @@ export default function ModelSelector({
                       <span className="min-w-0 truncate">{modelSelection.getDisplayText()}</span>
                       <ModelPrimaryGroupIcon
                         group={modelGroup}
-                        icon={modelGroup ? groupIcons?.[modelGroup] : undefined}
+                        icon={modelGroup ? groupIcons.icons?.[modelGroup] : undefined}
                       />
                     </span>
                   )}
@@ -452,6 +455,7 @@ export default function ModelSelector({
             <ModelCascadeContent
               models={modelSelection.filteredModels}
               selectedModel={selectedCascadeModel}
+              primaryGroupIcons={groupIcons}
               selectedSpecialKey={
                 modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
                   ? DEFAULT_MODEL_NAME

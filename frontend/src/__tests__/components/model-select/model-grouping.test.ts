@@ -43,6 +43,7 @@ describe('model grouping', () => {
 
     expect(groups).toEqual([
       {
+        configuredName: 'Primary One',
         name: 'Primary One',
         count: 2,
         subGroups: [
@@ -51,10 +52,23 @@ describe('model grouping', () => {
         ],
       },
       {
+        configuredName: null,
         name: 'Ungrouped',
         count: 1,
         subGroups: [{ name: 'Other', count: 1, models: [models[2]] }],
       },
+    ])
+  })
+
+  it('keeps an explicitly named group separate from the ungrouped models', () => {
+    const named = { ...models[0], modelGroup: 'Ungrouped' }
+    const groups = buildModelCascadeGroups([models[2], named], {
+      ungroupedLabel: 'Ungrouped',
+      uncategorizedLabel: 'Other',
+    })
+    expect(groups.map(group => [group.configuredName, group.subGroups[0].models[0]])).toEqual([
+      ['Ungrouped', named],
+      [null, models[2]],
     ])
   })
 
