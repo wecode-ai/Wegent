@@ -23,8 +23,10 @@ export function createComputerUseStatusStore() {
       const next = await getComputerUseStatus()
       if (current === revision && listeners.size) publish(next)
     } catch (error) {
-      if (current === revision && listeners.size)
+      if (current === revision && listeners.size) {
         console.error('[Wework] Failed to load computer use activity:', error)
+        initial = setTimeout(() => void load(), 1_000)
+      }
     } finally {
       if (pending === request) pending = null
     }
@@ -34,6 +36,7 @@ export function createComputerUseStatusStore() {
       if (event.type !== 'computerUse.changed') return
       const { currentTool } = event.payload
       if (currentTool !== null && typeof currentTool !== 'string') return
+      clearTimeout(initial)
       revision++
       publish({ currentTool })
     })
