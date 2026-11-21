@@ -297,10 +297,15 @@ export function createWorkbenchCloudProjectContextSource(
           taskId: address.taskId,
           deviceId: address.deviceId,
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
           elapsedMs: Math.round(performance.now() - started),
           causes:
             error instanceof AggregateError
-              ? error.errors.map(cause => (cause instanceof Error ? cause.message : String(cause)))
+              ? error.errors.map(cause =>
+                  cause instanceof Error
+                    ? { message: cause.message, stack: cause.stack }
+                    : { message: String(cause) }
+                )
               : undefined,
         },
         'warn'
