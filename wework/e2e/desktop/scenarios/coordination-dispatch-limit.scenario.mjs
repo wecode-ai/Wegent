@@ -50,19 +50,22 @@ export function createDesktopScenario({ executorHome, workspacePath, uiTimeoutMs
       assert.ok(model, 'A default Codex model must be available')
       const database = new DatabaseSync(join(executorHome, 'data/tasks.sqlite'))
       database.exec('PRAGMA busy_timeout = 5000')
+      let settingsSaved = false
       try {
         await rpc('runtime.stand_in.personal.save', {
           ...scope,
           settings: {
             ...initial,
             primary: {
-              ...initial.primary,
               enabled: true,
+              prompt: '',
+              preferences: '',
               model,
               workspace: { workspacePath, executionMode: 'current_workspace' },
             },
           },
         })
+        settingsSaved = true
         const discovery = await rpc('runtime.coordination.contexts', {})
         const context = discovery.contexts.find(row => row.id === CONTEXT)
         assert.ok(context?.enabled, 'The personal coordination context must be enabled')
@@ -100,11 +103,13 @@ export function createDesktopScenario({ executorHome, workspacePath, uiTimeoutMs
         return { dispatchFailures: exhausted.dispatchFailureCount, blockedExplicitRetry: true }
       } finally {
         database.close()
-        const current = await rpc('runtime.stand_in.personal.get', scope)
-        await rpc('runtime.stand_in.personal.save', {
-          ...scope,
-          settings: { ...initial, version: current.version },
-        })
+        if (settingsSaved) {
+          const current = await rpc('runtime.stand_in.personal.get', scope)
+          await rpc('runtime.stand_in.personal.save', {
+            ...scope,
+            settings: { ...initial, version: current.version },
+          })
+        }
       }
     },
   }
