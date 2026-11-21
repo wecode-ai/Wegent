@@ -307,6 +307,7 @@ export function createSystemDragSelectionSource() {
           enabled = preferences.systemDragEnabled
       })
       .catch(error => console.error('[Wework] Failed to read system drag preferences:', error))
+    let retry: ReturnType<typeof setTimeout> | undefined
     let pending = false
     let dirty = false
     const takePending = async () => {
@@ -316,6 +317,8 @@ export function createSystemDragSelectionSource() {
         return
       }
       dirty = false
+      clearTimeout(retry)
+      retry = undefined
       pending = true
       try {
         const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending', {
@@ -323,7 +326,10 @@ export function createSystemDragSelectionSource() {
         })
         if (!disposed && observed()) payloads.forEach(handlePayload)
       } catch (error) {
-        if (!disposed) reportTransferError(error)
+        if (!disposed) {
+          reportTransferError(error)
+          retry = setTimeout(() => void takePending(), 1_000)
+        }
       } finally {
         pending = false
         if (dirty) void takePending()
@@ -335,6 +341,7 @@ export function createSystemDragSelectionSource() {
     void takePending()
     stop = () => {
       disposed = true
+      clearTimeout(retry)
       unsubscribe()
       frames.forEach(frame => cancelAnimationFrame(frame))
       frames.clear()

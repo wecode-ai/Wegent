@@ -21,7 +21,7 @@ export function ComputerUseActivityIndicator() {
   const stop = useCallback(async () => {
     setStopping(true)
     try {
-      store.update(await stopComputerUseCurrentAction())
+      await store.updateFrom(stopComputerUseCurrentAction)
     } catch (error) {
       console.error('[Wework] Failed to stop computer use action:', error)
     } finally {

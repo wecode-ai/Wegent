@@ -31,6 +31,7 @@ interface NativeReplyOwner {
 export function createNativeInteractionReplies(accountKey: string, owner: NativeReplyOwner) {
   let connected = false
   let epoch = 0
+  let retry: ReturnType<typeof setTimeout> | undefined
   let draining = false
   let drainRequested = false
   let lastEligibility: string | undefined
@@ -59,6 +60,8 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
       return
     }
     drainRequested = false
+    clearTimeout(retry)
+    retry = undefined
     draining = true
     try {
       const replies = await invokeDesktopHost<NativeReply[]>('notification.pendingReplies', {
@@ -98,6 +101,7 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
       }
     } catch (error) {
       console.error('[Wework] Could not handle notification reply', error)
+      if (isCurrent()) retry = setTimeout(() => void drain(), 1_000)
     } finally {
       draining = false
       if (drainRequested) void drain()
@@ -105,13 +109,15 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
   }
   const disconnect = () => {
     connected = false
+    clearTimeout(retry)
+    retry = undefined
     drainRequested = false
     epoch++
     unsubscribe?.()
     unsubscribe = undefined
   }
   return {
-    synchronize(itemsChanged: boolean) {
+    synchronize() {
       if (
         !owner.active() ||
         !owner.enabled() ||
@@ -141,7 +147,7 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
           if (event.type === 'notification-reply') void drain()
         })
         void drain()
-      } else if (itemsChanged && eligibilityChanged) void drain()
+      } else if (eligibilityChanged) void drain()
     },
     disconnect,
   }

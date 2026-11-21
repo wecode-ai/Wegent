@@ -36,3 +36,30 @@ test('an action event remains visible while the initial status request stalls or
     vi.useRealTimers()
   }
 })
+
+test('a completed host event fences a delayed stop response even without view listeners', async () => {
+  let onEvent!: (event: DesktopHostEvent) => void
+  const release = vi.fn()
+  vi.mocked(subscribeDesktopHostEvents).mockImplementation(handler => {
+    onEvent = handler
+    return release
+  })
+  const store = createComputerUseStatusStore()
+  let finish!: (value: Awaited<ReturnType<typeof getComputerUseStatus>>) => void
+  const pending = store.updateFrom(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  onEvent({ sequence: 1, type: 'computerUse.changed', payload: { currentTool: null } })
+  finish({ currentTool: 'click' } as Awaited<ReturnType<typeof getComputerUseStatus>>)
+  await pending
+  expect(store.getSnapshot()?.currentTool).toBeNull()
+  expect(release).toHaveBeenCalledOnce()
+
+  await store.updateFrom(
+    async () => ({ currentTool: 'new-action' }) as Awaited<ReturnType<typeof getComputerUseStatus>>
+  )
+  expect(store.getSnapshot()?.currentTool).toBe('new-action')
+})

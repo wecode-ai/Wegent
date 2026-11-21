@@ -7,12 +7,12 @@ export function registerHostEventStream(ctx, security, client, path) {
     path,
     handler: security.wrapUpgrade((req, socket, head) => {
       server.handleUpgrade(req, socket, head, connection => {
+        connection.on('error', () => connection.terminate())
         const cursor = Number(new URL(req.url, 'http://localhost').searchParams.get('after') ?? 0)
         if (!Number.isSafeInteger(cursor) || cursor < 0) {
           connection.close(1008, 'Invalid event cursor')
           return
         }
-        connection.on('error', () => connection.terminate())
         void deliver(connection, client, cursor).catch(() => connection.terminate())
       })
     }),

@@ -464,6 +464,9 @@ const pluginDevelopmentChildRuntime =
       })
     : null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
+let pendingTrayState:
+  | Parameters<ElectronTrayManager<Electron.Menu | null, Tray>['setState']>[0]
+  | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
 const startupTelemetry = new StartupTelemetryLifecycle({
@@ -2809,6 +2812,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
+            pendingTrayState = state
             trayManager?.setState(state)
             syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
             void trayNativeStatus?.refresh()
@@ -3235,6 +3239,7 @@ if (hasSingleInstanceLock) {
           const manager = createTrayManager()
           manager.create()
           trayManager = manager
+          if (pendingTrayState) manager.setState(pendingTrayState)
         })
       }
       void startDesktopRuntime()

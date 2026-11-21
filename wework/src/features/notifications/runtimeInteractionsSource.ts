@@ -864,7 +864,6 @@ export function createRuntimeInteractionsSource(
     settle: settleFromConversation,
   })
   function publish() {
-    const previousNativeItems = snapshot.nativeItems
     snapshot = buildSnapshot()
     if (!active()) return
     if (persistedPending !== pending) {
@@ -873,7 +872,7 @@ export function createRuntimeInteractionsSource(
     }
     listeners.forEach(listener => listener())
     settlements.synchronize()
-    nativeReplies.synchronize(previousNativeItems !== snapshot.nativeItems)
+    nativeReplies.synchronize()
     if (lastResolved !== issueDiscovery.resolved) {
       lastResolved = issueDiscovery.resolved
       for (const item of lastResolved) void archiveResolved(item)

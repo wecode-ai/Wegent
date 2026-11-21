@@ -6,6 +6,7 @@ export function createComputerUseStatusStore() {
   let status: Pick<ComputerUseStatus, 'currentTool'> | null = null
   let pending: object | null = null
   let revision = 0
+  let pendingUpdates = 0
   const listeners = new Set<() => void>()
   let initial: ReturnType<typeof setTimeout> | undefined
   let unsubscribe: (() => void) | undefined
@@ -28,23 +29,41 @@ export function createComputerUseStatusStore() {
       if (pending === request) pending = null
     }
   }
+  const observeHost = () => {
+    unsubscribe ??= subscribeDesktopHostEvents(event => {
+      if (event.type !== 'computerUse.changed') return
+      const { currentTool } = event.payload
+      if (currentTool !== null && typeof currentTool !== 'string') return
+      revision++
+      publish({ currentTool })
+    })
+  }
+  const releaseHost = () => {
+    if (listeners.size || pendingUpdates) return
+    unsubscribe?.()
+    unsubscribe = undefined
+  }
   return {
     getSnapshot: () => status,
-    update(next: ComputerUseStatus) {
-      if (!listeners.size) return
-      revision++
-      publish(next)
+    async updateFrom(operation: () => Promise<ComputerUseStatus>) {
+      pendingUpdates++
+      observeHost()
+      const current = revision
+      try {
+        const next = await operation()
+        if (revision === current) {
+          revision++
+          publish(next)
+        }
+      } finally {
+        pendingUpdates--
+        releaseHost()
+      }
     },
     subscribe(listener: () => void) {
       listeners.add(listener)
       if (listeners.size === 1) {
-        unsubscribe = subscribeDesktopHostEvents(event => {
-          if (event.type !== 'computerUse.changed') return
-          const { currentTool } = event.payload
-          if (currentTool !== null && typeof currentTool !== 'string') return
-          revision++
-          publish({ currentTool })
-        })
+        observeHost()
         initial = setTimeout(() => void load(), 0)
       }
       return () => {
@@ -53,8 +72,7 @@ export function createComputerUseStatusStore() {
           revision++
           pending = null
           clearTimeout(initial)
-          unsubscribe?.()
-          unsubscribe = undefined
+          releaseHost()
         }
       }
     },

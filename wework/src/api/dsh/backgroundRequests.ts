@@ -49,12 +49,13 @@ export function executorRequestPriority(
       ? 'background'
       : 'foreground'
   }
-  return BACKGROUND_EXECUTOR_METHODS.has(method) || /\.(list|get|read|status)$/.test(method)
-    ? 'background'
-    : 'foreground'
+  return BACKGROUND_EXECUTOR_METHODS.has(method) ? 'background' : 'foreground'
 }
 
 const BACKGROUND_EXECUTOR_METHODS = new Set([
+  'runtime.tasks.list',
+  'runtime.stand_in.work.list',
+  'runtime.stand_in.telemetry.list',
   'runtime.tasks.archive',
   'runtime.codex.plugin.sync_bundled',
   'executor.plugins.initialize_bundled_marketplace',

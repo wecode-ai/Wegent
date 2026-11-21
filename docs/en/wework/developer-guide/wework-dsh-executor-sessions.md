@@ -126,11 +126,14 @@ windows share these slots. A slot remains held until the response body is consum
 errors and queued cancellation release capacity. Foreground commands such as
 attachment staging, sending and stopping do not enter the background queue.
 
-Executor queries, Git status and connection observers, tray
+Background task inventories, collaboration inbox reads, Git status and connection observers, tray
 synchronization share this limit. Background queries forwarded through
 `modelConfiguration.requestRuntime` also participate. New background entry points
 must reuse the scheduler. Queuing only inside DSH cannot protect browser sockets
 that are already occupied.
+Classify background methods with an explicit list rather than suffixes such as
+`get` or `read`. Executor identity checks required before sending are foreground
+dependencies and read directly while preserving all identity validation.
 
 Electron host events use a WebSocket protected by existing DSH session checks,
 reconnect from the consumed cursor and replay retained events without occupying

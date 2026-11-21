@@ -85,7 +85,7 @@ export class DshExecutorTransportError extends Error {
 }
 
 export function describeDshExecutor(): Promise<DshExecutorDescription> {
-  return scheduleDshRequest('background', readDshExecutorDescription)
+  return readDshExecutorDescription()
 }
 
 async function readDshExecutorDescription(): Promise<DshExecutorDescription> {

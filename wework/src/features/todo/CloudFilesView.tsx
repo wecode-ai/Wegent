@@ -14,6 +14,7 @@ import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { readFileFromAccessUrl, saveBlobToDownloads } from './cloudFileTransfer'
 
@@ -61,20 +62,21 @@ function WeworkFilesView({
     () => createCollaborationTranslator(language.startsWith('en') ? 'en' : 'zh-CN'),
     [language]
   )
-  const filesApi = useMemo(
-    () =>
-      createSharedWorkspaceFilesViewApi(
-        {
-          files: workspaceApi.files,
-          attachments: workspaceApi.attachments,
-        },
-        {
-          readAccess: access => readFileFromAccessUrl(access.url),
-          saveTaskAttachment: saveBlobToDownloads,
-        }
-      ),
-    [workspaceApi]
-  )
+  const filesApi = useMemo(() => {
+    if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+      logRuntimeTaskCreateStage('files-view-api-created', {})
+    }
+    return createSharedWorkspaceFilesViewApi(
+      {
+        files: workspaceApi.files,
+        attachments: workspaceApi.attachments,
+      },
+      {
+        readAccess: access => readFileFromAccessUrl(access.url),
+        saveTaskAttachment: saveBlobToDownloads,
+      }
+    )
+  }, [workspaceApi])
   const translate = useCallback(
     (key: string, fallback?: string, options?: CollaborationFilesTranslateOptions) => {
       const translated = fallback === undefined ? t(key, options) : t(key, fallback, options)

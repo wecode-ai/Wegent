@@ -502,7 +502,7 @@ export function OwnedWorkbenchProvider({
     setRuntimeTaskSelectedModelAndOptions,
     setRuntimeTaskSelectedModelOption,
   } = useRuntimeTaskModelSelection({
-    userId: user.id,
+    userId: currentUser.id,
     resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
     // The model store restores the focused task's saved selection, including a
