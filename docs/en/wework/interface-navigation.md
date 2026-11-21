@@ -127,6 +127,8 @@ If the Issue summary above the composer cannot read its task count, use its retr
 
 For installation, individual Skills and authorization, see [Plugins and Skills](./plugins-and-skills.md); for device management, [Devices and cloud work](./devices.md); for roles and sources, [My Stand-in](./personal-stand-in.md). Detailed workflows stay in their owning topics rather than being duplicated here.
 
+When connected to your organization server, choose **Install** on a card or its detail page in **Plugins → Personal creations**, or choose **Import and install** when importing a ZIP. **Start chat** is available after local installation while Wework continues installing for your account and syncing to cloud devices. See [Use a plugin you created on cloud devices](./plugins-and-skills.md#use-a-plugin-you-created-on-cloud-devices).
+
 Internal routes below support version maintenance and automated checks; they are not website URLs. Use the click paths for navigation.
 
 | Click path                  | Purpose and conditions                                                                                                                                                                                                        | Internal route |

@@ -35,6 +35,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginMarketplaceRegistered: async () => {},
   getKnownLocalExecutorDeviceId: () => mocks.deviceId,
   getInitializedBundledPluginMarketplace: () => mocks.bundled,
+  resumeBundledPluginUpdates: () => {},
 }))
 
 describe('local plugin source isolation', () => {
@@ -84,6 +85,80 @@ describe('local plugin source isolation', () => {
       throw new Error(`Unexpected source ${source}`)
     })
   })
+
+  test('installs a disk-only personal plugin using its marketplace manifest', async () => {
+    const api = createLocalCodexPluginApi()
+    const [diskItem] = await listPersonalMarketplacePluginsFromDisk()
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation(async (method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'plugin/install') {
+        if (params.params.marketplacePath !== '/personal/.agents/plugins/marketplace.json')
+          throw new Error('failed to read marketplace file: Is a directory')
+        return {}
+      }
+      if (method === 'codex.app_server_request' && params.method === 'plugin/read')
+        return { plugin: { summary: marketplace.plugins[0] } }
+      if (method === 'executor.plugins.manifest.read') return {}
+      return original(method, params)
+    })
+
+    const onLocalCommit = vi.fn()
+    await expect(api.installAvailablePlugin(diskItem!, onLocalCommit)).resolves.toMatchObject({
+      spec: { source: { pluginKey: 'personal-tool' } },
+    })
+    expect(onLocalCommit).toHaveBeenCalledTimes(1)
+  })
+
+  test.each([false, true])(
+    'passes the existing-release link guard to Native when device changed=%s',
+    async deviceChanged => {
+      const api = createLocalCodexPluginApi()
+      const { items } = await api.listInstalledPlugins({ requireComplete: true })
+      const plugin = items.find(item => item.spec.source.pluginKey === 'personal-tool')!
+      const originalRequest = mocks.request.getMockImplementation()!
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.links.link') return null
+        return originalRequest(method, params)
+      })
+      vi.spyOn(api, 'ensureCreatedPluginInWeworkPersonal').mockImplementation(async () => {
+        if (deviceChanged) mocks.deviceId = 'device-b'
+        return {
+          pluginName: 'personal-tool',
+          marketplacePath: '/personal',
+          pluginPath: '/personal/plugins/personal-tool',
+          migrated: false,
+        }
+      })
+      const link = api.linkPersonalPluginRelease(plugin, 17, 42, {
+        isCurrent: () => mocks.deviceId === 'device-a',
+        accountInstall: 'keepRelease',
+      })
+      if (deviceChanged) {
+        await expect(link).rejects.toThrow('Plugin account changed')
+      } else {
+        await link
+      }
+      const writes = mocks.request.mock.calls.filter(
+        ([method]) => method === 'executor.plugins.links.link'
+      )
+      expect(writes).toEqual(
+        !deviceChanged
+          ? [
+              [
+                'executor.plugins.links.link',
+                {
+                  marketplacePath: '/personal',
+                  localPluginName: 'personal-tool',
+                  cloudPluginId: 17,
+                  cloudReleaseId: 42,
+                  accountInstall: 'keepRelease',
+                },
+              ],
+            ]
+          : []
+      )
+    }
+  )
 
   function consumeSnapshot(state: LocalCodexPluginsState, expected: string[]) {
     expected = [...expected].sort()

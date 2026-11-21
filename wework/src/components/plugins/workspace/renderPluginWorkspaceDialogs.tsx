@@ -20,6 +20,7 @@ import {
   rememberMarketplaceKey,
 } from '../workspace/marketplaceWorkspaceHelpers'
 import type { PluginsWorkspaceController } from './usePluginsWorkspaceController'
+import { personalPluginDiskSource } from './personalPluginInstallSource'
 
 export function renderPluginWorkspaceDialogs({
   requestDialogs,
@@ -81,6 +82,7 @@ export function renderPluginWorkspaceDialogs({
   setMarketplaceSourceFilterKey,
   setQuery,
   refreshLocalMarketplace,
+  personalInstallation,
 }: PluginsWorkspaceController) {
   const pluginShareDialog = pluginShareState ? (
     <PluginShareDialog
@@ -183,6 +185,7 @@ export function renderPluginWorkspaceDialogs({
   const pluginOverlayDialogs = (
     <>
       {requestDialogs}
+      {personalInstallation.dialog}
       <ConfirmDialog
         open={pendingPluginUpdate !== null}
         title={t('workbench.plugins_update', '更新')}
@@ -300,9 +303,28 @@ export function renderPluginWorkspaceDialogs({
         <PluginImportDialog
           pluginApi={localPluginApi}
           onCancel={() => setShowPluginImportDialog(false)}
-          onImported={imported => {
+          onImport={async preview => {
+            const isCurrent = catalog.captureScope()
+            const accountInstall = preview.name
+              ? personalInstallation.reserveInstallRequest(preview.name, { reportBusy: false })
+              : undefined
+            if (accountInstall === null) throw new Error('PLUGIN_PERSONAL_MUTATION_IN_PROGRESS')
+            const imported = await localPluginApi
+              .importPluginPackage(preview, preview.existing)
+              .then(result => {
+                notifyLocalPluginSkillsChanged()
+                accountInstall?.submit(
+                  personalPluginDiskSource(
+                    result.pluginName,
+                    result.displayName,
+                    result.marketplacePath
+                  )
+                )
+                return result
+              })
+              .finally(() => accountInstall?.release())
+            if (!isCurrent()) return
             setShowPluginImportDialog(false)
-            notifyLocalPluginSkillsChanged()
             catalog.showNotice({
               id: 'plugin-import-complete',
               kind: 'success',

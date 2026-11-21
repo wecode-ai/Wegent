@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { createDesktopScenario as createToggleScenario } from './plugin-toggle-persistence.scenario.mjs'
-import { verifyPersonalPluginVersionSubmission } from '../modules/plugin-personal-version-flow.mjs'
+import {
+  authorPluginImportPath,
+  verifyPersonalPluginVersionSubmission,
+} from '../modules/plugin-personal-version-flow.mjs'
 import {
   accountPlugin,
   openPlugin,
@@ -15,6 +18,10 @@ export function createDesktopScenario(options) {
   let cloud
   return {
     ...toggle,
+    appEnvironment: {
+      ...toggle.appEnvironment,
+      WEWORK_E2E_OPEN_DIALOG_PATH: authorPluginImportPath,
+    },
     setCloudEnvironment(value) {
       cloud = value
       toggle.setCloudEnvironment(value)

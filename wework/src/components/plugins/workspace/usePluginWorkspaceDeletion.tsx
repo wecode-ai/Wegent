@@ -18,12 +18,27 @@ import type {
 import { type InstalledPluginItem } from '../PluginManagementRows'
 import { marketplaceItemMarketplaceId } from '../pluginDistribution'
 import { toInstalledPluginItem } from '../workspace/marketplaceWorkspaceHelpers'
+import { ownedPersonalPluginSourceKey } from './personalPluginInstallSource'
 import { TERMINAL_PUBLICATION_STATUSES } from './pluginPublicationState'
+import {
+  isPersonalPluginMutationInProgress,
+  reservePersonalPluginMutation,
+} from './pluginWorkspaceOperations'
 import type { PluginWorkspaceServices } from './pluginWorkspaceTypes'
+
+interface DeletePersonalPluginInput {
+  pluginName: string
+  displayName: string
+  marketplacePath?: string | null
+  installedId?: string | number | null
+  cloudPluginId?: string | number | null
+  deleteLocalSource?: boolean
+}
 
 export function usePluginWorkspaceDeletion({
   publicationRequests,
   pluginApi,
+  accountPluginApi,
   catalog,
   t,
   publications,
@@ -44,7 +59,9 @@ export function usePluginWorkspaceDeletion({
   | 'setSelectedPluginId'
   | 'setSelectedMarketplacePluginId'
   | 'refreshLocalMarketplace'
->) {
+> & {
+  accountPluginApi: Pick<PluginWorkspaceServices['pluginApi'], 'listMarketplacePlugins'> | null
+}) {
   const capturePluginScope = catalog.captureScope
   const [pendingPersonalPluginDelete, setPendingPersonalPluginDelete] = useState<{
     pluginName: string
@@ -52,35 +69,39 @@ export function usePluginWorkspaceDeletion({
     marketplacePath: string | null
     installedId: string | number | null
     cloudPluginId: string | number | null
+    verifyMarketplaceOwner: boolean
     deleteLocalSource: boolean
     impact: PluginDeleteImpactResponse | null
     publication: PluginPublicationRequestItem | null
   } | null>(null)
   const [isDeletingPersonalPlugin, setIsDeletingPersonalPlugin] = useState(false)
 
-  const requestDeletePersonalPlugin = async (input: {
-    pluginName: string
-    displayName: string
-    marketplacePath?: string | null
-    installedId?: string | number | null
-    cloudPluginId?: string | number | null
-    deleteLocalSource?: boolean
-  }) => {
-    const isCurrent = capturePluginScope()
-    const normalizedPluginName = input.pluginName.trim().toLowerCase()
-    const publication = matchingPublicationRequests(
-      publicationRequests,
-      input.cloudPluginId === null || input.cloudPluginId === undefined
+  const reportDeleteBusy = () => {
+    setPendingPersonalPluginDelete(null)
+    catalog.showNotice({
+      id: 'personal-plugin-mutation-in-progress',
+      kind: 'error',
+      message: t('workbench.plugins_reconciliation_busy'),
+    })
+  }
+
+  const openDeletePreview = async (input: DeletePersonalPluginInput, isCurrent: () => boolean) => {
+    const publication =
+      input.cloudPluginId === null
         ? null
-        : Number(input.cloudPluginId),
-      normalizedPluginName
-    ).find(candidate => !TERMINAL_PUBLICATION_STATUSES.has(candidate.status))
+        : matchingPublicationRequests(
+            publicationRequests,
+            input.cloudPluginId === undefined ? null : Number(input.cloudPluginId),
+            input.pluginName
+          ).find(candidate => !TERMINAL_PUBLICATION_STATUSES.has(candidate.status))
     const pending = {
       pluginName: input.pluginName,
       displayName: input.displayName,
       marketplacePath: input.marketplacePath?.trim() || null,
       installedId: input.installedId ?? null,
       cloudPluginId: input.cloudPluginId ?? null,
+      // The marketplace passes null for a local row. Installed details omit the cloud target.
+      verifyMarketplaceOwner: input.cloudPluginId === null,
       deleteLocalSource: input.deleteLocalSource ?? true,
       impact: null,
       publication: publication ?? null,
@@ -106,14 +127,43 @@ export function usePluginWorkspaceDeletion({
     }
   }
 
+  const requestDeletePersonalPlugin = async (input: DeletePersonalPluginInput) => {
+    const isCurrent = capturePluginScope()
+    if (!isCurrent()) return
+    if (isPersonalPluginMutationInProgress(input.pluginName)) return reportDeleteBusy()
+    await openDeletePreview(input, isCurrent)
+  }
+
   const confirmDeletePersonalPlugin = async () => {
     const isCurrent = capturePluginScope()
-    if (!pendingPersonalPluginDelete || isDeletingPersonalPlugin) return
+    if (!isCurrent() || !pendingPersonalPluginDelete || isDeletingPersonalPlugin) return
     const pending = pendingPersonalPluginDelete
     if (pending.cloudPluginId !== null && !pending.impact) return
+    const finishMutation = reservePersonalPluginMutation(pending.pluginName)
+    if (!finishMutation) return reportDeleteBusy()
     setIsDeletingPersonalPlugin(true)
     const attempt = beginOperation('plugin.delete')
     try {
+      if (accountPluginApi && pending.verifyMarketplaceOwner) {
+        const { items } = await accountPluginApi.listMarketplacePlugins()
+        if (!isCurrent()) return attempt.cancel()
+        // Keep the same name boundary as the catalog's local-source overlay.
+        const sourceName = pending.pluginName.toLowerCase()
+        const owners = items.filter(
+          item => ownedPersonalPluginSourceKey(item)?.toLowerCase() === sourceName
+        )
+        if (owners.length > 1) throw new Error('Personal plugin cloud ownership is ambiguous')
+        if (owners[0]) {
+          attempt.cancel()
+          catalog.showNotice({
+            id: `delete-impact-changed-${pending.pluginName}`,
+            kind: 'error',
+            message: t('workbench.plugins_delete_impact_changed'),
+          })
+          await openDeletePreview({ ...pending, cloudPluginId: owners[0].id }, isCurrent)
+          return
+        }
+      }
       if (pending.publication) {
         if (!pending.publication.actionEligibility.canWithdraw) {
           throw new Error(
@@ -252,6 +302,7 @@ export function usePluginWorkspaceDeletion({
           : t('workbench.plugins_delete_failed', '删除插件失败，请稍后重试'),
       })
     } finally {
+      finishMutation()
       if (isCurrent()) setIsDeletingPersonalPlugin(false)
     }
   }

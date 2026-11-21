@@ -1,5 +1,7 @@
 import { beginOperation } from '@/telemetry/operationBus'
 import { usePluginVersionSubmission } from '../hooks/usePluginVersionSubmission'
+import type { createPluginApi } from '@/api/plugins'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { createPluginCatalogState } from '../workspace/pluginCatalogState'
 import {
@@ -37,12 +39,20 @@ import {
 import type { Dispatch, SetStateAction } from 'react'
 import type { PluginMarketplaceState } from './marketplaceWorkspaceHelpers'
 import type { PluginCatalogInput } from './pluginCatalogState'
+import { usePersonalPluginAccountInstall } from './usePersonalPluginAccountInstall'
+import {
+  readPersonalPluginPackageVersion,
+  type PersonalPluginInstallSource,
+} from './personalPluginInstallSource'
 
 interface PublishingInput {
   setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
   setSelectedPluginId: Dispatch<SetStateAction<string | number | null>>
   catalog: ReturnType<typeof createPluginCatalogState>
   pluginApi: PluginCatalogInput['pluginApi']
+  accountPluginApi: ReturnType<typeof createPluginApi>
+  accountIdentity: Parameters<typeof usePersonalPluginAccountInstall>[0]['accountIdentity']
+  canInstallForAccount: boolean
   localPluginApi: PluginCatalogInput['localPluginApi']
   t: PluginCatalogInput['t']
   installedPlugins: InstalledPluginItem[]
@@ -55,6 +65,9 @@ export function usePluginWorkspacePublishing({
   setSelectedMarketplacePluginId,
   setSelectedPluginId,
   pluginApi,
+  accountPluginApi,
+  accountIdentity,
+  canInstallForAccount,
   localPluginApi,
   t,
   installedPlugins,
@@ -125,6 +138,23 @@ export function usePluginWorkspacePublishing({
     return isSingleSkill ? 'skill' : 'plugin'
   }
 
+  const uploadPersonalRelease = (
+    plugin: InstalledPluginItem,
+    file: File,
+    access: Pick<PluginPublishRequest, 'targets' | 'allowCopy'> = { targets: [], allowCopy: false },
+    privateInstallVersion?: string
+  ) =>
+    pluginApi.publishSubmission(file, {
+      slug: createdPluginSlug(plugin),
+      displayName: plugin.name,
+      version: privateInstallVersion ?? (plugin.version || '0.1.0'),
+      listingType: listingTypeForPlugin(plugin),
+      purpose: 'restricted_share',
+      visibility: 'personal',
+      ...(privateInstallVersion ? { privateFirstInstall: true } : {}),
+      ...access,
+    })
+
   const integratePersonalPublication = async (
     plugin: InstalledPluginItem,
     completed: PluginSubmissionCompleteResponse,
@@ -191,6 +221,65 @@ export function usePluginWorkspacePublishing({
     }
     return cloudPluginId
   }
+
+  const readPersonalInstallSource = async (source: PersonalPluginInstallSource) =>
+    source.installed ??
+    toInstalledPluginItem(
+      await localPluginApi.readMarketplacePluginDetail(
+        {
+          id: WEWORK_PERSONAL_MARKETPLACE_ID,
+          name: WEWORK_PERSONAL_MARKETPLACE_ID,
+          path: source.marketplacePath,
+        },
+        source.key,
+        { refresh: true }
+      )
+    )
+
+  const personalInstallation = usePersonalPluginAccountInstall({
+    available: canInstallForAccount,
+    accountIdentity,
+    api: accountPluginApi,
+    catalog,
+    t,
+    preparePrivate: async ({ source, isCurrent }) => {
+      const plugin = await readPersonalInstallSource(source)
+      if (!isCurrent()) return null
+      const file = await localPluginApi.packageCreatedPlugin(plugin.raw)
+      if (!isCurrent()) return null
+      const version = await readPersonalPluginPackageVersion(file)
+      if (!version) throw new Error(t('workbench.plugins_personal_install_version_missing'))
+      return { plugin, file, version }
+    },
+    publishPrivate: async ({ isAccountCurrent }, { plugin, file, version }) => {
+      const completed = await uploadPersonalRelease(plugin, file, undefined, version)
+      if (!isAccountCurrent()) return null
+      if (completed.submission.status !== 'approved' || !completed.plugin?.latestReleaseId) {
+        throw new Error(
+          completed.submission.reviewNote || t('workbench.plugins_personal_install_upload_failed')
+        )
+      }
+      if (completed.plugin.latestReleaseId !== completed.submission.releaseId) {
+        throw new Error(t('workbench.plugins_version_submit_superseded'))
+      }
+      return {
+        pluginId: Number(completed.plugin.id),
+        releaseId: completed.plugin.latestReleaseId,
+      }
+    },
+    linkSource: async ({ source, isSourceCurrent }, release, publishedSource) => {
+      const plugin = publishedSource ?? (await readPersonalInstallSource(source))
+      await localPluginApi.linkPersonalPluginRelease(
+        plugin.raw,
+        release.pluginId,
+        release.releaseId,
+        {
+          isCurrent: isSourceCurrent,
+          accountInstall: publishedSource ? 'updateRelease' : 'keepRelease',
+        }
+      )
+    },
+  })
 
   const openPublishCreatedPlugin = async (plugin: InstalledPluginItem) => {
     const isCurrent = capturePluginScope()
@@ -316,16 +405,7 @@ export function usePluginWorkspacePublishing({
         let sourcePluginId =
           ownedListing?.visibility === 'personal' ? Number(ownedListing.id) : null
         if (!sourcePluginId) {
-          const personalPublication = await pluginApi.publishSubmission(file, {
-            slug: createdPluginSlug(plugin),
-            displayName: plugin.name,
-            version: plugin.version || '0.1.0',
-            listingType: listingTypeForPlugin(plugin),
-            purpose: 'restricted_share',
-            visibility: 'personal',
-            targets: [],
-            allowCopy: false,
-          })
+          const personalPublication = await uploadPersonalRelease(plugin, file)
           if (!isCurrent()) {
             attempt.cancel()
             return
@@ -395,13 +475,7 @@ export function usePluginWorkspacePublishing({
         return
       }
 
-      const completed = await pluginApi.publishSubmission(file, {
-        slug: createdPluginSlug(plugin),
-        displayName: plugin.name,
-        version: plugin.version || '0.1.0',
-        listingType: listingTypeForPlugin(plugin),
-        purpose: 'restricted_share',
-        visibility: request.visibility,
+      const completed = await uploadPersonalRelease(plugin, file, {
         targets: request.targets,
         allowCopy: request.allowCopy,
       })
@@ -640,6 +714,7 @@ export function usePluginWorkspacePublishing({
     recoverPublishToShare,
     savePluginShare,
     versionSubmission,
+    personalInstallation,
     copyMarketplacePlugin,
     searchPluginShareUsers,
     searchPluginShareGroups,

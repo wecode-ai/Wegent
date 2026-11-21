@@ -23,7 +23,7 @@ import type {
   PluginSubmissionInitResponse,
 } from '@/types/api'
 import { sha256Hex } from './fileHash'
-import type { HttpClient } from './http'
+import { ApiError, type HttpClient } from './http'
 import { resolveApiUrl } from './resolveApiUrl'
 import { readInstalledPluginsForUninstall, uninstallCloudPlugin } from './pluginUninstall'
 
@@ -105,6 +105,8 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     const normalized = deviceId?.trim()
     return normalized ? `?device_id=${encodeURIComponent(normalized)}` : ''
   }
+  const requestMarketplaceInstall = (id: string | number, query: string) =>
+    client.post<PluginMarketplaceInstallResponse>(`/plugins/marketplace/${id}/install${query}`)
   const initSubmission = async (
     data: PluginSubmissionInitRequest
   ): Promise<PluginSubmissionInitResponse> => {
@@ -183,11 +185,11 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/plugins/marketplace${suffix}`)
     },
-    installMarketplacePlugin(
-      id: string | number,
-      deviceId?: string
-    ): Promise<PluginMarketplaceInstallResponse> {
-      return client.post(`/plugins/marketplace/${id}/install${deviceQuery(deviceId)}`)
+    installMarketplacePlugin(id: string | number, deviceId?: string) {
+      return requestMarketplaceInstall(id, deviceQuery(deviceId))
+    },
+    installMarketplacePluginForAccount(id: string | number, releaseId?: number) {
+      return requestMarketplaceInstall(id, releaseId == null ? '' : `?release_id=${releaseId}`)
     },
     updateMarketplacePlugin(
       installedId: string | number,
@@ -354,6 +356,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         | 'targets'
         | 'allowCopy'
         | 'releaseNotes'
+        | 'privateFirstInstall'
       >
     ): Promise<PluginSubmissionCompleteResponse> {
       const sha256 = await sha256Hex(file)
@@ -364,6 +367,13 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         sizeBytes: file.size,
       })
       try {
+        if (metadata.privateFirstInstall && initialized.privateFirstInstall !== true) {
+          throw new ApiError(
+            'The server did not confirm first private plugin publication',
+            409,
+            'PRIVATE_FIRST_INSTALL_UNSUPPORTED'
+          )
+        }
         const uploadTransport = globalThis.fetch.bind(globalThis)
         const upload = await uploadTransport(initialized.uploadUrl, {
           method: 'PUT',
