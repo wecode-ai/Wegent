@@ -68,6 +68,7 @@ export interface AvailableGroup {
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean
+  returnFocusRef?: React.RefObject<HTMLElement | null>
   onOpenChange: (open: boolean) => void
   onSubmit: (
     data: Omit<KnowledgeBaseCreate, 'namespace'> & {
@@ -118,6 +119,7 @@ function createEmptySource(): CodeWikiSourceDraft {
 
 export function CreateKnowledgeBaseDialog({
   open,
+  returnFocusRef,
   onOpenChange,
   onSubmit,
   loading,
@@ -488,6 +490,13 @@ export function CreateKnowledgeBaseDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        onCloseAutoFocus={event => {
+          const trigger = returnFocusRef?.current
+          if (trigger?.isConnected) {
+            event.preventDefault()
+            trigger.focus()
+          }
+        }}
         onPointerDownCapture={locations.onReturnInteraction}
         onKeyDownCapture={locations.onReturnInteraction}
         className="w-[calc(100%_-_1rem)] max-w-4xl h-[min(90dvh,46rem)] overflow-hidden flex flex-col"
