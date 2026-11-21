@@ -433,9 +433,10 @@ describe('SocketProvider reconnect notification', () => {
     }
   })
 
-  it('waits for the server acknowledgement when cancelling chat', async () => {
+  it('settles cancellation on acknowledgement, disconnect, and timeout', async () => {
     const socket = createMockSocket()
-    mockIo.mockReturnValue(socket)
+    const reconnectedSocket = createMockSocket()
+    mockIo.mockReturnValueOnce(socket).mockReturnValue(reconnectedSocket)
 
     let socketApi: SocketApi | undefined
     render(
@@ -477,5 +478,59 @@ describe('SocketProvider reconnect notification', () => {
     ack({ success: true })
     await cancellation
     expect(cancelResult).toEqual({ success: true })
+
+    let interruptedResult: { success: boolean; error?: string } | undefined
+    const interruptedCancellation = socketApi!
+      .cancelChatStream(78, 'partial', 'Chat')
+      .then(result => {
+        interruptedResult = result
+      })
+    const interruptedAck = socket.emit.mock.calls.at(-1)?.[2]
+    if (!interruptedAck) throw new Error('Interrupted cancellation acknowledgement is missing')
+
+    await act(async () => {
+      socket.triggerSocket('disconnect', 'ping timeout')
+    })
+
+    expect(interruptedResult).toEqual({
+      success: false,
+      error: 'Connection lost before cancellation was acknowledged',
+    })
+    await interruptedCancellation
+
+    await act(async () => {
+      socketApi!.connect('token')
+    })
+    await waitFor(() => expect(reconnectedSocket.connect).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      reconnectedSocket.triggerSocket('connect')
+      interruptedAck({ success: true })
+    })
+    expect(interruptedResult).toEqual({
+      success: false,
+      error: 'Connection lost before cancellation was acknowledged',
+    })
+
+    jest.useFakeTimers()
+    try {
+      let timeoutResult: { success: boolean; error?: string } | undefined
+      const timedCancellation = socketApi!.cancelChatStream(79, 'partial', 'Chat').then(result => {
+        timeoutResult = result
+      })
+      const lateAck = reconnectedSocket.emit.mock.calls.at(-1)?.[2]
+      if (!lateAck) throw new Error('Timed cancellation acknowledgement is missing')
+      await act(async () => {
+        jest.advanceTimersByTime(20_000)
+      })
+      expect(timeoutResult).toEqual({
+        success: false,
+        error: 'Cancellation acknowledgement timed out',
+      })
+      await timedCancellation
+      lateAck({ success: true })
+      expect(timeoutResult?.success).toBe(false)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
