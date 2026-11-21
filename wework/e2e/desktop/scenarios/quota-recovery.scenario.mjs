@@ -22,6 +22,7 @@ export function createDesktopScenario({ workspacePath }) {
       if (holdQuota && Date.now() >= resetAt * 1000) {
         resetAt = Math.floor(Date.now() / 1000) + 5
       }
+      console.info('[desktop-e2e] quota usage snapshot', { at: Date.now(), resetAt, holdQuota })
       return {
         plan_type: 'enterprise',
         rate_limit: {
@@ -68,11 +69,18 @@ export function createDesktopScenario({ workspacePath }) {
         { goal = false, responses } = {}
       ) => {
         const marker = `WEWORK_QUOTA_${taskId}`
+        let expectedResetAt = 0
         const plan = model.plan(marker, [
           {
             usageLimit: () => {
               holdQuota = holdUntilRestored
               resetAt = Math.floor(Date.now() / 1000) + delaySeconds
+              expectedResetAt = resetAt
+              console.info('[desktop-e2e] initial quota limit', {
+                taskId,
+                at: Date.now(),
+                expectedResetAt,
+              })
               return resetAt
             },
           },
@@ -112,14 +120,15 @@ export function createDesktopScenario({ workspacePath }) {
         const waiting = await waitForValue(
           () => task(taskId),
           value =>
-            value?.status === 'queued' &&
-            value.running === false &&
-            value.runtimeHandle?.quotaWait?.resumeAt === resetAt * 1000 &&
-            value.runtimeHandle.quotaWait,
+            value?.status === 'queued' && value.running === false && value.runtimeHandle?.quotaWait,
           'The subscription error did not enter durable quota waiting',
           RECOVERY_TIMEOUT_MS
         )
-        assert.equal(waiting.resumeAt, resetAt * 1000)
+        assert.equal(
+          waiting.resumeAt,
+          expectedResetAt * 1000,
+          `The first queued quota deadline for ${taskId} differs from its initial limit response`
+        )
         assert.equal(plan.count, 1, 'The limited request was retried before reset')
         return {
           created,
