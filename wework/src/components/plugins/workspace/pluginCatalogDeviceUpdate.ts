@@ -4,13 +4,13 @@ import { getErrorMessage } from '@/lib/error-message'
 
 import {
   beginPluginDeviceSync,
-  marketplaceNeedsDeviceSync,
   markPluginDeviceAutoSyncAttempted,
   markPluginDeviceAutoSyncSettled,
 } from '@/features/plugins/pluginDeviceAutoSync'
 
 import {
   marketplaceItemNeedsPluginAutoUpdate,
+  pendingPluginSyncTargets,
   runPluginAutoUpdate,
 } from '@/features/plugins/pluginAutoUpdate'
 
@@ -70,11 +70,7 @@ export function updatePluginCatalogDevice(ctx: PluginCatalogContext) {
       requireScope()
       return ctx.input.pluginApi.syncInstalledPluginToDevice(installedPluginId, deviceId)
     },
-    syncDevice: () => {
-      requireScope()
-      return ctx.input.pluginApi.syncInstalledPluginsToDevice(deviceId)
-    },
-    syncWhenNoUpdates: marketplaceNeedsDeviceSync(ctx.catalog.items),
+    pendingInstalls: pendingPluginSyncTargets(ctx.catalog.items),
     onProgress: ({ processedCount, remainingCount }) => {
       if (!scopeIsCurrent() || ctx.state.currentDeviceId !== deviceId) return
       ctx.publish({
