@@ -541,6 +541,9 @@ def create_knowledge_base(
             rag_config_mode=data.rag_config_mode,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_model_ref=data.summary_model_ref,
+            guided_questions=data.guided_questions,
+            max_calls_per_conversation=data.max_calls_per_conversation,
+            exempt_calls_before_check=data.exempt_calls_before_check,
             **multimodal_create_kwargs(data),
         )
 

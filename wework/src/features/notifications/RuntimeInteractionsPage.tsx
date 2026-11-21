@@ -261,7 +261,11 @@ export function RuntimeInteractionsPage({
   const pendingQuestion = row ? pending.find(item => item.id === row.id) : undefined
   const liveQuestion = pendingQuestion?.cached ? undefined : pendingQuestion
   const quickReply = liveQuestion && canReplyToInteraction(liveQuestion) ? liveQuestion : null
-  const showProcessing = Boolean(pendingQuestion && !pendingQuestion.project && !history)
+  const approval =
+    (liveQuestion?.payload.interactionKind ?? liveQuestion?.payload.interaction_kind) === 'approval'
+  const showProcessing = Boolean(
+    pendingQuestion && !pendingQuestion.project && !history && !approval
+  )
   const showContext = Boolean(row && (contextRowId === row.id || !showProcessing))
   const projectPreview = Boolean(row?.projectItem && showContext)
   const openOriginal = row && (

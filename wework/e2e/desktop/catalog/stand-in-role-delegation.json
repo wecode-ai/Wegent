@@ -1,0 +1,12 @@
+{
+  "order": 49100,
+  "scenario": "./scenarios/stand-in-role-delegation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 48100,
+      "shard": 5,
+      "position": 9100
+    }
+  }
+}

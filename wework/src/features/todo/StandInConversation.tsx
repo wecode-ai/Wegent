@@ -9,10 +9,23 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useCallback, useContext, useState, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import { selectStandInDelegatedWork } from './standInDelegatedBranches'
+import { StandInDelegatedWork } from './StandInDelegatedWork'
 import { useStandInConversationModel } from './useStandInConversationModel'
 
 export function StandInConversation({
@@ -92,6 +105,30 @@ export function StandInConversation({
   )
   const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
   const address = snapshot.data
+  const roleBranches = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([userId, deviceId, taskId]),
+        () => api.remoteRoleBranches(userId, deviceId, taskId),
+        { refreshIntervalMs: 3000, refreshIntervalMode: 'after-settle', refreshOnSubscribe: true }
+      ),
+    [api, userId, deviceId, taskId]
+  )
+  const remoteBranches = useSyncExternalStore(
+    active && !scope && address ? roleBranches.subscribe : subscribeIdleResource,
+    roleBranches.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const delegatedWork = scope
+    ? []
+    : selectStandInDelegatedWork(
+        workbench?.runtimeTaskReminders.items ?? [],
+        remoteBranches.data?.items ?? [],
+        userId,
+        deviceId,
+        taskId,
+        aliases
+      )
   const error = snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null
   const setAddress = useCallback(
     (value: RuntimeTaskAddress | null) => {
@@ -132,7 +169,41 @@ export function StandInConversation({
         instanceId={`stand-in:${deviceId}:${taskId}`}
         testId="stand-in-conversation"
         draftRequest={draftRequest}
-        contentFooter={contentFooter}
+        contentFooter={
+          delegatedWork.length ? (
+            <>
+              <StandInDelegatedWork
+                tasks={delegatedWork}
+                taskId={taskId}
+                onOpenTask={onOpenTask}
+                onCancel={async (root, branch) => {
+                  await api.cancelRoleWork(
+                    userId,
+                    branch?.dispatcherDeviceId ?? deviceId,
+                    taskId,
+                    root,
+                    branch?.taskId
+                  )
+                  void roleBranches.reload()
+                }}
+                onRetry={async branch => {
+                  await api.retryRoleWork(
+                    userId,
+                    branch.dispatcherDeviceId,
+                    taskId,
+                    branch.root,
+                    branch.taskId,
+                    branch.attempt
+                  )
+                  await roleBranches.reload()
+                }}
+              />
+              {contentFooter}
+            </>
+          ) : (
+            contentFooter
+          )
+        }
         onDraftRequestConsumed={onDraftRequestConsumed}
         initialAddress={address}
         controlledAddress={address}

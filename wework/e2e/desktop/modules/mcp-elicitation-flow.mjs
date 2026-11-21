@@ -36,14 +36,13 @@ import { waitForValue } from './workspace-agent-setup.mjs'
 
 const CATALOG_RELOAD_TIMEOUT_MS = 30_000
 
-async function assertElicitationCountdown(control, durationMs) {
-  const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
-  const time = countdown.match(/\b(\d+):([0-5]\d)\b/)
-  assert.ok(time, `Expected an MCP countdown in minutes and seconds, got "${countdown}"`)
+function assertElicitationCountdown(text, durationMs) {
+  const time = text.match(/\b(\d+):([0-5]\d)\b/)
+  assert.ok(time, `Expected an MCP countdown in minutes and seconds, got "${text}"`)
   const seconds = Number(time[1]) * 60 + Number(time[2])
   assert.ok(
     seconds > 0 && seconds <= Math.ceil(durationMs / 1000),
-    `MCP countdown "${countdown}" must be within the configured ${durationMs}ms deadline`
+    `MCP countdown "${time[0]}" must be within the configured ${durationMs}ms deadline`
   )
 }
 
@@ -85,7 +84,8 @@ async function verifyMcpElicitationInFullAccess(control) {
   for (const expectedText of ['访问范围', '所有人', '仅自己']) {
     assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
   }
-  await assertElicitationCountdown(control, MCP_FORM_TIMEOUT_MS)
+  const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
+  assertElicitationCountdown(countdown, MCP_FORM_TIMEOUT_MS)
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
@@ -426,15 +426,21 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
     `${MCP_ELICITATION_PROMPT} ${scenario}`,
     'mcp_elicitation'
   )
-  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
-    text: isUrl ? 'example.com' : '访问范围',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  // Capture the visible timer before the transcript RPC consumes the short URL window.
-  await assertElicitationCountdown(control, durationMs)
+  // Read the visible countdown with the card so a second UI command does not
+  // consume the short URL window before the transcript request.
+  const card = await control.command(
+    'waitFor',
+    '[data-testid="request-user-input-card"]:has([data-testid="request-user-input-deadline"])',
+    {
+      text: isUrl ? 'example.com' : '访问范围',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assertElicitationCountdown(card, durationMs)
+  const transcriptRequestedAt = Date.now()
   const original = await readPendingElicitation(control, taskId)
-  const remainingSeconds = Math.ceil((original.expiresAtUnixMs - Date.now()) / 1000)
+  const remainingSeconds = Math.ceil((original.expiresAtUnixMs - transcriptRequestedAt) / 1000)
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(

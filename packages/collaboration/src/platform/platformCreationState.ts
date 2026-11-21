@@ -167,10 +167,14 @@ export function createPlatformCreationState(
     publish({ projectWorkspaceId: defaultWorkspace?.id ?? null, projectDialogOpen: true })
     loadResources()
   }
-  const startProjectCreation = (mode: Mode = 'blank') => {
+  const startProjectCreation = (mode: Mode = 'blank', templateRequested = false) => {
     if (!input) return
     const { host, state } = input
-    if (host.capabilities.projectNavigation === 'projects' && !host.location.workspaceId) {
+    if (
+      !templateRequested &&
+      host.capabilities.projectNavigation === 'projects' &&
+      !host.location.workspaceId
+    ) {
       startStandaloneProjectCreation(
         mode === 'blank' ? (host.capabilities.projectLocation ?? 'local') : 'local',
         mode
@@ -236,7 +240,7 @@ export function createPlatformCreationState(
       if (request && !state.loading && !state.error && handledTemplate !== request.key) {
         handledTemplate = request.key
         publish({ projectTemplate: request.document })
-        startProjectCreation()
+        startProjectCreation('blank', true)
         request.onHandled()
       }
       return () => {

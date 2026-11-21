@@ -47,6 +47,7 @@ export interface WeworkCollaborationPlatformProps {
   >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
+  focusedPersonalIssueId?: string | null
   focusedItemId?: string | null
   focusedCommentId?: string | null
   focusedCommentRequestKey?: string | null

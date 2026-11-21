@@ -13,7 +13,7 @@ export interface LocalRuntimeSidebarOptions {
   localSidebarIdentity?: LocalRuntimeSidebarIdentity
 }
 
-// Trusted IPC provenance survives immutable spreads but is absent from JSON and RPC payloads.
+// Workspace and device provenance survives immutable spreads but stays out of JSON and RPC payloads.
 const localRuntimeSource = Symbol('local-runtime-source')
 type LocalRuntimeSource = { [localRuntimeSource]?: LocalRuntimeSidebarIdentity }
 
@@ -40,7 +40,7 @@ export function qualifyLocalRuntimeWork(
     workspace.workspaceSource !== 'remote'
       ? qualifyLocalRuntimeSource(workspace, identity)
       : workspace
-  return {
+  const qualifiedWork = {
     ...work,
     projects: work.projects.map(projectWork => ({
       ...projectWork,
@@ -53,6 +53,8 @@ export function qualifyLocalRuntimeWork(
     })),
     chats: work.chats.map(qualifyWorkspace),
   }
+  // A catalog receipt describes this exact read, so it must not carry over to merged snapshots.
+  return Object.defineProperty(qualifiedWork, localRuntimeSource, { value: identity })
 }
 
 export function localRuntimeSidebarIdentity(

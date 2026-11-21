@@ -175,6 +175,7 @@ def add_issue_comment(
             body=body,
             identity=collaboration,
             reply_to_comment_id=reply_to_comment_id,
+            mentions=mentions,
         )
         push_project_chat_message(message.model_dump(mode="json", by_alias=True))
         return _comment_view(message)

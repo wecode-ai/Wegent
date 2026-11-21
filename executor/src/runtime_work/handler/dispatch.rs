@@ -215,6 +215,15 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.work.list" => {
                 boxed_rpc(move || async move { self.list_connection_stand_in_work(payload) })
             }
+            "runtime.stand_in.role_task.branches" => {
+                boxed_rpc(move || async move { self.stand_in_role_branches(&payload) })
+            }
+            "runtime.stand_in.role_task.cancel" => {
+                boxed_rpc(move || async move { self.request_role_cancellation(payload).await })
+            }
+            "runtime.stand_in.role_task.retry" => {
+                boxed_rpc(move || async move { self.request_role_retry(payload).await })
+            }
             "runtime.stand_in.work.messages" => {
                 boxed_rpc(move || async move { self.connection_stand_in_messages(payload) })
             }

@@ -404,6 +404,10 @@ async fn reconcile_one(
         })
         .await?;
     if let Some(effects) = effects {
+        runtime_projection::record_reconciled_metrics(
+            effects.matched.as_ref(),
+            Some(effects.detail.as_str()),
+        );
         effects.deliver(state, runtime).await;
     }
     Ok(())

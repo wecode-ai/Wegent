@@ -967,7 +967,7 @@ def test_resolving_requires_authentication(test_client: TestClient):
     assert test_client.post(RESOLVE_URL, json=RESOLVE_PAYLOAD).status_code == 401
 
 
-def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
+def test_a_code_wiki_keeps_the_settings_it_was_created_with(
     test_client: TestClient,
     auth_headers: dict[str, str],
     test_db: Session,
@@ -978,6 +978,11 @@ def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
     and the edit dialog then showed defaults the user had not chosen."""
     from app.models.kind import Kind
 
+    usage_settings = {
+        "guided_questions": ["Where are the entry points?"],
+        "max_calls_per_conversation": 8,
+        "exempt_calls_before_check": 2,
+    }
     with patch(
         "app.api.endpoints.knowledge_code_wiki.assert_user_can_read_source",
         return_value={"has_access": True},
@@ -988,6 +993,7 @@ def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
                 **PAYLOAD,
                 "summary_enabled": True,
                 "summary_model_ref": {"name": "gpt", "namespace": "default"},
+                **usage_settings,
             },
             headers=auth_headers,
         )
@@ -996,6 +1002,15 @@ def test_a_code_wiki_keeps_the_summary_settings_it_was_created_with(
     spec = test_db.get(Kind, response.json()["id"]).json["spec"]
     assert spec["summaryEnabled"] is True
     assert spec["summaryModelRef"]["name"] == "gpt"
+    created = response.json()
+    assert {key: created[key] for key in usage_settings} == usage_settings
+
+    detail = test_client.get(
+        f"/api/knowledge-bases/{created['id']}", headers=auth_headers
+    )
+    assert detail.status_code == 200, detail.text
+    persisted = detail.json()
+    assert {key: persisted[key] for key in usage_settings} == usage_settings
 
 
 def test_a_code_wiki_keeps_the_model_it_was_told_to_generate_with(

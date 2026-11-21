@@ -521,6 +521,41 @@ fn collection_retry_starts_at_the_declared_delay_and_backs_off_after_repeated_fa
 }
 
 #[test]
+fn dingtalk_group_timeouts_shrink_then_leave_stale_backlog() {
+    let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,
+        "kind":"group","collectionKey":"all-messages"});
+    let mut state = json!({"checkpoint":{
+        "after":"2026-11-20T10:00:00Z","until":"2026-11-20T11:00:00Z","cursor":"old-page"}});
+    let now = "2026-11-20T16:30:00Z"
+        .parse::<chrono::DateTime<chrono::Utc>>()
+        .unwrap();
+    assert!(is_dingtalk_group_timeout(
+        &source,
+        &json!("request_timeout")
+    ));
+    assert!(!is_dingtalk_group_timeout(&source, &json!("rate_limited")));
+
+    recover_dingtalk_group_checkpoint(&source, &mut state, now);
+    assert_eq!(
+        state["checkpoint"],
+        json!({
+        "after":"2026-11-20T10:00:00Z","cursor":"0","windowMinutes":5})
+    );
+    recover_dingtalk_group_checkpoint(&source, &mut state, now);
+    assert_eq!(
+        state["checkpoint"],
+        json!({
+        "after":"2026-11-20T16:25:00+00:00","cursor":"0","windowMinutes":1})
+    );
+    recover_dingtalk_group_checkpoint(&source, &mut state, now);
+    assert_eq!(
+        state["checkpoint"],
+        json!({
+        "after":"2026-11-20T16:29:00+00:00","cursor":"0","windowMinutes":1})
+    );
+}
+
+#[test]
 fn connection_host_restart_preserves_progress_and_allows_collection_to_resume() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();

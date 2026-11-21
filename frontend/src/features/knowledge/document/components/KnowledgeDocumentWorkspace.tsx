@@ -503,14 +503,6 @@ function KnowledgeDocumentSession({
     [sidebar, updateUrlParams]
   )
 
-  const handleKnowledgeBaseTypeConverted = useCallback(
-    (updatedKb: KnowledgeBase) => {
-      sidebar.syncConvertedKnowledgeBase(updatedKb)
-      dialogs.setEditingKb(updatedKb)
-    },
-    [sidebar, dialogs]
-  )
-
   const retainsDetail =
     sidebar.selectedKb?.id === retainedKbId &&
     retainedKbId !== undefined &&
@@ -741,6 +733,21 @@ function KnowledgeDocumentSession({
       )}
 
       <div className="flex-1 min-h-0 min-w-0 flex flex-col bg-base relative">
+        {sidebar.viewRefreshErrors.map(id => (
+          <div key={id} role="alert" className="px-3 text-sm text-error">
+            {t('document.navigation.viewRefreshFailed', {
+              name: sidebar.allKnowledgeBases.find(kb => kb.id === id)?.name ?? String(id),
+            })}
+            <button
+              type="button"
+              data-testid={`retry-knowledge-view-${id}`}
+              className="min-h-11 min-w-11 px-3"
+              onClick={() => void sidebar.retryViewRefresh(id)}
+            >
+              {t('document.navigation.retry')}
+            </button>
+          </div>
+        ))}
         {sidebar.loadError && !kbResolution && (
           <div role="alert" className="p-3 text-error">
             {t('document.navigation.loadFailed')}
@@ -799,6 +806,13 @@ function KnowledgeDocumentSession({
         loading={dialogs.isCreating}
         scope={dialogs.createScope}
         groupName={dialogs.createGroupName}
+        spaceName={
+          sidebar.groups.find(group =>
+            dialogs.createScope === 'organization'
+              ? group.type === 'organization'
+              : group.type === 'group' && group.name === dialogs.createGroupName
+          )?.displayName
+        }
         kbType={dialogs.createKbType}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}
@@ -813,8 +827,15 @@ function KnowledgeDocumentSession({
         open={!!dialogs.editingKb}
         onOpenChange={open => !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
+        spaceName={
+          sidebar.groups.find(
+            group =>
+              (group.type === 'group' || group.type === 'organization') &&
+              group.name === dialogs.editingKb?.namespace
+          )?.displayName
+        }
         onSubmit={dialogs.handleUpdate}
-        onTypeConverted={handleKnowledgeBaseTypeConverted}
+        saveView={sidebar.saveKnowledgeBaseView}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}

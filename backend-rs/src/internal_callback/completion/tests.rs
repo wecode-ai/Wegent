@@ -4,7 +4,7 @@
 
 //! Focused compatibility tests for the terminal task-completion subsystem.
 use super::Tables;
-use super::collect::{is_blank_text_value, merge_blocks};
+use super::collect::{failure_details, is_blank_text_value, merge_blocks};
 use super::sql::{assistant_subtasks, update_subtask_running, update_subtask_terminal};
 use super::terminal_status;
 use serde_json::json;
@@ -106,6 +106,18 @@ fn blank_text_values_follow_the_source_predicate() {
     assert!(is_blank_text_value(Some(&json!("  "))));
     assert!(!is_blank_text_value(Some(&json!("x"))));
     assert!(!is_blank_text_value(Some(&json!(0))));
+}
+
+#[test]
+fn persisted_failure_keeps_the_legacy_code_beside_structured_classification() {
+    let details = failure_details("executor could not start", "EXECUTOR_DISPATCH_FAILED");
+
+    assert_eq!(
+        details.get("error_type"),
+        Some(&json!("EXECUTOR_DISPATCH_FAILED"))
+    );
+    assert_eq!(details["error_info"]["code"], json!("dispatch_error"));
+    assert_eq!(details["error_info"]["category"], json!("platform"));
 }
 
 /// The ORM subtask projection labels each column `{table}_{column}`, so the

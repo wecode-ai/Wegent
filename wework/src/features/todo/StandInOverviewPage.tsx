@@ -927,7 +927,12 @@ export function StandInOverviewPage({
           overview.draftExample(text)
         })
       }
-      bypass={Boolean(props.initialProfileId || profile || (!saved && state.error))}
+      bypass={Boolean(
+        props.initialProfileId ||
+        profile ||
+        (roleId && primaryDeviceId && primaryDeviceId !== deviceId) ||
+        (!saved && state.error)
+      )}
       onClose={props.onCancel}
     >
       {content}

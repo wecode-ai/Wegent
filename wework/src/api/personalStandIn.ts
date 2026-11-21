@@ -62,6 +62,7 @@ export interface StandInRole extends WorkspaceStandInSettings {
   collaboration: {
     enabled: boolean
     allProjects: boolean
+    includeIndependentIssues?: boolean
     projects: StandInProjectRef[]
     excludedProjects: StandInProjectRef[]
     tags: string[]
@@ -70,12 +71,18 @@ export interface StandInRole extends WorkspaceStandInSettings {
   }
 }
 
+export type StandInDelegationRoute = Pick<
+  StandInRole,
+  'id' | 'name' | 'prompt' | 'enabled' | 'executionDeviceId'
+>
+
 export interface PersonalStandInSettings {
   userId: number
   executionDeviceId: string
   version: number
   primary?: StandInIdentity
   roles: StandInRole[]
+  delegationRoutes?: StandInDelegationRoute[]
   lifecycle?: { status: 'stopping' | 'stopped' }
 }
 

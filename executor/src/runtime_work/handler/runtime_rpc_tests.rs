@@ -74,6 +74,38 @@ fn runtime_rpc_dispatch_retains_control_creation_routes() {
         });
 }
 
+#[tokio::test]
+async fn local_role_task_listing_requires_an_owned_conversation_not_a_cloud_grant() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("desktop", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "original".into(),
+        runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"desktop"},
+            "executionRequest":{"user_id":7}}),
+        ..RuntimeTaskLink::default()
+    });
+    let list = |user| {
+        json!({"method":"runtime.stand_in.role_task.branches",
+        "payload":{"userId":user,"taskId":"original"}})
+    };
+
+    assert_eq!(
+        handler.handle_runtime_rpc(list(7)).await.unwrap(),
+        json!({"items":[]})
+    );
+    assert_eq!(
+        handler.handle_runtime_rpc(list(8)).await.unwrap_err().code,
+        "permission_denied"
+    );
+    let unscoped = json!({"method":"runtime.stand_in.role_task.start","payload":{}});
+    assert_eq!(
+        handler.handle_runtime_rpc(unscoped).await.unwrap_err().code,
+        "permission_denied"
+    );
+}
+
 #[test]
 fn runtime_rpc_dispatch_fits_a_bounded_worker_stack() {
     let _lock = crate::test_env::lock();

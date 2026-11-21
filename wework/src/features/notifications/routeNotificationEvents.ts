@@ -3,7 +3,8 @@ import type { ProjectTaskAssignedPayload } from '@/stream/chatStream'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNotifications'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
-import { weworkIssueScheme } from './scheme'
+import { parseWeworkScheme, weworkIssueScheme } from './scheme'
+import { ISSUE_ASSIGNMENTS_CHANGED } from '@/features/todo/issueAssignmentEvents'
 
 export interface RouteNotificationInput {
   chatStream: WorkbenchServices['chatStream']
@@ -19,6 +20,7 @@ interface StreamBinding {
 
 /** The window/account route session owns stream delivery and assignment replay receipts. */
 export function createRouteNotificationEvents() {
+  const deliveredShares = new Set<string>()
   const deliveredAssignments = new Set<string>()
   let observing = false
   let input: RouteNotificationInput | undefined
@@ -79,11 +81,33 @@ export function createRouteNotificationEvents() {
       binding = current
       const ownsStream = () => observing && binding === current && current.active
       const release = current.stream.subscribe({
+        onIssueAssignmentsChanged: userId => {
+          if (ownsStream() && userId === input?.currentUserId)
+            window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
+        },
+        onRuntimeTransportReplaced: () => {
+          if (ownsStream()) window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
+        },
         onWeworkNotification: () => {
           if (ownsStream()) window.dispatchEvent(new Event('wework-notifications-changed'))
         },
+        onIssueShared: ({ id, userId, title, body, url }) => {
+          if (
+            !ownsStream() ||
+            userId !== input?.currentUserId ||
+            getDesktopWindowLabel() !== 'main' ||
+            deliveredShares.has(id) ||
+            !parseWeworkScheme(url)
+          )
+            return
+          deliveredShares.add(id)
+          void sendSystemNotification({ title, body, url })
+        },
         onProjectTaskAssigned: payload => {
-          if (ownsStream()) notifyAssignment(payload)
+          if (!ownsStream()) return
+          if (payload.projectStore !== 'local')
+            window.dispatchEvent(new Event(ISSUE_ASSIGNMENTS_CHANGED))
+          notifyAssignment(payload)
         },
       })
       if (binding === current && current.active) current.release = release

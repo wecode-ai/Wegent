@@ -21,9 +21,9 @@ interface CloudConnectionDialogProps {
   open: boolean
   onlineCloudDeviceCount: number
   onClose: () => void
-  onOpenSettings: () => void
+  onOpenSettings?: () => void
   onAddDevice?: () => void
-  intent?: 'independent-issue'
+  intent?: 'independent-issue' | 'share-issue'
   onConnected?: () => void
 }
 
@@ -127,16 +127,20 @@ export function CloudConnectionDialog({
               {t(
                 intent === 'independent-issue'
                   ? 'personalHome.connectForIssueTitle'
-                  : 'workbench.cloud_connection_title'
+                  : intent === 'share-issue'
+                    ? 'taskIssueShare.connectTitle'
+                    : 'workbench.cloud_connection_title'
               )}
             </h2>
             <p id={descriptionId} className="mt-1 text-sm leading-5 text-text-secondary">
               {intent === 'independent-issue'
                 ? t('personalHome.connectForIssueHint')
-                : t(
-                    'workbench.cloud_connection_description',
-                    '授权后会加入服务端模型、云设备和云端 Codex 认证同步。'
-                  )}
+                : intent === 'share-issue'
+                  ? t('taskIssueShare.connectHint')
+                  : t(
+                      'workbench.cloud_connection_description',
+                      '授权后会加入服务端模型、云设备和云端 Codex 认证同步。'
+                    )}
             </p>
           </div>
           <ControlButton
@@ -200,20 +204,22 @@ export function CloudConnectionDialog({
                   <LogOut className="h-4 w-4" />
                   {t('workbench.cloud_connection_disconnect', '断开')}
                 </ControlButton>
-                <ControlButton
-                  variant="primary"
-                  size="sm"
-                  type="button"
-                  data-testid="cloud-settings-button"
-                  onClick={() => {
-                    onClose()
-                    onOpenSettings()
-                  }}
-                  className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
-                >
-                  <Settings className="h-4 w-4" />
-                  {t('workbench.cloud_connection_settings', '云端设置')}
-                </ControlButton>
+                {onOpenSettings && (
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
+                    type="button"
+                    data-testid="cloud-settings-button"
+                    onClick={() => {
+                      onClose()
+                      onOpenSettings()
+                    }}
+                    className="inline-flex h-10 max-md:min-h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+                  >
+                    <Settings className="h-4 w-4" />
+                    {t('workbench.cloud_connection_settings', '云端设置')}
+                  </ControlButton>
+                )}
               </div>
             </div>
           </div>

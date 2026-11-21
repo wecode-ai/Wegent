@@ -1,4 +1,5 @@
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { isStandInMemoryReviewTask } from '@/lib/runtime-task-visibility'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import type { useIssueHumanInteractions } from './useIssueHumanInteractions'
 import type { InteractionHistory, RuntimeInteractionsValue } from './RuntimeInteractionsContext'
@@ -34,7 +35,11 @@ export function selectPendingRuntimeInteractions({
   acceptancePrefix,
   isDismissed,
 }: PendingProjection): RuntimeInteraction[] {
-  const visible = new Map([...(source?.items ?? []), ...inventory].map(item => [item.key, item]))
+  const visible = new Map(
+    [...(source?.items ?? []), ...inventory]
+      .filter(item => !isStandInMemoryReviewTask(item.task))
+      .map(item => [item.key, item])
+  )
   const runtime = Object.values(loaded)
     .flat()
     .filter(

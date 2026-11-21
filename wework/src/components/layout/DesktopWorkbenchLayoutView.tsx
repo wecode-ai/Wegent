@@ -547,6 +547,11 @@ export function DesktopWorkbenchLayoutView({
                     ownedWorkspaceTab?.kind === 'board' &&
                     projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
                   }
+                  focusedPersonalIssueId={
+                    ownedWorkspaceTab?.kind === 'board'
+                      ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'personalIssueId')
+                      : undefined
+                  }
                   focusedItemId={
                     ownedWorkspaceTab?.kind === 'board'
                       ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')

@@ -112,6 +112,7 @@ export interface StandInProcessingStatus {
 import {
   publishPersonalStandIn,
   type PersonalStandInSettings,
+  type StandInDelegationRoute,
   type StandInSourceConnection,
 } from './personalStandIn'
 
@@ -212,6 +213,37 @@ export type StandInTelemetryFact = {
   }
 }[keyof StandInGeneratedEventMap]
 
+export interface RemoteStandInRoleBranch {
+  taskId: string
+  createdAt: string
+  root: string
+  title: string
+  roleName?: string
+  deviceId: string
+  parentTaskId: string
+  ancestors: string[]
+  prerequisiteTaskIds?: string[] | null
+  taskAddress?: { deviceId: string; taskId: string } | null
+  attempt: number
+  retryAllowed: boolean
+  status:
+    | 'waiting_for_device'
+    | 'waiting_for_dependencies'
+    | 'blocked_by_dependency'
+    | 'waiting_for_user'
+    | 'waiting_for_parent'
+    | 'dispatched'
+    | 'retrying'
+    | 'running'
+    | 'done'
+    | 'failed'
+    | 'cancelling'
+    | 'cancelling_waiting_for_device'
+    | 'cancelled'
+  errorCode?: string | null
+  cancelGroup?: boolean
+}
+
 export interface StandInExecutorApi {
   deviceIdentity(deviceId: string): Promise<{ deviceId: string; backendDeviceId: string }>
   gitConnection(deviceId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -290,6 +322,26 @@ export interface StandInExecutorApi {
     userId: number,
     deviceId: string
   ): Promise<{ items: StandInInboxWork[]; sourceErrors: StandInSourceError[] }>
+  remoteRoleBranches(
+    userId: number,
+    deviceId: string,
+    taskId: string
+  ): Promise<{ items: RemoteStandInRoleBranch[] }>
+  cancelRoleWork(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    root: string,
+    branchTaskId?: string
+  ): Promise<void>
+  retryRoleWork(
+    userId: number,
+    deviceId: string,
+    taskId: string,
+    root: string,
+    branchTaskId: string,
+    attempt: number
+  ): Promise<void>
   workMessages(
     userId: number,
     deviceId: string,
@@ -371,6 +423,13 @@ export interface StandInExecutorApi {
     userId: number,
     settings: PersonalStandInSettings,
     deviceId: string
+  ): Promise<PersonalStandInSettings>
+  saveDelegationRoute(
+    userId: number,
+    deviceId: string,
+    version: number,
+    roleId: string,
+    route: StandInDelegationRoute | null
   ): Promise<PersonalStandInSettings>
   readTask(
     deviceId: string,
@@ -550,6 +609,22 @@ export function createStandInExecutorApi(
       await request('runtime.stand_in.memory.delete', { userId, id, version }, deviceId)
     },
     inbox: (userId, deviceId) => request('runtime.stand_in.work.list', { userId }, deviceId),
+    remoteRoleBranches: (userId, deviceId, taskId) =>
+      request('runtime.stand_in.role_task.branches', { userId, taskId }, deviceId),
+    cancelRoleWork: async (userId, deviceId, taskId, root, branchTaskId) => {
+      await request(
+        'runtime.stand_in.role_task.cancel',
+        { userId, taskId, root, branchTaskId },
+        deviceId
+      )
+    },
+    retryRoleWork: async (userId, deviceId, taskId, root, branchTaskId, attempt) => {
+      await request(
+        'runtime.stand_in.role_task.retry',
+        { userId, taskId, root, branchTaskId, attempt },
+        deviceId
+      )
+    },
     workMessages: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
     runWork: (userId, deviceId, workId, options) =>
@@ -654,6 +729,15 @@ export function createStandInExecutorApi(
       const saved = await request<PersonalStandInSettings>(
         'runtime.stand_in.personal.save',
         { userId, settings },
+        deviceId
+      )
+      publishPersonalStandIn(saved)
+      return saved
+    },
+    saveDelegationRoute: async (userId, deviceId, version, roleId, route) => {
+      const saved = await request<PersonalStandInSettings>(
+        'runtime.stand_in.personal.save',
+        { userId, delegationRoute: { version, roleId, route } },
         deviceId
       )
       publishPersonalStandIn(saved)

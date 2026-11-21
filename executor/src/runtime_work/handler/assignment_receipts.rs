@@ -105,7 +105,29 @@ impl RuntimeWorkRpcHandler {
         }
         binding["executionContext"]["origin"] = self.stand_in_issue_origin(config, issue, &binding);
         let issue_id = issue["id"].as_str().unwrap_or_default();
-        if binding["triggerCommentId"].is_string() {
+        if config["projectStore"] == super::stand_in_personal_issues::INDEPENDENT {
+            let address =
+                self.personal_issue_assignment_address(&binding["executionContext"]["origin"])?;
+            let path = format!("/v1/personal-issues/{issue_id}/assistant-binding");
+            let response = self.runtime_request(reqwest::Method::POST, &path, Some(&json!({
+                "assignment":address,"role_id":config["id"],
+                "role_name":config["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Stand-in"),
+            }))).await?;
+            if matches!(response.status().as_u16(), 403 | 404) {
+                return Err(AppIpcError::new(
+                    "source_removed",
+                    "Independent Issue assignment changed",
+                ));
+            }
+            let result =
+                Self::read_runtime_response(reqwest::Method::POST, &path, response).await?;
+            if result["claimed"] != true {
+                return Err(AppIpcError::new(
+                    "assignment_claimed",
+                    "Another assistant already owns this assignment",
+                ));
+            }
+        } else if binding["triggerCommentId"].is_string() {
             self.runtime_http(
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
@@ -140,7 +162,8 @@ impl RuntimeWorkRpcHandler {
                 binding["taskId"].as_str().unwrap(),
             )
             .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?;
-        if binding["triggerCommentId"].is_string()
+        if config["projectStore"] == super::stand_in_personal_issues::INDEPENDENT
+            || binding["triggerCommentId"].is_string()
             || (config["manual"] == true
                 && (issue["assignee_user_id"] != config["userId"]
                     || !binding["humanAssignmentId"].is_string()))

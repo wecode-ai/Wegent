@@ -228,23 +228,31 @@ impl RuntimeWorkRpcHandler {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, AppIpcError> {
-        let backend = crate::agents::request_backend_url(&context.request).ok_or_else(|| {
-            AppIpcError::new(
-                "cloud_unavailable",
-                "Current user cloud connection is required",
-            )
-        })?;
-        let token = context
-            .request
-            .auth_token
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "cloud_unavailable",
-                    "Current user cloud authorization is required",
-                )
-            })?;
+        let (backend, token) = if context.use_runtime_backend {
+            // Take the URL and token from the same current Runtime connection.
+            let connection = self.require_runtime_connection()?;
+            (connection.backend_url, connection.auth_token)
+        } else {
+            let backend =
+                crate::agents::request_backend_url(&context.request).ok_or_else(|| {
+                    AppIpcError::new(
+                        "cloud_unavailable",
+                        "Current user cloud connection is required",
+                    )
+                })?;
+            let token = context
+                .request
+                .auth_token
+                .as_ref()
+                .filter(|token| !token.is_empty())
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "cloud_unavailable",
+                        "Current user cloud authorization is required",
+                    )
+                })?;
+            (backend, token.clone())
+        };
         let client = crate::agents::backend_url::backend_http_client()
             .map_err(|_| AppIpcError::new("cloud_unavailable", "Backend client unavailable"))?;
         let mut request = client

@@ -44,6 +44,7 @@ mod parent_issue;
 mod stand_in;
 mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
+pub(crate) use context::is_independent_issue_origin;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
@@ -136,6 +137,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    stand_in_role_delegation: bool,
     control: Option<crate::workbench_control::ControlContext>,
     current_device_id: Option<String>,
     principal_id: Option<String>,
@@ -209,6 +211,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
             principal_id: None,
@@ -225,6 +228,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            stand_in_role_delegation: false,
             control: None,
             current_device_id: None,
             principal_id: None,
@@ -2315,21 +2319,23 @@ async fn call_backend_tool(
                 body["reply_to_comment_id"] = target.clone();
             }
             let issue_grant = grant.filter(|grant| grant.item_id.as_deref() == Some(item));
-            if let Some(dispatch_id) = issue_grant
-                .and_then(|grant| grant.dispatch_id.as_deref())
-                .filter(|_| body["reply_to_comment_id"].is_string())
+            if let Some((grant, dispatch_id)) = issue_grant
+                .filter(|grant| grant.role.is_some())
+                .and_then(|grant| grant.dispatch_id.as_deref().map(|id| (grant, id)))
             {
-                let address = delivery_address(issue_grant).map_err(|error| error.to_string())?;
-                let message_key = json!([
-                    "explicit-reply",
-                    body["reply_to_comment_id"],
-                    body["body"]
-                ]);
+                let address = delivery_address(Some(grant)).map_err(|error| error.to_string())?;
+                let message_id = if body["reply_to_comment_id"].is_string() {
+                    let message_key =
+                        json!(["explicit-reply", body["reply_to_comment_id"], body["body"]]);
+                    format!("{:x}", Sha256::digest(message_key.to_string().as_bytes()))
+                } else {
+                    uuid::Uuid::new_v4().to_string()
+                };
                 body["collaboration"] = json!({
                     "device_id": address.device_id,
                     "task_id": address.task_id,
                     "dispatch_id": dispatch_id,
-                    "message_id": format!("{:x}", Sha256::digest(message_key.to_string().as_bytes()))
+                    "message_id": message_id
                 });
             } else if let Some(address) = issue_grant
                 .and_then(|grant| delivery_address(Some(grant)).ok())
@@ -2339,11 +2345,15 @@ async fn call_backend_tool(
                     "requires_confirmation": true
                 });
             }
-            client.post(format!(
+            let request = client.post(format!(
                 "{base}/cloud-projects/{}/loop-items/{}/activity-comments",
                 encode_segment(project_id),
                 encode_segment(item)
-            )).json(&body)
+            )).json(&body);
+            if body["collaboration"].is_object() {
+                return comments::send_collaboration(request.bearer_auth(auth_token)).await;
+            }
+            request
         },
         "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",

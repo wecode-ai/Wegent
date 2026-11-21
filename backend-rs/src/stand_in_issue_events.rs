@@ -20,10 +20,48 @@ pub(crate) async fn enqueue_mention_on(
     issue: &str,
     comment: &str,
 ) -> MysqlResult<()> {
+    enqueue_on(
+        tx,
+        user,
+        json!({"commentId":comment,"itemId":issue,"projectId":project}),
+    )
+    .await
+}
+
+/// Commit an explicit project assignment with its recipient-owned wakeup.
+pub(crate) async fn enqueue_assignment_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    project: &str,
+    issue: &str,
+    assignment: &str,
+) -> MysqlResult<()> {
+    enqueue_on(
+        tx,
+        user,
+        json!({"assignmentId":assignment,"itemId":issue,"projectId":project}),
+    )
+    .await
+}
+
+pub(crate) async fn enqueue_personal_assignment_on(
+    tx: &mut impl MysqlTransaction,
+    user: i64,
+    issue: &str,
+    assignment: &str,
+) -> MysqlResult<()> {
+    enqueue_on(
+        tx,
+        user,
+        json!({"assignmentId":assignment,"personalIssueId":issue}),
+    )
+    .await
+}
+
+async fn enqueue_on(tx: &mut impl MysqlTransaction, user: i64, payload: Value) -> MysqlResult<()> {
     use crate::background_jobs::project::store;
 
     // Keep sorted keys and Python's default JSON spacing for cross-writer dedupe.
-    let payload = json!({"commentId":comment,"itemId":issue,"projectId":project});
     let id = crate::hex_sha256(
         format!(
             "stand-in:{user}:{}",

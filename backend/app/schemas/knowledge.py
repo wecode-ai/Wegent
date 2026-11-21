@@ -383,6 +383,8 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         max_length=3,
         description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
     )
+    max_calls_per_conversation: Optional[int] = Field(None, ge=2, le=50)
+    exempt_calls_before_check: Optional[int] = Field(None, ge=1)
     members: Optional[List[InitialMemberCreate]] = Field(
         None,
         description="Initial members to add to the knowledge base after creation",
