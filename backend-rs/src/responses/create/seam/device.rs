@@ -11,8 +11,7 @@ use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
 use super::{
-    ExecutionRequest, build_failure_message, is_subtask_not_dispatchable, mark_subtask_running,
-    recover_before_dispatch, routing,
+    ExecutionRequest, build_failure_message, mark_subtask_running, recover_before_dispatch, routing,
 };
 
 /// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
@@ -214,21 +213,16 @@ pub(crate) async fn dispatch_responses_device(
     device_route: &str,
 ) -> Result<(), FastApiError> {
     recover_before_dispatch(state, request, Some(device_route)).await?;
-    if let Err(error) = dispatch_device_turn(state, request, None, device_route).await {
-        if !is_subtask_not_dispatchable(&error) {
-            crate::responses::dispatch::finalize_executor_failure(
-                &crate::responses::dispatch::ConsumerState::from_app(state),
-                request.task_id,
-                request.subtask_id,
-                request.user_id,
-                request.message_id,
-                (build_failure_message(&error), "dispatch_error"),
-            )
-            .await;
-        }
-        return Err(error);
+    let dispatched = dispatch_device_turn(state, request, None, device_route).await;
+    if let Err(error) = &dispatched {
+        crate::responses::dispatch::device_terminal::settle_dispatch_error(
+            state,
+            request,
+            build_failure_message(error),
+        )
+        .await;
     }
-    Ok(())
+    dispatched
 }
 
 /// Admit a device Responses turn to the startup-owned supervisor after the

@@ -122,7 +122,9 @@ pub(crate) async fn process_execution_event(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> Result<(), FastApiError> {
-    process_event(state, event, (executor_name, executor_namespace), false).await
+    process_event(state, event, (executor_name, executor_namespace), false)
+        .await
+        .map(|_| ())
 }
 
 pub(crate) async fn process_background_shell_event(
@@ -136,13 +138,16 @@ pub(crate) async fn process_background_shell_event(
         true,
     )
     .await
+    .map(|_| ())
 }
 
-/// Queue a locally generated failure so a worker can retry its terminal write.
+/// Queue a locally generated outcome so a worker can retry its terminal write.
+///
+/// Returns whether this call published a terminal callback frame.
 pub(crate) async fn process_dispatch_failure(
     state: &AppState,
     event: event::ExecutionEvent,
-) -> Result<(), FastApiError> {
+) -> Result<bool, FastApiError> {
     process_event(state, event, (None, None), true).await
 }
 
@@ -151,7 +156,7 @@ async fn process_event(
     mut event: event::ExecutionEvent,
     executor: (Option<&str>, Option<&str>),
     defer_advance: bool,
-) -> Result<(), FastApiError> {
+) -> Result<bool, FastApiError> {
     let terminal_status = completion::terminal_status(&event.event_type);
     let Some(redis) = state.redis.as_ref() else {
         if terminal_status.is_some() {
@@ -162,7 +167,7 @@ async fn process_event(
             );
             return Err(FastApiError::internal());
         }
-        return Ok(());
+        return Ok(false);
     };
 
     prepare_interactive_form_event(&state.interactive_form, &mut event).await;
@@ -196,7 +201,7 @@ async fn process_event(
         tracing::warn!(%error, "callback channel publish failed");
     }
     channel::forward_event_to_channel_callbacks(redis, event.task_id, &event).await;
-    Ok(())
+    Ok(false)
 }
 
 async fn deliver_terminal_callback(
@@ -206,7 +211,7 @@ async fn deliver_terminal_callback(
     status: &str,
     executor: (Option<&str>, Option<&str>),
     defer_advance: bool,
-) -> Result<(), FastApiError> {
+) -> Result<bool, FastApiError> {
     let pending_event = defer_advance.then(|| {
         let mut saved = event.to_value();
         saved["executor_name"] = json!(executor.0);
@@ -254,7 +259,7 @@ async fn deliver_terminal_callback(
         replay_source,
     }) = completion
     else {
-        return Ok(());
+        return Ok(false);
     };
     if let Some(source) = replay_source {
         *event = event::ExecutionEvent::from_value(&source);
@@ -307,12 +312,12 @@ async fn deliver_terminal_callback(
     if let Some(advance) = advance {
         if defer_advance {
             // The recovery worker waits for admission outside the SSE consumer pool.
-            return Ok(());
+            return Ok(false);
         }
         Box::pin(pipeline::dispatch_next(state, advance)).await?;
     }
 
-    session::publish_terminal_callback(redis, event)
+    let published = session::publish_terminal_callback(redis, event)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "terminal callback channel publish failed");
@@ -335,7 +340,7 @@ async fn deliver_terminal_callback(
     {
         tracing::warn!(%error, "could not retire terminal delivery from recovery index");
     }
-    Ok(())
+    Ok(published)
 }
 
 async fn prepare_interactive_form_event(

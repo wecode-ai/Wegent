@@ -594,7 +594,7 @@ async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
         created_at: TEST_CREATED_AT,
         target_url: None,
     };
-    let bridge = test_bridge(
+    let mut bridge = test_bridge(
         &app,
         &request,
         &input,
@@ -603,16 +603,18 @@ async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
         },
     )
     .expect("callback bridge");
-    drop(
-        app.responses_dispatch
-            .reserve()
-            .expect("reserve the only admission slot"),
-    );
-    let body = super::body_stream(bridge).expect("SSE body");
-    let failure = tokio::time::timeout(Duration::from_secs(1), drain_stream(body))
+    let permits: Vec<_> = std::iter::from_fn(|| app.responses_dispatch.reserve()).collect();
+    assert!(!permits.is_empty());
+    let failure = bridge
+        .open_callback()
         .await
-        .expect("queue rejection must finish the stream");
-    assert!(failure.contains("response.failed"), "{failure}");
+        .err()
+        .expect("the full device queue must reject callback dispatch");
+    assert!(!bridge.callback_dispatch_settled);
+    drop(permits);
+    bridge.fail(failure).await;
+    let body = drain(&mut bridge).await;
+    assert!(body.contains("response.failed"), "{body}");
 }
 
 async fn drain_stream(mut body: BodyStream) -> String {

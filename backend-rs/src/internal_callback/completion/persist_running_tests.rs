@@ -12,7 +12,7 @@
 //! read as `SELECT ... FROM subtasks_0711 WHERE subtasks_0711.id = ? LIMIT 1`
 //! followed by `SELECT ... FROM subtask_contexts WHERE subtask_id IN (?)
 //! ORDER BY id ASC`, then the `status='RUNNING'` update.
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use brz_mysql::{
     FromMysqlRow, MysqlResult, MysqlRouteKey, MysqlRouteOutput, MysqlRouting, MysqlService,
@@ -503,6 +503,23 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     verify_terminal_callback_retry(writer, &app).await
 }
 
+async fn dispatch_to_offline_device(app: &crate::state::AppState) {
+    let mut request = crate::responses::create::dispatch::ExecutionRequest {
+        task_id: 12,
+        subtask_id: 43,
+        user_id: 7,
+        ..Default::default()
+    };
+    let error = crate::responses::create::seam::dispatch_responses_device(
+        app,
+        &mut request,
+        "offline-test-device",
+    )
+    .await
+    .expect_err("the fixture has no online device");
+    assert_eq!(error.detail_message(), Some("Selected device is offline"));
+}
+
 /// A device dispatch that loses the PENDING/RUNNING transition race must
 /// publish the already committed terminal outcome instead of waiting forever.
 async fn verify_device_dispatch_terminal_race(
@@ -510,8 +527,11 @@ async fn verify_device_dispatch_terminal_race(
     app: &crate::state::AppState,
 ) -> anyhow::Result<()> {
     let redis = app.redis.as_ref().expect("Redis fixture");
-    for (kind, status, event_type) in [("done", "COMPLETED", "done"), ("error", "FAILED", "error")]
-    {
+    for (kind, status) in [
+        ("done", "COMPLETED"),
+        ("error", "FAILED"),
+        ("cancelled", "CANCELLED"),
+    ] {
         reset_callback_state(writer, "RUNNING").await?;
         terminal_callback(app, kind, "committed outcome")
             .await
@@ -525,12 +545,12 @@ async fn verify_device_dispatch_terminal_race(
         // receive the committed terminal even when the delivery idempotency
         // marker was written by the original callback.
         let mut subscription = redis.subscribe("callback:channel:43").await?;
-        assert!(crate::responses::dispatch::publish_committed_device_terminal(app, 12, 43).await);
+        dispatch_to_offline_device(app).await;
         let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
             .await??
             .expect("replayed terminal callback");
         let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
-        assert_eq!(event["type"], event_type);
+        assert_eq!(event["type"], kind);
         subscription.unsubscribe().await?;
     }
 
@@ -545,11 +565,94 @@ async fn verify_device_dispatch_terminal_race(
         ("CANCELLING".into(), "RUNNING".into())
     );
 
-    assert!(crate::responses::dispatch::publish_committed_device_terminal(app, 12, 43).await);
+    dispatch_to_offline_device(app).await;
     assert_eq!(
         callback_statuses(writer).await?,
         ("CANCELLED".into(), "CANCELLED".into())
     );
+
+    // A cancellation committed on the writer must win even when the configured
+    // task-store read still sees the previous running state on its replica.
+    reset_callback_state(writer, "RUNNING").await?;
+    assert!(
+        crate::socketio::chat_control::mark_cancelling(app, 12, 43)
+            .await
+            .unwrap()
+    );
+    #[derive(FromMysqlRow)]
+    struct Schema {
+        name: String,
+    }
+    let schema: Schema = writer.fetch_one("SELECT DATABASE() AS name", ()).await?;
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
+    let replica = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM `tasks`") {
+            let task = vec![
+                ("id", MysqlValue::I64(12)),
+                ("user_id", MysqlValue::I32(7)),
+                ("kind", MysqlValue::Text("Task".into())),
+                ("name", MysqlValue::Text("lag-test".into())),
+                ("namespace", MysqlValue::Text("default".into())),
+                (
+                    "json",
+                    MysqlValue::Text(
+                        serde_json::json!({"status": {"status": "RUNNING"}}).to_string(),
+                    ),
+                ),
+                ("is_active", MysqlValue::I8(1)),
+            ];
+            (task.clone(), vec![task])
+        } else {
+            (vec![("id", MysqlValue::I64(43))], vec![])
+        }
+    })
+    .await;
+    let lagging = MysqlService::connect_lazy_read_write_named_with_options(
+        &format!("mysql://root@{address}/{}?ssl-mode=disabled", schema.name),
+        &replica.url,
+        "device-terminal-cancel-race",
+        MysqlServiceOptions::default()
+            .with_query_timeout(Duration::from_secs(5))
+            .with_acquire_timeout(Duration::from_secs(5)),
+    )?;
+    let mut lagging_app = crate::app_test_support::app(lagging.clone());
+    Arc::get_mut(&mut lagging_app)
+        .expect("unique lagging app")
+        .redis = app.redis.clone();
+    lagging_app
+        .completion_app
+        .set(Arc::downgrade(&lagging_app))
+        .ok();
+
+    let replica_task = lagging_app
+        .task_store
+        .get_task(12)
+        .await?
+        .expect("stale task");
+    let replica_payload =
+        super::super::task_column::<brz_mysql::Json<serde_json::Value>>(&replica_task, "json")
+            .expect("replica task payload");
+    assert_eq!(replica_payload.0["status"]["status"], "RUNNING");
+
+    let mut subscription = redis.subscribe("callback:channel:43").await?;
+    dispatch_to_offline_device(&lagging_app).await;
+    let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
+        .await??
+        .expect("replayed cancellation callback");
+    let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
+    assert_eq!(event["type"], "cancelled");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), subscription.next_message())
+            .await
+            .is_err(),
+        "the cancellation terminal callback must be replayed exactly once"
+    );
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    subscription.unsubscribe().await?;
+    lagging.close().await;
 
     terminal_callback(app, "done", "late outcome")
         .await

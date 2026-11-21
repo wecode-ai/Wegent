@@ -54,7 +54,12 @@ executor placement grant no access. The existing isolated MySQL cancellation
 contract covers all three routes and verifies that denied requests leave task,
 subtask and Redis cancellation state unchanged. The existing Chromium CI shards
 discover `chat-cancel-access.spec.ts`, covering a rejected foreign caller followed
-by owner cancellation of a real Chat execution. CP01–CP20 remain unchanged.
+by owner cancellation of a real Chat execution. HTTP device cancellation applies
+the same task access check. It captures the current assistant turn under the task
+lock and addresses the device using the turn's execution account. Delivery and
+local finalization remain scoped to that turn. Backend service tests cover
+approved members, denied callers, and a delayed cancellation after a new turn.
+CP01–CP20 remain unchanged.
 
 Member drawer Skill discovery and saving use the same target publication groups. Ordinary edits and same-namespace clones retain those groups; only an actual cross-namespace clone clears the source group context, with omitted namespaces normalized to `default`. Binding loads and retries belong to the current editing session. Unknown or failed bindings block member saving and expose retry; closing, creating, switching Agents and unmounting invalidate old requests so they cannot overwrite later groups, errors or loading state. The server still validates current resource and target-group authority; client context grants no new permission. CP01–CP20 remain unchanged. Parent-component and BotEdit contract tests cover classification, empty bindings and stale responses. The existing Chromium CI suite discovers `settings-team-member-skills.spec.ts` for real member edits, same-namespace clones, persistence and binding transport-fault recovery; the existing Skill scope suite retains cross-namespace clone coverage.
 

@@ -20,6 +20,8 @@
 //! The supervisor keeps every task handle, reaps completed tasks, and logs a
 //! panicking or early-exiting task with its task/subtask/request identity, so
 //! a background failure is never invisible.
+pub(crate) mod device_terminal;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -569,26 +571,6 @@ where
                 super::create::seam::dispatch_responses_device(&app, &mut request, &device_route)
                     .await
             {
-                if super::create::seam::is_subtask_not_dispatchable(&error) {
-                    if publish_committed_device_terminal(&app, request.task_id, request.subtask_id)
-                        .await
-                    {
-                        return;
-                    }
-                    finalize_executor_failure(
-                        &consumer,
-                        request.task_id,
-                        request.subtask_id,
-                        request.user_id,
-                        request.message_id,
-                        (
-                            "Assistant subtask is no longer dispatchable",
-                            "EXECUTOR_DISPATCH_FAILED",
-                        ),
-                    )
-                    .await;
-                    return;
-                }
                 tracing::warn!(
                     task_id = request.task_id,
                     subtask_id = request.subtask_id,
@@ -596,133 +578,6 @@ where
                     "background device dispatch failed"
                 );
             }
-        }
-    }
-}
-
-/// Publish a terminal outcome that committed before device submission. The
-/// terminal path is idempotent, so a device callback that won concurrently
-/// keeps its committed outcome.
-pub(crate) async fn publish_committed_device_terminal(
-    app: &AppState,
-    task_id: i64,
-    subtask_id: i64,
-) -> bool {
-    use crate::internal_callback::{
-        completion,
-        event::{EventType, ExecutionEvent},
-    };
-    let Some(redis) = app.redis.as_ref() else {
-        return false;
-    };
-    let (_, subtask_table) =
-        match completion::resolve_tables(Some(app), crate::internal_callback::tables(app), task_id)
-            .await
-        {
-            Ok(tables) => tables,
-            Err(error) => {
-                tracing::warn!(%error, task_id, subtask_id, "device terminal table read failed");
-                return false;
-            }
-        };
-    match completion::read_terminal_result(&app.mysql, &subtask_table, task_id, subtask_id).await {
-        Ok(Some(terminal)) => {
-            let event_type = match terminal.status.as_str() {
-                "COMPLETED" => EventType::Done,
-                "FAILED" => EventType::Error,
-                "CANCELLED" => EventType::Cancelled,
-                _ => return false,
-            };
-            let mut event = ExecutionEvent::new(event_type, task_id, subtask_id);
-            event.error_code = terminal
-                .result
-                .as_ref()
-                .and_then(|result| result.get("error_type"))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            event.result = terminal.result;
-            event.error = terminal.error;
-            return match crate::internal_callback::session::publish_callback_event(
-                redis, subtask_id, &event,
-            )
-            .await
-            {
-                Ok(_) => true,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        task_id,
-                        subtask_id,
-                        "device terminal callback replay failed"
-                    );
-                    false
-                }
-            };
-        }
-        Ok(None) => {}
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                task_id,
-                subtask_id,
-                "device terminal status read failed"
-            );
-            return false;
-        }
-    }
-
-    // A cancellation intent can win before the PENDING/RUNNING transition.
-    // Commit and publish that canonical cancellation when no producer started.
-    let task = match app.task_store.get_task(task_id).await {
-        Ok(task) => task,
-        Err(error) => {
-            tracing::warn!(%error, task_id, subtask_id, "device cancellation status read failed");
-            return false;
-        }
-    };
-    let Some(task) = task else {
-        return false;
-    };
-    let Some(payload) = completion::task_column::<brz_mysql::Json<Value>>(&task, "json") else {
-        return false;
-    };
-    if !matches!(
-        payload.0.pointer("/status/status").and_then(Value::as_str),
-        Some("CANCELLING" | "CANCELLED")
-    ) {
-        return false;
-    }
-    let mut event = ExecutionEvent::new(EventType::Cancelled, task_id, subtask_id);
-    event.result = Some(serde_json::json!({}));
-    match crate::internal_callback::process_dispatch_failure(app, event.clone()).await {
-        Ok(()) => {
-            // The terminal write is idempotent. Replaying the callback closes the
-            // race where a producer committed the cancellation without a stream reader.
-            match crate::internal_callback::session::publish_callback_event(
-                redis, subtask_id, &event,
-            )
-            .await
-            {
-                Ok(_) => true,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        task_id,
-                        subtask_id,
-                        "device cancellation callback replay failed"
-                    );
-                    false
-                }
-            }
-        }
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                task_id,
-                subtask_id,
-                "device cancellation callback publish failed"
-            );
-            false
         }
     }
 }

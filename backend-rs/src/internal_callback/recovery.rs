@@ -215,5 +215,6 @@ async fn replay_event(
         state, redis, &mut event, status, executor, false,
     ))
     .await
+    .map(|_| ())
     .map_err(|_| anyhow::anyhow!("terminal work is still pending"))
 }
