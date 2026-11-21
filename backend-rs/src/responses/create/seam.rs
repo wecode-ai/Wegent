@@ -281,7 +281,7 @@ pub async fn dispatch_create(
         // Non-streaming: fire-and-forget the executor dispatch and return
         // `queued`.
         if let Some(device_route) = input.device_id.as_deref() {
-            dispatch_responses_device(state, &mut request, device_route).await?;
+            dispatch_responses_device(state, &mut request, device_route, false).await?;
         } else if let Some(url) = target.url.as_deref() {
             if target.mode == routing::CommunicationMode::Inprocess {
                 enqueue_chat_shell_dispatch(state, Some(url), request.clone(), input.request_id);

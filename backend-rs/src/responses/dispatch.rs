@@ -565,9 +565,15 @@ where
                 );
                 return;
             };
-            if let Err(error) =
-                super::create::seam::dispatch_responses_device(&app, &mut request, &device_route)
-                    .await
+            // Keep ownership of a rejected submission until recovery can index it.
+            let retry_index_write = true;
+            if let Err(error) = super::create::seam::dispatch_responses_device(
+                &app,
+                &mut request,
+                &device_route,
+                retry_index_write,
+            )
+            .await
             {
                 tracing::warn!(
                     task_id = request.task_id,

@@ -783,7 +783,7 @@ impl Bridge {
                 && let Some(app) = self.app.upgrade()
                 && let Some((_, request)) = self.callback_dispatch.as_ref()
             {
-                super::seam::settle_responses_device_failure(&app, request, &message).await;
+                super::seam::settle_responses_device_failure(&app, request, &message, false).await;
                 // Admission may fail after another producer has already settled the turn.
                 if let Ok(Some(winner)) = self.read_committed_winner().await {
                     self.finish_committed_winner_result(Ok(Some(winner))).await;

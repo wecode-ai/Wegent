@@ -35,6 +35,7 @@ pub(super) async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::
     verify_online_device_cannot_dispatch_a_terminal_turn(writer, &app).await?;
     verify_device_dispatch_terminal_race(writer, &app).await?;
     verify_device_dispatch_retries_failed_terminal_read(writer, &app).await?;
+    verify_device_dispatch_retries_failed_recovery_index(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
 }
 
@@ -56,6 +57,7 @@ async fn verify_device_dispatch_persists_failure_without_redis(
         &app,
         &mut request,
         "offline-test-device",
+        false,
     )
     .await
     .expect_err("device submission requires Redis");
@@ -67,7 +69,7 @@ async fn verify_device_dispatch_persists_failure_without_redis(
     Ok(())
 }
 
-async fn dispatch_to_offline_device(app: &crate::state::AppState) {
+async fn dispatch_to_offline_device(app: &crate::state::AppState, retry_index_write: bool) {
     let mut request = crate::responses::create::dispatch::ExecutionRequest {
         task_id: 12,
         subtask_id: 43,
@@ -78,6 +80,7 @@ async fn dispatch_to_offline_device(app: &crate::state::AppState) {
         app,
         &mut request,
         "offline-test-device",
+        retry_index_write,
     )
     .await
     .expect_err("the fixture has no online device");
@@ -109,7 +112,7 @@ async fn verify_device_dispatch_terminal_race(
         // receive the committed terminal even when the delivery idempotency
         // marker was written by the original callback.
         let mut subscription = redis.subscribe("callback:channel:43").await?;
-        dispatch_to_offline_device(app).await;
+        dispatch_to_offline_device(app, false).await;
         let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
             .await??
             .expect("replayed terminal callback");
@@ -132,7 +135,7 @@ async fn verify_device_dispatch_terminal_race(
         ("CANCELLING".into(), "RUNNING".into())
     );
 
-    dispatch_to_offline_device(app).await;
+    dispatch_to_offline_device(app, false).await;
     assert_eq!(
         callback_statuses(writer).await?,
         ("CANCELLED".into(), "CANCELLED".into())
@@ -201,7 +204,7 @@ async fn verify_device_dispatch_terminal_race(
     assert_eq!(replica_payload.0["status"]["status"], "RUNNING");
 
     let mut subscription = redis.subscribe("callback:channel:43").await?;
-    dispatch_to_offline_device(&lagging_app).await;
+    dispatch_to_offline_device(&lagging_app, false).await;
     let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
         .await??
         .expect("replayed cancellation callback");
@@ -267,10 +270,14 @@ async fn verify_online_device_cannot_dispatch_a_terminal_turn(
         user_id: 7,
         ..Default::default()
     };
-    let error =
-        crate::responses::create::seam::dispatch_responses_device(app, &mut request, DEVICE_ROUTE)
-            .await
-            .expect_err("the RUNNING guard must reject the completed assistant");
+    let error = crate::responses::create::seam::dispatch_responses_device(
+        app,
+        &mut request,
+        DEVICE_ROUTE,
+        false,
+    )
+    .await
+    .expect_err("the RUNNING guard must reject the completed assistant");
     assert_eq!(error.status(), http::StatusCode::CONFLICT);
 
     let message = tokio::time::timeout(Duration::from_secs(2), callback.next_message())
@@ -309,7 +316,7 @@ async fn verify_device_dispatch_retries_failed_terminal_read(
             (),
         )
         .await?;
-    dispatch_to_offline_device(app).await;
+    dispatch_to_offline_device(app, false).await;
     writer
         .execute(
             "ALTER TABLE subtasks RENAME COLUMN unavailable_error_message TO error_message",
@@ -341,6 +348,60 @@ async fn verify_device_dispatch_retries_failed_terminal_read(
             .await
             .is_err(),
         "successful recovery retires the pending device dispatch"
+    );
+    subscription.unsubscribe().await?;
+    Ok(())
+}
+
+async fn verify_device_dispatch_retries_failed_recovery_index(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    use crate::internal_callback::recovery::{EVENTS, QUEUE, device_dispatch_member};
+
+    reset_callback_state(writer, "RUNNING").await?;
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    let mut subscription = redis.subscribe("callback:channel:43").await?;
+    // ZADD succeeds, but the payload write fails with WRONGTYPE.
+    redis.set(EVENTS, "temporarily unavailable").await?;
+    let member = device_dispatch_member(12, 43);
+    let wait_for_index_attempt = async {
+        loop {
+            let indexed: i64 = redis
+                .eval(
+                    "return redis.call('ZSCORE', KEYS[1], ARGV[1]) and 1 or 0",
+                    [QUEUE],
+                    [&member],
+                )
+                .await?;
+            if indexed == 1 {
+                return Ok::<_, brz_redis::RedisError>(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    let dispatch = dispatch_to_offline_device(app, true);
+    tokio::pin!(dispatch);
+    tokio::select! {
+        biased;
+        () = &mut dispatch => panic!("the admitted dispatch lost its failure before recovery accepted it"),
+        attempted = tokio::time::timeout(Duration::from_secs(2), wait_for_index_attempt) => attempted??,
+    }
+    assert!(
+        crate::socketio::chat_control::mark_cancelling(app, 12, 43)
+            .await
+            .unwrap()
+    );
+    redis.del(EVENTS).await?;
+    tokio::time::timeout(Duration::from_secs(8), dispatch).await?;
+    let message = tokio::time::timeout(Duration::from_secs(2), subscription.next_message())
+        .await??
+        .expect("recovery delivers the terminal callback");
+    let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
+    assert_eq!(event["type"], "cancelled");
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
     );
     subscription.unsubscribe().await?;
     Ok(())

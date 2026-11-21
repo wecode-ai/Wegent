@@ -211,11 +211,18 @@ pub(crate) async fn dispatch_responses_device(
     state: &AppState,
     request: &mut ExecutionRequest,
     device_route: &str,
+    retry_index_write: bool,
 ) -> Result<(), FastApiError> {
     recover_before_dispatch(state, request, Some(device_route)).await?;
     let dispatched = dispatch_device_turn(state, request, None, device_route).await;
     if let Err(error) = &dispatched {
-        settle_responses_device_failure(state, request, build_failure_message(error)).await;
+        settle_responses_device_failure(
+            state,
+            request,
+            build_failure_message(error),
+            retry_index_write,
+        )
+        .await;
     }
     dispatched
 }
@@ -224,6 +231,7 @@ pub(crate) async fn settle_responses_device_failure(
     state: &AppState,
     request: &ExecutionRequest,
     message: &str,
+    retry_index_write: bool,
 ) {
     if state.redis.is_some() {
         crate::internal_callback::process_device_dispatch_failure(
@@ -232,6 +240,7 @@ pub(crate) async fn settle_responses_device_failure(
             request.subtask_id,
             request.message_id,
             message,
+            retry_index_write,
         )
         .await;
     } else {

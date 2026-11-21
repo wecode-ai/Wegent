@@ -14,8 +14,8 @@ use crate::state::AppState;
 
 use super::{completion, deliver_terminal_callback, event::ExecutionEvent, tables};
 
-const QUEUE: &str = "wegent:terminal-delivery:pending:rust";
-const EVENTS: &str = "{wegent:terminal-delivery:pending:rust}:events";
+pub(super) const QUEUE: &str = "wegent:terminal-delivery:pending:rust";
+pub(super) const EVENTS: &str = "{wegent:terminal-delivery:pending:rust}:events";
 const DEVICE_DISPATCH_PREFIX: &str = "device-dispatch:";
 const RETRY_SECONDS: i64 = 5;
 const MAX_RECOVERIES: usize = 8;
@@ -71,13 +71,14 @@ async fn retire_member(redis: &RedisService, member: &str) -> brz_redis::RedisRe
     Ok(())
 }
 
-fn device_dispatch_member(task_id: i64, subtask_id: i64) -> String {
+pub(super) fn device_dispatch_member(task_id: i64, subtask_id: i64) -> String {
     format!("{DEVICE_DISPATCH_PREFIX}{task_id}:{subtask_id}")
 }
 
 pub(super) async fn settle_device_dispatch(
     state: &AppState,
     event: &ExecutionEvent,
+    retry_index_write: bool,
 ) -> anyhow::Result<()> {
     let redis = state
         .redis
@@ -86,7 +87,18 @@ pub(super) async fn settle_device_dispatch(
     // Keep a separate record so ordinary callback delivery cannot retire a
     // pending replay for a Responses subscriber.
     let member = device_dispatch_member(event.task_id, event.subtask_id);
-    track_member(redis, &member, Some(&event.to_value())).await?;
+    let payload = event.to_value();
+    loop {
+        match track_member(redis, &member, Some(&payload)).await {
+            Ok(()) => break,
+            Err(error) if retry_index_write => {
+                tracing::warn!(%error, member, "device dispatch recovery index write will retry");
+                tokio::time::sleep(Duration::from_secs(RETRY_SECONDS as u64)).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    // From here the recovery worker can retry reads and delivery on its own.
     recover(state, &member).await
 }
 

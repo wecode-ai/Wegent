@@ -155,12 +155,13 @@ pub(crate) async fn process_device_dispatch_failure(
     subtask_id: i64,
     message_id: Option<i64>,
     message: &str,
+    retry_index_write: bool,
 ) {
     let mut event = event::ExecutionEvent::new(event::EventType::Error, task_id, subtask_id);
     event.message_id = message_id;
     event.error = Some(message.to_owned());
     event.error_code = Some("EXECUTOR_DISPATCH_FAILED".to_owned());
-    if let Err(error) = recovery::settle_device_dispatch(state, &event).await {
+    if let Err(error) = recovery::settle_device_dispatch(state, &event, retry_index_write).await {
         tracing::warn!(%error, task_id, subtask_id, "device dispatch terminal settlement failed");
     }
 }
