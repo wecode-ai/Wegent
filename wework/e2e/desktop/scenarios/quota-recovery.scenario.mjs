@@ -111,7 +111,11 @@ export function createDesktopScenario({ workspacePath }) {
         assert.equal(created.accepted, true)
         const waiting = await waitForValue(
           () => task(taskId),
-          value => value?.runtimeHandle?.quotaWait,
+          value =>
+            value?.status === 'queued' &&
+            value.running === false &&
+            value.runtimeHandle?.quotaWait?.resumeAt === resetAt * 1000 &&
+            value.runtimeHandle.quotaWait,
           'The subscription error did not enter durable quota waiting',
           RECOVERY_TIMEOUT_MS
         )
