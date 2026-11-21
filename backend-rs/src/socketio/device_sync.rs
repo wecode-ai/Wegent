@@ -35,6 +35,11 @@ use super::runtime::{CallbackIds, DeviceJob, RuntimeCallEvent, RuntimeRpcCall, S
 const SYNC_EVENT: &str = "device:sync_capabilities";
 /// `SYNC_NAMESPACE`.
 const SYNC_NAMESPACE: &str = "/local-executor";
+/// A deferred plugin preparation is retried after the Skills/MCP fallback has
+/// already been acknowledged, so plugin write contention cannot block every
+/// capability from reaching the reconnecting Runtime.
+const PLUGIN_SYNC_RETRY_ATTEMPTS: usize = 3;
+const PLUGIN_SYNC_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 
 /// The worker loop. Runs until the queue closes or the process shuts down.
 pub(crate) async fn run_worker(
@@ -148,23 +153,43 @@ async fn reconcile_device_capabilities(
     user_id: i64,
     device_id: String,
 ) {
-    let include_plugins =
-        match prepare_plugins_for_registered_device(state, user_id, &device_id).await {
-            crate::plugins_installed::PluginPreparation::Ready => true,
-            crate::plugins_installed::PluginPreparation::Deferred => false,
-            crate::plugins_installed::PluginPreparation::Failed => return,
-        };
+    let preparation = prepare_plugins_for_registered_device(state, user_id, &device_id).await;
+    let include_plugins = match preparation {
+        crate::plugins_installed::PluginPreparation::Ready => true,
+        crate::plugins_installed::PluginPreparation::Deferred => false,
+        crate::plugins_installed::PluginPreparation::Failed => return,
+    };
     let dispatch = LocalDispatch {
         state,
         emitters,
         callbacks,
     };
-    let Some(result) =
-        sync_registration_capabilities(state, user_id, &device_id, include_plugins, &dispatch)
-            .await
+    let Some(success) =
+        run_registration_sync(state, user_id, &device_id, include_plugins, &dispatch).await
     else {
         return;
     };
+    if !should_retry_deferred_plugin_sync(include_plugins, success) {
+        return;
+    }
+    retry_deferred_plugin_sync(state, user_id, &device_id, &dispatch).await;
+}
+
+fn should_retry_deferred_plugin_sync(include_plugins: bool, skills_sync_succeeded: bool) -> bool {
+    !include_plugins && skills_sync_succeeded
+}
+
+/// Build, dispatch, and persist one registration-time capability snapshot.
+async fn run_registration_sync<D: CapabilityDispatch>(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    include_plugins: bool,
+    dispatch: &D,
+) -> Option<bool> {
+    let result =
+        sync_registration_capabilities(state, user_id, device_id, include_plugins, dispatch)
+            .await?;
     if !result.success {
         tracing::warn!(
             user_id,
@@ -176,6 +201,37 @@ async fn reconcile_device_capabilities(
     if include_plugins {
         record_registration_sync_result(state, user_id, &result).await;
     }
+    Some(result.success)
+}
+
+/// Recover plugins after a transient registration-time write conflict.
+async fn retry_deferred_plugin_sync<D: CapabilityDispatch>(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    dispatch: &D,
+) {
+    for attempt in 1..=PLUGIN_SYNC_RETRY_ATTEMPTS {
+        tokio::time::sleep(plugin_sync_retry_delay(attempt)).await;
+        match prepare_plugins_for_registered_device(state, user_id, device_id).await {
+            crate::plugins_installed::PluginPreparation::Ready => {
+                let _ = run_registration_sync(state, user_id, device_id, true, dispatch).await;
+                return;
+            }
+            crate::plugins_installed::PluginPreparation::Deferred => continue,
+            crate::plugins_installed::PluginPreparation::Failed => return,
+        }
+    }
+    tracing::warn!(
+        user_id,
+        device_id,
+        attempts = PLUGIN_SYNC_RETRY_ATTEMPTS,
+        "registration plugin sync retry exhausted"
+    );
+}
+
+fn plugin_sync_retry_delay(attempt: usize) -> Duration {
+    PLUGIN_SYNC_RETRY_BASE_DELAY.saturating_mul(attempt as u32)
 }
 
 /// The registration path's local socket plus adapter publish.
@@ -368,6 +424,24 @@ mod tests {
             ))),
             "connection closed"
         );
+    }
+
+    #[test]
+    fn deferred_plugin_sync_retry_is_bounded_and_backed_off() {
+        assert_eq!(PLUGIN_SYNC_RETRY_ATTEMPTS, 3);
+        assert_eq!(plugin_sync_retry_delay(0), Duration::ZERO);
+        assert_eq!(plugin_sync_retry_delay(1), PLUGIN_SYNC_RETRY_BASE_DELAY);
+        assert_eq!(
+            plugin_sync_retry_delay(PLUGIN_SYNC_RETRY_ATTEMPTS),
+            PLUGIN_SYNC_RETRY_BASE_DELAY.saturating_mul(PLUGIN_SYNC_RETRY_ATTEMPTS as u32)
+        );
+    }
+
+    #[test]
+    fn only_successful_skills_fallback_retries_plugins() {
+        assert!(should_retry_deferred_plugin_sync(false, true));
+        assert!(!should_retry_deferred_plugin_sync(false, false));
+        assert!(!should_retry_deferred_plugin_sync(true, true));
     }
 
     /// A closed socket and a missing local ACK waiter both keep the source's

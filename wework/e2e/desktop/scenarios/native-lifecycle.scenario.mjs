@@ -163,7 +163,8 @@ export function createDesktopScenario(options) {
         const started = await waitForWorkbenchDebugState(
           control,
           snapshot => Boolean(snapshot.workbench?.activeLifecycle?.turn.id),
-          'The initial native Goal did not start'
+          'The initial native Goal did not start',
+          options.modelResponseTimeoutMs
         )
         address = started.workbench.currentRuntimeTask
         await assertRunning('initial-goal')

@@ -87,20 +87,14 @@ impl CodexAppServerClient {
     ) -> Result<(Value, u64), String> {
         let method = "account/login/start";
         let params = json!({"type":login_type});
-        let (request_id, handle, response_rx) = self
+        let request = self
             .prepare_request_with_process(true, None, method, &params)
             .await?;
-        let generation = handle.notifications.process_generation;
+        let generation = request.process_generation();
         // Login is a mutation; never replay it after an uncertain transport outcome.
-        let result = Self::send_request_and_wait(
-            method,
-            params,
-            codex_rpc_timeout_seconds(),
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await?;
+        let result = request
+            .write_and_wait(method, params, codex_rpc_timeout_seconds())
+            .await?;
         Ok((result, generation))
     }
 }
@@ -299,7 +293,7 @@ mod tests {
         let _environment = LaunchEnvironment::new();
         let _activation = crate::services::capability_activation::activate().await;
         let client = router_client().await;
-        let (request_id, handle, _response) = client
+        let pending_request = client
             .prepare_request_with_process(true, None, "account/rateLimits/read", &Value::Null)
             .await
             .unwrap();
@@ -315,14 +309,22 @@ mod tests {
             client.state.lock().await.auth_mode,
             CodexAuthMode::WeworkRouter
         );
-        assert!(handle.pending.lock().await.contains_key(&request_id));
+        assert!(pending_request
+            .handle
+            .pending
+            .lock()
+            .await
+            .contains_key(&pending_request.request_id));
 
         let request =
             client.prepare_request_with_process(true, Some(&launch), "model/list", &Value::Null);
         tokio::pin!(request);
         assert!(futures_util::poll!(&mut request).is_pending());
 
-        handle.remove_pending(request_id).await;
+        pending_request
+            .handle
+            .remove_pending(pending_request.request_id)
+            .await;
         client.restart().await;
     }
 
@@ -332,7 +334,7 @@ mod tests {
         let _environment = LaunchEnvironment::new();
         let _activation = crate::services::capability_activation::activate().await;
         let client = echo_router_client().await;
-        let (request_id, handle, response_rx) = client
+        let request = client
             .prepare_request_with_process(true, None, "account/rateLimits/read", &Value::Null)
             .await
             .unwrap();
@@ -340,8 +342,9 @@ mod tests {
         tokio::pin!(admission);
         assert!(futures_util::poll!(&mut admission).is_pending());
 
-        handle
-            .write_message(json!({"id":request_id,"result":{"rateLimits":{}}}))
+        request
+            .handle
+            .write_message(json!({"id":request.request_id,"result":{"rateLimits":{}}}))
             .await
             .unwrap();
         let state = timeout(Duration::from_secs(5), admission)
@@ -349,7 +352,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(response_rx.await.unwrap(), Ok(json!({"rateLimits": {}})));
+        assert_eq!(
+            request
+                .wait("account/rateLimits/read", codex_rpc_timeout_seconds())
+                .await
+                .unwrap(),
+            json!({"rateLimits": {}})
+        );
         assert_eq!(state.auth_mode, CodexAuthMode::LocalSubscription);
         assert!(state.process.is_none());
     }
@@ -440,7 +449,7 @@ mod tests {
         let _environment = LaunchEnvironment::new();
         let _activation = crate::services::capability_activation::activate().await;
         let client = echo_router_client().await;
-        let (metadata_id, metadata_handle, metadata_rx) = client
+        let metadata_request = client
             .prepare_request_with_process(
                 true,
                 None,
@@ -454,12 +463,19 @@ mod tests {
         assert!(futures_util::poll!(&mut admission).is_pending());
 
         let metadata = json!({"thread":{"id":"history","historyMode":"paginated"}});
-        metadata_handle
-            .write_message(json!({"id":metadata_id,"result":metadata}))
+        metadata_request
+            .handle
+            .write_message(json!({"id":metadata_request.request_id,"result":metadata}))
             .await
             .unwrap();
-        assert_eq!(metadata_rx.await.unwrap(), Ok(metadata));
-        let (page_id, page_handle, page_rx) = client
+        assert_eq!(
+            metadata_request
+                .wait("thread/read", codex_rpc_timeout_seconds())
+                .await
+                .unwrap(),
+            metadata
+        );
+        let page_request = client
             .prepare_request_with_process(true, None, method, &params)
             .await
             .unwrap();
@@ -468,10 +484,16 @@ mod tests {
             client.state.lock().await.auth_mode,
             CodexAuthMode::WeworkRouter
         );
-        assert!(page_handle.pending.lock().await.contains_key(&page_id));
+        assert!(page_request
+            .handle
+            .pending
+            .lock()
+            .await
+            .contains_key(&page_request.request_id));
 
-        page_handle
-            .write_message(json!({"id":page_id,"result":response}))
+        page_request
+            .handle
+            .write_message(json!({"id":page_request.request_id,"result":response}))
             .await
             .unwrap();
         let state = timeout(Duration::from_secs(5), admission)
@@ -479,7 +501,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(page_rx.await.unwrap(), Ok(response));
+        assert_eq!(
+            page_request
+                .wait(method, codex_rpc_timeout_seconds())
+                .await
+                .unwrap(),
+            response
+        );
         assert_eq!(state.auth_mode, CodexAuthMode::LocalSubscription);
         assert!(state.process.is_none());
     }
@@ -490,7 +518,7 @@ mod tests {
         let _environment = LaunchEnvironment::new();
         let _activation = crate::services::capability_activation::activate().await;
         let client = echo_router_client().await;
-        let (request_id, handle, response_rx) = client
+        let request = client
             .prepare_request_with_process(
                 true,
                 None,
@@ -503,7 +531,8 @@ mod tests {
             ("turn/started", "inProgress"),
             ("turn/completed", "completed"),
         ] {
-            handle
+            request
+                .handle
                 .notifications
                 .send(json!({"method":method,"params":{
                     "threadId":"history","turn":{"id":"completed-turn","status":status}
@@ -521,8 +550,10 @@ mod tests {
         assert!(futures_util::poll!(&mut admission).is_pending());
 
         let response = json!({"goal":{"status":"active"}});
-        handle
-            .write_message(json!({"id":request_id,"result":response}))
+        let notifications = request.handle.notifications.clone();
+        request
+            .handle
+            .write_message(json!({"id":request.request_id,"result":response}))
             .await
             .unwrap();
         let error = timeout(Duration::from_secs(5), admission)
@@ -530,7 +561,13 @@ mod tests {
             .unwrap()
             .err()
             .unwrap();
-        assert_eq!(response_rx.await.unwrap(), Ok(response));
+        assert_eq!(
+            request
+                .wait("thread/goal/get", codex_rpc_timeout_seconds())
+                .await
+                .unwrap(),
+            response
+        );
         assert!(error.contains("active_turns=1, pending_requests=0"));
         {
             let state = client.state.lock().await;
@@ -539,8 +576,7 @@ mod tests {
             assert!(state.active_threads.is_empty());
             assert_eq!(state.active_threads_snapshot().get("history"), Some(&1));
         }
-        handle
-            .notifications
+        notifications
             .send(json!({"method":"thread/goal/cleared","params":{"threadId":"history"}}))
             .await;
         client.restart().await;
@@ -596,7 +632,7 @@ mod tests {
 
     async fn assert_pending_request_rejects_auth_change(method: &str) {
         let client = router_client().await;
-        let (request_id, handle, _response) = client
+        let request = client
             .prepare_request_with_process(true, None, method, &Value::Null)
             .await
             .unwrap();
@@ -612,8 +648,13 @@ mod tests {
             client.state.lock().await.auth_mode,
             CodexAuthMode::WeworkRouter
         );
-        assert!(handle.pending.lock().await.contains_key(&request_id));
-        handle.remove_pending(request_id).await;
+        assert!(request
+            .handle
+            .pending
+            .lock()
+            .await
+            .contains_key(&request.request_id));
+        request.handle.remove_pending(request.request_id).await;
         client.restart().await;
     }
 

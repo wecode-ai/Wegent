@@ -36,10 +36,11 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
       }),
     })
     expect(refresh.status).toBe(200)
-    expect(await refresh.json()).toEqual({
-      access_token: 'synthetic-cloud-config-recovery-access',
-      refresh_token: 'synthetic-cloud-config-recovery-refresh',
-    })
+    const refreshed = await refresh.json()
+    expect(refreshed.refresh_token).toBe('synthetic-cloud-config-recovery-refresh')
+    expect(refreshed.access_token).toBe(refreshed.id_token)
+    expect(refreshed.access_token.split('.')).toHaveLength(3)
+    expect(service.authorizationHeader()).toBe(`Bearer ${refreshed.access_token}`)
     expect(service.diagnostics().tokenRefreshes).toBe(1)
     expect((await fetch(bundleUrl)).status).toBe(503)
     expect(service.diagnostics().bundleFailures).toBe(2)

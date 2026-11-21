@@ -80,6 +80,41 @@ async fn background_terminal_prevents_idle_restart_until_native_exit() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Process-global Codex RPC timeout is serialized by the shared test lock.
+async fn forced_restart_skips_failed_live_background_terminal_query() {
+    let _lock = crate::test_env::lock();
+    let _timeout = ScalarEnv::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
+    let (mut handler, root) = isolated_runtime_work_handler("forced-restart-terminal-query");
+    let codex_home = root.join("codex");
+    let _codex_home = ScalarEnv::set("WEGENT_CODEX_HOME", codex_home.to_str().unwrap());
+    let client = CodexAppServerClient::isolated_for_test("/bin/false", codex_home);
+    assert!(
+        client.timeout_stalled_request_for_test().await,
+        "a stalled app-server request should time out and leave a live process"
+    );
+    handler.codex_app_server = client;
+    let mut link = RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+
+    let idle_error = handler
+        .restart_codex_app_server_with_expected_models(json!({"ifIdle": true}), Vec::new())
+        .await
+        .expect_err("ordinary idle restart must surface the live query failure");
+    assert_eq!(idle_error.code, "codex_idle_status_failed");
+
+    let forced = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        handler.restart_codex_app_server_with_expected_models(json!({"force": true}), Vec::new()),
+    )
+    .await
+    .expect("forced restart must not wait for the failed live query")
+    .expect("forced restart should succeed");
+    assert_eq!(forced["restarted"], true);
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn background_terminal_output_survives_execution_settlement_gap() {
     verify_background_terminal_settlement(true, false);

@@ -16,8 +16,13 @@ import {
 } from './response-protocol.mjs'
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
-const ACCESS = 'synthetic-cloud-config-recovery-access'
 const REFRESH = 'synthetic-cloud-config-recovery-refresh'
+
+function syntheticJwt(claims) {
+  // Codex reads access-token expiry from the JWT payload before deciding whether
+  // cloud-config loading should trigger an OAuth refresh.
+  return `header.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`
+}
 
 async function authFileMetadata(path) {
   try {
@@ -46,13 +51,16 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
+  let accessToken = ''
   let tokenRefreshes = 0
   const plans = new Map()
   const requests = []
   const authSnapshots = []
   const releases = new Set()
+  const authorizationHeader = () => `Bearer ${accessToken}`
 
   return {
+    authorizationHeader,
     plan(marker, responses = [{}]) {
       const rounds = responses.map(response => {
         let release
@@ -77,7 +85,13 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           assert.equal(body.refresh_token, REFRESH)
           tokenRefreshes += 1
           response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify({ access_token: ACCESS, refresh_token: REFRESH }))
+          response.end(
+            JSON.stringify({
+              access_token: accessToken,
+              refresh_token: REFRESH,
+              id_token: accessToken,
+            })
+          )
           return
         }
         if (readUsage && request.url?.includes('/wham/usage')) {
@@ -132,27 +146,25 @@ export function createCloudConfigModelService({ readUsage } = {}) {
 
       nativeHome = join(appEnvironment.HOME, '.codex')
       await mkdir(nativeHome, { recursive: true })
-      const claims = Buffer.from(
-        JSON.stringify({
-          email: 'cloud-config-recovery@example.test',
-          exp: Math.floor(Date.now() / 1000) + 3600,
-          'https://api.openai.com/auth': {
-            chatgpt_account_id: ACCOUNT,
-            // An account-only synthetic identity cannot reuse the native bundle
-            // disk cache. Each real loader therefore observes the service state.
-            chatgpt_plan_type: 'enterprise',
-          },
-        })
-      ).toString('base64url')
+      accessToken = syntheticJwt({
+        email: 'cloud-config-recovery@example.test',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        'https://api.openai.com/auth': {
+          chatgpt_account_id: ACCOUNT,
+          // An account-only synthetic identity cannot reuse the native bundle
+          // disk cache. Each real loader therefore observes the service state.
+          chatgpt_plan_type: 'enterprise',
+        },
+      })
       await writeFile(
         join(nativeHome, 'auth.json'),
         JSON.stringify({
           auth_mode: 'chatgpt',
           tokens: {
             account_id: ACCOUNT,
-            access_token: ACCESS,
+            access_token: accessToken,
             refresh_token: REFRESH,
-            id_token: `header.${claims}.signature`,
+            id_token: accessToken,
           },
           last_refresh: new Date().toISOString(),
         })
@@ -226,7 +238,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         }
         authSnapshots.push(snapshot)
         console.info('[desktop-e2e] subscription auth file metadata', JSON.stringify(snapshot))
-        assert.equal(request.headers.authorization, `Bearer ${ACCESS}`)
+        assert.equal(request.headers.authorization, authorizationHeader())
         assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
       }
       requests.push({ marker: plan.marker, round: plan.count, subscription })

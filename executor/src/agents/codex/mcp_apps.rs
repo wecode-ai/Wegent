@@ -13,21 +13,15 @@ impl CodexAppServerClient {
         params: Value,
     ) -> Result<Value, CodexAppToolError> {
         let method = "mcpServer/tool/call";
-        let (request_id, handle, response_rx) = self
+        let request = self
             .prepare_request_with_process(true, None, method, &params)
             .await
             .map_err(CodexAppToolError::NotDispatched)?;
         // A failed write may already have reached the server. Never replay a tool call.
-        Self::send_request_and_wait(
-            method,
-            params,
-            codex_rpc_timeout_seconds(),
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await
-        .map_err(CodexAppToolError::OutcomeUnknown)
+        request
+            .write_and_wait(method, params, codex_rpc_timeout_seconds())
+            .await
+            .map_err(CodexAppToolError::OutcomeUnknown)
     }
 
     pub(crate) async fn set_mcp_app_session(

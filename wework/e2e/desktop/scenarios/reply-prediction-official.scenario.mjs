@@ -47,7 +47,7 @@ export function createDesktopScenario({ resultDir, workspacePath, modelResponseT
       const input = JSON.stringify(body.input ?? [])
       if (!input.includes(MARKER)) return false
       assert.equal(body.model, MODEL)
-      assert.equal(request.headers.authorization, 'Bearer synthetic-cloud-config-recovery-access')
+      assert.equal(request.headers.authorization, subscription.authorizationHeader())
       assert.equal(request.headers['chatgpt-account-id'], 'cloud-config-recovery-enterprise')
       if (prediction) {
         predictionRequests += 1

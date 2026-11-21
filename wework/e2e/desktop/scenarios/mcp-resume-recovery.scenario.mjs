@@ -55,10 +55,14 @@ export function createDesktopScenario({
       ),
     ].map(match => match[1])
 
-  async function retain(name, pid) {
-    const identity = await collectProcessInstanceIdentity(Number(pid))
-    assert.ok(identity, `The real ${name} MCP process is no longer running`)
-    retainedProcesses.set(name, identity)
+  async function retainLatestRunning(name, pids) {
+    for (const pid of pids.toReversed()) {
+      const identity = await collectProcessInstanceIdentity(Number(pid))
+      if (!identity) continue
+      retainedProcesses.set(name, identity)
+      return
+    }
+    assert.fail(`No running ${name} MCP process was recorded`)
   }
 
   async function retainReadyClient(name) {
@@ -169,7 +173,7 @@ export function createDesktopScenario({
       assert.ok(pid)
       const healthy = await starts(NAMES[0])
       assert.ok(healthy.length >= 1, 'The real healthy MCP did not start')
-      await retain(NAMES[0], healthy[0])
+      await retainLatestRunning(NAMES[0], healthy)
       const initialLog = await readFile(log, 'utf8')
       for (const name of NAMES.slice(1))
         assert.match(

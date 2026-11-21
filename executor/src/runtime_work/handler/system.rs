@@ -970,8 +970,18 @@ impl RuntimeWorkRpcHandler {
             .count();
         let force = bool_field(&payload, "force").unwrap_or(false);
         let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
-        let background_terminal_count = self.background_terminal_count();
-        if (active_task_count > 0 || background_terminal_count > 0) && if_idle && !force {
+        let requires_idle = if_idle && !force;
+        // A forced restart is the recovery path for an unresponsive app-server,
+        // so it cannot depend on another live RPC succeeding. The terminal query
+        // remains mandatory for ordinary idle restarts.
+        let background_terminal_count = if requires_idle {
+            self.background_terminal_work_count()
+                .await
+                .map_err(|error| AppIpcError::new("codex_idle_status_failed", error))?
+        } else {
+            0
+        };
+        if (active_task_count > 0 || background_terminal_count > 0) && requires_idle {
             return Ok(json!({
                 "restarted": false,
                 "requiresConfirmation": true,
@@ -986,7 +996,7 @@ impl RuntimeWorkRpcHandler {
                 .await
                 .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         }
-        if if_idle && !force {
+        if requires_idle {
             match self.codex_app_server.restart_if_idle().await {
                 Ok(()) => {}
                 Err((active_turn_count, pending_request_count)) => {

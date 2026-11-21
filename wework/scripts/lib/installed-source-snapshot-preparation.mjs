@@ -8,7 +8,10 @@ import {
   installedSourcePreparationRequest,
   installedSourceSnapshotIdentity,
 } from '../../e2e/desktop/modules/installed-source-preparation.mjs'
-import { saveInstalledSourceSnapshot } from '../../e2e/desktop/modules/installed-source-snapshot.mjs'
+import {
+  canReuseInstalledSourceSnapshot,
+  saveInstalledSourceSnapshot,
+} from '../../e2e/desktop/modules/installed-source-snapshot.mjs'
 import { upgradeUserEnvironment } from '../../e2e/desktop/modules/upgrade-user-environment.mjs'
 import { stopProcessGroup } from '../../e2e/desktop/process-lifecycle.mjs'
 import { prepareReleaseProcess } from '../../electron/src/runtime/release-preparation-progress.mjs'
@@ -16,6 +19,24 @@ import { prepareReleaseProcess } from '../../electron/src/runtime/release-prepar
 /** Generate the installed baseline with its own CLI while target programs prepare. */
 export async function prepareInstalledSourceSnapshot(source, { diagnosticsDirectory }) {
   const started = performance.now()
+  assert.ok(source.preparationCache, 'Source preparation requires a snapshot cache')
+  const identity = installedSourceSnapshotIdentity(source)
+  if (
+    await canReuseInstalledSourceSnapshot({
+      cache: source.preparationCache,
+      identity,
+    })
+  ) {
+    console.log(
+      JSON.stringify({
+        event: 'source-initial-preparation-reused',
+        version: source.version,
+        archiveSha256: source.sha256,
+        elapsedMs: Math.round(performance.now() - started),
+      })
+    )
+    return
+  }
   const base = process.platform === 'win32' ? process.env.APPDATA : tmpdir()
   assert.ok(base && isAbsolute(base), 'Source preparation requires the native data volume')
   const directory = await mkdtemp(join(base, 'wp-'))
@@ -47,7 +68,7 @@ export async function prepareInstalledSourceSnapshot(source, { diagnosticsDirect
       cache: source.preparationCache,
       slot,
       dataDirectory: directory,
-      identity: installedSourceSnapshotIdentity(source),
+      identity,
     })
     console.log(
       JSON.stringify({
