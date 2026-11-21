@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { ApiError } from '@/apis/client'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import type { DocumentDetailResponse } from '@/types/knowledge'
 import { toast } from 'sonner'
@@ -43,6 +44,7 @@ interface UseDocumentDetailReturn {
   loading: boolean
   /** Error message if loading failed */
   error: string | null
+  previewNotReady: boolean
   /** Whether refreshing summary is in progress */
   refreshing: boolean
   /** Whether loading more content is in progress */
@@ -89,7 +91,7 @@ export function useDocumentDetail({
   // Loading states
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; previewNotReady: boolean } | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
   // Pagination state
@@ -174,9 +176,18 @@ export function useDocumentDetail({
       if (err instanceof Error && err.name === 'AbortError') {
         return
       }
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load document detail'
-      setError(errorMessage)
-      toast.error(t('document.document.detail.contentLoadFailed'))
+      const previewNotReady =
+        err instanceof ApiError && err.errorCode === 'document_preview_not_ready'
+      const fallback = t('document.document.detail.contentLoadFailed')
+      setError({
+        previewNotReady,
+        message: previewNotReady
+          ? t('document.document.detail.previewNotReady')
+          : err instanceof Error
+            ? err.message
+            : fallback,
+      })
+      if (!previewNotReady) toast.error(fallback)
     } finally {
       if (requestId === fetchRequestIdRef.current) setLoading(false)
     }
@@ -342,7 +353,8 @@ export function useDocumentDetail({
   return {
     detail,
     loading,
-    error,
+    error: error?.message ?? null,
+    previewNotReady: error?.previewNotReady ?? false,
     refreshing,
     loadingMore,
     currentOffset,

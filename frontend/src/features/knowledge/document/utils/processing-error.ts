@@ -4,6 +4,8 @@
 
 import type { DocumentProcessingError } from '@/types/knowledge'
 
+export const DINGTALK_AUTHORIZATION_REQUIRED = 'dingtalk_authorization_required'
+
 const ERROR_TRANSLATION_KEYS: Record<string, string> = {
   model_quota_exhausted: 'modelQuotaExhausted',
   model_permission_denied: 'modelPermissionDenied',
@@ -23,6 +25,7 @@ const ERROR_TRANSLATION_KEYS: Record<string, string> = {
   external_import_failed: 'externalImportFailed',
   external_source_missing: 'externalSourceMissing',
   external_source_unavailable: 'externalSourceUnavailable',
+  [DINGTALK_AUTHORIZATION_REQUIRED]: 'dingtalkAuthorizationRequired',
 }
 
 export function getProcessingErrorMessage(

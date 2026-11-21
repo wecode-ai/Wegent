@@ -815,7 +815,6 @@ function KnowledgeDocumentSession({
           )?.displayName
         }
         onSubmit={dialogs.handleUpdate}
-        saveView={sidebar.saveKnowledgeBaseView}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}

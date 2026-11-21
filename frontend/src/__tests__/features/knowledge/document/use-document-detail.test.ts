@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { createInstance } from 'i18next'
+import { ApiError } from '@/apis/client'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { useDocumentDetail } from '@/features/knowledge/document/hooks/useDocumentDetail'
 import zhKnowledge from '@/i18n/locales/zh-CN/knowledge.json'
@@ -24,6 +25,20 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 beforeEach(() => jest.clearAllMocks())
+
+it('translates preview not ready without also showing a generic error toast', async () => {
+  jest
+    .mocked(knowledgeBaseApi.getDocumentDetail)
+    .mockRejectedValue(
+      new ApiError('Document content is not ready for preview', 400, 'document_preview_not_ready')
+    )
+
+  const { result } = renderHook(() => useDocumentDetail({ kbId: 115, docId: 245 }))
+
+  await waitFor(() => expect(result.current.error).toBe('文档内容暂不可预览。'))
+  expect(result.current.previewNotReady).toBe(true)
+  expect(toast.error).not.toHaveBeenCalled()
+})
 
 it('shows a translated content error when preview loading fails', async () => {
   jest.mocked(knowledgeBaseApi.getDocumentDetail).mockRejectedValue(new Error('Unavailable'))

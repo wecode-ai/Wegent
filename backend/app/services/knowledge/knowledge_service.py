@@ -929,8 +929,11 @@ class KnowledgeService:
             raise ValueError("You do not have permission to manage this knowledge base")
 
         # Get current spec
-        kb_json = kb.json
-        spec = kb_json.get("spec", {})
+        kb_json = dict(kb.json)
+        spec = dict(kb_json.get("spec", {}))
+
+        if data.kb_type is not None:
+            KnowledgeService._set_default_opening_view(spec, data.kb_type)
 
         # Check duplicate name if name is being changed
         if data.name and data.name != spec.get("name"):
@@ -1318,6 +1321,16 @@ class KnowledgeService:
         return document.origin == ContentOrigin.GENERATED.value
 
     @staticmethod
+    def _set_default_opening_view(spec: dict[str, Any], new_type: str) -> bool:
+        current_type = spec.get("kbType", KnowledgeBaseType.NOTEBOOK.value)
+        if current_type == KnowledgeBaseType.CODE_WIKI.value:
+            raise ValueError("Cannot change the opening view of a code wiki")
+        if current_type == new_type:
+            return False
+        spec["kbType"] = new_type
+        return True
+
+    @staticmethod
     def update_knowledge_base_type(
         db: Session,
         knowledge_base_id: int,
@@ -1358,21 +1371,8 @@ class KnowledgeService:
         kb_json = kb.json
         spec = kb_json.get("spec", {})
 
-        current_type = spec.get("kbType", KnowledgeBaseType.NOTEBOOK.value)
-
-        # A code wiki is a repository binding, not a view preference, so the toggle does
-        # not apply. Rejecting it here also keeps this endpoint from being used to
-        # reinterpret a code wiki as an ordinary knowledge base, which would orphan its
-        # repository and version history.
-        if current_type == KnowledgeBaseType.CODE_WIKI.value:
-            raise ValueError("Cannot change the opening view of a code wiki")
-
-        # If same type, return current kb
-        if current_type == new_type:
+        if not KnowledgeService._set_default_opening_view(spec, new_type):
             return kb
-
-        # Update the default opening view. This does not change KB capabilities.
-        spec["kbType"] = new_type
         kb_json["spec"] = spec
         kb.json = kb_json
         # Mark JSON field as modified so SQLAlchemy detects the change

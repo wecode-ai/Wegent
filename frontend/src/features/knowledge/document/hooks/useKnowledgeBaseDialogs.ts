@@ -33,6 +33,7 @@ interface SidebarLike {
   selectedGroupId: string | null
   currentUser: { id: number } | null
   selectedKbId: number | null
+  saveKnowledgeBaseSettings: (id: number, data: KnowledgeBaseUpdate) => Promise<KnowledgeBase>
   refreshAll: () => Promise<void>
   clearSelection: () => void
 }
@@ -299,8 +300,7 @@ export function useKnowledgeBaseDialogs({
       if (!editingKb) return
       setIsUpdating(true)
       try {
-        const { updateKnowledgeBase } = await import('@/apis/knowledge')
-        await updateKnowledgeBase(editingKb.id, data)
+        await sidebar.saveKnowledgeBaseSettings(editingKb.id, data)
 
         await sidebar.refreshAll()
       } finally {
