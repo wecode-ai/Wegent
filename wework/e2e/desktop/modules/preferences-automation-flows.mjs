@@ -50,6 +50,8 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
           app_startup_succeeded: true,
           feature_opened: true,
           telemetry_preference_changed: true,
+          // An automatic update can finish after consent and share the startup batch.
+          plugin_auto_update_succeeded: true,
         },
         event.event
       ),
@@ -57,6 +59,9 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
       `The initial telemetry request contained an unexpected event: ${event.event}`
     )
     assert.ok(event.properties && typeof event.properties === 'object')
+    if (event.event === 'plugin_auto_update_succeeded') {
+      assert.equal(event.properties.domain, 'plugin')
+    }
     assert.ok(['mac', 'win', 'linux'].includes(event.properties.platform))
     assert.equal(event.properties.platform, event.properties.os)
     assert.equal(event.properties.event_schema_version, 1)
