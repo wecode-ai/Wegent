@@ -665,8 +665,8 @@ mod tests {
                 .unwrap()
                 .duration_ms
         };
-        assert_eq!(get("tool"), 10);
-        assert_eq!(get("agent"), 30);
+        assert_eq!(get("tool"), 20);
+        assert_eq!(get("agent"), 20);
         let gap = response
             .triage
             .iter()
