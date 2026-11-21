@@ -568,12 +568,39 @@ async fn a_nondispatchable_device_turn_fails_when_no_producer_exists() {
 
 #[tokio::test]
 async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
+    let body = reject_device_queue_admission(false).await;
+    assert!(body.contains("response.failed"), "{body}");
+    assert!(body.contains("Device dispatch queue unavailable"), "{body}");
+}
+
+#[tokio::test]
+async fn a_queue_rejection_replays_an_already_committed_cancellation() {
+    let body = reject_device_queue_admission(true).await;
+    assert!(body.contains("response.completed"), "{body}");
+    assert!(body.contains("committed cancellation output"), "{body}");
+    assert!(!body.contains("response.failed"), "{body}");
+}
+
+async fn reject_device_queue_admission(cancelled: bool) -> String {
     use super::super::callback_source::test_support::ScriptedSubscriptions;
     use crate::sql_test_support::mysql_rows::{MysqlRows, Value as MysqlValue};
 
-    let fixture =
-        MysqlRows::start_results(|_| (vec![("id", MysqlValue::I64(TEST_TASK_ID))], Vec::new()))
-            .await;
+    let fixture = MysqlRows::start_results(move |sql| {
+        if cancelled && sql.starts_with("SELECT status, result, error_message") {
+            let row = vec![
+                ("status", MysqlValue::Text("CANCELLED".into())),
+                (
+                    "result",
+                    MysqlValue::Text(json!({"value": "committed cancellation output"}).to_string()),
+                ),
+                ("error_message", MysqlValue::Text(String::new())),
+            ];
+            (row.clone(), vec![row])
+        } else {
+            (vec![("id", MysqlValue::I64(TEST_TASK_ID))], Vec::new())
+        }
+    })
+    .await;
     let mut app = crate::app_test_support::app(fixture.mysql.clone());
     {
         let state = std::sync::Arc::get_mut(&mut app).expect("uniquely owned test app");
@@ -620,9 +647,7 @@ async fn a_queue_rejection_is_not_reported_as_settled_dispatch() {
     assert_eq!(failure.message, "Device dispatch queue unavailable");
     drop(permits);
     bridge.fail(failure).await;
-    let body = drain(&mut bridge).await;
-    assert!(body.contains("response.failed"), "{body}");
-    assert!(body.contains("Device dispatch queue unavailable"), "{body}");
+    drain(&mut bridge).await
 }
 
 async fn drain_stream(mut body: BodyStream) -> String {

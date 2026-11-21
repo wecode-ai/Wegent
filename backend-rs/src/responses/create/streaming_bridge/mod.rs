@@ -783,15 +783,12 @@ impl Bridge {
                 && let Some(app) = self.app.upgrade()
                 && let Some((_, request)) = self.callback_dispatch.as_ref()
             {
-                crate::responses::dispatch::finalize_executor_failure(
-                    &crate::responses::dispatch::ConsumerState::from_app(&app),
-                    self.task_id,
-                    self.subtask_id,
-                    request.user_id,
-                    self.message_id,
-                    (&message, "stream_subscribe_error"),
-                )
-                .await;
+                super::seam::settle_responses_device_failure(&app, request, &message).await;
+                // Admission may fail after another producer has already settled the turn.
+                if let Ok(Some(winner)) = self.read_committed_winner().await {
+                    self.finish_committed_winner_result(Ok(Some(winner))).await;
+                    return;
+                }
             }
             // The producer owns the failure persistence; the consumer renders
             // the failed stream and releases its subscription.

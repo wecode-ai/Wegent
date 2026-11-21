@@ -22,7 +22,9 @@
 mod device;
 
 use device::{dispatch_device_turn, resolve_device_route_id};
-pub(crate) use device::{dispatch_responses_device, enqueue_responses_device};
+pub(crate) use device::{
+    dispatch_responses_device, enqueue_responses_device, settle_responses_device_failure,
+};
 
 use std::io;
 use std::pin::Pin;

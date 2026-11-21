@@ -52,10 +52,11 @@ impl LocalCancellationRegistry {
 
     pub(super) fn cancel_task(&self, task_id: String, subtask_id: Option<String>) {
         let mut state = self.inner.lock().expect("cancellation state lock");
-        let current_turn = state
-            .registered_tasks
-            .get_mut(&task_id)
-            .filter(|turn| subtask_id.as_deref().is_none_or(|id| id == turn.subtask_id));
+        let current_turn = state.registered_tasks.get_mut(&task_id).filter(|turn| {
+            subtask_id
+                .as_deref()
+                .map_or(true, |id| id == turn.subtask_id)
+        });
         if let Some(turn) = current_turn {
             turn.cancel_requested = true;
         } else if let Some(subtask_id) = subtask_id {
@@ -68,7 +69,7 @@ impl LocalCancellationRegistry {
     pub(super) fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
         let state = self.inner.lock().expect("cancellation state lock");
         state.registered_tasks.get(task_id).is_some_and(|turn| {
-            turn.cancel_requested && subtask_id.is_none_or(|id| id == turn.subtask_id)
+            turn.cancel_requested && subtask_id.map_or(true, |id| id == turn.subtask_id)
         }) || state.pending_task_ids.contains(task_id)
             || subtask_id.is_some_and(|subtask_id| state.pending_subtask_ids.contains(subtask_id))
     }

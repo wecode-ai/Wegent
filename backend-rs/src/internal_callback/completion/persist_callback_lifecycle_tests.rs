@@ -32,6 +32,7 @@ pub(super) async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::
     verify_non_chat_cancel_liveness(writer, &app).await?;
     verify_chat_cancel_waits_for_runtime_then_falls_back(writer, &app).await?;
     verify_cancel_callback_order(writer, &app).await?;
+    verify_online_device_cannot_dispatch_a_terminal_turn(writer, &app).await?;
     verify_device_dispatch_terminal_race(writer, &app).await?;
     verify_device_dispatch_retries_failed_terminal_read(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
@@ -114,6 +115,9 @@ async fn verify_device_dispatch_terminal_race(
             .expect("replayed terminal callback");
         let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
         assert_eq!(event["type"], kind);
+        if kind == "error" {
+            assert_eq!(event["error"], "committed outcome");
+        }
         subscription.unsubscribe().await?;
     }
 
@@ -223,6 +227,67 @@ async fn verify_device_dispatch_terminal_race(
         callback_statuses(writer).await?,
         ("CANCELLED".into(), "CANCELLED".into())
     );
+    Ok(())
+}
+
+async fn verify_online_device_cannot_dispatch_a_terminal_turn(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    use serde_json::json;
+
+    const DEVICE_ROUTE: &str = "online-terminal-test";
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    writer
+        .execute(
+            "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at) \
+             VALUES (7, 'Device', ?, 'default', ?, 1, NOW(), NOW())",
+            (
+                DEVICE_ROUTE,
+                brz_mysql::Json(json!({"spec": {"deviceType": "local", "deviceId": DEVICE_ROUTE}})),
+            ),
+        )
+        .await?;
+    let online_key = crate::device_online_state::online_key(7, DEVICE_ROUTE);
+    redis
+        .set_ex(&online_key, 30, r#"{"socket_id":"test-socket"}"#)
+        .await?;
+    reset_callback_state(writer, "RUNNING").await?;
+    terminal_callback(app, "done", "committed before submission")
+        .await
+        .unwrap();
+
+    let mut callback = redis.subscribe("callback:channel:43").await?;
+    let mut socketio = redis
+        .subscribe(crate::socketio_emit::SOCKETIO_CHANNEL)
+        .await?;
+    let mut request = crate::responses::create::dispatch::ExecutionRequest {
+        task_id: 12,
+        subtask_id: 43,
+        user_id: 7,
+        ..Default::default()
+    };
+    let error =
+        crate::responses::create::seam::dispatch_responses_device(app, &mut request, DEVICE_ROUTE)
+            .await
+            .expect_err("the RUNNING guard must reject the completed assistant");
+    assert_eq!(error.status(), http::StatusCode::CONFLICT);
+
+    let message = tokio::time::timeout(Duration::from_secs(2), callback.next_message())
+        .await??
+        .expect("replayed terminal callback");
+    let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
+    assert_eq!(event["type"], "done");
+    assert_eq!(event["result"]["value"], "committed before submission");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), socketio.next_message())
+            .await
+            .is_err(),
+        "a rejected RUNNING transition must not start the device turn"
+    );
+    callback.unsubscribe().await?;
+    socketio.unsubscribe().await?;
+    redis.del(online_key).await?;
     Ok(())
 }
 

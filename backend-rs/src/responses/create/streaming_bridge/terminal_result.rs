@@ -10,30 +10,25 @@ use super::Bridge;
 use crate::internal_callback::completion;
 
 impl Bridge {
-    pub(super) async fn finish_committed_winner(&mut self) {
+    pub(super) async fn read_committed_winner(
+        &mut self,
+    ) -> brz_mysql::MysqlResult<Option<completion::StoredTerminal>> {
         let app = self.app.upgrade();
-        let (_, subtask_table) = match completion::resolve_tables(
+        let (_, subtask_table) = completion::resolve_tables(
             app.as_deref(),
             self.tables,
             self.task_id,
         )
         .await
-        {
-            Ok(tables) => tables,
-            Err(error) => {
-                tracing::warn!(%error, task_id = self.task_id, "terminal result table read failed");
-                self.finish_persistence_error("Could not read the committed execution result")
-                    .await;
-                return;
-            }
-        };
-        let winner = completion::read_terminal_result(
-            &self.mysql,
-            &subtask_table,
-            self.task_id,
-            self.subtask_id,
-        )
-        .await;
+        .inspect_err(|error| {
+            tracing::warn!(%error, task_id = self.task_id, "terminal result table read failed");
+        })?;
+        completion::read_terminal_result(&self.mysql, &subtask_table, self.task_id, self.subtask_id)
+            .await
+    }
+
+    pub(super) async fn finish_committed_winner(&mut self) {
+        let winner = self.read_committed_winner().await;
         self.finish_committed_winner_result(winner).await;
     }
 
