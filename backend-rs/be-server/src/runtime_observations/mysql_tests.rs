@@ -1,6 +1,37 @@
 //! Reuses the Backend Rust CI MySQL fixture and real HTTP authentication.
 use super::*;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+
+const DEVICE_KEY: &str = "wg-observation-device-fixture";
+
+async fn seed_device_keys(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
+    for (token, kind, active, expires) in [
+        (DEVICE_KEY, "personal", true, "2999-01-01 00:00:00"),
+        (
+            "wg-observation-revoked",
+            "personal",
+            false,
+            "2999-01-01 00:00:00",
+        ),
+        (
+            "wg-observation-expired",
+            "personal",
+            true,
+            "2000-01-01 00:00:00",
+        ),
+        (
+            "wg-observation-service",
+            "service",
+            true,
+            "2999-01-01 00:00:00",
+        ),
+    ] {
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        mysql.execute("INSERT INTO api_keys (user_id,key_hash,key_prefix,name,key_type,description,is_active,expires_at,last_used_at,created_at,updated_at) VALUES (981002,?,'fixture','observation-auth',?,'',?,?,NOW(),NOW(),NOW())",(hash,kind,active,expires)).await?;
+    }
+    Ok(())
+}
 
 #[tokio::test]
 #[ignore = "requires disposable WEGENT_TEST_MYSQL_ADDRESS; invoked by Backend Rust CI"]
@@ -117,6 +148,7 @@ async fn verify_collector_migration(
 }
 
 async fn verify_http(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
+    seed_device_keys(mysql).await?;
     let mut state = crate::app_test_support::app(mysql.clone());
     Arc::get_mut(&mut state).unwrap().redis =
         Some(crate::startup::redis::shared(&crate::config::RedisConfig::from_env()?).await?);
@@ -156,12 +188,18 @@ async fn verify_http(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     };
     let result=async {
         let user=jsonwebtoken::encode(&jsonwebtoken::Header::default(),&json!({"sub":"observation-user-981002","exp":chrono::Utc::now().timestamp()+300}),&jsonwebtoken::EncodingKey::from_secret(state.auth.jwt_key.as_bytes()))?;
+        let task_token=jsonwebtoken::encode(&jsonwebtoken::Header::default(),&json!({"type":"task_token","task_id":42,"subtask_id":43,"user_id":981002,"user_name":"observation-user-981002","exp":chrono::Utc::now().timestamp()+300}),&jsonwebtoken::EncodingKey::from_secret(state.auth.jwt_key.as_bytes()))?;
+        anyhow::ensure!(wegent_identity::task_token::verify(&state.auth,Some(&format!("Bearer {task_token}"))).is_some(),"The rejected task token must carry a valid signed task identity");
+        for credential in ["wg-observation-revoked", "wg-observation-expired", "wg-observation-service", task_token.as_str(), "observation-test-service"] {
+            let denied=post("/api/runtime-observations/command",credential,json!({"action":"list"})).await?;
+            anyhow::ensure!(denied.status().as_u16()==401,"Revoked, expired, non-personal, task-scoped and service credentials cannot access an account observation ledger");
+        }
         let stopped=post("/api/runtime-observations/command",&user,json!({"action":"stop_observer","observerId":"unknown","generation":"before-first-activation"})).await?;
         anyhow::ensure!(stopped.status().as_u16()==200 && stopped.json::<Value>().await?["stopped"]==true,"Stopping an unknown UI activation must remain idempotent before any registration");
         let rows:Vec<Document>=mysql.fetch_all("SELECT id,json FROM kinds WHERE user_id=981002 AND kind='RuntimeObservations' AND namespace='wework' AND name='account' AND is_active=1",()).await?;
         anyhow::ensure!(rows.is_empty(),"An idempotent stop cannot create an empty or invalid account ledger");
-        let attached=post("/api/runtime-observations/command",&user,attach("cloud-task")).await?;
-        anyhow::ensure!(attached.status().as_u16()==200);
+        let attached=post("/api/runtime-observations/command",DEVICE_KEY,attach("cloud-task")).await?;
+        anyhow::ensure!(attached.status().as_u16()==200,"A personal device key must register its owner's Runtime observation subscription; received {}",attached.status());
         let attached=attached.json::<Value>().await?;
         let before=command(mysql,981002,&json!({"action":"list"})).await?;
         let mut task_attach=attach("forged-task");
@@ -175,8 +213,10 @@ async fn verify_http(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         anyhow::ensure!(denied.status().as_u16()==400,"A caller-provided task target cannot be smuggled into device registration");
         anyhow::ensure!(command(mysql,981002,&json!({"action":"list"})).await?==before,"Rejected task registrations cannot mutate the account ledger");
         let mut wrong_owner=attach("wrong-owner"); wrong_owner["expectedOwnerId"]=json!(981001);
-        let denied=post("/api/runtime-observations/command",&user,wrong_owner).await?;
-        anyhow::ensure!(denied.status().as_u16()==403,"An account change between registration attempts must not write into the newly connected owner's ledger");
+        for credential in [user.as_str(),DEVICE_KEY] {
+            let denied=post("/api/runtime-observations/command",credential,wrong_owner.clone()).await?;
+            anyhow::ensure!(denied.status().as_u16()==403,"An account change between registration attempts must not write into the newly connected owner's ledger");
+        }
         anyhow::ensure!(command(mysql,981002,&json!({"action":"list"})).await?==before);
         let own=post("/api/runtime-observations/command",&user,json!({"action":"get_subscription","subscriptionId":attached["subscriptionId"]})).await?;
         anyhow::ensure!(own.status().as_u16()==200);
@@ -198,10 +238,14 @@ async fn verify_http(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         anyhow::ensure!(recovered["subscriptions"]==json!([]),"Task recovery cannot cross the authenticated account ledger");
         let foreign=command(mysql,981001,&json!({"action":"list"})).await?;
         let foreign_id=foreign["subscriptions"].as_object().unwrap().keys().next().unwrap();
-        let denied=post("/api/runtime-observations/command",&user,json!({"action":"get_subscription","subscriptionId":foreign_id})).await?;
-        anyhow::ensure!(denied.status().as_u16()==404,"A subscription identifier cannot cross the authenticated account ledger");
-        let denied=post("/api/internal/runtime-observations/command",&user,json!({"userId":981002,"action":"claim"})).await?;
-        anyhow::ensure!(denied.status().as_u16()==401,"Session credentials cannot claim worker leases");
+        for credential in [user.as_str(),DEVICE_KEY] {
+            let denied=post("/api/runtime-observations/command",credential,json!({"action":"get_subscription","subscriptionId":foreign_id})).await?;
+            anyhow::ensure!(denied.status().as_u16()==404,"A subscription identifier cannot cross the authenticated account ledger");
+        }
+        for credential in [user.as_str(),DEVICE_KEY] {
+            let denied=post("/api/internal/runtime-observations/command",credential,json!({"userId":981002,"action":"claim"})).await?;
+            anyhow::ensure!(denied.status().as_u16()==401,"Session and personal device credentials cannot claim worker leases");
+        }
         let claimed=post("/api/internal/runtime-observations/command","observation-test-service",json!({"userId":981002,"action":"claim"})).await?.json::<Value>().await?;
         let token=claimed["collectorToken"].as_str().ok_or_else(||anyhow::anyhow!("Scoped collector token missing"))?;
         for body in [json!([]), json!("invalid")] {
