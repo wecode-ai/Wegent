@@ -130,21 +130,19 @@ echo -e "${GREEN}Port check complete.${NC}"
 echo -e "\n${YELLOW}Step 1: Starting MySQL and Redis...${NC}"
 cd "$PROJECT_ROOT"
 
-if docker-compose ps --status running --services mysql | grep -qx mysql &&
-   docker-compose ps --status running --services redis | grep -qx redis; then
+# Check if services are already running
+MYSQL_RUNNING=$(docker-compose ps mysql 2>/dev/null | grep -c "Up" || echo "0")
+REDIS_RUNNING=$(docker-compose ps redis 2>/dev/null | grep -c "Up" || echo "0")
+
+if [ "$MYSQL_RUNNING" = "0" ] || [ "$REDIS_RUNNING" = "0" ]; then
+    docker-compose up -d mysql redis
+    STARTED_DOCKER=true
+    echo "Waiting for MySQL to be ready..."
+    sleep 10
+else
     echo "MySQL and Redis are already running."
     STARTED_DOCKER=false
-else
-    STARTED_DOCKER=true
-    docker-compose up -d --wait --wait-timeout 60 mysql redis
 fi
-
-# MySQL's initialization only runs on a fresh volume.
-echo "Preparing the wegent_test database..."
-docker-compose exec -T mysql sh -c '
-    export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
-    exec mysql --user=root --execute="CREATE DATABASE IF NOT EXISTS wegent_test"
-'
 
 # Step 2: Install shared module
 echo -e "\n${YELLOW}Step 2: Installing shared module...${NC}"
@@ -167,7 +165,7 @@ echo -e "\n${YELLOW}Step 3: Starting Backend...${NC}"
 cd "$PROJECT_ROOT/backend"
 
 # Set environment variables for backend
-export DATABASE_URL="mysql+pymysql://root:123456@127.0.0.1:3306/wegent_test"
+export DATABASE_URL="mysql+pymysql://root:123456@127.0.0.1:3306/task_manager"
 export REDIS_URL="redis://127.0.0.1:6379"
 export ENVIRONMENT="development"
 export DB_AUTO_MIGRATE="True"

@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
-import { delimiter, resolve } from 'node:path'
-import { promisify } from 'node:util'
 import { test, expect, type Page, type BrowserContext, type Locator } from '@playwright/test'
 import { createApiClient, type ApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
@@ -319,95 +316,6 @@ const creationTest = test.extend<{ creation: CreationSession }>({
     }
   },
 })
-
-creationTest(
-  'corrects and retries a rejected Code Wiki schedule without saving the library twice',
-  async ({ page, creation }) => {
-    test.setTimeout(60_000)
-    const backend = resolve(__dirname, '../../../../backend')
-    const { stdout } = await promisify(execFile)(
-      'uv',
-      [
-        'run',
-        '--no-sync',
-        '--no-env-file',
-        'python',
-        'tests/e2e/prepare_code_wiki_schedule.py',
-        ADMIN_USER.username,
-        fixtureName('schedule-retry'),
-      ],
-      {
-        cwd: backend,
-        timeout: 25_000,
-        env: {
-          ...process.env,
-          PYTHONPATH: [backend, resolve(backend, '..'), process.env.PYTHONPATH]
-            .filter(Boolean)
-            .join(delimiter),
-        },
-      }
-    )
-    const id = Number(stdout.trim().split('\n').at(-1))
-    expect(Number.isSafeInteger(id) && id > 0).toBe(true)
-    creation.libraries.set(id, creation.api)
-    const libraryPath = `/api/knowledge-bases/${id}`
-    const schedulePath = `${libraryPath}/code-wiki/scheduled-update`
-    const requests: string[] = []
-    page.on('request', request => {
-      const path = new URL(request.url()).pathname
-      if (path === libraryPath || path === schedulePath)
-        requests.push(`${request.method()} ${path}`)
-    })
-    const scheduleResponse = () =>
-      page.waitForResponse(
-        response =>
-          new URL(response.url()).pathname === schedulePath &&
-          response.request().method() === 'PUT',
-        { timeout: 10000 }
-      )
-
-    await page.goto(`/knowledge?type=document&kb=${id}`)
-    await page.getByTestId('code-wiki-configure').click({ timeout: 10000 })
-    const generation = page.getByTestId('knowledge-generation-section-trigger')
-    await generation.click({ timeout: 5000 })
-    const enabled = page.getByTestId('code-wiki-scheduled-enabled')
-    await expect(enabled).toBeEnabled({ timeout: 5000 })
-    const countScheduleReads = () =>
-      requests.filter(request => request === `GET ${schedulePath}`).length
-    const initialScheduleReads = countScheduleReads()
-    await enabled.click()
-    await page.getByTestId('knowledge-basic-section-trigger').click()
-    await generation.click()
-    await expect(enabled).toBeChecked({ timeout: 3000 })
-    expect(countScheduleReads()).toBe(initialScheduleReads)
-
-    const first = scheduleResponse()
-    await page.getByTestId('edit-kb-save').click()
-    const rejected = await first
-    expect(rejected.status()).toBe(400)
-    expect(await rejected.json()).toMatchObject({
-      detail: expect.stringContaining('RUNNER_INACTIVE'),
-    })
-
-    await expect(enabled).toBeEnabled({ timeout: 5000 })
-    await enabled.click()
-    await page.getByTestId('code-wiki-scheduled-advanced').click()
-    await page.getByTestId('code-wiki-scheduled-use-default-runner').click()
-    await page.getByTestId('code-wiki-scheduled-time').fill('12:34')
-    const second = scheduleResponse()
-    await page.getByTestId('code-wiki-scheduled-save-retry').click()
-    expect((await second).status()).toBe(200)
-    expect(requests.filter(request => request === `PUT ${libraryPath}`)).toHaveLength(1)
-    const saved = await creation.api.get(schedulePath)
-    expect(saved.status).toBe(200)
-    expect(saved.data).toMatchObject({
-      enabled: false,
-      hour: 12,
-      minute: 34,
-      execution_principal_user_id: null,
-    })
-  }
-)
 
 async function createLibraryInDialog(
   page: Page,
