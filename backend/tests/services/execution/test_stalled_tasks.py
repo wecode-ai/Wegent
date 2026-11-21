@@ -327,6 +327,56 @@ async def test_classify_fails_running_subtask_without_executor(
 
 
 @pytest.mark.asyncio
+async def test_classify_keeps_live_executor_without_bound_name(
+    execution_evidence_probe,
+):
+    """A live task heartbeat proves dispatch started even before DB binding."""
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_heartbeat_alive",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
+
+    assert reason is None
+    execution_evidence_probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_classify_without_executor_ignores_dead_or_unknown_heartbeat(
+    execution_evidence_probe,
+):
+    """Only an explicit live heartbeat exempts an unbound subtask."""
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_heartbeat_alive",
+            AsyncMock(return_value=False),
+        ),
+    ):
+        reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
+
+    assert reason == (EXECUTOR_NOT_STARTED_ERROR, "executor_not_started")
+    execution_evidence_probe.assert_awaited_once_with(
+        100, 200, since=NOW - timedelta(minutes=30)
+    )
+
+
+@pytest.mark.asyncio
 async def test_classify_keeps_subtask_that_is_still_queued():
     """A RUNNING subtask waiting behind backpressure is not a failure."""
     sweeper = StalledSubtaskSweeper(
@@ -399,6 +449,10 @@ async def test_classify_exempts_execution_evidence_or_unknown(
             "app.services.execution.stalled_tasks.executor_dispatch_pending",
             AsyncMock(return_value=False),
         ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_heartbeat_alive",
+            AsyncMock(return_value=False),
+        ),
         caplog.at_level(logging.INFO),
     ):
         reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
@@ -421,6 +475,10 @@ async def test_evidence_failure_does_not_interrupt_bound_executor_check(
     with (
         patch(
             "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_heartbeat_alive",
             AsyncMock(return_value=False),
         ),
         patch(
@@ -506,6 +564,10 @@ async def test_exempt_oldest_page_does_not_starve_later_executor(
     with (
         patch(
             "app.services.execution.stalled_tasks.executor_dispatch_pending",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_heartbeat_alive",
             AsyncMock(return_value=False),
         ),
         patch(
