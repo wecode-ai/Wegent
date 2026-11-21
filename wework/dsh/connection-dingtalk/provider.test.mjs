@@ -86,6 +86,25 @@ test('preserves group and sender boundaries and excludes automated self replies'
   )
 })
 
+test('collection preserves each original send timestamp and rejects invalid timestamps', () => {
+  const group = conversation('selected', false, 'alice')
+  group.messages.push({
+    ...group.messages[0],
+    openMessageId: 'second',
+    createTime: '2026-10-23T12:00:01.123456+08:00',
+  })
+  const source = { kind: 'group', id: 'selected' }
+  const response = { result: { conversationMessagesList: [group] } }
+  assert.deepEqual(
+    normalizeMessages(source, response, 'own').map(message => message.at),
+    group.messages.map(message => message.createTime)
+  )
+  group.messages[1].createTime = 'invalid'
+  assert.throws(() => normalizeMessages(source, response, 'own'), {
+    code: 'dingtalk_response_invalid',
+  })
+})
+
 test('accepts successful empty pages and rejects incomplete provider responses', () => {
   assert.deepEqual(
     normalizeMessages(
@@ -513,6 +532,8 @@ test('SDK native continuation preserves precision and same-timestamp messages wi
   const second = await provider.readSource(fixture.ctx, { source, cursor: first.nextCursor })
   assert.equal(fixture.calls.at(-1).arguments.time, time)
   assert.deepEqual(second.range, first.range)
+  assert.equal(first.items[0].at, stamp)
+  assert.equal(second.items[0].at, stamp)
   assert.equal(second.items[0].id, 'two')
   assert.equal(second.items[0].isOwn, true)
   assert.match(second.items[0].quotedMessage.text, /Please review/)
