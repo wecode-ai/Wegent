@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { test, expect, type Page, type BrowserContext, type Locator } from '@playwright/test'
 import { createApiClient, type ApiClient } from '../../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
@@ -316,6 +319,143 @@ const creationTest = test.extend<{ creation: CreationSession }>({
     }
   },
 })
+
+creationTest(
+  'persists Code Wiki schedules and retries only a rejected plan',
+  async ({ page, creation }) => {
+    test.setTimeout(60_000)
+    if (!process.env.DATABASE_URL) throw new Error('Code Wiki E2E requires the test DATABASE_URL')
+    const { stdout } = await promisify(execFile)(
+      'uv',
+      [
+        'run',
+        '--no-sync',
+        '--no-env-file',
+        'python',
+        'tests/e2e/prepare_code_wiki_schedule.py',
+        ADMIN_USER.username,
+        fixtureName('schedule-retry'),
+      ],
+      {
+        cwd: resolve(__dirname, '../../../../backend'),
+        env: { ...process.env, PYTHONPATH: '.:..' },
+        timeout: 15_000,
+      }
+    )
+    const id = Number(stdout.trim().split('\n').at(-1))
+    expect(Number.isSafeInteger(id) && id > 0).toBe(true)
+    const { api } = creation
+    creation.libraries.set(id, api)
+    const libraryPath = `/api/knowledge-bases/${id}`
+    const schedulePath = `${libraryPath}/code-wiki/scheduled-update`
+    const save = page.getByTestId('edit-kb-save')
+    const close = page.getByTestId('close-edit-kb')
+    const generation = page.getByTestId('knowledge-generation-section-trigger')
+    const enabled = page.getByTestId('code-wiki-scheduled-enabled')
+    const time = page.getByTestId('code-wiki-scheduled-time')
+    const retry = page.getByTestId('code-wiki-scheduled-save-retry')
+    const libraryWrites: string[] = []
+    page.on('request', request => {
+      if (request.method() === 'PUT' && new URL(request.url()).pathname === libraryPath)
+        libraryWrites.push(request.url())
+    })
+    const savePlan = async (button: Locator, step: string) => {
+      const [response] = await Promise.all([
+        page
+          .waitForResponse(
+            response =>
+              new URL(response.url()).pathname === schedulePath &&
+              response.request().method() === 'PUT',
+            { timeout: 10_000 }
+          )
+          .catch(error => {
+            throw new Error(`${step}: waiting for PUT ${schedulePath} failed`, { cause: error })
+          }),
+        button.click({ timeout: 5_000 }),
+      ])
+      return response
+    }
+    const openSettings = async () => {
+      await page.getByTestId('code-wiki-configure').click({ timeout: 10_000 })
+      await generation.click({ timeout: 5_000 })
+      await expect(time, 'Schedule settings loaded').toBeEnabled({ timeout: 5_000 })
+    }
+
+    await page.goto(`/knowledge?type=document&kb=${id}`)
+    await openSettings()
+    await time.fill('10:15', { timeout: 5_000 })
+    expect((await savePlan(save, 'Initial schedule save')).status()).toBe(200)
+    await expect(close, 'Editor closes after the schedule is saved').toBeHidden({ timeout: 5_000 })
+    const initialPlan = await api.get(schedulePath)
+    expect(initialPlan.status).toBe(200)
+    expect(initialPlan.data).toMatchObject({
+      configured: true,
+      enabled: false,
+      hour: 10,
+      minute: 15,
+    })
+
+    // A disabled plan can retain an execution user who no longer exists.
+    const missingRunner = 2_147_483_647
+    const seeded = await api.put(schedulePath, {
+      enabled: false,
+      hour: 10,
+      minute: 15,
+      timezone: 'UTC',
+      execution_principal_user_id: missingRunner,
+    })
+    expect(seeded.status).toBe(200)
+
+    await openSettings()
+    await page.getByTestId('knowledge-basic-section-trigger').click({ timeout: 5_000 })
+    const description = 'Saved before the schedule was rejected'
+    await page.getByTestId('kb-description-input').fill(description, { timeout: 5_000 })
+    await generation.click({ timeout: 5_000 })
+    await time.fill('11:45', { timeout: 5_000 })
+    await enabled.click({ timeout: 5_000 })
+    const rejected = await savePlan(save, 'Enable the schedule with an unavailable runner')
+    expect(rejected.status()).toBe(400)
+    expect(await rejected.json()).toMatchObject({
+      detail: expect.stringContaining('RUNNER_INACTIVE'),
+    })
+    await expect(retry, 'Retry is offered after the library save succeeds').toBeEnabled({
+      timeout: 5_000,
+    })
+    await expect(enabled, 'The schedule draft is still enabled').toBeChecked({ timeout: 3_000 })
+    await expect(time, 'The edited time is retained in the draft').toHaveValue('11:45', {
+      timeout: 3_000,
+    })
+    await expect(time, 'The draft remains editable after the rejection').toBeEnabled({
+      timeout: 3_000,
+    })
+    const library = await api.get(libraryPath)
+    expect(library.status).toBe(200)
+    expect(library.data).toMatchObject({ description })
+    const rejectedPlan = await api.get(schedulePath)
+    expect(rejectedPlan.status).toBe(200)
+    expect(rejectedPlan.data).toMatchObject({ enabled: false, hour: 10, minute: 15 })
+    expect(libraryWrites).toHaveLength(2)
+
+    await enabled.click({ timeout: 5_000 })
+    await page.getByTestId('code-wiki-scheduled-advanced').click({ timeout: 5_000 })
+    await page.getByTestId('code-wiki-scheduled-use-default-runner').click({ timeout: 5_000 })
+    await time.fill('12:34', { timeout: 5_000 })
+    expect((await savePlan(retry, 'Retry the corrected schedule')).status()).toBe(200)
+    await expect(close, 'Editor closes after the corrected schedule is saved').toBeHidden({
+      timeout: 5_000,
+    })
+    expect(libraryWrites).toHaveLength(2)
+    const finalPlan = await api.get(schedulePath)
+    expect(finalPlan.status).toBe(200)
+    expect(finalPlan.data).toMatchObject({
+      configured: true,
+      enabled: false,
+      hour: 12,
+      minute: 34,
+      execution_principal_user_id: null,
+    })
+  }
+)
 
 async function createLibraryInDialog(
   page: Page,
