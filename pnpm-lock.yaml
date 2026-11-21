@@ -857,6 +857,9 @@ importers:
       unified:
         specifier: ^11.0.5
         version: 11.0.5
+      ws:
+        specifier: 8.23.0
+        version: 8.23.0
       yauzl:
         specifier: 3.4.0
         version: 3.4.0

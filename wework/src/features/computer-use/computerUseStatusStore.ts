@@ -1,19 +1,26 @@
+import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { getComputerUseStatus, type ComputerUseStatus } from '@/desktop/computerUse'
 
-/** Poll the host at a fixed cadence while sharing one in-flight status read. */
+/** Read once on subscription, then follow host state changes. */
 export function createComputerUseStatusStore() {
   let status: ComputerUseStatus | null = null
   let pending: object | null = null
   let revision = 0
   const listeners = new Set<() => void>()
   let initial: ReturnType<typeof setTimeout> | undefined
-  let timer: ReturnType<typeof setInterval> | undefined
+  let unsubscribe: (() => void) | undefined
+  let dirty = false
   const publish = (next: ComputerUseStatus) => {
     status = next
     listeners.forEach(listener => listener())
   }
   const load = async () => {
-    if (pending || !listeners.size) return
+    if (!listeners.size) return
+    if (pending) {
+      dirty = true
+      return
+    }
+    dirty = false
     const request = {}
     pending = request
     const current = ++revision
@@ -25,6 +32,7 @@ export function createComputerUseStatusStore() {
         console.error('[Wework] Failed to load computer use activity:', error)
     } finally {
       if (pending === request) pending = null
+      if (dirty && listeners.size) void load()
     }
   }
   return {
@@ -37,8 +45,10 @@ export function createComputerUseStatusStore() {
     subscribe(listener: () => void) {
       listeners.add(listener)
       if (listeners.size === 1) {
+        unsubscribe = subscribeDesktopHostEvents(event => {
+          if (event.type === 'computerUse.changed') void load()
+        })
         initial = setTimeout(() => void load(), 0)
-        timer = setInterval(() => void load(), 1000)
       }
       return () => {
         listeners.delete(listener)
@@ -46,9 +56,13 @@ export function createComputerUseStatusStore() {
           revision++
           pending = null
           clearTimeout(initial)
-          clearInterval(timer)
+          unsubscribe?.()
+          unsubscribe = undefined
+          dirty = false
         }
       }
     },
   }
 }
+
+export const computerUseStatusStore = createComputerUseStatusStore()

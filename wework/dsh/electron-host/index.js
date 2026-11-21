@@ -1,4 +1,5 @@
 import { createRequestSecurity } from './request-security.js'
+import { registerHostEventStream } from './event-stream.js'
 import { ElectronHostClient, ElectronHostError } from './electron-host-client.js'
 import { createWeworkDesktopService, WEWORK_DESKTOP_SERVICE_KEY } from './desktop-service.js'
 
@@ -18,6 +19,10 @@ export async function apply(ctx) {
     onDisconnect: hostDisconnectHandler(ctx),
   })
   await client.start()
+  ctx.effect(
+    () => registerHostEventStream(ctx, security, client, `${BASE_PATH}/events`),
+    'wework-electron-host: event stream'
+  )
   const generation = createWeworkDesktopService(client)
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide(WEWORK_DESKTOP_SERVICE_KEY, generation.service)

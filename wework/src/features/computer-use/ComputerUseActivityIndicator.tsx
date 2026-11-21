@@ -6,12 +6,11 @@ import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Loader2, Square } from 'lucide-react'
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { createComputerUseStatusStore } from './computerUseStatusStore'
+import { useCallback, useState, useSyncExternalStore } from 'react'
+import { computerUseStatusStore as store } from './computerUseStatusStore'
 
 export function ComputerUseActivityIndicator() {
   const { t } = useTranslation('common')
-  const store = useMemo(() => createComputerUseStatusStore(), [])
   const status = useSyncExternalStore(
     isElectronRuntime() ? store.subscribe : subscribeIdleResource,
     store.getSnapshot,
@@ -28,7 +27,7 @@ export function ComputerUseActivityIndicator() {
     } finally {
       setStopping(false)
     }
-  }, [store])
+  }, [])
 
   useWindowEvent(
     'keydown',

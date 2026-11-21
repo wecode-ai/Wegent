@@ -116,3 +116,30 @@ instead of appending an unbounded record for every run.
 In Wework local-first mode, a plugin client should use the active cloud
 connection's `apiBaseUrl` and token. Local functionality can continue without
 a Backend connection, but shared data is unavailable.
+
+## Browser request isolation
+
+HTTP/1.1 requests to one DSH origin share the browser connection pool. Background
+RPCs acquire one of the two same-origin Web Locks in
+`src/api/dsh/backgroundRequests.ts` before dispatch. Main, popout and workspace
+windows share these slots. A slot remains held until the response body is consumed;
+errors and queued cancellation release capacity. Foreground commands such as
+attachment staging, sending and stopping do not enter the background queue.
+
+Executor queries, Git status and connection observers, tray
+synchronization share this limit. Background queries forwarded through
+`modelConfiguration.requestRuntime` also participate. New background entry points
+must reuse the scheduler. Queuing only inside DSH cannot protect browser sockets
+that are already occupied.
+
+Electron host events use a WebSocket protected by existing DSH session checks,
+reconnect from the consumed cursor and replay retained events without occupying
+ordinary HTTP slots. Drag delivery, native notification replies and computer-use
+activity read on events and retain an initial state read. Lightweight cached
+pending-interaction discovery and the collaboration inbox retain their discovery
+contracts; reducing traffic must not hide interactions absent from the current UI.
+
+The CI checkpoint `background-request-isolation` stalls two background requests,
+checks that remaining requests wait in the browser lock queue, stages a real pasted
+attachment, and releases the requests to verify recovery.
+`idle-executor-requests` continues checking lightweight discovery and identity fences.

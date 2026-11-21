@@ -1,3 +1,4 @@
+import { scheduleDshRequest, executorRequestPriority } from './backgroundRequests'
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export interface DesktopHostErrorPayload {
@@ -46,13 +47,33 @@ const desktopHostEventHandlers = new Set<DesktopHostEventHandler>()
 const desktopHostEventHistory: DesktopHostEvent[] = []
 const MAX_DESKTOP_HOST_EVENT_HISTORY = 1024
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
-const DESKTOP_HOST_EVENT_POLL_INTERVAL_MS = 500
 const ATTACHMENT_REQUEST_TIMEOUT_MS = 15_000
 let desktopHostEventAfter = loadDesktopHostEventCursor()
-let desktopHostEventLoop: Promise<void> | null = null
-let desktopHostEventLoopGeneration = 0
+let disconnectDesktopHostEvents: (() => void) | null = null
 
-export async function invokeDesktopHost<Result>(
+const BACKGROUND_HOST_CAPABILITIES = new Set([
+  'tray.setState',
+  'computerUse.status',
+  'notification.pendingReplies',
+  'systemDrag.takePending',
+  'diagnostics.modelLoading',
+])
+
+export function invokeDesktopHost<Result>(
+  capability: string,
+  params: Record<string, unknown> = {}
+): Promise<Result> {
+  return scheduleDshRequest(
+    capability === 'modelConfiguration.requestRuntime'
+      ? executorRequestPriority(String(params.method), {})
+      : BACKGROUND_HOST_CAPABILITIES.has(capability)
+        ? 'background'
+        : 'foreground',
+    () => performDesktopHostRequest<Result>(capability, params)
+  )
+}
+
+async function performDesktopHostRequest<Result>(
   capability: string,
   params: Record<string, unknown> = {}
 ): Promise<Result> {
@@ -145,10 +166,13 @@ export function subscribeDesktopHostEvents(
       if (options.replay(event)) dispatchDesktopHostEvent(handler, event)
     }
   }
-  startDesktopHostEventLoop()
+  disconnectDesktopHostEvents ??= connectDesktopHostEvents()
   return () => {
     desktopHostEventHandlers.delete(handler)
-    if (desktopHostEventHandlers.size === 0) desktopHostEventLoopGeneration += 1
+    if (desktopHostEventHandlers.size === 0) {
+      disconnectDesktopHostEvents?.()
+      disconnectDesktopHostEvents = null
+    }
   }
 }
 
@@ -156,43 +180,55 @@ export function readDesktopHostEventCursor(): number {
   return desktopHostEventAfter
 }
 
-function startDesktopHostEventLoop(): void {
-  if (desktopHostEventLoop || desktopHostEventHandlers.size === 0) return
-  const generation = ++desktopHostEventLoopGeneration
-  desktopHostEventLoop = runDesktopHostEventLoop(generation).finally(() => {
-    desktopHostEventLoop = null
-    if (desktopHostEventHandlers.size > 0) startDesktopHostEventLoop()
-  })
-}
-
-async function runDesktopHostEventLoop(generation: number): Promise<void> {
-  while (desktopHostEventHandlers.size > 0 && desktopHostEventLoopGeneration === generation) {
-    try {
-      const batch = await invokeDesktopHost<DesktopHostEventBatch>('desktop.events', {
-        after: desktopHostEventAfter,
-      })
-      if (desktopHostEventLoopGeneration !== generation) return
-      if (batch.historyLost) {
-        recoverFromDesktopHostEventHistoryLoss(batch.latestSequence)
-        return
-      }
-      desktopHostEventAfter = batch.latestSequence
-      for (const event of coalesceDesktopHostEvents(batch.events)) {
-        desktopHostEventHistory.push(event)
-        if (desktopHostEventHistory.length > MAX_DESKTOP_HOST_EVENT_HISTORY) {
-          desktopHostEventHistory.shift()
+function connectDesktopHostEvents(): () => void {
+  let closed = false
+  let socket: WebSocket | null = null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let retryMs = 500
+  const connect = () => {
+    if (closed) return
+    const url = new URL('/wework/electron-host/v1/events', window.location.href)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set('after', String(desktopHostEventAfter))
+    const next = new WebSocket(url)
+    socket = next
+    next.onmessage = message => {
+      if (closed || socket !== next) return
+      try {
+        const batch = JSON.parse(String(message.data)) as DesktopHostEventBatch
+        if (!Array.isArray(batch.events) || !Number.isSafeInteger(batch.latestSequence))
+          throw new Error('Invalid desktop host event batch')
+        if (batch.historyLost) {
+          recoverFromDesktopHostEventHistoryLoss(batch.latestSequence)
+          return
         }
-        desktopHostEventHandlers.forEach(handler => {
-          dispatchDesktopHostEvent(handler, event)
-        })
+        retryMs = 500
+        desktopHostEventAfter = batch.latestSequence
+        for (const event of coalesceDesktopHostEvents(batch.events)) {
+          desktopHostEventHistory.push(event)
+          if (desktopHostEventHistory.length > MAX_DESKTOP_HOST_EVENT_HISTORY)
+            desktopHostEventHistory.shift()
+          desktopHostEventHandlers.forEach(handler => dispatchDesktopHostEvent(handler, event))
+        }
+        saveDesktopHostEventCursor(desktopHostEventAfter)
+      } catch (error) {
+        console.error('[Wework] Invalid Electron host event stream', error)
+        next.close()
       }
-      saveDesktopHostEventCursor(desktopHostEventAfter)
-      await waitForNextDesktopHostEventPoll()
-    } catch (error) {
-      if (desktopHostEventLoopGeneration !== generation) return
-      console.error('[Wework] Failed to receive Electron host events', error)
-      await waitForNextDesktopHostEventPoll()
     }
+    next.onerror = () => next.close()
+    next.onclose = () => {
+      if (closed || socket !== next) return
+      socket = null
+      timer = setTimeout(connect, retryMs)
+      retryMs = Math.min(retryMs * 2, 10_000)
+    }
+  }
+  connect()
+  return () => {
+    closed = true
+    clearTimeout(timer)
+    socket?.close()
   }
 }
 
@@ -209,10 +245,6 @@ function recoverFromDesktopHostEventHistoryLoss(latestSequence: number): void {
   desktopHostEventAfter = latestSequence
   saveDesktopHostEventCursor(desktopHostEventAfter)
   window.location.reload()
-}
-
-function waitForNextDesktopHostEventPoll(): Promise<void> {
-  return new Promise(resolve => window.setTimeout(resolve, DESKTOP_HOST_EVENT_POLL_INTERVAL_MS))
 }
 
 function coalesceDesktopHostEvents(events: DesktopHostEvent[]): DesktopHostEvent[] {

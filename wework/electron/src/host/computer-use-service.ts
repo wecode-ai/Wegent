@@ -41,7 +41,8 @@ export class ComputerUseService {
   constructor(
     private readonly executorHome: string,
     private readonly platform: NodeJS.Platform = process.platform,
-    private readonly operationTimeoutMs = 90_000
+    private readonly operationTimeoutMs = 90_000,
+    private readonly onStatusChanged: () => void = () => {}
   ) {}
 
   async status(): Promise<ComputerUseStatus> {
@@ -85,6 +86,7 @@ export class ComputerUseService {
 
   private async applyEnabled(enabled: boolean): Promise<ComputerUseStatus> {
     this.enabled = enabled
+    this.onStatusChanged()
     if (enabled) await this.start()
     else await this.stopInternal()
     return this.snapshot()
@@ -106,6 +108,7 @@ export class ComputerUseService {
   /** Cancel the action without clearing admission before its driver call settles. */
   async stopCurrentAction(): Promise<ComputerUseStatus> {
     this.currentActionController?.abort(new Error('Computer use action stopped by user'))
+    this.onStatusChanged()
     return this.snapshot()
   }
 
@@ -181,6 +184,7 @@ export class ComputerUseService {
     this.server = null
     this.runtimePath = null
     this.currentTool = null
+    this.onStatusChanged()
     for (const controller of this.operationControllers) {
       controller.abort(new Error('Computer use service stopped'))
     }
@@ -240,6 +244,7 @@ export class ComputerUseService {
         throw new Error('Another computer use action is already running')
       }
       this.currentTool = body.name
+      this.onStatusChanged()
       this.error = null
       const controller = new AbortController()
       actionController = controller
@@ -260,6 +265,7 @@ export class ComputerUseService {
       if (actionController && this.currentActionController === actionController) {
         this.currentActionController = null
         this.currentTool = null
+        this.onStatusChanged()
       }
     }
   }

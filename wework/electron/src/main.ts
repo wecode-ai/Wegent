@@ -2518,7 +2518,12 @@ async function configureDesktopRuntime(): Promise<void> {
     })
   }
   computerUse = new ComputerUseService(
-    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+    process.platform,
+    90_000,
+    () => {
+      desktopHostEvents.publish('computerUse.changed', {})
+    }
   )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
@@ -2801,6 +2806,7 @@ async function configureDesktopRuntime(): Promise<void> {
             const owner = presentationId ?? systemDragPresentationId
             if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
+            desktopHostEvents.publish('systemDrag.pending', {})
             await showPopoutWindow()
             return owner === systemDragPresentationId
           },

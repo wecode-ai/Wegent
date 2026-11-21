@@ -32,10 +32,11 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
   let connected = false
   let epoch = 0
   let draining = false
+  let drainRequested = false
+  let lastEligibility: string | undefined
   const handled = createStandInRecordStore(`wework.interactions:${accountKey}:native-replies`)
   let handledIds = new Set<string>()
   let unsubscribe: (() => void) | undefined
-  let timer: ReturnType<typeof setInterval> | undefined
   const acknowledge = async (id: string) => {
     handledIds.add(id)
     try {
@@ -52,7 +53,12 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
   const drain = async () => {
     const current = epoch
     const isCurrent = () => connected && owner.active() && current === epoch
-    if (draining || !isCurrent()) return
+    if (!isCurrent()) return
+    if (draining) {
+      drainRequested = true
+      return
+    }
+    drainRequested = false
     draining = true
     try {
       const replies = await invokeDesktopHost<NativeReply[]>('notification.pendingReplies', {
@@ -94,13 +100,13 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
       console.error('[Wework] Could not handle notification reply', error)
     } finally {
       draining = false
+      if (drainRequested) void drain()
     }
   }
   const disconnect = () => {
     connected = false
+    drainRequested = false
     epoch++
-    clearInterval(timer)
-    timer = undefined
     unsubscribe?.()
     unsubscribe = undefined
   }
@@ -115,6 +121,18 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
         if (connected) disconnect()
         return
       }
+      const eligibility = JSON.stringify(
+        owner
+          .items()
+          .map(item => [
+            item.id,
+            item.cached === true,
+            owner.isHandled(item.id),
+            owner.isBusy(item.id),
+          ])
+      )
+      const eligibilityChanged = eligibility !== lastEligibility
+      lastEligibility = eligibility
       if (!connected) {
         connected = true
         epoch++
@@ -122,9 +140,8 @@ export function createNativeInteractionReplies(accountKey: string, owner: Native
         unsubscribe = subscribeDesktopHostEvents(event => {
           if (event.type === 'notification-reply') void drain()
         })
-        timer = setInterval(() => void drain(), 5000)
         void drain()
-      } else if (itemsChanged) void drain()
+      } else if (itemsChanged && eligibilityChanged) void drain()
     },
     disconnect,
   }

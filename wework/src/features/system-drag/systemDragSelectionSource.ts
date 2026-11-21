@@ -14,7 +14,7 @@ import {
   resolveStoredWorkspacePaths,
 } from '@/lib/workspace-path-transfer'
 import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import {
   prepareSelectedTextDrag,
   type SelectedTextChangedDetail,
@@ -308,8 +308,14 @@ export function createSystemDragSelectionSource() {
       })
       .catch(error => console.error('[Wework] Failed to read system drag preferences:', error))
     let pending = false
+    let dirty = false
     const takePending = async () => {
-      if (pending || disposed || !observed()) return
+      if (disposed || !observed()) return
+      if (pending) {
+        dirty = true
+        return
+      }
+      dirty = false
       pending = true
       try {
         const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending', {
@@ -320,13 +326,16 @@ export function createSystemDragSelectionSource() {
         if (!disposed) reportTransferError(error)
       } finally {
         pending = false
+        if (dirty) void takePending()
       }
     }
+    const unsubscribe = subscribeDesktopHostEvents(event => {
+      if (event.type === 'systemDrag.pending') void takePending()
+    })
     void takePending()
-    const poll = window.setInterval(() => void takePending(), 250)
     stop = () => {
       disposed = true
-      window.clearInterval(poll)
+      unsubscribe()
       frames.forEach(frame => cancelAnimationFrame(frame))
       frames.clear()
       timers.forEach(timer => clearTimeout(timer))
