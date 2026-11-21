@@ -433,20 +433,35 @@ pub(crate) enum ExternalWorkKind {
 }
 
 pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
-    if request.extra.contains_key("standInDelegation") {
+    if request.extra.contains_key("standInDelegation") || scheduled_continuation(request).is_some()
+    {
         return Some(ExternalWorkKind::Message);
     }
     let origin = request.extra.get("origin")?;
     if matches!(
         origin["type"].as_str(),
         Some("dingtalk_work" | "connection_work" | "stand_in_coordinator" | "stand_in_task")
-    ) {
+    ) || uses_calendar_connection_policy(origin)
+    {
         Some(ExternalWorkKind::Message)
     } else if origin["type"] == "issue_dispatch" {
         Some(ExternalWorkKind::Project)
     } else {
         None
     }
+}
+
+fn scheduled_continuation(request: &ExecutionRequest) -> Option<&Value> {
+    request
+        .extra
+        .get("standInSchedule")
+        .filter(|schedule| schedule["continuation"] == true)
+}
+
+fn uses_calendar_connection_policy(origin: &Value) -> bool {
+    origin["type"] == "stand_in_schedule"
+        && origin["weeklyReview"] != true
+        && origin["memoryReview"] != true
 }
 
 pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool {
@@ -470,7 +485,15 @@ pub(crate) fn stand_in_requires_confirmation(request: &ExecutionRequest) -> bool
     {
         return true;
     }
+    let continuation = scheduled_continuation(request);
+    if continuation.is_some_and(|schedule| schedule["askBeforeAct"] != false) {
+        return true;
+    }
     request.extra.get("origin").is_some_and(|origin| {
+        // The previous calendar run's policy is superseded by this trigger.
+        if continuation.is_some() && uses_calendar_connection_policy(origin) {
+            return false;
+        }
         matches!(
             origin["initiatedBy"].as_str(),
             Some("stand_in" | "stand_in_identity" | "stand_in_coordinator")

@@ -34,10 +34,12 @@ export function createDesktopScenario({
   uiTimeoutMs,
   workspacePath,
   executorHome,
+  resultDir,
   modelResponseTimeoutMs,
 }) {
   const coordinator = createStandInCoordinatorVerification({
     captureScreenshot,
+    resultDir,
     uiTimeoutMs,
     modelResponseTimeoutMs,
   })

@@ -2432,6 +2432,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'readStandInTasksThroughColdDeviceRoute': {
+      const taskIds = JSON.parse(command.value ?? '[]') as string[]
+      const { createHybridWorkbenchServices } = await import('@/api/hybrid/hybridServices')
+      const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
+      const { LOCAL_USER } = await import('@/api/local/localSession')
+      const { device_id: deviceId } = await describeDshExecutor()
+      const services = createHybridWorkbenchServices({
+        apiBaseUrl: window.location.origin,
+        socketBaseUrl: window.location.origin,
+        socketPath: '/socket.io',
+        token: '',
+        user: LOCAL_USER,
+      })
+      const reader = services.standInApi
+      if (!reader) throw new Error('Stand-in task reader is unavailable')
+      return JSON.stringify(
+        await Promise.all(taskIds.map(taskId => reader.readTask(deviceId, taskId)))
+      )
+    }
     case 'refreshRuntimeWork':
       window.dispatchEvent(
         new StorageEvent('storage', {
@@ -2976,6 +2995,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'blurMainWindow':
       await invokeDesktopHost('e2e.blurMainWindow')
       return ''
+    case 'minimizeMainWindow':
+      await invokeDesktopHost('window.minimize')
+      return ''
+    case 'getWorkbenchWindowActivity':
+      return String(await window.weworkElectronLifecycle?.getWorkbenchActivity?.())
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),

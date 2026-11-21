@@ -61,6 +61,14 @@ maintenance warnings. Data migration failures, missing runtime files, and storag
 still need repair; clearing user data must not hide them. Animation, screenshot, and window geometry
 errors affect presentation and must not prevent a loaded main window from appearing.
 
+## The main window opens while the task list is still loading
+
+The task list can load while worktrees and queued tasks recover. Wework can show the first available
+local list and apply later results in the background. To diagnose a long wait, compare
+`main-window-show` and `renderer-startup-ready` with source `task-list` in `wework-main.log`.
+When `model-loading.log` contains `runtime.inventory.slow`, it reports the time spent reading the
+Executor identity, requesting the list, and verifying the identity again.
+
 ## Conversation export remains on packaging
 
 In the desktop log directory, inspect `dsh-core-runtime.log` for `[wework-conversation-export]` and the export task ID. Finalization logs report the start, completion, or failure of document sync, asset sync, packaging, and destination replacement, including stage duration and asset count. They omit file paths and contents. A stage with only a start event identifies the file operation to investigate; the packaging message alone does not establish that the export has failed.

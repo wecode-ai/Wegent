@@ -81,6 +81,24 @@ function nativeCall(body, id, name, args) {
   }).events
 }
 
+export function dotsSilentIntakeEvents(body) {
+  const id = 'dots-intake'
+  if (!requestContainsToolOutput(body, id)) return nativeCall(body, id, 'read_intake', {})
+  if (!requestContainsToolOutput(body, `${id}-ignore`)) {
+    const intakeOutput = readMcpToolOutput(body, id)
+    if (intakeOutput === 'Coordinator batch or tool is no longer available') {
+      return [assistantMessage('Coordinator batch is no longer available.')]
+    }
+    const eventIds = JSON.parse(intakeOutput).snapshot.events.map(item => item.id)
+    if (eventIds.length === 0) return [assistantMessage('No unrelated source work.')]
+    return nativeCall(body, `${id}-ignore`, 'ignore_events', {
+      eventIds,
+      reason: 'These fixture tasks are handled through explicit owner requests.',
+    })
+  }
+  return [assistantMessage('No unrelated source work.')]
+}
+
 export async function revealDotsFollowupHistory(control) {
   const previews = `${STORY_CHAT} [data-testid="message-turn-navigation-preview"]`
   const request = REQUEST('REVENUE', 2)
@@ -549,16 +567,9 @@ export function createDesktopScenario(options) {
           observedReports.set(receipt[1], JSON.stringify(events))
       } else if (latest.includes(REQUEST(story, phase))) events = primary(body)
       else if (JSON.stringify(body.input).includes(WORK(story, phase))) events = worker(body)
-      else if (latest.startsWith('Review this silent intake batch')) {
-        const id = 'dots-intake'
-        if (!has(body, id)) events = nativeCall(body, id, 'read_intake', {})
-        else if (!has(body, `${id}-ignore`))
-          events = nativeCall(body, `${id}-ignore`, 'ignore_events', {
-            eventIds: JSON.parse(readMcpToolOutput(body, id)).snapshot.events.map(item => item.id),
-            reason: 'These fixture tasks are handled through explicit owner requests.',
-          })
-        else events = [assistantMessage('No unrelated source work.')]
-      } else return false
+      else if (latest.startsWith('Review this silent intake batch'))
+        events = dotsSilentIntakeEvents(body)
+      else return false
       const id = `dots-${story}-${phase}-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
@@ -790,6 +801,7 @@ export function createDesktopScenario(options) {
         )
         await preview(control, 'followup-plan.md', 'No customer has been contacted.')
       } finally {
+        active = false
         if (original) {
           const current = await rpc(control, 'runtime.stand_in.personal.get', {
             userId: STORY_USER,
@@ -803,7 +815,6 @@ export function createDesktopScenario(options) {
           const result = await rpc(control, 'runtime.tasks.archive', { taskId })
           assert.equal(result.accepted, true)
         }
-        active = false
       }
     },
   }

@@ -3,13 +3,14 @@ use super::*;
 
 pub(super) fn schema_is_current(connection: &Connection) -> Result<bool, rusqlite::Error> {
     connection.query_row(
-        "SELECT count(*) = 12 FROM sqlite_master WHERE
+        "SELECT count(*) = 14 FROM sqlite_master WHERE
          (type='table' AND name IN ('stand_in_history','stand_in_history_refs','stand_in_retention_cursor'))
          OR (type='index' AND name IN (
            'ix_stand_in_history_status','ix_stand_in_history_batch',
            'ix_stand_in_history_router_batch','ix_stand_in_history_error',
            'ix_stand_in_history_event_ref','ix_stand_in_history_retention',
-           'ix_loop_items_loop_item_id','ix_loop_items_delivery_id','ix_stand_in_live_work'))",
+           'ix_loop_items_loop_item_id','ix_loop_items_delivery_id','ix_stand_in_live_work',
+           'ix_stand_in_recent_actions','ix_stand_in_recent_suggestions'))",
         [],
         |row| row.get(0),
     )
@@ -48,6 +49,16 @@ pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Err
            WHERE resource_type IN ('stand_in_action','stand_in_event')
              AND CASE WHEN json_valid(metadata)
                       THEN json_extract(metadata,'$.status') IN ('pending','sending','failed')
+                      ELSE 0 END;
+         CREATE INDEX IF NOT EXISTS ix_stand_in_recent_actions
+           ON loop_items(json_extract(metadata,'$.userId'), created_at DESC, id DESC)
+           WHERE resource_type='stand_in_action' AND json_valid(metadata);
+         CREATE INDEX IF NOT EXISTS ix_stand_in_recent_suggestions
+           ON loop_items(json_extract(metadata,'$.userId'), created_at DESC, id DESC)
+           WHERE resource_type='stand_in_action'
+             AND CASE WHEN json_valid(metadata)
+                      THEN json_extract(metadata,'$.kind')='suggest_action'
+                       AND json_extract(metadata,'$.status') IS NOT 'cancelled'
                       ELSE 0 END;
          CREATE TABLE IF NOT EXISTS stand_in_retention_cursor (
            resource_type TEXT PRIMARY KEY, updated_jd REAL NOT NULL,
