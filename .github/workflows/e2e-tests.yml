@@ -1942,6 +1942,7 @@ jobs:
           # Use the server's bounded drain before the intentional Backend restart.
           WEGENT_PYTHON_RELOAD: "false"
           GRACEFUL_SHUTDOWN_TIMEOUT: "20"
+          WEGENT_RS_ROUTES_FILE: ${{ github.workspace }}/.github/ci/backend-e2e-routes.toml
         run: |
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
