@@ -247,7 +247,10 @@ async def test_remote_gateway_index_document_closes_owned_session_before_http(
 
 
 @pytest.mark.asyncio
-async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None:
+@pytest.mark.parametrize("deduplicate", [False, True])
+async def test_remote_gateway_query_posts_reference_mode_request(
+    mocker, deduplicate: bool
+) -> None:
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",
         return_value=_build_response(
@@ -280,6 +283,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
         },
         user_id=8,
         max_results=5,
+        deduplicate_by_document=deduplicate,
         scope=RetrievalScope(document_ids=[10, 11]),
         metadata_condition={"key": "source", "operator": "==", "value": "kb"},
     )
@@ -314,6 +318,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
             "phrases": ["release checklist"],
         },
         "max_results": 5,
+        "deduplicate_by_document": deduplicate,
         "scope": {"document_ids": [10, 11]},
         "metadata_condition": {
             "key": "source",

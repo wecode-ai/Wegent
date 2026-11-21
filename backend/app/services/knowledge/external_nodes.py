@@ -4,24 +4,26 @@
 
 """Node listing helpers for external knowledge MCP integrations."""
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.models.subtask_context import ContextType, SubtaskContext
 from app.schemas.knowledge_external import (
     ExternalKnowledgeNode,
     ExternalKnowledgeNodeType,
 )
 from app.services.knowledge.external_creator import resolve_external_knowledge_creators
-from app.services.knowledge.external_document_access import (
-    build_document_capabilities,
-    load_attachment_map,
-)
+from app.services.knowledge.external_document_access import build_document_capabilities
 
 MAX_RECURSIVE_NODES = 5000
 MAX_RECURSIVE_DEPTH = 100
+MAX_NODE_TEXT_PREFIX_LENGTH = 4096
+MAX_NODE_SUMMARY_LENGTH = 300
 
 
 class ExternalKnowledgeInputError(ValueError):
@@ -113,7 +115,7 @@ def list_direct_nodes(
         folder_ids=[folder.id for folder in child_folders],
         include_inactive=include_inactive,
     )
-    attachment_map = load_attachment_map(db, child_documents)
+    attachment_map = _load_node_attachment_map(db, child_documents)
     creator_map = resolve_external_knowledge_creators(
         db,
         [document.user_id for document in child_documents],
@@ -126,6 +128,7 @@ def list_direct_nodes(
         _build_document_node(
             document,
             attachment=attachment_map.get(document.attachment_id),
+            parsed_attachment=attachment_map.get(_converted_attachment_id(document)),
             creator=creator_map.get(document.user_id),
             original_download_allowed=original_download_allowed,
         )
@@ -176,7 +179,7 @@ def list_recursive_nodes(
         .filter(*_document_filters(knowledge_base_id, include_inactive))
         .all()
     )
-    attachment_map = load_attachment_map(db, documents)
+    attachment_map = _load_node_attachment_map(db, documents)
 
     folder_by_id = {folder.id: folder for folder in folders}
     folders_by_parent: dict[int, list[KnowledgeFolder]] = {}
@@ -220,6 +223,9 @@ def list_recursive_nodes(
             _build_document_node(
                 document,
                 attachment=attachment_map.get(document.attachment_id),
+                parsed_attachment=attachment_map.get(
+                    _converted_attachment_id(document)
+                ),
                 creator=creator_map.get(document.user_id),
                 original_download_allowed=original_download_allowed,
             )
@@ -275,6 +281,9 @@ def list_recursive_nodes(
                 _build_document_node(
                     document,
                     attachment=attachment_map.get(document.attachment_id),
+                    parsed_attachment=attachment_map.get(
+                        _converted_attachment_id(document)
+                    ),
                     creator=creator_map.get(document.user_id),
                     orphan=True,
                     original_download_allowed=original_download_allowed,
@@ -349,7 +358,7 @@ def _list_recursive_subtree_nodes(
     all_documents = [
         document for documents in documents_by_folder.values() for document in documents
     ]
-    attachment_map = load_attachment_map(db, all_documents)
+    attachment_map = _load_node_attachment_map(db, all_documents)
     creator_map = resolve_external_knowledge_creators(
         db,
         [document.user_id for document in all_documents],
@@ -370,6 +379,9 @@ def _list_recursive_subtree_nodes(
             _build_document_node(
                 document,
                 attachment=attachment_map.get(document.attachment_id),
+                parsed_attachment=attachment_map.get(
+                    _converted_attachment_id(document)
+                ),
                 creator=creator_map.get(document.user_id),
                 original_download_allowed=original_download_allowed,
             )
@@ -388,6 +400,120 @@ def _document_index_status(document: KnowledgeDocument) -> Optional[str]:
         if hasattr(document.index_status, "value")
         else str(document.index_status)
     )
+
+
+def _converted_attachment_id(document: KnowledgeDocument) -> Optional[int]:
+    source_config = document.source_config
+    if not isinstance(source_config, dict):
+        return None
+    value = source_config.get("converted_attachment_id")
+    if type(value) not in (int, str):
+        return None
+    try:
+        attachment_id = int(value)
+    except ValueError:
+        return None
+    return attachment_id if attachment_id > 0 else None
+
+
+def _load_node_attachment_map(
+    db: Session, documents: list[KnowledgeDocument]
+) -> dict[int, SubtaskContext]:
+    """Batch metadata and parsed prefixes without loading text or binary blobs."""
+    attachment_ids = {
+        attachment_id
+        for document in documents
+        for attachment_id in (
+            document.attachment_id,
+            _converted_attachment_id(document),
+        )
+        if attachment_id and attachment_id > 0
+    }
+    if not attachment_ids:
+        return {}
+    rows = (
+        db.query(
+            SubtaskContext.id,
+            SubtaskContext.name,
+            SubtaskContext.context_type,
+            SubtaskContext.type_data,
+            func.substr(
+                SubtaskContext.extracted_text, 1, MAX_NODE_TEXT_PREFIX_LENGTH
+            ).label("extracted_text"),
+        )
+        .filter(
+            SubtaskContext.id.in_(attachment_ids),
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        )
+        .all()
+    )
+    # Transient snapshots reuse attachment properties without altering ORM state.
+    return {
+        row.id: SubtaskContext(
+            id=row.id,
+            name=row.name,
+            context_type=row.context_type,
+            type_data=row.type_data,
+            extracted_text=row.extracted_text,
+        )
+        for row in rows
+    }
+
+
+def _first_meaningful_paragraph(text: Optional[str]) -> Optional[str]:
+    """Extract a short paragraph from the bounded, already parsed text prefix."""
+    if not isinstance(text, str):
+        return None
+    prefix = text[:MAX_NODE_TEXT_PREFIX_LENGTH].lstrip("\ufeff \t\r\n")
+    prefix = re.sub(
+        r"\A---[ \t]*\r?\n.*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)",
+        "",
+        prefix,
+        count=1,
+        flags=re.DOTALL,
+    )
+    paragraph: list[str] = []
+    code_fence: Optional[str] = None
+    for line in prefix.splitlines():
+        line = line.strip()
+        if line.startswith(("```", "~~~")):
+            if code_fence is None:
+                code_fence = line[:3]
+            elif line.startswith(code_fence):
+                code_fence = None
+            continue
+        if code_fence is not None:
+            continue
+        if not line or re.match(r"^(?:#{1,6}(?:\s|$)|[-*_ =]+$|!\[.*\]\(.*\)$)", line):
+            if paragraph:
+                break
+            continue
+        paragraph.append(line)
+    return " ".join(paragraph)[:MAX_NODE_SUMMARY_LENGTH].rstrip() or None
+
+
+def _document_summary_fields(
+    document: KnowledgeDocument,
+    attachment: Optional[SubtaskContext],
+    parsed_attachment: Optional[SubtaskContext],
+) -> tuple[Optional[str], Optional[str]]:
+    summary = document.summary if isinstance(document.summary, dict) else {}
+    short_summary = summary.get("short_summary")
+    short_summary = (
+        short_summary.strip()[:MAX_NODE_SUMMARY_LENGTH].rstrip() or None
+        if isinstance(short_summary, str)
+        else None
+    )
+    status = summary.get("status")
+    status = status.strip() or None if isinstance(status, str) else None
+    if not short_summary:
+        text = None
+        if parsed_attachment is not None and parsed_attachment.extracted_text:
+            text = parsed_attachment.extracted_text
+        elif attachment is not None:
+            text = attachment.extracted_text
+        short_summary = _first_meaningful_paragraph(text)
+    return short_summary, status
 
 
 def _build_folder_node(
@@ -416,11 +542,15 @@ def _build_document_node(
     creator=None,
     orphan: bool = False,
     original_download_allowed: bool = True,
+    parsed_attachment: Optional[SubtaskContext] = None,
 ) -> ExternalKnowledgeNode:
     capabilities = build_document_capabilities(
         document,
         attachment,
         original_download_allowed=original_download_allowed,
+    )
+    short_summary, summary_status = _document_summary_fields(
+        document, attachment, parsed_attachment
     )
     return ExternalKnowledgeNode(
         node_id=f"document:{document.id}",
@@ -430,6 +560,8 @@ def _build_document_node(
         parent_id=document.folder_id or 0,
         source_type=document.source_type,
         index_status=_document_index_status(document),
+        short_summary=short_summary,
+        summary_status=summary_status,
         file_extension=capabilities.file_extension,
         content_readable=capabilities.content_readable,
         downloadable=capabilities.downloadable,

@@ -139,6 +139,11 @@ set_external_knowledge_creator_resolver(enterprise_creator_resolver)
 
 ## Tools
 
+All five tools return business JSON objects directly in `structuredContent`, rather than
+wrapping serialized JSON in a `result` string. Legacy clients can still parse the JSON text
+in `content[].text`; structured-output clients should use `structuredContent` directly.
+Success and error responses use the same object output format.
+
 ### `wegent_kb_list_knowledge_bases`
 
 Returns knowledge bases accessible to the authenticated user.
@@ -184,6 +189,9 @@ Behavior:
 - `recursive` and `include_inactive` must be strict booleans. The string `"false"` is rejected.
 - `include_inactive` defaults to `true`, so inactive documents are shown to callers, matching the internal MCP behavior. Callers can use `index_status` to determine whether a document is searchable.
 - Document nodes return `creator`; folder nodes do not have independent creator information, so their `creator` is `null`.
+- Document nodes return `short_summary` and `summary_status`. An existing short summary is
+  preferred; otherwise a bounded first meaningful paragraph of parsed text serves as a preview.
+  Folder fields are `null`. Listing does not generate summaries.
 - Non-recursive listing returns `total_available` and `has_more`; callers should page with `limit` and `offset`.
 - `total_returned` counts every node in the returned tree, including nested children.
 - Root recursive listing pre-counts candidate folders and documents. If the result exceeds `MAX_RECURSIVE_NODES`, it returns `result_too_large` before loading the whole tree.
@@ -253,12 +261,21 @@ Parameters:
 | `query` | `string` | required | Search query, at most `2000` characters |
 | `knowledge_base_ids` | `list[int]` | required | Target knowledge base IDs. At most `100` unique IDs, and must be non-empty |
 | `max_results` | `int` | `10` | Number of results to return, from `1` to `50` |
+| `deduplicate_by_document` | `bool` | `false` | Return only the highest-scoring chunk per document; when enabled, `max_results` limits document results |
 
 Behavior:
 
 - `knowledge_base_ids` must be provided explicitly and must not be empty. External callers should call `wegent_kb_list_knowledge_bases` first, then search selected knowledge bases.
 - `knowledge_base_ids` are deduplicated before the count limit is enforced, so repeated IDs do not amplify permission checks.
 - `max_results` must be a strict integer. The string `"10"` is rejected.
+- `deduplicate_by_document` must be a strict boolean. It defaults to chunk results. When enabled,
+  results are deduplicated by knowledge base ID and document ID before applying `max_results`.
+  Hits without a known document ID remain separate.
+- Document mode expands candidate `top_k` to at least `min(max_results * 4, 200)` and preserves
+  any larger configured window. A bounded candidate pool cannot guarantee coverage of all documents.
+- `total` remains the candidate chunk count before deduplication and the final limit.
+  `total_returned` counts returned records; `returned_document_count` counts distinct documents
+  with known IDs in those records. The response echoes `deduplicate_by_document`.
 - Inaccessible `knowledge_base_ids` are ignored and returned in `ignored_knowledge_base_ids` with `warnings`. If no requested knowledge base is accessible, the tool returns `not_found`.
 - Search results prefer top-level `document_id`; if absent, they also read `metadata.document_id`, top-level `doc_ref`, or `metadata.doc_ref`.
 
@@ -288,7 +305,7 @@ Backend" path; a retrieval failure is reported instead of falling back to local 
 
 ## Error Response
 
-Tools return errors as JSON strings:
+Tools return errors as structured JSON objects:
 
 ```json
 {
