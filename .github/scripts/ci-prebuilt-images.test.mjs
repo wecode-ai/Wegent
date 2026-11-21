@@ -39,7 +39,9 @@ test("dependency keys follow build inputs and survive application-only changes",
       "sdk/plugin-auth",
       "backend-rs/Cargo.toml",
       "backend-rs/Cargo.lock",
-      "backend-rs/crates",
+      "backend-rs/be-server/Cargo.toml",
+      "backend-rs/src/task_export_docx/templates/thumbnail.jpeg",
+      "backend-rs/backend-config",
     ]) {
       mkdirSync(dirname(join(directory, input)), { recursive: true });
       cpSync(new URL(input, root), join(directory, input), { recursive: true });
@@ -54,6 +56,17 @@ test("dependency keys follow build inputs and survive application-only changes",
       "application changes",
     );
     assert.equal(key(), executor);
+    mkdirSync(join(directory, "backend-rs/be-server/src"), { recursive: true });
+    writeFileSync(
+      join(directory, "backend-rs/be-server/src/main.rs"),
+      "application changes",
+    );
+    assert.equal(key("backend-rs-deps"), backend);
+    const librarySource = join(directory, "backend-rs/backend-config/src/lib.rs");
+    const originalLibrarySource = readFileSync(librarySource, "utf8");
+    writeFileSync(librarySource, `${originalLibrarySource}\n// Changed library\n`);
+    assert.notEqual(key("backend-rs-deps"), backend);
+    writeFileSync(librarySource, originalLibrarySource);
     const sharedSource = join(directory, "shared/rust/crypto/src/lib.rs");
     const originalSource = readFileSync(sharedSource, "utf8");
     writeFileSync(

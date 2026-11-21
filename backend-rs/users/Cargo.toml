@@ -1,0 +1,38 @@
+[package]
+name = "wegent-backend-users"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "User profiles, account settings, runtime configuration, and directory routes"
+
+[dependencies]
+tokio = { workspace = true, features = ["rt"] }
+wegent-backend-config = { workspace = true }
+wegent-identity = { workspace = true }
+wegent-http-compat = { workspace = true }
+wegent-python-compat = { workspace = true }
+wegent-crypto = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bcrypt = { workspace = true }
+brz-http = { workspace = true, features = ["json"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+erased-serde = { workspace = true }
+getrandom = { workspace = true }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+wegent-backend-test-support = { workspace = true }
+wegent-identity = { workspace = true, features = ["test-support"] }
+aes = { workspace = true }
+cbc = { workspace = true, features = ["alloc", "block-padding"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }

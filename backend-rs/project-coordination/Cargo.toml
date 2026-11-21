@@ -1,0 +1,39 @@
+[package]
+name = "wegent-project-coordination"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Cloud project permissions, membership, board and LoopNode persistence"
+
+[features]
+test-support = []
+
+[dependencies]
+aes-gcm.workspace = true
+base64.workspace = true
+brz-http = { workspace = true, features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+getrandom.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha1.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+wegent-backend-config.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-devices.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-protocol.workspace = true
+wegent-storage.workspace = true
+wegent-python-compat.workspace = true
+
+[dev-dependencies]
+futures-util = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wegent-backend-test-support.workspace = true
