@@ -13,7 +13,7 @@ wegent-http-compat = { path = "../http-compat" }
 wegent-task-store = { path = "../task-store" }
 anyhow = "1"
 brz-http-server = { version = "=0.0.33", features = ["macros"] }
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

@@ -11,5 +11,5 @@ brz-metrics = { version = "=0.0.13", features = ["tokio"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

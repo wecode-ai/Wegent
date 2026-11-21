@@ -57,7 +57,7 @@ brz-socket-io = { version = "=0.0.6", features = ["macros", "metrics"] }
 brz-logs = { version = "=0.0.17", features = ["metrics"] }
 # Keep one published metrics registry across all Breeze components.
 brz-metrics = { version = "=0.0.13", features = ["tokio"] }
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
 brz-schedule = "=0.0.1"
 brz-schedule-redis = "=0.0.1"
