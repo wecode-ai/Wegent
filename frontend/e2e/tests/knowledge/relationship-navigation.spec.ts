@@ -493,6 +493,55 @@ async function createLibraryInDialog(
 }
 
 creationTest(
+  'saves the default view with the rest of the library settings',
+  async ({ page, creation }) => {
+    const { api } = creation
+    const created = await api.post<{ id: number }>('/api/knowledge-bases', {
+      name: fixtureName('e2e-default-view'),
+      kb_type: 'notebook',
+      summary_enabled: false,
+    })
+    expect(created.status).toBe(201)
+    const id = created.data!.id
+    creation.libraries.set(id, api)
+    const path = `/api/knowledge-bases/${id}`
+    const writes: string[] = []
+    page.on('request', request => {
+      const pathname = new URL(request.url()).pathname
+      if ([path, `${path}/type`].includes(pathname) && ['PUT', 'PATCH'].includes(request.method()))
+        writes.push(request.method())
+    })
+
+    await page.goto('/knowledge?type=document')
+    const edit = page.getByTestId(`edit-kb-${id}`)
+    const view = page.getByTestId('edit-kb-default-view')
+    const close = page.getByTestId('close-edit-kb')
+    await edit.click({ timeout: 10_000 })
+    await view.click({ timeout: 5_000 })
+    await expect(page.getByRole('dialog')).toHaveCount(1, { timeout: 3_000 })
+    await close.click({ timeout: 5_000 })
+    await expect(close).toBeHidden({ timeout: 5_000 })
+    expect(writes).toEqual([])
+    expect((await api.get(path)).data).toMatchObject({ kb_type: 'notebook' })
+
+    await edit.click({ timeout: 5_000 })
+    await view.click({ timeout: 5_000 })
+    const description = 'Saved with the new default view'
+    await page.getByTestId('kb-description-input').fill(description, { timeout: 5_000 })
+    const saved = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname === path && response.request().method() === 'PUT',
+      { timeout: 10_000 }
+    )
+    await page.getByTestId('edit-kb-save').click({ timeout: 5_000 })
+    expect((await saved).status()).toBe(200)
+    await expect(close).toBeHidden({ timeout: 5_000 })
+    expect(writes).toEqual(['PUT'])
+    expect((await api.get(path)).data).toMatchObject({ kb_type: 'classic', description })
+  }
+)
+
+creationTest(
   'preserves guided questions and call limits when creating a document library',
   async ({ page, creation }) => {
     await page.goto('/knowledge?type=document')

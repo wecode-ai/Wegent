@@ -485,6 +485,7 @@ export interface RetrievalConfigUpdate {
 }
 
 export interface KnowledgeBaseUpdate {
+  kb_type?: DocumentViewType
   name?: string
   description?: string
   direct_access_requirement?: DirectAccessRequirement

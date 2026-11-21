@@ -61,6 +61,29 @@ fn only_coding_shells_enter_the_recovery_read() {
     }
 }
 
+#[tokio::test]
+async fn explicit_device_placement_skips_managed_executor_recovery() {
+    let fixture = MysqlRows::start_results(|sql| panic!("unexpected recovery query: {sql}")).await;
+    let app = crate::app_test_support::app(fixture.mysql.clone());
+    let mut request = ExecutionRequest {
+        bot: json!([{"shell_type": "Codex"}]),
+        executor_name: Some("stale-managed-executor".into()),
+        executor_namespace: Some("stale-namespace".into()),
+        ..ExecutionRequest::default()
+    };
+
+    let recovered = recover_executor_if_needed(&app, &mut request, Some("device-route"), false)
+        .await
+        .unwrap();
+
+    assert!(!recovered);
+    assert_eq!(
+        request.executor_name.as_deref(),
+        Some("stale-managed-executor")
+    );
+    assert!(fixture.queries().is_empty());
+}
+
 /// `_has_fork_workspace_archive` needs a non-blank `storageKey`.
 #[test]
 fn a_fork_workspace_archive_requires_a_non_blank_storage_key() {

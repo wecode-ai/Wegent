@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-import { getKnowledgeBase, updateKnowledgeBaseType } from '@/apis/knowledge'
+import { getKnowledgeBase } from '@/apis/knowledge'
 import { EditKnowledgeBaseDialog } from '@/features/knowledge/document/components/EditKnowledgeBaseDialog'
 import type { KnowledgeBase, KnowledgeBaseUpdate } from '@/types/knowledge'
 
@@ -15,7 +15,6 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
-  updateKnowledgeBaseType: jest.fn(),
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
@@ -111,104 +110,50 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
     )
   })
 
-  it('keeps a later editor intact when an earlier view conversion resolves', async () => {
-    const first = { ...knowledgeBase, kb_type: 'notebook' as const }
-    const second = { ...first, id: 102, name: 'Other Docs' }
-    jest.mocked(getKnowledgeBase).mockImplementation(async id => (id === first.id ? first : second))
-    let resolveConversion!: (kb: KnowledgeBase) => void
-    jest.mocked(updateKnowledgeBaseType).mockImplementationOnce(
-      () =>
-        new Promise(resolve => {
-          resolveConversion = resolve
-        })
-    )
-    const onTypeConverted = jest.fn()
-    const saveView: typeof updateKnowledgeBaseType = async (id, type) => {
-      const updated = await updateKnowledgeBaseType(id, type)
-      onTypeConverted(updated)
-      return updated
-    }
-    const editor = (kb: KnowledgeBase) => (
-      <EditKnowledgeBaseDialog
-        open
-        knowledgeBase={kb}
-        onOpenChange={jest.fn()}
-        onSubmit={jest.fn()}
-        saveView={saveView}
-      />
-    )
-    const { rerender } = render(editor(first))
-    fireEvent.click(await screen.findByTestId('edit-kb-default-view'))
-    const findConfirmation = () =>
-      screen.getByRole('dialog', { name: 'document.knowledgeBase.changeDefaultView' })
-    fireEvent.click(
-      within(findConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
-    )
-
-    rerender(editor(second))
-    fireEvent.click(await screen.findByTestId('edit-kb-default-view'))
-    expect(within(findConfirmation()).getByText(second.name)).toBeVisible()
-    await act(async () => resolveConversion({ ...first, kb_type: 'classic' }))
-
-    expect(within(findConfirmation()).getByText(second.name)).toBeVisible()
-    expect(
-      within(findConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
-    ).toBeEnabled()
-    expect(onTypeConverted).toHaveBeenCalledTimes(1)
-    expect(onTypeConverted).toHaveBeenCalledWith(
-      expect.objectContaining({ id: first.id, kb_type: 'classic' })
-    )
-    expect(
-      within(findConfirmation()).getByText('document.knowledgeBase.typeNotebook')
-    ).toBeVisible()
-  })
-
-  it('uses the returned default view for subsequent changes in the same editor', async () => {
+  it('submits the selected default view with other settings only on save', async () => {
+    const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
     jest.mocked(getKnowledgeBase).mockResolvedValue({ ...knowledgeBase, kb_type: 'notebook' })
-    jest
-      .mocked(updateKnowledgeBaseType)
-      .mockImplementation(async (_id, kb_type) => ({ ...knowledgeBase, kb_type }))
     render(
       <EditKnowledgeBaseDialog
         open
         knowledgeBase={knowledgeBase}
         onOpenChange={jest.fn()}
-        onSubmit={jest.fn()}
+        onSubmit={onSubmit}
       />
     )
 
-    await screen.findByTestId('edit-kb-default-view')
-    const mainForm = within(screen.getByTestId('knowledge-base-form'))
-    const getConfirmation = () =>
-      screen.getByRole('dialog', {
-        name: 'document.knowledgeBase.changeDefaultView',
-      })
-    const savedCount = jest.mocked(updateKnowledgeBaseType).mock.calls.length
-    expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+    fireEvent.click(await screen.findByTestId('edit-kb-default-view'))
+    expect(screen.getByTestId('kb-default-view-current')).toHaveTextContent('typeClassic')
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(onSubmit).not.toHaveBeenCalled()
 
-    fireEvent.click(mainForm.getByTestId('edit-kb-default-view'))
-    fireEvent.click(
-      within(getConfirmation()).getByRole('button', { name: 'common:actions.cancel' })
-    )
-    expect(updateKnowledgeBaseType).toHaveBeenCalledTimes(savedCount)
-    expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
-
-    fireEvent.click(mainForm.getByTestId('edit-kb-default-view'))
-    fireEvent.click(
-      within(getConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
-    )
+    fireEvent.click(screen.getByTestId('knowledge-base-direct-access-edit'))
+    fireEvent.click(screen.getByTestId('edit-kb-save'))
     await waitFor(() =>
-      expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeClassic')
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ kb_type: 'classic', direct_access_requirement: 'edit' })
+      )
     )
+  })
 
-    fireEvent.click(mainForm.getByTestId('edit-kb-default-view'))
-    fireEvent.click(
-      within(getConfirmation()).getByRole('button', { name: 'common:actions.confirm' })
+  it('discards an unsaved selection when the editor is closed and reopened', async () => {
+    jest.mocked(getKnowledgeBase).mockResolvedValue({ ...knowledgeBase, kb_type: 'notebook' })
+    const onSubmit = jest.fn()
+    const editor = (open: boolean) => (
+      <EditKnowledgeBaseDialog
+        open={open}
+        knowledgeBase={knowledgeBase}
+        onOpenChange={jest.fn()}
+        onSubmit={onSubmit}
+      />
     )
-    await waitFor(() =>
-      expect(mainForm.getByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
-    )
-    expect(updateKnowledgeBaseType).toHaveBeenLastCalledWith(knowledgeBase.id, 'notebook')
+    const { rerender } = render(editor(true))
+    fireEvent.click(await screen.findByTestId('edit-kb-default-view'))
+    expect(screen.getByTestId('kb-default-view-current')).toHaveTextContent('typeClassic')
+    rerender(editor(false))
+    rerender(editor(true))
+    expect(await screen.findByTestId('kb-default-view-current')).toHaveTextContent('typeNotebook')
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 
   it('loads and saves the direct access requirement', async () => {

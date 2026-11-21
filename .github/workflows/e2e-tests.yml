@@ -2159,6 +2159,15 @@ jobs:
             "$PLATFORM_E2E_IMAGE" \
             node ./node_modules/@playwright/test/cli.js test --project=executor-chromium
 
+      - name: Run Responses device cancellation E2E
+        working-directory: ./backend
+        env:
+          E2E_API_URL: http://127.0.0.1:8000
+          E2E_MODEL_URL: http://127.0.0.1:9999
+          DATABASE_URL: mysql+pymysql://root:test123@127.0.0.1:3306/wegent_test
+          REDIS_URL: redis://127.0.0.1:6379/0
+        run: uv run --no-sync python -m tests.e2e.responses_device_cancel
+
       # Keep normal executor coverage on production thresholds. Replace only the
       # Backend after that suite, retaining its binaries, ports and dependencies.
       - name: Restart Backend for stalled Chat SSE regression

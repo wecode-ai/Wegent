@@ -61,10 +61,6 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
   ),
 }))
 
-jest.mock('@/features/knowledge/document/components/ConvertKnowledgeBaseTypeDialog', () => ({
-  ConvertKnowledgeBaseTypeDialog: () => null,
-}))
-
 jest.mock('@/features/knowledge/code-wiki/ScheduledUpdateSettings', () => ({
   ScheduledUpdateSettings: ({
     draft,

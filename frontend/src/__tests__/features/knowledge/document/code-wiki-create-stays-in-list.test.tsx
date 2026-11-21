@@ -44,6 +44,7 @@ describe('creating a Code Wiki', () => {
         selectedGroupId: null,
         currentUser: { id: 1 },
         selectedKbId: 1,
+        saveKnowledgeBaseSettings: jest.fn(),
         refreshAll: jest.fn(),
         clearSelection: jest.fn(),
       }
@@ -83,6 +84,7 @@ describe('creating a Code Wiki', () => {
         selectedGroupId: null,
         currentUser: { id: 1 },
         selectedKbId: 1,
+        saveKnowledgeBaseSettings: jest.fn(),
         refreshAll: jest.fn().mockResolvedValue(undefined),
         clearSelection: jest.fn(),
       }
@@ -148,6 +150,7 @@ describe('creating a Code Wiki', () => {
       selectedGroupId: null,
       currentUser: { id: 1 },
       selectedKbId: null,
+      saveKnowledgeBaseSettings: jest.fn(),
       refreshAll,
       clearSelection: jest.fn(),
     }
@@ -188,6 +191,7 @@ describe('creating a Code Wiki', () => {
       selectedGroupId: null,
       currentUser: { id: 1 },
       selectedKbId: null,
+      saveKnowledgeBaseSettings: jest.fn(),
       refreshAll: jest.fn().mockResolvedValue(undefined),
       clearSelection: jest.fn(),
     }
@@ -235,6 +239,7 @@ describe('creating a normal knowledge base', () => {
       selectedGroupId: null,
       currentUser: { id: 1 },
       selectedKbId: null,
+      saveKnowledgeBaseSettings: jest.fn(),
       refreshAll: jest.fn().mockResolvedValue(undefined),
       clearSelection: jest.fn(),
     }
@@ -261,6 +266,7 @@ it('rechecks the selected team before creating even through a previously capture
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }
@@ -300,6 +306,7 @@ it('ignores a late creation response after changing account and keeps the new sc
     groups: [],
     selectedGroupId: null,
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }
@@ -333,6 +340,7 @@ it('does not send the deferred document create when its account scope has alread
     groups: [],
     selectedGroupId: null,
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }
@@ -364,6 +372,7 @@ it.each([
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,
+    saveKnowledgeBaseSettings: jest.fn(),
     refreshAll: jest.fn().mockResolvedValue(undefined),
     clearSelection: jest.fn(),
   }

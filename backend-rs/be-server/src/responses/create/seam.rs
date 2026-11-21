@@ -21,8 +21,10 @@
 //! The chat-shell upstream is the deployment's `CHAT_SHELL_URL`.
 mod device;
 
-pub(super) use device::dispatch_responses_device;
 use device::{dispatch_device_turn, resolve_device_route_id};
+pub(crate) use device::{
+    dispatch_responses_device, enqueue_responses_device, settle_responses_device_failure,
+};
 
 use std::io;
 use std::pin::Pin;
@@ -284,7 +286,7 @@ pub async fn dispatch_create(
         // Non-streaming: fire-and-forget the executor dispatch and return
         // `queued`.
         if let Some(device_route) = input.device_id.as_deref() {
-            dispatch_responses_device(state, &mut request, device_route).await?;
+            dispatch_responses_device(state, &mut request, device_route, false).await?;
         } else if let Some(url) = target.url.as_deref() {
             if target.mode == routing::CommunicationMode::Inprocess {
                 enqueue_chat_shell_dispatch(state, Some(url), request.clone(), input.request_id);

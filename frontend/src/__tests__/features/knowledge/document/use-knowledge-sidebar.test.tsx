@@ -5,7 +5,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { useKnowledgeSidebar } from '@/features/knowledge/document/hooks/useKnowledgeSidebar'
-import { getKnowledgeBase, updateKnowledgeBaseType } from '@/apis/knowledge'
+import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import type {
   AllGroupedKnowledgeResponse,
   KnowledgeBase,
@@ -30,7 +30,7 @@ jest.mock('@/apis/knowledge-base', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
-  updateKnowledgeBaseType: jest.fn(),
+  updateKnowledgeBase: jest.fn(),
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -309,8 +309,8 @@ it('rejects old mutation and refresh callbacks after scope changes, including re
   await waitFor(() => expect(result.current.hasLoaded).toBe(true))
   const first = result.current.allKnowledgeBases[0]
   const mutation = pending<KnowledgeBase>()
-  jest.mocked(updateKnowledgeBaseType).mockReturnValueOnce(mutation.promise)
-  const oldSave = result.current.saveKnowledgeBaseView(first.id, 'classic')
+  jest.mocked(updateKnowledgeBase).mockReturnValueOnce(mutation.promise)
+  const oldSave = result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'classic' })
   const oldRefresh = result.current.refreshAll
   mockUser = { id: 2 }
   rerender()
@@ -335,10 +335,10 @@ it('updates only the converted library view when another library is selected', a
   await act(async () => result.current.selectKb(second))
 
   jest
-    .mocked(updateKnowledgeBaseType)
+    .mocked(updateKnowledgeBase)
     .mockResolvedValueOnce({ ...first, name: 'Older snapshot', kb_type: 'classic' })
   await act(async () => {
-    await result.current.saveKnowledgeBaseView(first.id, 'classic')
+    await result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'classic' })
   })
 
   expect(result.current.allKnowledgeBases.find(kb => kb.id === first.id)).toMatchObject({
@@ -359,11 +359,11 @@ it('reconciles overlapping saves from the server after the older response arrive
   const older = pending<KnowledgeBase>()
   const newer = pending<KnowledgeBase>()
   jest
-    .mocked(updateKnowledgeBaseType)
+    .mocked(updateKnowledgeBase)
     .mockReturnValueOnce(older.promise)
     .mockReturnValueOnce(newer.promise)
-  const olderSave = result.current.saveKnowledgeBaseView(first.id, 'classic')
-  const newerSave = result.current.saveKnowledgeBaseView(first.id, 'notebook')
+  const olderSave = result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'classic' })
+  const newerSave = result.current.saveKnowledgeBaseSettings(first.id, { kb_type: 'notebook' })
 
   await act(async () => {
     newer.resolve({ ...first, kb_type: 'notebook' })
@@ -395,14 +395,14 @@ it('keeps the saved view when older detail and grouped reads finish', async () =
   const grouped = pending<AllGroupedKnowledgeResponse>()
   jest.mocked(getKnowledgeBase).mockReturnValueOnce(detail.promise)
   mockGetAllGrouped.mockReturnValueOnce(grouped.promise)
-  jest.mocked(updateKnowledgeBaseType).mockResolvedValueOnce({ ...kb, kb_type: 'classic' })
+  jest.mocked(updateKnowledgeBase).mockResolvedValueOnce({ ...kb, kb_type: 'classic' })
   let refresh!: Promise<void>
   act(() => {
     result.current.selectKb(kb)
     refresh = result.current.refreshAll()
   })
   await act(async () => {
-    await result.current.saveKnowledgeBaseView(kb.id, 'classic')
+    await result.current.saveKnowledgeBaseSettings(kb.id, { kb_type: 'classic' })
   })
 
   const response = dataset()
@@ -433,13 +433,13 @@ it('retries a failed view reconciliation without marking navigation as failed', 
   const [kb] = result.current.allKnowledgeBases
   const first = pending<KnowledgeBase>()
   jest
-    .mocked(updateKnowledgeBaseType)
+    .mocked(updateKnowledgeBase)
     .mockReturnValueOnce(first.promise)
     .mockResolvedValueOnce({ ...kb, kb_type: 'classic' })
   jest.mocked(getKnowledgeBase).mockRejectedValueOnce(new Error('offline'))
-  const firstSave = result.current.saveKnowledgeBaseView(kb.id, 'notebook')
+  const firstSave = result.current.saveKnowledgeBaseSettings(kb.id, { kb_type: 'notebook' })
   await act(async () => {
-    await result.current.saveKnowledgeBaseView(kb.id, 'classic')
+    await result.current.saveKnowledgeBaseSettings(kb.id, { kb_type: 'classic' })
   })
   await act(async () => {
     first.resolve({ ...kb, kb_type: 'notebook' })
