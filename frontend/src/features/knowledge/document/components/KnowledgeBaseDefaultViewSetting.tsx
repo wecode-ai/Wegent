@@ -30,7 +30,7 @@ export function KnowledgeBaseDefaultViewSetting({
 
   return (
     <SimpleConfigRow label={groupLabel} align="start">
-      <div role="group" aria-label={groupLabel} className="grid min-w-0 gap-2 lg:grid-cols-2">
+      <div role="group" aria-label={groupLabel} className="grid min-w-0 grid-cols-1 gap-2">
         {options.map(({ value: option, label, description, icon: Icon }) => {
           const selected = value === option
           return (
@@ -56,9 +56,10 @@ export function KnowledgeBaseDefaultViewSetting({
                   {t(`document.knowledgeBase.${description}`)}
                 </span>
               </span>
-              {selected && (
-                <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-              )}
+              <Check
+                className={cn('mt-0.5 h-4 w-4 shrink-0 text-primary', !selected && 'invisible')}
+                aria-hidden="true"
+              />
             </Button>
           )
         })}
