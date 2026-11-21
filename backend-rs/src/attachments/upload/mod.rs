@@ -380,6 +380,14 @@ async fn upload_new_attachment(
     let effective_subtask_id_value = effective_subtask_id;
     let user_id_value = user_id;
     let filename_owned = filename.to_string();
+    let prepared = prepare_upload_parse(
+        &*backend,
+        mime_type,
+        storage_purpose,
+        binary_data,
+        &extension,
+    )
+    .await;
     let mut validation_error = None;
     let outcome = state
         .mysql
@@ -412,7 +420,7 @@ async fn upload_new_attachment(
                 binary_data,
                 storage_key,
                 type_data,
-                storage_purpose,
+                prepared,
                 &mut validation_error,
             )
             .await
@@ -488,6 +496,8 @@ pub(crate) async fn upload_attachment_context(
         UNLINKED_SUBTASK_ID
     };
     let filename_owned = filename.to_string();
+    let prepared =
+        prepare_upload_parse(&*backend, mime_type, "default", binary_data, &extension).await;
     let mut validation_error = None;
     let outcome = state
         .mysql
@@ -519,7 +529,7 @@ pub(crate) async fn upload_attachment_context(
                 binary_data,
                 storage_key,
                 type_data,
-                "default",
+                prepared,
                 &mut validation_error,
             )
             .await?;
@@ -636,6 +646,34 @@ async fn overwrite_attachment(
     })
 }
 
+/// Pre-transaction document parse result for [`store_and_parse`].
+///
+/// Running CPU-heavy [`document::parse_async`] before opening the MySQL
+/// transaction prevents parser semaphore waits and `spawn_blocking` extraction
+/// from consuming the 30-second transaction timeout budget, while preserving
+/// the exact in-transaction SQL sequence for both `READY` and `FAILED` states.
+enum PreparedUpload {
+    ExternalStorage,
+    Parsed(Result<document::ParseResult, document::DocumentParseError>),
+}
+
+async fn prepare_upload_parse(
+    backend: &dyn AttachmentUploadBackend,
+    mime_type: &str,
+    storage_purpose: &str,
+    binary_data: &[u8],
+    extension: &str,
+) -> PreparedUpload {
+    if backend
+        .external_storage_backend(mime_type, storage_purpose)
+        .is_some()
+    {
+        PreparedUpload::ExternalStorage
+    } else {
+        PreparedUpload::Parsed(document::parse_async(binary_data, extension).await)
+    }
+}
+
 /// The shared `_store_attachment_binary` + `_parse_and_update_context` stage.
 ///
 /// Runs inside the caller's transaction: the object write, the backend save's
@@ -654,29 +692,29 @@ async fn store_and_parse<T: MysqlTransaction>(
     binary_data: &[u8],
     storage_key: String,
     mut type_data: Map<String, Value>,
-    storage_purpose: &str,
+    prepared: PreparedUpload,
     validation_error: &mut Option<String>,
 ) -> Result<UploadOutcome, brz_mysql::MysqlError> {
     let mime_type = mime_type_for(extension);
-    if backend
-        .external_storage_backend(mime_type, storage_purpose)
-        .is_some()
-    {
-        return external_storage::store(
-            transaction,
-            backend,
-            context_id,
-            ExternalAttachmentUploadRequest {
-                filename,
-                content: binary_data,
-                mime_type,
-                user_id,
-            },
-            type_data,
-            validation_error,
-        )
-        .await;
-    }
+    let parsed = match prepared {
+        PreparedUpload::ExternalStorage => {
+            return external_storage::store(
+                transaction,
+                backend,
+                context_id,
+                ExternalAttachmentUploadRequest {
+                    filename,
+                    content: binary_data,
+                    mime_type,
+                    user_id,
+                },
+                type_data,
+                validation_error,
+            )
+            .await;
+        }
+        PreparedUpload::Parsed(parsed) => parsed,
+    };
     let encrypt = encryption_enabled();
     let store_data = if encrypt {
         super::crypto::encrypt_attachment(binary_data).unwrap_or_else(|_| binary_data.to_vec())
@@ -745,7 +783,7 @@ async fn store_and_parse<T: MysqlTransaction>(
         .await?;
 
     // `_parse_and_update_context`.
-    let parsed = match document::parse_async(binary_data, extension).await {
+    let parsed = match parsed {
         Ok(parsed) => parsed,
         // The source records the failure and lets the caller commit it.
         Err(error) => {
