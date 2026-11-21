@@ -238,7 +238,7 @@ fn aggregate(
     let has_spans = !spans.is_empty();
     let triage = triage_categories(&spans, window);
     let coverage = coverage_categories(&spans, window);
-    let top_suspects = top_suspects(&spans);
+    let top_suspects = top_suspects(&spans, window);
 
     TaskTimingResponse {
         task_id,
@@ -477,7 +477,21 @@ fn union_ms(intervals: &[(i64, i64)]) -> i64 {
         .sum()
 }
 
-fn top_suspects(spans: &[SpanView]) -> Vec<TopSuspect> {
+fn top_suspects(spans: &[SpanView], window: Option<(i64, i64)>) -> Vec<TopSuspect> {
+    let effective_duration = |span: &SpanView| {
+        let Some(start_at_ms) = span.start_at_ms else {
+            return 0;
+        };
+        span.duration_ms
+            .or_else(|| span.end_at_ms.and_then(|end| end.checked_sub(start_at_ms)))
+            .unwrap_or_else(|| {
+                window
+                    .and_then(|(_, window_end)| window_end.checked_sub(start_at_ms))
+                    .unwrap_or(0)
+                    .max(0)
+            })
+            .max(0)
+    };
     let mut candidates: Vec<&SpanView> = spans
         .iter()
         .filter(|span| {
@@ -487,7 +501,7 @@ fn top_suspects(spans: &[SpanView]) -> Vec<TopSuspect> {
             )
         })
         .collect();
-    candidates.sort_by_key(|span| -span.duration_ms.unwrap_or(0));
+    candidates.sort_by_key(|span| -effective_duration(span));
     candidates
         .into_iter()
         .take(5)
@@ -495,7 +509,7 @@ fn top_suspects(spans: &[SpanView]) -> Vec<TopSuspect> {
             span_id: span.span_id.clone(),
             label: suspect_label(span),
             category: span.kind.clone(),
-            duration_ms: span.duration_ms.unwrap_or(0),
+            duration_ms: effective_duration(span),
             status: span.status.clone(),
             suggestion: suggestion(span),
         })
@@ -721,6 +735,20 @@ mod tests {
         };
         assert_eq!(get("agent"), 980);
         assert_eq!(get("gap"), 10);
+    }
+
+    #[test]
+    fn running_task_open_spans_rank_as_elapsed_suspects() {
+        let mut open = span("agent", 20, 50);
+        open.end_at_ms = None;
+        open.duration_ms = None;
+        let completed = span("tool", 30, 40);
+        let rows = vec![open, completed];
+        let response = aggregate(1, 7, session(Some(10), None), rows, 1_000);
+
+        assert_eq!(response.top_suspects[0].category, "agent");
+        assert_eq!(response.top_suspects[0].duration_ms, 980);
+        assert_eq!(response.top_suspects[1].duration_ms, 10);
     }
 
     #[test]
