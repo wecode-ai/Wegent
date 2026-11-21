@@ -1063,13 +1063,9 @@
     "creation": {
       "refreshingLocations": "Refreshing creation locations…",
       "refreshLocationsFailed": "Could not refresh creation locations. Please retry.",
-      "created": "Library created",
-      "createdDescription": "You can authorize people or teams now, or finish later. The library is already saved.",
       "authorize": "Authorize",
       "authorizing": "Authorizing…",
       "authorized": "Authorization complete",
-      "finishLater": "Done / finish later",
-      "refreshFailed": "The library is created, but the list could not be refreshed.",
       "authorizationFailed": "Authorization failed. Retry only the failed targets.",
       "unconfirmed": "The authorization result is unconfirmed. Verify existing access before retrying.",
       "roleConflict": "Existing access has a different role. Review it in permission management.",
@@ -1379,7 +1375,6 @@
       "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with",
-      "created": "Code Wiki created. Content is generating.",
       "scheduleNotConfigured": "Code Wiki created. Scheduled updates were not saved; configure them from the wiki.",
       "scheduledUpdate": "Scheduled updates",
       "scheduledUpdateHint": "The first generation starts after creation; optionally enable future checks too."
