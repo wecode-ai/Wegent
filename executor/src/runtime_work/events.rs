@@ -324,7 +324,6 @@ pub(crate) struct CodexNotificationEventMapper {
     proxy_retry_wait_ids: BTreeSet<String>,
     native_retry_waits: BTreeMap<String, Value>,
     completed_context_compaction_ids: BTreeSet<String>,
-    unavailable_mcp_servers: BTreeSet<String>,
 }
 
 struct ProcessTextStream {
@@ -394,27 +393,8 @@ impl CodexNotificationEventMapper {
             );
         }
         match notification.method.as_str() {
-            "mcpServer/startupStatus/updated" => {
-                let server = notification.params["name"].as_str().unwrap_or_default();
-                if matches!(
-                    notification.params["status"].as_str(),
-                    Some("failed" | "cancelled")
-                ) && self.unavailable_mcp_servers.insert(server.to_owned())
-                {
-                    self.emit_completed_process_text(
-                        &emit_context,
-                        "text",
-                        "assistant_message",
-                        Some(format!(
-                            "mcp-unavailable-{}-{}",
-                            request.subtask_id,
-                            self.unavailable_mcp_servers.len()
-                        )),
-                        wegent_mcp_runtime::interactive_mcp::MCP_UNAVAILABLE_MESSAGE.to_owned(),
-                        None,
-                    );
-                }
-            }
+            // Codex diagnostics and recovery handle startup status outside the transcript.
+            "mcpServer/startupStatus/updated" => {}
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
                     self.emit_subagent_text_delta(
@@ -2778,32 +2758,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcp_startup_failures_emit_one_safe_notice_without_failing_the_response() {
-        let (event_tx, mut events) = broadcast::channel(4);
+    fn mcp_startup_failures_stay_out_of_transcript_but_tool_errors_remain_visible() {
+        let (event_tx, mut events) = broadcast::channel(8);
+        let event_tx = Some(event_tx);
         let request = ExecutionRequest::default();
         let mut mapper = CodexNotificationEventMapper::default();
-        for status in ["starting", "failed", "failed", "cancelled"] {
+        for (name, status) in [
+            ("calendar", "starting"),
+            ("calendar", "failed"),
+            ("mail", "failed"),
+            ("search", "cancelled"),
+        ] {
             mapper.map(
-                &Some(event_tx.clone()),
+                &event_tx,
                 "device",
                 "task",
                 &request,
                 json!({"method":"mcpServer/startupStatus/updated",
-                    "params":{"name":"connector", "status":status,
-                        "failureReason":"private-credential-and-response"}}),
+                    "params":{"name":name, "status":status,
+                        "failureReason":"startup detail"}}),
             );
         }
-        let notice = events.try_recv().unwrap();
-        assert_eq!(notice["event"], "response.block.created");
-        assert_eq!(notice["payload"]["data"]["block"]["status"], "done");
         assert_eq!(
-            notice["payload"]["data"]["block"]["content"],
-            wegent_mcp_runtime::interactive_mcp::MCP_UNAVAILABLE_MESSAGE
+            events.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
         );
-        assert!(!notice
-            .to_string()
-            .contains("private-credential-and-response"));
-        assert!(events.try_recv().is_err());
+
+        for item in [
+            json!({"id":"tool", "type":"mcpToolCall", "server":"calendar", "tool":"read",
+                "status":"failed", "error":{"message":"connection timed out"}}),
+            json!({"id":"answer", "type":"agentMessage", "phase":"final_answer",
+                "text":"Independent work completed."}),
+        ] {
+            mapper.map(
+                &event_tx,
+                "device",
+                "task",
+                &request,
+                json!({"method":"item/completed", "params":{"item":item}}),
+            );
+        }
+        let tool_error = events.try_recv().unwrap();
+        assert_eq!(tool_error["event"], "response.block.updated");
+        let updates = &tool_error["payload"]["data"]["updates"];
+        assert_eq!(updates["status"], "error");
+        assert_eq!(updates["tool_output"], "connection timed out");
+        let answer = events.try_recv().unwrap();
+        assert_eq!(answer["event"], "response.output_text.done");
+        assert_eq!(
+            answer["payload"]["data"]["text"],
+            "Independent work completed."
+        );
+        assert_eq!(
+            events.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        );
     }
 
     #[test]

@@ -348,7 +348,7 @@ function KnowledgeDocumentSession({
 
   const { refreshAll } = sidebar
   // Closing the dialog preserves the owner of writes that are still in flight.
-  const permissionResource = accessKbId ?? dialogs.createdKb?.id ?? sidebar.selectedKbId
+  const permissionResource = accessKbId ?? sidebar.selectedKbId
   const permissionOwner = useRef({ kbId: permissionResource, version: 0 })
   if (permissionResource !== null && permissionResource !== permissionOwner.current.kbId) {
     permissionOwner.current = {
@@ -369,14 +369,9 @@ function KnowledgeDocumentSession({
     void refreshAll()
   }, [refreshAll, permissionVersion, permissionCacheScope])
 
-  const { dismissCreatedKb } = dialogs
   useEffect(() => {
-    if (sidebar.selectedKbId !== null) {
-      dismissCreatedKb()
-      setAccessKbId(null)
-    }
-  }, [sidebar.selectedKbId, dismissCreatedKb])
-  const permissionKb = dialogs.createdKb ?? accessKb
+    if (sidebar.selectedKbId !== null) setAccessKbId(null)
+  }, [sidebar.selectedKbId])
 
   // Auto-collapse sidebar in Notebook view.
   useEffect(() => {
@@ -767,29 +762,13 @@ function KnowledgeDocumentSession({
         {sidebar.loadError && !sidebar.hasLoaded && !kbResolution ? null : renderMainContent()}
       </div>
 
-      {permissionKb && (
+      {accessKb && (
         <KnowledgeAccessDialog
-          kbId={permissionKb.id}
-          kbNamespace={permissionKb.namespace}
-          resourceCreated={Boolean(dialogs.createdKb)}
-          restoreFocus={
-            dialogs.createdKb
-              ? () => {
-                  if (createTrigger.current?.isConnected) createTrigger.current.focus()
-                }
-              : undefined
-          }
-          refreshError={dialogs.createdKb ? dialogs.createRefreshError || sidebar.loadError : null}
-          onRetryRefresh={() => void dialogs.retryCreatedList()}
-          onClose={() => {
-            setAccessKbId(null)
-            dialogs.dismissCreatedKb()
-          }}
+          kbId={accessKb.id}
+          kbNamespace={accessKb.namespace}
+          onClose={() => setAccessKbId(null)}
           onChanged={permissionsChanged}
-          onAccessLost={() => {
-            sidebar.removeInaccessibleKnowledgeBase(permissionKb.id)
-            dialogs.dismissCreatedKb()
-          }}
+          onAccessLost={() => sidebar.removeInaccessibleKnowledgeBase(accessKb.id)}
         />
       )}
       <CreateKnowledgeBaseDialog
@@ -802,6 +781,7 @@ function KnowledgeDocumentSession({
             }
           }
         }}
+        returnFocusRef={createTrigger}
         onSubmit={dialogs.handleCreate}
         loading={dialogs.isCreating}
         scope={dialogs.createScope}
@@ -835,7 +815,6 @@ function KnowledgeDocumentSession({
           )?.displayName
         }
         onSubmit={dialogs.handleUpdate}
-        saveView={sidebar.saveKnowledgeBaseView}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}

@@ -623,25 +623,20 @@ class PluginDeviceInstallationService:
         circuit breaker opens. Manual retries reset that breaker.
         """
         scopes = [item.id for item in self._desired_installs(db, user_id)]
-        acquire_plugin_write_locks(db, ((user_id, item) for item in scopes))
-        reconcile_plugin_device_rows(db, user_id, installed_ids=scopes)
-        normalized_device_id = plugin_device_id(db, user_id, device_id)
-        if not normalized_device_id:
+        if not scopes:
             db.commit()
             return 0
-        changed = 0
-        for installed in self._desired_installs(db, user_id):
-            if installed.id not in scopes:
-                continue
-            changed += self._ensure_desired_install_pending(
+        # A blocked device row must not hold the lease for a different plugin.
+        return sum(
+            self.ensure_plugin_pending_for_device(
                 db,
                 user_id=user_id,
-                device_id=normalized_device_id,
-                installed=installed,
+                device_id=device_id,
+                installed_kind_id=installed_id,
                 manual_retry=manual_retry,
             )
-        db.commit()
-        return changed
+            for installed_id in scopes
+        )
 
     def ensure_plugin_pending_for_device(
         self,
@@ -653,25 +648,19 @@ class PluginDeviceInstallationService:
         manual_retry: bool = False,
     ) -> int:
         """Prepare one plugin device row without changing unrelated plugins."""
+        scope = [installed_kind_id]
         acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
-        reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
+        reconcile_plugin_device_rows(db, user_id, installed_ids=scope)
         normalized_device_id = plugin_device_id(db, user_id, device_id)
-        installed = next(
-            (
-                item
-                for item in self._desired_installs(db, user_id)
-                if item.id == installed_kind_id
-            ),
-            None,
-        )
-        if not normalized_device_id or installed is None:
+        installs = self._desired_installs(db, user_id, installed_ids=scope)
+        if not normalized_device_id or not installs:
             db.commit()
             return 0
         changed = self._ensure_desired_install_pending(
             db,
             user_id=user_id,
             device_id=normalized_device_id,
-            installed=installed,
+            installed=installs[0],
             manual_retry=manual_retry,
         )
         db.commit()

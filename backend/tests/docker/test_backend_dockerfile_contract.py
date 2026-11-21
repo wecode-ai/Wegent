@@ -65,10 +65,10 @@ def test_rust_builder_contains_embedded_migration_assets(tmp_path: Path) -> None
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source_path, target)
-    migration_sources = REPO_ROOT / "backend-rs/src/migrations"
+    migration_sources = REPO_ROOT / "backend-rs/be-server/src/migrations"
     shutil.copytree(
         migration_sources,
-        image_root / "src/migrations",
+        image_root / "be-server/src/migrations",
         dirs_exist_ok=True,
     )
     shutil.copytree(
@@ -80,7 +80,8 @@ def test_rust_builder_contains_embedded_migration_assets(tmp_path: Path) -> None
         (source, asset)
         for source in [
             *migration_sources.rglob("*.rs"),
-            REPO_ROOT / "backend-rs/src/responses/create/socket_runtime_model.rs",
+            REPO_ROOT
+            / "backend-rs/be-server/src/responses/create/socket_runtime_model.rs",
         ]
         for asset in re.findall(
             r'include_str!\(\s*"([^"\n]+)"\s*\)', source.read_text()

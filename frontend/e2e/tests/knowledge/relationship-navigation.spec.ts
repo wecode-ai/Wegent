@@ -486,8 +486,60 @@ async function createLibraryInDialog(
   const body = (await response.json()) as { id: number; namespace: string }
   if (Number.isSafeInteger(body.id) && body.id > 0) creation.libraries.set(body.id, owner)
   expect(response.status()).toBe(201)
+  await expect(dialog, 'The create dialog closes after the library is saved').toBeHidden({
+    timeout: 5000,
+  })
   return body
 }
+
+creationTest(
+  'saves the default view with the rest of the library settings',
+  async ({ page, creation }) => {
+    const { api } = creation
+    const created = await api.post<{ id: number }>('/api/knowledge-bases', {
+      name: fixtureName('e2e-default-view'),
+      kb_type: 'notebook',
+      summary_enabled: false,
+    })
+    expect(created.status).toBe(201)
+    const id = created.data!.id
+    creation.libraries.set(id, api)
+    const path = `/api/knowledge-bases/${id}`
+    const writes: string[] = []
+    page.on('request', request => {
+      const pathname = new URL(request.url()).pathname
+      if ([path, `${path}/type`].includes(pathname) && ['PUT', 'PATCH'].includes(request.method()))
+        writes.push(request.method())
+    })
+
+    await page.goto('/knowledge?type=document')
+    const edit = page.getByTestId(`edit-kb-${id}`)
+    const view = page.getByTestId('edit-kb-default-view')
+    const close = page.getByTestId('close-edit-kb')
+    await edit.click({ timeout: 10_000 })
+    await view.click({ timeout: 5_000 })
+    await expect(page.getByRole('dialog')).toHaveCount(1, { timeout: 3_000 })
+    await close.click({ timeout: 5_000 })
+    await expect(close).toBeHidden({ timeout: 5_000 })
+    expect(writes).toEqual([])
+    expect((await api.get(path)).data).toMatchObject({ kb_type: 'notebook' })
+
+    await edit.click({ timeout: 5_000 })
+    await view.click({ timeout: 5_000 })
+    const description = 'Saved with the new default view'
+    await page.getByTestId('kb-description-input').fill(description, { timeout: 5_000 })
+    const saved = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname === path && response.request().method() === 'PUT',
+      { timeout: 10_000 }
+    )
+    await page.getByTestId('edit-kb-save').click({ timeout: 5_000 })
+    expect((await saved).status()).toBe(200)
+    await expect(close).toBeHidden({ timeout: 5_000 })
+    expect(writes).toEqual(['PUT'])
+    expect((await api.get(path)).data).toMatchObject({ kb_type: 'classic', description })
+  }
+)
 
 creationTest(
   'preserves guided questions and call limits when creating a document library',
@@ -524,7 +576,10 @@ creationTest(
     await page.goto('/knowledge?type=document')
     await page.getByTestId('create-kb-button').click()
     const library = await createLibraryInDialog(page, creation)
-    await expect(page.getByTestId('created-knowledge-authorization')).toHaveCount(0)
+    await expect(page.getByTestId('create-kb-button')).toBeFocused()
+    await expect(page.getByTestId('close-knowledge-access')).toHaveCount(0)
+    const permission = page.getByTestId(`permission-kb-${library.id}`)
+    await permission.click()
     await page.getByTestId('permission-add-collaborator').click()
     const authorization = page.getByTestId('created-knowledge-authorization')
     await authorization.getByTestId('knowledge-auth-user-search').fill(REGULAR_USER.username)
@@ -542,8 +597,8 @@ creationTest(
     await expect(page.getByTestId('knowledge-authorization-complete')).toBeVisible()
     await page.getByTestId('close-add-collaborator').click()
     await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
-    await page.getByTestId('finish-created-authorization').click()
-    await expect(page.getByTestId('create-kb-button')).toBeFocused()
+    await page.getByTestId('close-knowledge-access').click()
+    await expect(permission).toBeFocused()
     await page.getByTestId('nav-personal-item').click()
     await expect(page.getByTestId('kb-row-' + library.id)).toHaveCount(1)
     const recipient = createApiClient(request)
@@ -575,8 +630,9 @@ creationTest(
     await page.getByTestId('create-kb-button').click()
     await expect(page.getByTestId('group-selector')).toBeVisible()
     await expect(page.getByTestId('group-selector')).toContainText(name)
-    expect((await createLibraryInDialog(page, creation)).namespace).toBe(name)
-    await page.getByTestId('finish-created-authorization').click()
+    const teamLibrary = await createLibraryInDialog(page, creation)
+    expect(teamLibrary.namespace).toBe(name)
+    await expect(page.getByTestId('kb-row-' + teamLibrary.id)).toBeVisible()
     const recipient = createApiClient(request)
     const login = await recipient.login(REGULAR_USER.username, REGULAR_USER.password, 1)
     expect(login.status).toBe(200)
@@ -602,7 +658,6 @@ creationTest(
     await expect(teammate.getByTestId('submit-create-kb')).toBeDisabled()
     await teammate.getByTestId('create-in-personal-space').click()
     expect((await createLibraryInDialog(teammate, creation, recipient)).namespace).toBe('default')
-    await teammate.getByTestId('finish-created-authorization').click()
   }
 )
 
@@ -747,53 +802,48 @@ creationTest(
       await page.setViewportSize(viewport)
       await page.getByTestId('create-kb-button').click()
       const library = await createLibraryInDialog(page, creation)
-      for (const entry of ['created', 'management']) {
-        if (entry === 'management') {
-          await page.getByTestId('finish-created-authorization').click()
-          if (viewport.width < 768) await page.getByTestId(`more-kb-${library.id}`).click()
-          await page.getByTestId(`permission-kb-${library.id}`).click()
-        }
-        await page.getByTestId('permission-add-collaborator').click()
-        const search = page.getByTestId('knowledge-auth-user-search')
-        await search.fill(REGULAR_USER.username)
-        const person = page.getByRole('button', { name: REGULAR_USER.username, exact: false })
-        const userResults = person.locator('..')
-        await expectResultsBefore(userResults, page.getByTestId('add-namespace-group-search'))
-        await expectReachable(page.getByTestId('auth-role-user'))
-        await person.click()
-        await expect(search).toHaveValue(REGULAR_USER.username)
-        const groupSearch = page.getByTestId('add-namespace-group-search')
-        await groupSearch.fill(prefix)
-        const first = page.getByTestId(`auth-select-namespace-${groupIds[0]}`)
-        const last = page.getByTestId(`auth-select-namespace-${groupIds[7]}`)
-        const results = first.locator('..')
-        await expect(first).toBeVisible()
-        await first.scrollIntoViewIfNeeded()
-        await expectResultsClearOfFooter(results, page.getByTestId('submit-created-permissions'))
-        expect(await results.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(
-          true
-        )
-        await expectReachable(last)
-        await last.click()
-        await expect(groupSearch).toHaveValue(prefix)
-        await expect(last).toBeDisabled()
-        await expectReachable(first)
-        await first.click()
-        await expect(page.getByTestId(`remove-auth-namespace-${groupIds[0]}`)).toBeVisible()
-        await expectReachable(page.getByTestId('auth-role-namespace'))
-        await page.getByTestId('auth-role-namespace').click()
-        await page.getByRole('option', { name: /Developer|开发者/ }).click()
-        // Reopen the results before checking footer hit targets.
-        await groupSearch.click()
-        await expectReachable(page.getByTestId('submit-created-permissions'))
-        await expectReachable(page.getByTestId('cancel-created-permissions'))
-        await expectReachable(page.getByTestId('close-add-collaborator'))
-        await page.getByTestId('cancel-created-permissions').click()
-        await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
-        await page.getByTestId('permission-add-collaborator').click()
-        await page.getByTestId('close-add-collaborator').click()
-        await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
-      }
+      if (viewport.width < 768) await page.getByTestId(`more-kb-${library.id}`).click()
+      await page.getByTestId(`permission-kb-${library.id}`).click()
+      await page.getByTestId('permission-add-collaborator').click()
+      const search = page.getByTestId('knowledge-auth-user-search')
+      await search.fill(REGULAR_USER.username)
+      const person = page.getByRole('button', { name: REGULAR_USER.username, exact: false })
+      const userResults = person.locator('..')
+      await expectResultsBefore(userResults, page.getByTestId('add-namespace-group-search'))
+      await expectReachable(page.getByTestId('auth-role-user'))
+      await person.click()
+      await expect(search).toHaveValue(REGULAR_USER.username)
+      const groupSearch = page.getByTestId('add-namespace-group-search')
+      await groupSearch.fill(prefix)
+      const first = page.getByTestId(`auth-select-namespace-${groupIds[0]}`)
+      const last = page.getByTestId(`auth-select-namespace-${groupIds[7]}`)
+      const results = first.locator('..')
+      await expect(first).toBeVisible()
+      await first.scrollIntoViewIfNeeded()
+      await expectResultsClearOfFooter(results, page.getByTestId('submit-created-permissions'))
+      expect(await results.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(
+        true
+      )
+      await expectReachable(last)
+      await last.click()
+      await expect(groupSearch).toHaveValue(prefix)
+      await expect(last).toBeDisabled()
+      await expectReachable(first)
+      await first.click()
+      await expect(page.getByTestId(`remove-auth-namespace-${groupIds[0]}`)).toBeVisible()
+      await expectReachable(page.getByTestId('auth-role-namespace'))
+      await page.getByTestId('auth-role-namespace').click()
+      await page.getByRole('option', { name: /Developer|开发者/ }).click()
+      // Reopen the results before checking footer hit targets.
+      await groupSearch.click()
+      await expectReachable(page.getByTestId('submit-created-permissions'))
+      await expectReachable(page.getByTestId('cancel-created-permissions'))
+      await expectReachable(page.getByTestId('close-add-collaborator'))
+      await page.getByTestId('cancel-created-permissions').click()
+      await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+      await page.getByTestId('permission-add-collaborator').click()
+      await page.getByTestId('close-add-collaborator').click()
+      await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
       await page.getByTestId('close-knowledge-access').click()
       await expect(page.getByTestId('close-knowledge-access')).toBeHidden()
       await expect(page.getByTestId('create-kb-button')).toBeEnabled()
@@ -816,6 +866,7 @@ creationTest(
     await page.goto('/knowledge?type=document')
     await page.getByTestId('create-kb-button').click()
     const library = await createLibraryInDialog(page, creation)
+    await page.getByTestId(`permission-kb-${library.id}`).click()
     await page.getByTestId('permission-add-collaborator').click()
     await page.getByTestId('knowledge-auth-user-search').fill(REGULAR_USER.username)
     await page.getByRole('button', { name: REGULAR_USER.username, exact: false }).click()

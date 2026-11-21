@@ -1,0 +1,15 @@
+[package]
+name = "wegent-directory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Employee-directory provider contracts and profile values"
+
+[dependencies]
+async-trait = { workspace = true }
+brz-json = { workspace = true }
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+serde = { workspace = true, features = ["derive"] }
+wegent-backend-persistence = { workspace = true }

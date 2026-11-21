@@ -250,10 +250,6 @@
         "emptyCode": "No code knowledge bases"
       },
       "currentDefaultView": "Current Default Opening View",
-      "changeDefaultView": "Change Default View",
-      "changeDefaultViewConfirm": "This only changes the default view used when opening the knowledge base. Existing content and permissions are unchanged.",
-      "defaultViewUpdateSuccess": "Default opening view updated",
-      "defaultViewUpdateFailed": "Failed to update default opening view",
       "targetGroup": "Target Group",
       "selectGroup": "Select Group",
       "kindDocument": "Documents",
@@ -349,7 +345,8 @@
           "processingFailed": "Document processing failed. Please retry.",
           "externalImportFailed": "The external document could not be imported. Please retry later.",
           "externalSourceMissing": "The source document was deleted, so it cannot be synced.",
-          "externalSourceUnavailable": "The source document is not accessible, so it cannot be synced."
+          "externalSourceUnavailable": "The source document is not accessible, so it cannot be synced.",
+          "dingtalkAuthorizationRequired": "DingTalk authorization has expired. Reconnect it and retry sync."
         },
         "model": "Model"
       },
@@ -481,6 +478,7 @@
         "metaInfo": "Metadata",
         "content": "Document Content",
         "contentLoadFailed": "Failed to load document content. Please retry.",
+        "previewNotReady": "Document content is not ready for preview.",
         "protectedViewerUnavailable": "Protected document viewer is unavailable",
         "parsedContent": "Parsed Content",
         "sourceFile": "Original File",
@@ -1063,13 +1061,9 @@
     "creation": {
       "refreshingLocations": "Refreshing creation locations…",
       "refreshLocationsFailed": "Could not refresh creation locations. Please retry.",
-      "created": "Library created",
-      "createdDescription": "You can authorize people or teams now, or finish later. The library is already saved.",
       "authorize": "Authorize",
       "authorizing": "Authorizing…",
       "authorized": "Authorization complete",
-      "finishLater": "Done / finish later",
-      "refreshFailed": "The library is created, but the list could not be refreshed.",
       "authorizationFailed": "Authorization failed. Retry only the failed targets.",
       "unconfirmed": "The authorization result is unconfirmed. Verify existing access before retrying.",
       "roleConflict": "Existing access has a different role. Review it in permission management.",
@@ -1379,7 +1373,6 @@
       "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with",
-      "created": "Code Wiki created. Content is generating.",
       "scheduleNotConfigured": "Code Wiki created. Scheduled updates were not saved; configure them from the wiki.",
       "scheduledUpdate": "Scheduled updates",
       "scheduledUpdateHint": "The first generation starts after creation; optionally enable future checks too."

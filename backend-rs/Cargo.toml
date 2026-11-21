@@ -1,133 +1,168 @@
-[package]
-name = "wegent-backend-rs"
-version = "0.1.0"
-edition = "2024"
-rust-version.workspace = true
-description = "Incremental Rust migration gateway for the Wegent backend"
-license = "Apache-2.0"
-
 [workspace]
 resolver = "2"
-members = ["crates/*"]
-default-members = [".", "crates/*"]
+members = [
+    "access",
+    "attachments",
+    "authentication",
+    "backend-config",
+    "be-server",
+    "capabilities",
+    "celery",
+    "devices",
+    "directory",
+    "execution-events",
+    "execution-preparation",
+    "execution-runtime",
+    "executor-manager",
+    "git-repositories",
+    "http-compat",
+    "identity",
+    "job-runtime",
+    "knowledge",
+    "knowledge-access",
+    "mcp-providers",
+    "mcp-transport",
+    "media",
+    "models",
+    "network-policy",
+    "oidc",
+    "onboarding",
+    "persistence",
+    "plugin-catalog",
+    "plugin-store",
+    "project-coordination",
+    "python-compat",
+    "remote-workspace",
+    "resource-store",
+    "responses-api",
+    "runtime-check",
+    "sites",
+    "socket-events",
+    "storage",
+    "task-export-docx",
+    "task-store",
+    "tasks",
+    "teams",
+    "terminal",
+    "test-support",
+    "users",
+    "wework-transcripts",
+    "workspace-archive",
+    "workspaces",
+]
 
 [workspace.package]
+version = "0.1.0"
+edition = "2024"
 rust-version = "1.94"
+license = "Apache-2.0"
 
-[dependencies]
-wegent-oidc = { path = "crates/oidc" }
-wegent-onboarding = { path = "crates/onboarding" }
-wegent-authentication = { path = "crates/authentication" }
-wegent-backend-users = { path = "crates/users" }
-wegent-remote-workspace = { path = "crates/remote-workspace" }
-wegent-executor-manager = { path = "crates/executor-manager" }
-wegent-media = { path = "crates/media" }
-wegent-capabilities = { path = "crates/capabilities" }
-wegent-models = { path = "crates/models" }
-wegent-runtime-check = { path = "crates/runtime-check" }
-wegent-task-store = { path = "crates/task-store" }
-wegent-resource-store = { path = "crates/resource-store" }
-wegent-job-runtime = { path = "crates/job-runtime" }
-wegent-socket-events = { path = "crates/socket-events" }
-wegent-git-repositories = { path = "crates/git-repositories" }
-wegent-network-policy = { path = "crates/network-policy" }
-wegent-sites = { path = "crates/sites" }
-wegent-access = { path = "crates/access" }
-wegent-directory = { path = "crates/directory" }
-wegent-identity = { path = "crates/identity" }
-wegent-backend-config = { path = "crates/config" }
-wegent-backend-persistence = { path = "crates/persistence" }
-wegent-celery = { path = "crates/celery" }
-wegent-python-compat = { path = "crates/python-compat" }
-wegent-http-compat = { path = "crates/http-compat" }
-wegent-storage = { path = "crates/storage" }
-wegent-protocol = { path = "../shared/rust/protocol" }
-wegent-crypto = { path = "../shared/rust/crypto" }
+[workspace.dependencies]
 aes = "0.8"
 aes-gcm = "0.10"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.23.1"
 bcrypt = "0.19"
-cbc = { version = "0.1", features = ["alloc", "block-padding"] }
-brz-http = { version = "=0.0.14", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-gateway = { version = "=0.2.15", features = ["fallback-log"] }
-brz-http-server = { version = "=0.0.33", features = ["macros", "metrics", "api-log", "slow-log", "hyper"] }
-brz-socket-io = { version = "=0.0.6", features = ["macros", "metrics"] }
-brz-logs = { version = "=0.0.17", features = ["metrics"] }
-# Keep one published metrics registry across all Breeze components.
-brz-metrics = { version = "=0.0.13", features = ["tokio"] }
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
-brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+brotli = { version = "8.0.4", default-features = false }
+brz-http = "=0.0.14"
+brz-http-gateway = "=0.2.15"
+brz-http-server = "=0.0.33"
+brz-json = "=0.0.11"
+brz-logs = "=0.0.17"
+# Use one metrics registry across Breeze components.
+brz-metrics = "=0.0.13"
+brz-mysql = "=0.0.33"
+brz-redis = "=0.0.18"
 brz-schedule = "=0.0.1"
 brz-schedule-redis = "=0.0.1"
+brz-socket-io = "=0.0.7"
 bytes = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
+cbc = "0.1"
 chardetng = "=1.0.0"
+chrono = { version = "0.4", default-features = false }
+chrono-tz = { version = "0.10", default-features = false }
 csv = "=1.4.0"
 encoding_rs = "=0.8.42"
 erased-serde = "0.4"
-flate2 = { version = "1", default-features = false, features = ["zlib"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
+flate2 = { version = "1", default-features = false }
+futures-util = { version = "0.3", default-features = false }
 getrandom = "0.2"
 hmac = "0.12"
 htmd = "=0.5.6"
-lettre = { version = "=0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
-pep440_rs = "=0.7.3"
-rustpython-parser = { version = "=0.4.0", default-features = false, features = ["num-bigint"] }
-rustpython-ast = { version = "=0.4.0", default-features = false, features = ["num-bigint", "fold"] }
-unicode-normalization = "=0.1.25"
-pulldown-cmark = "0.13"
 http = "1"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["http1", "server"] }
+hyper = "1"
+jsonschema = { version = "0.60.2", default-features = false }
 jsonwebtoken = { version = "9.3", default-features = false }
-# `md5` for the repository-token digest and the URL-metadata cache key
-# (`hashlib.md5`).
+lettre = { version = "=0.11.23", default-features = false }
+libz-sys = "1.1"
 md-5 = "0.10"
+pep440_rs = "=0.7.3"
+pulldown-cmark = "0.13"
 regex = "1"
-serde = { version = "1", features = ["derive"] }
-brz-json = "=0.0.11"
-# Preserve source dict ordering at the remaining dynamic mutation boundaries.
-serde_json = { version = "1", features = ["preserve_order"] }
+rustpython-ast = { version = "=0.4.0", default-features = false }
+rustpython-parser = { version = "=0.4.0", default-features = false }
+serde = "1"
+serde_json = "1"
 sha1 = "0.10"
 sha2 = "0.10"
-tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = "1"
+tokio-util = "0.7"
 toml = "0.8"
-tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
-turbojpeg = { version = "=1.5.1", default-features = false, features = ["cmake"] }
+turbojpeg = { version = "=1.5.1", default-features = false }
+unicode-normalization = "=0.1.25"
 url = "2"
+wegent-access = { path = "access" }
+wegent-authentication = { path = "authentication" }
+wegent-backend-config = { path = "backend-config" }
+wegent-backend-persistence = { path = "persistence" }
+wegent-backend-test-support = { path = "test-support" }
+wegent-backend-users = { path = "users" }
+wegent-capabilities = { path = "capabilities" }
+wegent-celery = { path = "celery" }
+wegent-crypto = { path = "../shared/rust/crypto" }
+wegent-directory = { path = "directory" }
+wegent-workspace-archive = { path = "workspace-archive" }
+wegent-execution-preparation = { path = "execution-preparation" }
+wegent-execution-events = { path = "execution-events" }
+wegent-execution-runtime = { path = "execution-runtime" }
+wegent-executor-manager = { path = "executor-manager" }
+wegent-git-repositories = { path = "git-repositories" }
+wegent-http-compat = { path = "http-compat" }
+wegent-identity = { path = "identity" }
+wegent-job-runtime = { path = "job-runtime" }
+wegent-mcp-transport = { path = "mcp-transport" }
+wegent-mcp-providers = { path = "mcp-providers" }
+wegent-knowledge = { path = "knowledge" }
+wegent-knowledge-access = { path = "knowledge-access" }
+wegent-teams = { path = "teams" }
+wegent-devices = { path = "devices" }
+wegent-plugin-catalog = { path = "plugin-catalog" }
+wegent-plugin-store = { path = "plugin-store" }
+wegent-project-coordination = { path = "project-coordination" }
+wegent-attachments = { path = "attachments" }
+wegent-responses-api = { path = "responses-api" }
+wegent-media = { path = "media" }
+wegent-models = { path = "models" }
+wegent-network-policy = { path = "network-policy" }
+wegent-oidc = { path = "oidc" }
+wegent-onboarding = { path = "onboarding" }
+wegent-protocol = { path = "../shared/rust/protocol" }
+wegent-python-compat = { path = "python-compat" }
+wegent-remote-workspace = { path = "remote-workspace" }
+wegent-resource-store = { path = "resource-store" }
+wegent-runtime-check = { path = "runtime-check" }
+wegent-sites = { path = "sites" }
+wegent-socket-events = { path = "socket-events" }
+wegent-storage = { path = "storage" }
+wegent-task-store = { path = "task-store" }
+wegent-terminal = { path = "terminal" }
 yaml-rust2 = { version = "0.10.4", default-features = false }
-# Pillow's PNG encoder compresses with `deflateInit2(level 9, windowBits 15,
-# memLevel 9, Z_FILTERED)`. `flate2` fixes memLevel at 8 and `zlib-rs` does not
-# reproduce zlib's deflate stream byte-for-byte, so the attachment PNG encoder
-# calls the already-linked zlib through this FFI surface.
-libz-sys = "1.1"
-brotli = { version = "8.0.4", default-features = false, features = ["std"] }
-zstd = { version = "0.13.1", features = ["arrays"] }
-zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
-jsonschema = { version = "0.60.2", default-features = false }
-
-[dev-dependencies]
-wegent-identity = { path = "crates/identity", features = ["test-support"] }
-wegent-task-store = { path = "crates/task-store", features = ["test-support"] }
-wegent-backend-test-support = { path = "crates/test-support" }
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
-
-[lints.rust]
-# `deny` rather than `forbid` so `config::init_env` can relax it for the single
-# `env::set_var` call that ports the reference dotenv export. Everything else
-# stays unsafe-free.
-unsafe_code = "deny"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-
-[lib]
-name = "wegent_backend_rs"
-
-[[bin]]
-name = "wegent-backend-rs"
-path = "src/main.rs"
+zip = { version = "=6.0.0", default-features = false }
+zstd = "0.13.1"
+wegent-task-export-docx = { path = "task-export-docx" }
+wegent-tasks = { path = "tasks" }
+wegent-wework-transcripts = { path = "wework-transcripts" }
+wegent-workspaces = { path = "workspaces" }

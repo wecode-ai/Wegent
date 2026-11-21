@@ -118,6 +118,20 @@ def update_task_on_cancel(db: Session, task: TaskResource) -> None:
     task_store.update_json(db, task=task, payload=task_crd.model_dump(mode="json"))
 
 
+def is_cancellation_stuck(updated_at: Any) -> bool:
+    """Check the cancellation timestamp against the recovery timeout."""
+    if isinstance(updated_at, str):
+        try:
+            updated_at = datetime.fromisoformat(updated_at)
+        except ValueError:
+            return False
+    if not isinstance(updated_at, datetime):
+        return False
+    return (
+        datetime.now(updated_at.tzinfo) - updated_at
+    ).total_seconds() > settings.CANCELLING_STUCK_TIMEOUT_SECONDS
+
+
 _TASK_FINAL_STATES = ("COMPLETED", "FAILED", "CANCELLED", "DELETE")
 
 

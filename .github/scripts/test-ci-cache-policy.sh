@@ -134,7 +134,7 @@ assert_warmup_case "Backend Rust OCI resolver" "${warmup_all_false/wework_target
 assert_warmup_case "Backend Rust OCI recipe" "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/runtime-images/backend-rs-e2e.Dockerfile"
 assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
-  "backend-rs/src/hybrid.rs"
+  "backend-rs/be-server/src/hybrid.rs"
 assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
   "executor/src/main.rs"
 assert_warmup_case "Executor dependency source warms desktop sidecar" "$executor_lock" \

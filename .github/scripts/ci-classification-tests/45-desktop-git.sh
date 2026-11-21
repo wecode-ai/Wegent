@@ -10,7 +10,7 @@ for git_path in \
   'executor/src/runtime_work/handler/git_source_workspace.rs' \
   'executor/src/runtime_work/local_connector_auth/gitlab_cli.rs' \
   'executor/src/task_runtime/mcp/git_connections.rs' \
-  'backend-rs/src/git_connection_inbox/routes.rs'; do
+  'backend-rs/be-server/src/git_connection_inbox/routes.rs'; do
   git_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$git_path")"
   node --input-type=module - "$git_path" "$git_output" <<'NODE'
 import assert from 'node:assert/strict'

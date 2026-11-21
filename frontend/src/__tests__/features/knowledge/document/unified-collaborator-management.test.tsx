@@ -283,7 +283,7 @@ it('keeps approvals independent of the authorization table and displays register
   expect(screen.getByTestId('permission-role-91')).toBeEnabled()
 })
 
-it.each(['document', 'created'])(
+it.each(['document', 'after-create'])(
   'keeps only failed collaborators after a partial grant (%s)',
   async entry => {
     const { registerAuthSection } =
@@ -328,6 +328,9 @@ it.each(['document', 'created'])(
       await user.type(screen.getByTestId('kb-name-input'), 'New library')
       await user.click(document.getElementById('knowledge-summary-enabled')!)
       await user.click(screen.getByTestId('submit-create-kb'))
+      await waitFor(() => expect(screen.queryByTestId('create-kb-dialog')).not.toBeInTheDocument())
+      await user.click(screen.getByTestId('more-kb-7'))
+      await user.click(screen.getByTestId('permission-kb-7'))
     }
     await user.click(await screen.findByTestId('permission-add-collaborator'))
     await user.click(screen.getByRole('button', { name: 'Select test-success' }))
@@ -395,7 +398,7 @@ it('recovers a failed team search and prevents selecting an existing team bindin
 })
 
 it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
-  'creates once and opens the shared collaborator flow after a failed list refresh (%p)',
+  'closes creation and retries only the list after a failed refresh (%p)',
   async Page => {
     const user = userEvent.setup()
     render(<Page />)
@@ -406,22 +409,16 @@ it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
     jest.mocked(createKnowledgeBase).mockResolvedValueOnce(created)
     jest.mocked(knowledgeBaseApi.getAllGrouped).mockRejectedValueOnce(new Error('offline'))
     await user.click(screen.getByTestId('submit-create-kb'))
-    await screen.findByTestId('retry-created-list')
-    expect(screen.getAllByRole('heading', { name: 'document.creation.created' })).toHaveLength(1)
-    await screen.findByTestId('knowledge-authorization-objects')
-    expect(screen.queryByTestId('created-knowledge-authorization')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('submit-created-permissions')).not.toBeInTheDocument()
-    await user.click(screen.getByTestId('permission-add-collaborator'))
-    expect(screen.getAllByTestId('created-knowledge-authorization')).toHaveLength(1)
-    await user.keyboard('{Escape}')
-    expect(screen.getByTestId('permission-add-collaborator')).toHaveFocus()
-    data.personal.created_by_me.push(row(created))
-    await user.click(screen.getByTestId('retry-created-list'))
-    await waitFor(() => expect(screen.queryByTestId('retry-created-list')).not.toBeInTheDocument())
-    expect(screen.getByTestId('permission-add-collaborator')).toBeEnabled()
-    await user.click(screen.getByTestId('finish-created-authorization'))
+    const retry = await screen.findByTestId('retry-knowledge-navigation')
+    expect(screen.queryByTestId('create-kb-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('close-knowledge-access')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('create-kb-button')).toHaveFocus())
-    expect(screen.getByTestId('kb-row-29')).toBeInTheDocument()
+    data.personal.created_by_me.push(row(created))
+    await user.click(retry)
+    await waitFor(() =>
+      expect(screen.queryByTestId('retry-knowledge-navigation')).not.toBeInTheDocument()
+    )
+    expect(await screen.findByTestId('kb-row-29')).toBeInTheDocument()
     expect(createKnowledgeBase).toHaveBeenCalledTimes(1)
     expect(knowledgePermissionApi.batchAddPermission).not.toHaveBeenCalled()
   }

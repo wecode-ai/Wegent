@@ -623,6 +623,7 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
+        for_update: bool = False,
     ) -> Optional[Subtask]:
         if not statuses:
             return None
@@ -632,6 +633,8 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
             Subtask.status.in_(statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if for_update:
+            query = query.populate_existing().with_for_update()
         return query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).first()
 
     def get_latest_running_assistant_by_task(

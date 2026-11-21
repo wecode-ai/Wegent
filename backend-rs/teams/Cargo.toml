@@ -1,0 +1,33 @@
+[package]
+name = "wegent-teams"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authorized Team and Bot routes and projections"
+
+[dependencies]
+brz-http-server = { workspace = true, features = ["macros"] }
+brz-json.workspace = true
+brz-mysql = { workspace = true, features = ["metrics", "slow-log"] }
+brz-redis = { workspace = true, features = ["metrics", "slow-log"] }
+chrono = { workspace = true, features = ["clock", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing.workspace = true
+wegent-access.workspace = true
+wegent-backend-config.workspace = true
+wegent-backend-persistence.workspace = true
+wegent-capabilities.workspace = true
+wegent-directory.workspace = true
+wegent-http-compat.workspace = true
+wegent-identity.workspace = true
+wegent-python-compat.workspace = true
+wegent-resource-store.workspace = true
+wegent-task-store.workspace = true
+
+[dev-dependencies]
+http.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wegent-backend-test-support.workspace = true
+wegent-identity = { workspace = true, features = ["test-support"] }

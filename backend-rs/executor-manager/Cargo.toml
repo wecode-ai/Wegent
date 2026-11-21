@@ -1,0 +1,18 @@
+[package]
+name = "wegent-executor-manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Executor manager transport and response projections"
+
+[dependencies]
+tracing = { workspace = true }
+anyhow = { workspace = true }
+brz-http = { workspace = true, features = ["json"] }
+brz-json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
