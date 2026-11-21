@@ -10,6 +10,7 @@ import {
 import { waitForWindowState } from '../modules/native-window-state.mjs'
 import { verifyRuntimeWorkRefreshBurst } from '../modules/runtime-work-refresh-burst.mjs'
 import { verifyPendingInventoryProjection } from '../modules/idle-executor-pending-inventory.mjs'
+import { verifyStandInDeviceDiscoveryBurst } from '../modules/stand-in-device-discovery-burst.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -129,6 +130,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         assertIdleExecutorTraffic(rows, windows)
         await verifyRuntimeWorkRefreshBurst(control, read)
         await verifyPendingInventoryProjection(control, { executorHome, resultDir })
+        await verifyStandInDeviceDiscoveryBurst(control, read)
         return { idleExecutorRequests: true, observationMs: OBSERVATION_MS, windows }
       } finally {
         await client({ action: 'detach', target })
