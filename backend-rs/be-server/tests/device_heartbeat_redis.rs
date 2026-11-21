@@ -15,6 +15,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use brz_mysql::MysqlService;
 use brz_redis::{Redis, RedisService, cmd};
+use brz_socket_io::SocketIo;
 use engineio_poll_client::PollClient;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, time::timeout};
@@ -75,6 +76,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
     )
     .unwrap();
     let server = socketio::handlers::build(Arc::clone(&state)).await.unwrap();
+    let io = server.io().clone();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (stop, stopped) = oneshot::channel();
@@ -96,6 +98,8 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         async move {
             timeout(Duration::from_secs(20), async {
                 let client = assert_heartbeats(&address, &token, &redis, &device_id, &key).await;
+                assert_managed_cloud_identity(&address, &token, &mysql, &redis, &device_id, &io)
+                    .await;
                 assert_terminal_delivery(&client, &redis, &mysql, &device_id).await;
                 assert_offline_timeout(&state, &redis, &mysql).await;
             })
@@ -293,6 +297,340 @@ async fn assert_terminal_delivery(
         .unwrap();
     assert_eq!(next_callback(&mut subscription).await, barrier);
     subscription.close().await.unwrap();
+}
+
+async fn assert_managed_cloud_identity(
+    address: &str,
+    token: &str,
+    mysql: &MysqlService,
+    redis: &RedisService,
+    prefix: &str,
+    io: &SocketIo,
+) {
+    let name = format!("{prefix}-cloud");
+    let key = format!("device:online:{USER_ID}:{name}");
+    let client = PollClient::connect(address, NAMESPACE, &json!({"token": token}).to_string())
+        .await
+        .unwrap();
+    let registration = json!({
+        "device_id": name, "name": "Managed Cloud", "device_type": "local",
+        "runtime_instance_id": "runtime-cloud", "runtime_transfer_port": 17888,
+    });
+    // Warm the local registration cache before the server repairs provisioning.
+    assert_eq!(
+        event_ack(&client, 9, "device:register", registration.clone()).await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+    let (record_id, mut document): (i64, Value) = mysql
+        .fetch_one(
+            "SELECT id, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+             AND namespace = 'default' AND name = ?",
+            (USER_ID, name.as_str()),
+        )
+        .await
+        .unwrap();
+    let original_presence = online(redis, &key).await;
+    document["spec"]["deviceType"] = json!("cloud");
+    document["spec"]["cloudConfig"] = json!({
+        "deviceId": name, "sandboxId": "sandbox-cloud",
+    });
+    mysql
+        .execute(
+            "UPDATE kinds SET json = ? WHERE id = ? AND user_id = ?",
+            (document.to_string(), record_id, USER_ID),
+        )
+        .await
+        .unwrap();
+    for (id, field, value) in [
+        (10, "runtime_instance_id", Value::Null),
+        (11, "runtime_instance_id", json!("another-runtime")),
+        (12, "app_device_id", json!("another-app")),
+    ] {
+        let mut invalid = registration.clone();
+        invalid[field] = value;
+        let ack = event_ack(&client, id, "device:register", invalid).await;
+        assert!(
+            ack["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("Registration failed:")
+        );
+        let (stored,): (Value,) = mysql
+            .fetch_one(
+                "SELECT json FROM kinds WHERE id = ? AND user_id = ?",
+                (record_id, USER_ID),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stored, document,
+            "a rejected registration cannot mutate the managed record"
+        );
+        assert_eq!(online(redis, &key).await, original_presence);
+    }
+    assert_eq!(
+        event_ack(&client, 13, "device:register", registration.clone()).await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+    let records: Vec<AppDeviceRecord> = mysql
+        .fetch_all(
+            "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (USER_ID, name.as_str()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, record_id);
+    assert_eq!(records[0].json["spec"]["deviceId"], name);
+    assert_eq!(records[0].json["spec"]["deviceType"], "cloud");
+    assert_eq!(
+        records[0].json["spec"]["runtimeInstanceId"],
+        "runtime-cloud"
+    );
+    assert_eq!(
+        records[0].json["spec"]["cloudConfig"],
+        document["spec"]["cloudConfig"]
+    );
+    let presence = online(redis, &key).await;
+    assert_eq!(presence["socket_id"], client.socket_id());
+    assert_eq!(presence["runtime_instance_id"], "runtime-cloud");
+
+    // Keep Redis presence live for both attempts. The first reuses the
+    // original local fingerprint. The second changes only a fingerprint field.
+    assert_stale_local_reactivation(mysql, redis, io, &client, record_id, registration).await;
+    redis.del(key).await.unwrap();
+
+    // Formal cloud records without an optional sandbox pointer stay compatible.
+    let mut without_sandbox = document.clone();
+    without_sandbox["spec"]["cloudConfig"] = json!({"deviceId": name});
+    mysql
+        .execute(
+            "UPDATE kinds SET json = ? WHERE id = ? AND user_id = ?",
+            (without_sandbox.to_string(), record_id, USER_ID),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event_ack(
+            &client,
+            15,
+            "device:register",
+            json!({
+                "device_id": name, "name": "Managed Cloud", "device_type": "cloud",
+                "runtime_instance_id": "runtime-cloud",
+            })
+        )
+        .await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+
+    // The record-only deletion API soft-deletes the record, after which the
+    // original executor must be able to register and reactivate it.
+    mysql
+        .execute(
+            "UPDATE kinds SET is_active = 0 WHERE id = ? AND user_id = ?",
+            (record_id, USER_ID),
+        )
+        .await
+        .unwrap();
+    // The original executor must reactivate the record without creating a
+    // replacement or losing its managed-cloud metadata.
+    assert_eq!(
+        event_ack(
+            &client,
+            16,
+            "device:register",
+            json!({
+                "device_id": name, "name": "Managed Cloud", "device_type": "cloud",
+                "runtime_instance_id": "runtime-cloud",
+            })
+        )
+        .await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+    let reactivated: Vec<AppDeviceRecord> = mysql
+        .fetch_all(
+            "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (USER_ID, name.as_str()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reactivated.len(), 1);
+    assert_eq!(reactivated[0].id, record_id);
+    assert_eq!(reactivated[0].is_active, 1);
+    assert_eq!(reactivated[0].json["spec"]["deviceType"], "cloud");
+    assert_eq!(
+        reactivated[0].json["spec"]["runtimeInstanceId"],
+        "runtime-cloud"
+    );
+    assert_eq!(
+        reactivated[0].json["spec"]["cloudConfig"],
+        json!({"deviceId": name})
+    );
+
+    mysql.execute(
+        "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)
+         VALUES (9, 'foreign-cloud-e2e', '', true, 'user', 'password', '{}')",
+        (),
+    ).await.unwrap();
+    for (ack_id, reported_type, sandbox_id) in
+        [(14, "local", Some("sandbox-foreign")), (19, "cloud", None)]
+    {
+        let foreign = format!("{prefix}-foreign-{ack_id}");
+        assert_foreign_managed_cloud_conflict(
+            mysql,
+            redis,
+            &client,
+            &foreign,
+            ack_id,
+            reported_type,
+            sandbox_id,
+        )
+        .await;
+    }
+}
+
+async fn assert_foreign_managed_cloud_conflict(
+    mysql: &MysqlService,
+    redis: &RedisService,
+    client: &PollClient,
+    foreign: &str,
+    ack_id: u8,
+    reported_type: &str,
+    sandbox_id: Option<&str>,
+) {
+    // Managed IDs can differ from Kind names, including provisioned legacy rows.
+    let kind_name = format!("{foreign}-kind");
+    let mut cloud_config = json!({"deviceId": foreign});
+    if let Some(sandbox_id) = sandbox_id {
+        cloud_config["sandboxId"] = json!(sandbox_id);
+    }
+    let foreign_document = json!({"spec": {
+        "deviceType": "cloud", "deviceId": foreign, "runtimeInstanceId": "runtime-cloud",
+        "cloudConfig": cloud_config,
+    }});
+    mysql.execute(
+        "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
+         VALUES (9, 'Device', ?, 'default', ?, true, now(), now())",
+        (kind_name.as_str(), foreign_document.to_string()),
+    ).await.unwrap();
+    assert_eq!(
+        event_ack(
+            client,
+            ack_id,
+            "device:register",
+            json!({
+                "device_id": foreign, "name": "Managed Cloud", "device_type": reported_type,
+                "runtime_instance_id": "runtime-cloud",
+            })
+        )
+        .await,
+        json!({"error": "Registration failed: Managed cloud device identity conflict"}),
+    );
+    let (count,): (i64,) = mysql
+        .fetch_one(
+            "SELECT COUNT(*) FROM kinds WHERE user_id = ? AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (USER_ID, foreign),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "a foreign managed identity cannot allocate an owned replacement"
+    );
+    let (stored,): (Value,) = mysql
+        .fetch_one(
+            "SELECT json FROM kinds WHERE user_id = 9 AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (kind_name.as_str(),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored, foreign_document);
+    assert!(
+        redis
+            .get::<_, String>(format!("device:online:{USER_ID}:{foreign}"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+async fn assert_stale_local_reactivation(
+    mysql: &MysqlService,
+    redis: &RedisService,
+    io: &SocketIo,
+    client: &PollClient,
+    record_id: i64,
+    mut registration: Value,
+) {
+    let name = registration["device_id"].as_str().unwrap().to_owned();
+    let key = format!("device:online:{USER_ID}:{name}");
+    let socket = io
+        .of(NAMESPACE)
+        .unwrap()
+        .get_socket(client.socket_id().parse().unwrap())
+        .unwrap();
+    let session =
+        brz_socket_io::__private::session::<socketio::session::DeviceSession, _>(&socket).unwrap();
+    for (ack_id, transfer_port, case) in [
+        (17, 17888, "cached local registration"),
+        (18, 17889, "uncached local registration"),
+    ] {
+        mysql
+            .execute(
+                "UPDATE kinds SET is_active = 0 WHERE id = ? AND user_id = ?",
+                (record_id, USER_ID),
+            )
+            .await
+            .unwrap();
+        registration["runtime_transfer_port"] = json!(transfer_port);
+        assert_eq!(
+            event_ack(client, ack_id, "device:register", registration.clone()).await,
+            json!({"success": true, "device_id": name, "device_route_id": name}),
+            "{case}",
+        );
+        let records: Vec<AppDeviceRecord> = mysql
+            .fetch_all(
+                "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+                 AND namespace = 'default' AND name = ?",
+                (USER_ID, name.as_str()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1, "{case}");
+        assert_eq!(records[0].id, record_id, "{case}");
+        assert_eq!(records[0].is_active, 1, "{case}");
+        assert_eq!(records[0].json["spec"]["deviceType"], "cloud", "{case}");
+        assert_eq!(
+            records[0].json["spec"]["runtimeInstanceId"], "runtime-cloud",
+            "{case}"
+        );
+        assert_eq!(
+            records[0].json["spec"]["cloudConfig"],
+            json!({"deviceId": name, "sandboxId": "sandbox-cloud"}),
+            "{case}",
+        );
+        let snapshot = session.snapshot().device;
+        assert_eq!(
+            snapshot.device_type,
+            Some(socketio::device::DeviceType::Cloud),
+            "{case}"
+        );
+        assert_eq!(snapshot.device_id.as_deref(), Some(name.as_str()), "{case}");
+        assert_eq!(
+            snapshot.logical_device_id.as_deref(),
+            Some(name.as_str()),
+            "{case}"
+        );
+        let presence = online(redis, &key).await;
+        assert_eq!(presence["socket_id"], client.socket_id(), "{case}");
+        assert_eq!(presence["runtime_instance_id"], "runtime-cloud", "{case}");
+        assert_eq!(presence["runtime_transfer_port"], transfer_port, "{case}");
+    }
 }
 
 async fn assert_offline_timeout(
