@@ -11,10 +11,9 @@ describe('user preference prompt commands', () => {
       action: 'append',
       value: 'Keep replies concise.',
     })
-    expect(parseUserPreferencePromptCommand('  /memory  ')).toEqual({ action: 'openSettings' })
   })
 
-  test.each(['', '   ', '/remember', '/remember    ', '/memory extra', 'remember this'])(
+  test.each(['', '   ', '/remember', '/remember    ', 'remember this'])(
     'rejects invalid input %s',
     input => {
       expect(parseUserPreferencePromptCommand(input)).toBeNull()

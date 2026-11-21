@@ -86,10 +86,9 @@ additionalContext["wework.user-preferences"] = {
 
 ## 提示词维护
 
-第一版只提供两个输入命令：
+第一版只提供一个输入命令：
 
 - `/remember <preference>`：把一行偏好追加到现有提示词末尾。
-- `/memory`：打开“设置 → 上下文 → 用户偏好提示词”。
 
 命令规则：
 
@@ -112,7 +111,7 @@ additionalContext["wework.user-preferences"] = {
 
 - 偏好规范化：缺省、空白、超长拒绝和非法类型。
 - GUI：编辑、保存、保存失败、空态和输入长度限制。
-- 命令解析：合法追加、空内容、超长拒绝；/memory 打开设置页。
+- 命令解析：合法追加、空内容和超长拒绝。
 - 请求构造：创建、续聊和引导请求注入 `wework.user-preferences`。
 - 注入层不按设备类型过滤，因此本地、云端和远程请求由同一路径生成同一字段。
 - 空提示词不注入字段。

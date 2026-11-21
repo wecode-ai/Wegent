@@ -13,7 +13,6 @@ import {
 } from './runtimeConversationCache'
 import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
-import { navigateTo } from '@/lib/navigation'
 import {
   buildRuntimeTaskCreateHandle,
   friendlyTitleForTask,
@@ -32,7 +31,6 @@ vi.mock('@/desktop/appPreferences', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/appPreferences')>()),
   updateAppPreferences: vi.fn(),
 }))
-vi.mock('@/lib/navigation', () => ({ navigateTo: vi.fn() }))
 
 function messagingFixture(
   modelState: {
@@ -204,12 +202,6 @@ test('appends a user preference from the remember command', async () => {
   expect(vi.mocked(updateAppPreferences)).toHaveBeenCalledWith({
     userPreferencePrompt: 'Existing preference\nKeep replies concise.',
   })
-})
-
-test('opens context settings from the memory command', async () => {
-  const { messaging } = messagingFixture()
-  await expect(messaging.sendCurrentInput('/memory')).resolves.toBe(true)
-  expect(vi.mocked(navigateTo)).toHaveBeenCalledWith('/settings/personal/context')
 })
 
 test('injects the saved user preference prompt into guidance requests', async () => {

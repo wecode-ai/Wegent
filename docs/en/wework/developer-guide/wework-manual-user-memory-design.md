@@ -86,10 +86,9 @@ Constraints:
 
 ## Prompt maintenance
 
-The first version provides two input commands:
+The first version provides one input command:
 
 - `/remember <preference>`: append one line to the existing prompt.
-- `/memory`: open Settings → Context → User preference prompt.
 
 Command rules:
 
@@ -112,7 +111,7 @@ Use focused unit and component tests only:
 
 - Preference normalization: missing, blank, over-limit rejection, and invalid values.
 - GUI: edit, save, failed save, empty state, and input length limit.
-- Command parsing: valid append, empty content, over-limit rejection, and opening settings with /memory.
+- Command parsing: valid append, empty content, and over-limit rejection.
 - Request construction: create, continuation, and guidance requests inject `wework.user-preferences`.
 - The injection layer does not filter by device type, so local, cloud, and remote requests produce the same field through the same path.
 - An empty prompt omits the field.

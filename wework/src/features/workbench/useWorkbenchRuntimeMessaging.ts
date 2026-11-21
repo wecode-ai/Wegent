@@ -45,7 +45,6 @@ import {
   appendUserPreferencePrompt,
   parseUserPreferencePromptCommand,
 } from './userPreferencePromptCommands'
-import { navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -1705,10 +1704,6 @@ export function useWorkbenchRuntimeMessaging({
     async (inputOverride?: string, options?: SendCurrentInputOptions) => {
       const command = parseUserPreferencePromptCommand(inputOverride ?? '')
       if (command) {
-        if (command.action === 'openSettings') {
-          navigateTo('/settings/personal/context')
-          return true
-        }
         try {
           await updateAppPreferences({
             userPreferencePrompt: appendUserPreferencePrompt(

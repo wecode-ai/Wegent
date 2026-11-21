@@ -424,7 +424,7 @@ Open **Settings → Personal → Context**:
 | Interaction style (Codex personality)   | Open the selector and choose a reply style                                                                                                                                                                                                       |
 | Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                                                                                                                                               |
 | Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules                                                                                                                   |
-| User preference prompt                  | Edit preferences shared by local, cloud and remote tasks and save; append one line from the composer with `/remember <preference>`, or open this page with `/memory`; preferences are not permissions and cannot override explicit task requests |
+| User preference prompt                  | Edit preferences shared by local, cloud and remote tasks and save; append one line from the composer with `/remember <preference>`; preferences are not permissions and cannot override explicit task requests |
 
 <a id="hooks-controls"></a>
 

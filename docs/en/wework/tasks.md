@@ -19,7 +19,7 @@ sidebar_position: 4
 | Model, reasoning and permissions | Select model and supported effort; use the permission icon to change mode        | Varies by model/device; permission mode is not app authorization                                                                           |
 | Voice                            | Microphone → record → stop and transcribe → review → send                        | First prepare a model and OS microphone access                                                                                             |
 | Queue, guide and pause           | Use the running-task send actions; pause to interrupt the current reply          | Message queues, execution queues and persistent goals are separate                                                                         |
-| User preference prompt           | Enter /remember <preference> to append a line; enter /memory to open settings    | Takes effect on the next turn; preferences are not permissions. Edit them under [Settings](./settings.md#context-and-default-instructions) |
+| User preference prompt           | Enter /remember <preference> to append a line                                   | Takes effect on the next turn; preferences are not permissions. Edit them under [Settings](./settings.md#context-and-default-instructions) |
 
 ### Persistent-goal status and controls
 

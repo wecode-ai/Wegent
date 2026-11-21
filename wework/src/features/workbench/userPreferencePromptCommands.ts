@@ -1,14 +1,11 @@
 import { USER_PREFERENCE_PROMPT_MAX_LENGTH } from '@/desktop/appPreferences'
 
-export type UserPreferencePromptCommand =
-  | { action: 'append'; value: string }
-  | { action: 'openSettings' }
+export type UserPreferencePromptCommand = { action: 'append'; value: string }
 
 export function parseUserPreferencePromptCommand(
   input: string
 ): UserPreferencePromptCommand | null {
   const value = input.trim()
-  if (value === '/memory') return { action: 'openSettings' }
   const preference = value.match(/^\/remember\s+([\s\S]+)$/)
   if (!preference) return null
   const preferenceValue = preference[1].trim()
