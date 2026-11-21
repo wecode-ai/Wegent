@@ -302,7 +302,10 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
           await uninstallPersonalPluginInUi(control, listing, { expectInstallInProgress: true })
           await control.command('clickWhenEnabled', testId('plugin-operation-notice-dismiss'))
           await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
-          await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-delete-"]')
+          await control.command(
+            'clickWhenEnabled',
+            '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
+          )
           const notice = `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
           await control.command('waitFor', notice)
           assert.equal(
@@ -362,7 +365,10 @@ async function verifyStalePersonalDeletePreview({ cloud, control, request, root 
     `[data-testid^="plugin-marketplace-row-"] > button[aria-label*="${name}"]`
   )
   await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-actions-"]')
-  await control.command('clickWhenEnabled', 'button[data-testid^="plugin-detail-delete-"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[role="menuitem"][data-testid^="plugin-detail-delete-"]'
+  )
   const dialog = testId('delete-personal-plugin-dialog')
   await control.command('waitFor', dialog)
   assert.match(await control.command('getText', dialog), /本地插件源码|local source/i)
