@@ -7,10 +7,12 @@ import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
 const executorEventSubscribers = new Map<symbol, (event: DshExecutorEventEnvelope) => void>()
+const executorEventSubscriberSources = new Map<symbol, string[]>()
 let disconnectExecutorEventStream: (() => void) | null = null
 const INITIAL_RECONNECT_DELAY_MS = 500
 const MAX_RECONNECT_DELAY_MS = 10_000
@@ -272,10 +274,20 @@ export function subscribeDshExecutorEvents(
 ): () => void {
   const subscription = Symbol('executor-event-subscriber')
   executorEventSubscribers.set(subscription, listener)
+  const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+  if (e2e) {
+    executorEventSubscriberSources.set(
+      subscription,
+      [...(new Error().stack ?? '').matchAll(/([^/\s()]+\.js):(\d+):(\d+)/g)]
+        .slice(1, 5)
+        .map(match => `${match[1]}:${match[2]}:${match[3]}`)
+    )
+  }
   if (!disconnectExecutorEventStream) {
     disconnectExecutorEventStream = connectDshExecutorEventStream(event => {
       for (const [id, subscriber] of [...executorEventSubscribers]) {
         if (!executorEventSubscribers.has(id)) continue
+        const startedAt = e2e ? performance.now() : 0
         try {
           subscriber(event)
         } catch (error) {
@@ -284,12 +296,23 @@ export function subscribeDshExecutorEvents(
             sequence: event.sequence,
             error,
           })
+        } finally {
+          const durationMs = e2e ? performance.now() - startedAt : 0
+          if (durationMs >= 50)
+            logRuntimeTaskCreateStage('executor-slow-event-subscriber', {
+              event: event.event,
+              sequence: event.sequence,
+              durationMs,
+              subscriberCount: executorEventSubscribers.size,
+              sources: executorEventSubscriberSources.get(id),
+            })
         }
       }
     })
   }
   return () => {
     executorEventSubscribers.delete(subscription)
+    executorEventSubscriberSources.delete(subscription)
     if (executorEventSubscribers.size === 0) {
       disconnectExecutorEventStream?.()
       disconnectExecutorEventStream = null
@@ -331,6 +354,7 @@ function connectDshExecutorEventStream(
     }
     nextSource.onmessage = message => {
       if (source !== nextSource) return
+      const parseStartedAt = import.meta.env.VITE_WEWORK_E2E === 'true' ? performance.now() : 0
       let event: DshExecutorEventEnvelope
       try {
         event = JSON.parse(message.data) as DshExecutorEventEnvelope
@@ -356,6 +380,13 @@ function connectDshExecutorEventStream(
         return
       }
       if (event.sequence <= cursor) return
+      if (import.meta.env.VITE_WEWORK_E2E === 'true' && performance.now() - parseStartedAt >= 50)
+        logRuntimeTaskCreateStage('executor-slow-event-parse', {
+          event: event.event,
+          sequence: event.sequence,
+          durationMs: performance.now() - parseStartedAt,
+          bytes: message.data.length,
+        })
       cursor = event.sequence
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
       if (event.event === 'executor.stream.cursor') return
