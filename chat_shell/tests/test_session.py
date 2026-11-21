@@ -173,3 +173,35 @@ class TestStreamingCore:
         assert response["messages_chain"] == streaming_state.messages_chain
         assert response["context_compactions"] == streaming_state.context_compactions
         assert response["termination_reason"] == "completed_with_unexecuted_tool_calls"
+
+    @pytest.mark.asyncio
+    async def test_finalize_preserves_refusal_stop_reason(self, streaming_state):
+        """A refusal must not be rewritten to a normal end_turn completion."""
+        from chat_shell.services.streaming.core import (
+            REFUSAL_WARNING_MESSAGE,
+            StreamingCore,
+        )
+        from shared.models import EmitterBuilder, GeneratorTransport
+
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        streaming_state.append_content("Partial answer")
+        streaming_state.set_truncated("refusal")
+        streaming_state.termination_reason = "model_refusal"
+
+        core = StreamingCore(emitter=emitter, state=streaming_state)
+
+        await core.finalize()
+
+        completed = next(
+            data
+            for event_type, data in transport.get_events()
+            if event_type == "response.completed"
+        )
+        response = completed["response"]
+        assert response["stop_reason"] == "refusal"
+        assert response["termination_reason"] == "model_refusal"
+        assert response["truncated"] is True
+        assert response["truncation_reason"] == "refusal"
+        response_text = response["output"][0]["content"][0]["text"]
+        assert response_text.endswith(REFUSAL_WARNING_MESSAGE)
