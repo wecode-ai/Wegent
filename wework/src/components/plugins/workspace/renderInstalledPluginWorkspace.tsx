@@ -21,7 +21,6 @@ import {
   pluginDetailActionErrorMessage,
   tryPluginInChat,
 } from '../workspace/marketplaceWorkspaceHelpers'
-import { personalPluginInstallSource } from './personalPluginInstallSource'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
 
 export function renderInstalledPluginWorkspace({
@@ -44,8 +43,6 @@ export function renderInstalledPluginWorkspace({
   openPublicationProgress,
   openPublicationRevision,
   versionSubmission,
-  personalInstallation,
-  reconciliationBlocksActions,
   closePluginDetail,
   setSelectedPluginId,
   requestDeletePersonalPlugin,
@@ -131,9 +128,6 @@ export function renderInstalledPluginWorkspace({
         ],
         selectedPlugin
       )
-    const personalSource = personalPluginInstallSource([selectedPlugin])
-    const installForAccount = personalInstallation.actionFor(personalSource)
-    const installingForAccount = personalSource?.key === personalInstallation.busySourceKey
     return (
       <>
         <PluginDetailView
@@ -144,20 +138,11 @@ export function renderInstalledPluginWorkspace({
           primaryActionLabel={
             selectedUninstalling
               ? t('workbench.plugins_uninstalling', '正在卸载')
-              : installForAccount
-                ? installingForAccount
-                  ? t('workbench.plugins_installing')
-                  : t('workbench.plugins_install_plugin')
-                : t('workbench.plugins_try_now', '立即对话')
+              : t('workbench.plugins_try_now', '立即对话')
           }
-          primaryActionIcon={installForAccount ? 'install' : 'try'}
-          primaryActionDisabled={
-            selectedUninstalling ||
-            (Boolean(installForAccount) &&
-              (headerBusy || reconciliationBlocksActions || installingForAccount))
-          }
+          primaryActionDisabled={selectedUninstalling}
           shareActionLabel={t('workbench.plugins_share', '分享')}
-          shareActionDisabled={headerBusy || personalInstallation.busy}
+          shareActionDisabled={headerBusy}
           onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
           publication={selectedPublication}
           publicationWithdrawing={withdrawingPublicationId === selectedPublication?.id}
@@ -219,10 +204,6 @@ export function renderInstalledPluginWorkspace({
           }
           onToggle={() => {
             if (isInstalledPluginUninstalling(selectedPlugin)) return
-            if (installForAccount) {
-              installForAccount()
-              return
-            }
             if (!tryPluginInChat(selectedPlugin.raw)) {
               setPluginDetailActionError({
                 pluginId: selectedPlugin.id,

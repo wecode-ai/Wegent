@@ -41,7 +41,6 @@ import type { PluginMarketplaceState } from './marketplaceWorkspaceHelpers'
 import type { PluginCatalogInput } from './pluginCatalogState'
 import { usePersonalPluginAccountInstall } from './usePersonalPluginAccountInstall'
 import {
-  isPersonalPluginInstallSource,
   readPersonalPluginPackageVersion,
   type PersonalPluginInstallSource,
 } from './personalPluginInstallSource'
@@ -54,7 +53,6 @@ interface PublishingInput {
   accountPluginApi: ReturnType<typeof createPluginApi>
   accountIdentity: Parameters<typeof usePersonalPluginAccountInstall>[0]['accountIdentity']
   canInstallForAccount: boolean
-  personalDetailSourceKey: string | null
   localPluginApi: PluginCatalogInput['localPluginApi']
   t: PluginCatalogInput['t']
   installedPlugins: InstalledPluginItem[]
@@ -70,7 +68,6 @@ export function usePluginWorkspacePublishing({
   accountPluginApi,
   accountIdentity,
   canInstallForAccount,
-  personalDetailSourceKey,
   localPluginApi,
   t,
   installedPlugins,
@@ -244,8 +241,6 @@ export function usePluginWorkspacePublishing({
     accountIdentity,
     api: accountPluginApi,
     catalog,
-    detailSourceKey: personalDetailSourceKey,
-    observeCatalog: installedPlugins.some(isPersonalPluginInstallSource),
     t,
     preparePrivate: async ({ source, isCurrent }) => {
       const plugin = await readPersonalInstallSource(source)

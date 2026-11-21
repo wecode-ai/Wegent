@@ -215,14 +215,27 @@ async function verifyAuthorCloudInstall({ cloud, control, request, recipient, ro
         await control.command('click', testId('personal-plugin-install-private-cancel'))
         assert.equal(await getListing(name), undefined, 'Cancelling uploaded a private release')
         assert.equal(await accountPlugin(cloud, name), undefined, 'Cancelling installed the plugin')
+        await control.command(
+          'waitFor',
+          `[data-testid^="plugin-marketplace-row-"]:has(> button[aria-label*="${name}"]) [data-testid^="plugin-marketplace-actions-"]`
+        )
         await control.command('clickWhenEnabled', row)
         await waitForSnapshot(
           control,
           snapshot =>
-            snapshot.text.split('\n').some(text => /^(安装插件|Install plugin)$/i.test(text)),
-          'The imported private source did not offer the standard install action'
+            snapshot.testIds.includes('plugin-detail-actions-bar') &&
+            snapshot.text.split('\n').some(text => /^(立即对话|Start chat)$/i.test(text)),
+          'Cancelling private upload did not preserve the local Start chat action'
         )
+        await control.command('waitFor', target, { enabled: true })
+        await control.command('clickWhenEnabled', testId('plugin-detail-back-button'))
+        await control.command('uninstallInstalledPlugin', 'body', {
+          value: `${name}@wework-personal`,
+        })
+        await refreshPluginInventory(control)
+        await control.command('clickWhenEnabled', row)
         await control.command('clickWhenEnabled', target)
+        await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
         await control.command('clickWhenEnabled', testId('personal-plugin-install-private-confirm'))
       }
       const install = await until(

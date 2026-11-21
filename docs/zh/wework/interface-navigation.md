@@ -131,7 +131,7 @@ Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也�
 
 插件安装、单个 Skill、应用授权在[插件与 Skills](./plugins-and-skills.md)；设备管理在[设备与云端工作](./devices.md)；助理角色与来源在[我的助理](./personal-stand-in.md)。详细流程由专题维护，本页不复制多份。
 
-连接企业服务后，从 **插件 → 个人创建** 的卡片或详情点 **安装**，可以把个人插件装到账号并同步到云设备。导入 ZIP 时也可点 **导入并安装**。见[在云设备使用自己创建的插件](./plugins-and-skills.md#use-a-plugin-you-created-on-cloud-devices)。
+连接企业服务后，从 **插件 → 个人创建** 的卡片或详情点 **安装**，或在导入 ZIP 时点 **导入并安装**。本机安装后可点 **立即对话**，账号安装会继续进行并同步到云设备。见[在云设备使用自己创建的插件](./plugins-and-skills.md#use-a-plugin-you-created-on-cloud-devices)。
 
 下表的内部路由仅用于版本维护和自动校验，不是网页网址。用户操作时按“点击路径”进入。
 

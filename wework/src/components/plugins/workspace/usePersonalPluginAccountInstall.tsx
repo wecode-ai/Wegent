@@ -1,5 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useRef, useState } from 'react'
 import { ApiError } from '@/api/http'
 import type { createPluginApi } from '@/api/plugins'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -22,7 +21,7 @@ interface InstallTarget {
   isAccountCurrent: () => boolean
   isSourceCurrent: () => boolean
   finishMutation: () => void
-  onSettled?: () => void
+  onLocalReady?: () => void
 }
 
 export interface PrivateInstallPackage {
@@ -62,8 +61,6 @@ export function usePersonalPluginAccountInstall({
   available,
   api,
   catalog,
-  detailSourceKey,
-  observeCatalog = false,
   preparePrivate,
   publishPrivate,
   linkSource,
@@ -79,8 +76,6 @@ export function usePersonalPluginAccountInstall({
     ReturnType<typeof createPluginCatalogState>,
     'captureScope' | 'onDetach' | 'dismissNotice' | 'refresh' | 'showNotice'
   >
-  detailSourceKey: string | null
-  observeCatalog?: boolean
   preparePrivate(target: InstallTarget): Promise<PrivateInstallPackage | null>
   publishPrivate(
     target: InstallTarget,
@@ -97,30 +92,10 @@ export function usePersonalPluginAccountInstall({
     target: InstallTarget
     prepared: PrivateInstallPackage
   } | null>(null)
-  const [busySourceKey, setBusySourceKey] = useState<string | null>(null)
   const running = useRef(false)
   const active = useRef<InstallTarget | null>(null)
   const queued = useRef<InstallTarget[]>([])
   const stopWatchingConfirmation = useRef<(() => void) | null>(null)
-  const accountCatalog = useMemo(
-    () =>
-      createAsyncResource('personal-plugin-account-catalog', () => api.listMarketplacePlugins(), {
-        refreshOnSubscribe: true,
-      }),
-    [api]
-  )
-  const shouldObserveCatalog = available && Boolean(detailSourceKey || observeCatalog)
-  const subscribe = useCallback(
-    (listener: () => void) =>
-      shouldObserveCatalog ? accountCatalog.subscribe(listener) : subscribeIdleResource(),
-    [accountCatalog, shouldObserveCatalog]
-  )
-  const account = useSyncExternalStore(
-    subscribe,
-    accountCatalog.getSnapshot,
-    accountCatalog.getSnapshot
-  )
-
   const readOwnedListing = async (key: string) => {
     // Native links may belong to a different server or account.
     const { items } = await api.listMarketplacePlugins()
@@ -131,6 +106,12 @@ export function usePersonalPluginAccountInstall({
     return matches[0]
   }
 
+  const continueLocalUse = (target: InstallTarget) => {
+    const onLocalReady = target.onLocalReady
+    target.onLocalReady = undefined
+    if (target.isCurrent() && target.isAccountCurrent()) onLocalReady?.()
+  }
+
   const finish = (target: InstallTarget) => {
     if (active.current !== target) return
     target.finishMutation()
@@ -138,11 +119,8 @@ export function usePersonalPluginAccountInstall({
     stopWatchingConfirmation.current = null
     const next = queued.current.shift() ?? null
     active.current = next
-    if (target.isCurrent()) {
-      setConfirmation(null)
-      setBusySourceKey(next?.source.key ?? null)
-      if (target.isAccountCurrent()) target.onSettled?.()
-    }
+    if (target.isCurrent()) setConfirmation(null)
+    continueLocalUse(target)
     if (next) void install(next)
   }
 
@@ -158,7 +136,6 @@ export function usePersonalPluginAccountInstall({
     stopWatchingConfirmation.current = null
     const noticeKey = 'personal-account-install-' + target.source.key
     if (target.isCurrent()) {
-      setBusySourceKey(target.source.key)
       setConfirmation(null)
       catalog.dismissNotice(noticeKey)
     }
@@ -180,6 +157,8 @@ export function usePersonalPluginAccountInstall({
           return attempt.cancel()
         }
         try {
+          // The author has confirmed private upload. Local use can start now.
+          continueLocalUse(target)
           published = await publishPrivate(target, prepared)
         } catch (error) {
           if (!isAccountCurrent()) return attempt.cancel()
@@ -201,10 +180,10 @@ export function usePersonalPluginAccountInstall({
           ? { pluginId: Number(listing.id), releaseId: listing.latestReleaseId }
           : null)
       if (!release) return attempt.cancel()
+      continueLocalUse(target)
       await linkSource(target, release, published ? prepared?.plugin : undefined)
       if (!isAccountCurrent()) return attempt.cancel()
       if (!published && listing?.installedPluginId != null) {
-        if (target.isCurrent()) void accountCatalog.reload()
         attempt.succeed()
         return
       }
@@ -215,7 +194,6 @@ export function usePersonalPluginAccountInstall({
       attempt.succeed()
       if (!isAccountCurrent() || !target.isCurrent()) return
       catalog.refresh(false)
-      void accountCatalog.reload()
       catalog.showNotice({
         id: noticeKey,
         kind: 'success',
@@ -226,15 +204,33 @@ export function usePersonalPluginAccountInstall({
       attempt.fail('request')
       if (!target.isCurrent()) return
       const message = getErrorMessage(error, t('workbench.plugins_personal_install_failed'))
+      const unsupported =
+        error instanceof ApiError && error.errorCode === 'PRIVATE_FIRST_INSTALL_UNSUPPORTED'
+      const versionExists =
+        error instanceof ApiError &&
+        error.status === 409 &&
+        message === 'Plugin version already exists'
+      const reason = unsupported
+        ? t('workbench.plugins_personal_install_server_unsupported')
+        : versionExists
+          ? t('workbench.plugins_personal_install_version_exists')
+          : message.includes('PLUGIN_PERSONAL_SOURCE_LINK_CONFLICT')
+            ? t('workbench.plugins_personal_source_link_conflict')
+            : message
       catalog.showNotice({
         id: noticeKey,
         kind: 'error',
-        message:
-          error instanceof ApiError && error.errorCode === 'PRIVATE_FIRST_INSTALL_UNSUPPORTED'
-            ? t('workbench.plugins_personal_install_server_unsupported')
-            : message.includes('PLUGIN_PERSONAL_SOURCE_LINK_CONFLICT')
-              ? t('workbench.plugins_personal_source_link_conflict')
-              : message,
+        message: t('workbench.plugins_personal_account_install_failed', { reason }),
+        ...(!unsupported &&
+          !versionExists && {
+            actionLabel: t('common.retry', '重试'),
+            onAction: () => {
+              if (!target.isCurrent() || !target.isSourceCurrent()) return
+              const request = reserveInstallRequest(target.source.key)
+              request?.submit(target.source)
+              request?.release()
+            },
+          }),
       })
     } finally {
       running.current = false
@@ -265,7 +261,7 @@ export function usePersonalPluginAccountInstall({
     const slug = createdPluginSlugFromKey(sourceKey)
     let pending = true
     return {
-      submit(source: PersonalPluginInstallSource | null, onSettled?: () => void) {
+      submit(source: PersonalPluginInstallSource | null, onLocalReady?: () => void) {
         if (
           !pending ||
           !source ||
@@ -280,7 +276,7 @@ export function usePersonalPluginAccountInstall({
           isAccountCurrent,
           isSourceCurrent,
           finishMutation,
-          onSettled,
+          onLocalReady,
         }
         if (active.current) {
           queued.current.push(target)
@@ -298,36 +294,8 @@ export function usePersonalPluginAccountInstall({
     }
   }
 
-  const requestInstall = (source: PersonalPluginInstallSource | null, onSettled?: () => void) => {
-    if (!source) return false
-    const request = reserveInstallRequest(source.key)
-    try {
-      return request === null || (request?.submit(source, onSettled) ?? false)
-    } finally {
-      request?.release()
-    }
-  }
-
-  const needsInstall = (source: PersonalPluginInstallSource | null) => {
-    if (!available || !source || !account.data) return false
-    const matches = ownedPersonalPluginListings(account.data.items, source.key)
-    const listing = matches.length === 1 ? matches[0] : null
-    return !listing?.latestReleaseId || listing.installedPluginId == null
-  }
-
   return {
-    busy: busySourceKey !== null,
-    busySourceKey,
-    needsInstall,
-    refreshAccountCatalog() {
-      if (shouldObserveCatalog) void accountCatalog.reload()
-    },
     reserveInstallRequest,
-    requestInstall,
-    actionFor(source: PersonalPluginInstallSource | null) {
-      if (source?.key !== detailSourceKey || !needsInstall(source)) return undefined
-      return () => void requestInstall(source)
-    },
     dialog:
       confirmation && available ? (
         <ConfirmDialog

@@ -26,7 +26,6 @@ export interface PluginMarketplaceRowProps {
   isReconciling: boolean
   isInstalling: boolean
   isUninstalling: boolean
-  needsAccountInstall?: boolean
   allowPendingRetry: boolean
   showPendingAsSyncing?: boolean
   labels: PluginMarketplaceRowLabels
@@ -48,7 +47,6 @@ export function arePluginMarketplaceRowPropsEqual(
     previous.isReconciling === next.isReconciling &&
     previous.isInstalling === next.isInstalling &&
     previous.isUninstalling === next.isUninstalling &&
-    previous.needsAccountInstall === next.needsAccountInstall &&
     previous.allowPendingRetry === next.allowPendingRetry &&
     previous.showPendingAsSyncing === next.showPendingAsSyncing &&
     previous.labels === next.labels &&

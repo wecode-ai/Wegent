@@ -1983,6 +1983,8 @@
     "plugins_personal_install_description": "Upload and install {{name}} (v{{version}}) as a version only you can use. Cloud devices on your account will sync automatically.",
     "plugins_personal_install_queued": "Plugin installed for this account. Cloud devices will sync automatically.",
     "plugins_personal_install_failed": "Could not install the personal plugin. Try again.",
+    "plugins_personal_account_install_failed": "Installed on this device. Cloud installation failed. {{reason}}",
+    "plugins_personal_install_version_exists": "This version has already been published. Increase the plugin version and try importing or installing again.",
     "plugins_personal_source_link_conflict": "This local source is linked to a different cloud plugin. The installation could not sync.",
     "plugins_personal_install_upload_failed": "The personal plugin did not pass the upload checks. Check the package and try again.",
     "plugins_personal_install_catalog_unavailable": "Could not confirm the cloud version of this personal plugin. Refresh and try again.",

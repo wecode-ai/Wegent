@@ -95,7 +95,7 @@ If you do not have a package yet, choose **Download example plugin** in the impo
 
 ### Use a plugin you created on cloud devices
 
-Connect to your organization server and open **Plugins → Personal creations**. Choose **Install** on a card or its detail page to install your plugin for your account. **Import and install** starts the same flow from the ZIP import dialog. Wework installs an existing cloud version directly. For the first upload, confirm that the version is available only to you. Installation proceeds after the package passes its scan. If you cancel the upload, you can still use the source installed on your computer. After account installation, choose **Start chat** in the detail page. Cloud devices on your account sync in the background, and offline devices catch up after reconnecting.
+Connect to your organization server and choose **Install** on a card or its detail page under **Plugins → Personal creations**, or choose **Import and install** in the ZIP import dialog. After installing locally, Wework installs the plugin for your account. Wework reuses an existing cloud version. For the first upload, confirm that the version is available only to you. If account installation fails, follow the notice to retry or update the version. **Start chat** is available as soon as the plugin is installed locally. To start account installation for a plugin you already installed locally, uninstall it and install it again. Cloud devices on your account sync in the background, and offline devices catch up after reconnecting.
 
 ## Managed local Python
 

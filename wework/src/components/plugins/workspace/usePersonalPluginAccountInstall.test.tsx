@@ -58,6 +58,18 @@ interface AuthorDetailFixture {
   linkSource?: Parameters<typeof usePersonalPluginAccountInstall>[0]['linkSource']
   secondPlugin?: typeof localSource
   localInstall?: () => Promise<void>
+  onLocalReady?: () => void
+}
+
+function submitAccountInstall(
+  install: ReturnType<typeof usePersonalPluginAccountInstall>,
+  source: ReturnType<typeof personalPluginInstallSource>,
+  onLocalReady?: () => void
+) {
+  if (!source) return
+  const request = install.reserveInstallRequest(source.key)
+  request?.submit(source, onLocalReady)
+  request?.release()
 }
 
 function renderAuthorDetail({
@@ -69,6 +81,7 @@ function renderAuthorDetail({
   linkSource = async () => {},
   secondPlugin,
   localInstall,
+  onLocalReady,
 }: AuthorDetailFixture = {}) {
   const api = {
     listMarketplacePlugins,
@@ -94,25 +107,22 @@ function renderAuthorDetail({
 
   function AuthorDetail() {
     const { t } = useTranslation('common')
-    const [detailSourceKey, setDetailSourceKey] = useState(source?.key ?? null)
+    const [detailOpen, setDetailOpen] = useState(true)
     const install = usePersonalPluginAccountInstall({
       accountIdentity,
       available: true,
       api,
       catalog,
-      detailSourceKey,
       preparePrivate: async () => ({ plugin, file: new File([], 'plugin.zip'), version: '1.0.0' }),
       publishPrivate,
       linkSource,
       t,
     })
-    const action = install.actionFor(source)
     return (
       <>
-        <button onClick={() => setDetailSourceKey(null)}>Close detail</button>
-        <button onClick={install.refreshAccountCatalog}>Refresh</button>
-        {action && (
-          <button disabled={install.busy} onClick={action}>
+        <button onClick={() => setDetailOpen(false)}>Close detail</button>
+        {detailOpen && source && (
+          <button onClick={() => submitAccountInstall(install, source, onLocalReady)}>
             Install
           </button>
         )}
@@ -135,7 +145,8 @@ function renderAuthorDetail({
         {secondPlugin && (
           <button
             onClick={() =>
-              install.requestInstall(
+              submitAccountInstall(
+                install,
                 personalPluginDiskSource(secondPlugin.name, secondPlugin.name, '/personal')
               )
             }
@@ -153,6 +164,11 @@ function renderAuthorDetail({
     api,
     catalog,
     publishPrivate,
+    retryFromNotice() {
+      const action = catalog.showNotice.mock.lastCall?.[0]?.onAction
+      expect(action).toBeTypeOf('function')
+      act(() => action?.())
+    },
     leavePluginWorkspace() {
       mounted = false
       view.unmount()
@@ -161,28 +177,39 @@ function renderAuthorDetail({
   }
 }
 
-test('retries a failed account install using the already uploaded personal release', async () => {
+test('continues local use after consent and retries the account install using the uploaded release', async () => {
   let uploaded = false
-  const { api, catalog, publishPrivate } = renderAuthorDetail({
+  const onLocalReady = vi.fn()
+  const { api, catalog, publishPrivate, retryFromNotice } = renderAuthorDetail({
+    onLocalReady,
     listMarketplacePlugins: async () => ({ items: uploaded ? [release] : [] }),
     publishPrivate: vi.fn(async () => {
       uploaded = true
       return { pluginId: 17, releaseId: 42 }
     }),
   })
-  api.installMarketplacePluginForAccount.mockRejectedValueOnce(new Error('Account write failed'))
+  const accountWrite = Promise.withResolvers<{ plugin: typeof localSource.raw }>()
+  api.installMarketplacePluginForAccount.mockReturnValueOnce(accountWrite.promise)
   const install = await screen.findByRole('button', { name: 'Install' })
   fireEvent.click(install)
   const confirm = await screen.findByTestId('personal-plugin-install-private-confirm')
   expect(uploaded).toBe(false)
+  expect(onLocalReady).not.toHaveBeenCalled()
   fireEvent.click(confirm)
   await waitFor(() =>
+    expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17, 42)
+  )
+  expect(onLocalReady).toHaveBeenCalledTimes(1)
+  await act(() => accountWrite.reject(new Error('Account write failed')))
+  await waitFor(() =>
     expect(catalog.showNotice).toHaveBeenLastCalledWith(
-      expect.objectContaining({ kind: 'error', message: 'Account write failed' })
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringContaining('Account write failed'),
+      })
     )
   )
-  expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17, 42)
-  fireEvent.click(install)
+  retryFromNotice()
   await waitFor(() =>
     expect(catalog.showNotice).toHaveBeenLastCalledWith(
       expect.objectContaining({ kind: 'success' })
@@ -199,7 +226,7 @@ test('retries the source link before installing an already published private rel
     .fn<() => Promise<void>>()
     .mockRejectedValueOnce(new Error('Failed to save the source link'))
     .mockResolvedValue(undefined)
-  const { api, catalog, publishPrivate } = renderAuthorDetail({
+  const { api, catalog, publishPrivate, retryFromNotice } = renderAuthorDetail({
     listMarketplacePlugins: async () => ({ items: uploaded ? [release] : [] }),
     publishPrivate: vi.fn(async () => {
       uploaded = true
@@ -211,11 +238,14 @@ test('retries the source link before installing an already published private rel
   fireEvent.click(await screen.findByTestId('personal-plugin-install-private-confirm'))
   await waitFor(() =>
     expect(catalog.showNotice).toHaveBeenLastCalledWith(
-      expect.objectContaining({ kind: 'error', message: 'Failed to save the source link' })
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringContaining('Failed to save the source link'),
+      })
     )
   )
   expect(api.installMarketplacePluginForAccount).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+  retryFromNotice()
   await waitFor(() =>
     expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17)
   )
@@ -472,7 +502,6 @@ test('links the exact imported private release before account install after leav
     },
     accountIdentity,
     canInstallForAccount: true,
-    personalDetailSourceKey: installed.raw.spec.source.pluginKey,
     localPluginApi: {
       packageCreatedPlugin,
       linkPersonalPluginRelease,
@@ -488,7 +517,7 @@ test('links the exact imported private release before account install after leav
     const { personalInstallation } = usePluginWorkspacePublishing({ ...publishingInput, t })
     return (
       <>
-        <button onClick={() => personalInstallation.requestInstall(source)}>Install</button>
+        <button onClick={() => submitAccountInstall(personalInstallation, source)}>Install</button>
         {personalInstallation.dialog}
       </>
     )
@@ -547,34 +576,45 @@ test('sends no artifact when the server did not acknowledge the private first-in
   }
 })
 
-test.each(['ready', 'failed'])(
-  'keeps account install hidden while the initial catalog read is pending and then %s',
-  async outcome => {
-    const read = Promise.withResolvers<{ items: PluginMarketplaceItem[] }>()
-    const { api } = renderAuthorDetail({ listMarketplacePlugins: () => read.promise })
-    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
-    await act(async () => {
-      if (outcome === 'failed') read.reject(new Error('Catalog unavailable'))
-      else read.resolve({ items: [{ ...release, installedPluginId: 120 }] })
-    })
-    expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
-    expect(api.installMarketplacePluginForAccount).not.toHaveBeenCalled()
-  }
-)
-
-test('recovers the install action when a manual refresh confirms missing account membership', async () => {
+test('looks up the account only after installation and retries a failed lookup from the notice', async () => {
   const listMarketplacePlugins = vi
     .fn<() => Promise<{ items: PluginMarketplaceItem[] }>>()
     .mockRejectedValueOnce(new Error('Catalog unavailable'))
     .mockResolvedValue({ items: [release] })
-  const { api } = renderAuthorDetail({ listMarketplacePlugins })
-  await waitFor(() => expect(listMarketplacePlugins).toHaveBeenCalledTimes(1))
-  expect(screen.queryByRole('button', { name: 'Install' })).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-  fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
+  const { api, catalog, retryFromNotice } = renderAuthorDetail({ listMarketplacePlugins })
+  expect(listMarketplacePlugins).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+  await waitFor(() =>
+    expect(catalog.showNotice).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'error' }))
+  )
+  expect(api.installMarketplacePluginForAccount).not.toHaveBeenCalled()
+  retryFromNotice()
   await waitFor(() =>
     expect(api.installMarketplacePluginForAccount).toHaveBeenCalledExactlyOnceWith(17)
   )
+})
+
+test('a published version conflict keeps local use available and explains how to continue', async () => {
+  const onLocalReady = vi.fn()
+  const { api, catalog } = renderAuthorDetail({
+    onLocalReady,
+    publishPrivate: vi.fn().mockRejectedValue(new ApiError('Plugin version already exists', 409)),
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+  fireEvent.click(await screen.findByTestId('personal-plugin-install-private-confirm'))
+  await waitFor(() =>
+    expect(catalog.showNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringMatching(
+          /Installed on this device.*Increase the plugin version|本机已安装.*提高插件版本号/
+        ),
+      })
+    )
+  )
+  expect(catalog.showNotice.mock.lastCall?.[0]).not.toHaveProperty('onAction')
+  expect(onLocalReady).toHaveBeenCalledTimes(1)
+  expect(api.installMarketplacePluginForAccount).not.toHaveBeenCalled()
 })
 
 test.each([

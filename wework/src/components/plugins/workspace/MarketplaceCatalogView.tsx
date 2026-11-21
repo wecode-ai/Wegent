@@ -4,7 +4,7 @@ import type { PluginMarketplaceItem } from '@/types/api'
 import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Boxes, RefreshCw } from 'lucide-react'
-import type { ComponentProps, ReactNode, Ref, RefObject } from 'react'
+import type { ReactNode, Ref, RefObject } from 'react'
 import { memo, useMemo } from 'react'
 import type { MarketplaceCategorySection } from '../marketplaceCategorySections'
 import { previewMarketplaceSectionItems } from '../marketplaceCategorySections'
@@ -50,7 +50,6 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isReconciling,
   installingMarketplacePluginIds,
   isLocallyUninstalling,
-  accountInstallState,
   allowPendingRetry,
   showPendingAsSyncing,
   rowLabels,
@@ -93,7 +92,6 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   isLocallyUninstalling: (item: PluginMarketplaceItem) => boolean
-  accountInstallState?: ComponentProps<typeof MarketplaceCardGrid>['accountInstallState']
   allowPendingRetry: boolean
   showPendingAsSyncing: boolean
   rowLabels: PluginMarketplaceRowLabels
@@ -399,7 +397,6 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                       isReconciling={isReconciling}
                       installingMarketplacePluginIds={installingMarketplacePluginIds}
                       isLocallyUninstalling={isLocallyUninstalling}
-                      accountInstallState={accountInstallState}
                       allowPendingRetry={allowPendingRetry}
                       showPendingAsSyncing={showPendingAsSyncing}
                       labels={rowLabels}

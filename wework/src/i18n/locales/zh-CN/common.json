@@ -1982,6 +1982,8 @@
     "plugins_personal_install_description": "将 {{name}}（v{{version}}）上传为仅自己可用的版本并安装。同一账号的云设备会自动同步。",
     "plugins_personal_install_queued": "已为当前账号安装插件，云设备将自动同步。",
     "plugins_personal_install_failed": "个人插件安装失败，请重试。",
+    "plugins_personal_account_install_failed": "本机已安装。云端安装失败。{{reason}}",
+    "plugins_personal_install_version_exists": "该版本曾在云端发布过，请提高插件版本号后重新导入或安装。",
     "plugins_personal_source_link_conflict": "本机源码已关联另一个云端插件，无法同步此次安装。",
     "plugins_personal_install_upload_failed": "个人插件未通过上传检查，请检查插件包后重试。",
     "plugins_personal_install_catalog_unavailable": "无法确认个人插件的云端版本，请刷新后重试。",

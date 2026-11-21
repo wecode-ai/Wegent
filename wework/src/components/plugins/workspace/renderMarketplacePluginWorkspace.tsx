@@ -34,8 +34,6 @@ import {
   withMarketplaceListingInterface,
   withMarketplacePluginDetail,
 } from '../workspace/marketplaceWorkspaceHelpers'
-import { personalPluginInstallSource } from './personalPluginInstallSource'
-import { resolveMarketplacePluginLock } from '../marketplacePluginLock'
 import type { PluginsWorkspaceViewContext } from './pluginWorkspaceViewContext'
 
 export function renderMarketplacePluginWorkspace({
@@ -54,7 +52,6 @@ export function renderMarketplacePluginWorkspace({
   marketplaceDetailLoading,
   t,
   versionSubmission,
-  personalInstallation,
   pluginPublishPreparing,
   isUploadingPlugin,
   pluginSharePreparing,
@@ -197,14 +194,6 @@ export function renderMarketplacePluginWorkspace({
         installedDetail
       )
 
-    const personalSource = personalPluginInstallSource(installedPlugins, selectedMarketplacePlugin)
-    const installingForAccount = personalSource?.key === personalInstallation.busySourceKey
-    const installForAccount =
-      isInstalled && !resolveMarketplacePluginLock(selectedMarketplacePlugin)
-        ? personalInstallation.actionFor(personalSource)
-        : undefined
-    const accountInstallDisabled =
-      isActionPending || reconciliationBlocksActions || isUploadingPlugin || pluginPublishPreparing
     return (
       <>
         <PluginDetailView
@@ -223,12 +212,7 @@ export function renderMarketplacePluginWorkspace({
             marketplaceOwnerActions.canManageAccess ? openMarketplaceOwnerShare : undefined
           }
           shareActionLabel={t('workbench.plugins_share', '分享')}
-          shareActionDisabled={
-            pluginPublishPreparing ||
-            isUploadingPlugin ||
-            pluginSharePreparing ||
-            personalInstallation.busy
-          }
+          shareActionDisabled={pluginPublishPreparing || isUploadingPlugin || pluginSharePreparing}
           onShareAction={
             marketplaceOwnerActions.showShareAction
               ? packableCreated
@@ -329,32 +313,23 @@ export function renderMarketplacePluginWorkspace({
                 : isInstalling
                   ? t('workbench.plugins_installing', '正在安装')
                   : t('workbench.plugins_syncing_installation', '同步中...')
-              : installForAccount
-                ? installingForAccount
-                  ? t('workbench.plugins_installing')
-                  : t('workbench.plugins_install_plugin')
-                : canUpdate
-                  ? t('workbench.plugins_update', '更新')
-                  : isInstalled
-                    ? t('workbench.plugins_try_now', '立即对话')
-                    : isFailed
-                      ? t('workbench.plugins_retry_install', '重试安装')
-                      : detailRequiresConnection
-                        ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
-                            name:
-                              detailRequiredConnectionNames[0] ||
-                              selectedMarketplacePlugin.displayName ||
-                              selectedMarketplacePlugin.name,
-                          })
-                        : t('workbench.plugins_install_plugin', '安装插件')
+              : canUpdate
+                ? t('workbench.plugins_update', '更新')
+                : isInstalled
+                  ? t('workbench.plugins_try_now', '立即对话')
+                  : isFailed
+                    ? t('workbench.plugins_retry_install', '重试安装')
+                    : detailRequiresConnection
+                      ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
+                          name:
+                            detailRequiredConnectionNames[0] ||
+                            selectedMarketplacePlugin.displayName ||
+                            selectedMarketplacePlugin.name,
+                        })
+                      : t('workbench.plugins_install_plugin', '安装插件')
           }
-          primaryActionIcon={
-            installForAccount && !primaryActionPending ? 'install' : marketplacePrimaryIcon
-          }
-          primaryActionDisabled={
-            primaryActionPending ||
-            (Boolean(installForAccount) && (accountInstallDisabled || installingForAccount))
-          }
+          primaryActionIcon={marketplacePrimaryIcon}
+          primaryActionDisabled={primaryActionPending}
           tertiaryActionLabel={
             selectedMarketplacePlugin.accessRole === 'recipient' &&
             selectedMarketplacePlugin.allowCopy
@@ -373,10 +348,6 @@ export function renderMarketplacePluginWorkspace({
           onToggle={() => {
             if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
               return
-            if (installForAccount) {
-              if (!accountInstallDisabled) installForAccount()
-              return
-            }
             if (canUpdate) {
               installMarketplacePlugin(selectedMarketplacePlugin)
               return

@@ -28,7 +28,6 @@ import {
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { useLocalExecutorCloudConnectionStatus } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
-import { personalPluginInstallSource } from './personalPluginInstallSource'
 import {
   getPluginInventoryMutationVersion,
   pluginMarketplaceCacheKey,
@@ -289,12 +288,6 @@ export function usePluginsWorkspaceController({
     accountPluginApi,
     accountIdentity: { apiBaseUrl: cloudApiBaseUrl, userId: cloudUserId },
     canInstallForAccount,
-    personalDetailSourceKey:
-      (selectedPluginSummary
-        ? personalPluginInstallSource([selectedPluginSummary])
-        : selectedMarketplacePlugin &&
-          personalPluginInstallSource(installedPlugins, selectedMarketplacePlugin)
-      )?.key ?? null,
     localPluginApi,
     t,
     installedPlugins,
@@ -319,7 +312,6 @@ export function usePluginsWorkspaceController({
     if (isReconcilingPlugins) return
     setBrowsingCategoryKey(null)
     catalog.refresh(true)
-    personalInstallation.refreshAccountCatalog()
   }
 
   const refreshLocalMarketplace = (options?: { reloadCatalog: boolean }) => {

@@ -92,7 +92,7 @@ export function usePluginWorkspaceInstallation({
 > & {
   personalInstallation: Pick<
     ReturnType<typeof usePersonalPluginAccountInstall>,
-    'needsInstall' | 'requestInstall' | 'reserveInstallRequest'
+    'reserveInstallRequest'
   >
   requestConfirmation(message: string): Promise<boolean>
 }) {
@@ -286,16 +286,6 @@ export function usePluginWorkspaceInstallation({
       return
     }
 
-    const personalSource = personalPluginInstallSource(installedPlugins, item)
-    if (
-      !promptAfterInstall &&
-      !updateConfirmed &&
-      personalSource?.installed &&
-      personalInstallation.needsInstall(personalSource)
-    ) {
-      personalInstallation.requestInstall(personalSource)
-      return
-    }
     const alreadyInstalled = Boolean(item.installed || item.installedLocally)
     const installFromLocal =
       isLocalMarketplaceItem(item) || (!alreadyInstalled && isPersonalSourceInstall(item))
