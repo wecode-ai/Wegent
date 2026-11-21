@@ -1,4 +1,4 @@
-import { scheduleDshRequest } from './backgroundRequests'
+import { executorRequestPriority, scheduleDshRequest } from './backgroundRequests'
 import { createTestWebLocks } from '@/test/web-locks'
 
 function deferred() {
@@ -27,6 +27,25 @@ test('two stalled background requests leave foreground work independent across c
   await expect(
     scheduleDshRequest('foreground', async () => 'uploaded', undefined, locks)
   ).resolves.toBe('uploaded')
+  for (const command of [
+    'git_add_all',
+    'git_commit',
+    'git_push',
+    'git_checkout',
+    'git_checkout_new',
+    'git_apply_patch',
+    'git_worktree_remove',
+    'git_future_action',
+  ]) {
+    const priority = executorRequestPriority('device.execute_command', { command_key: command })
+    expect(priority).toBe('foreground')
+    await expect(scheduleDshRequest(priority, async () => command, undefined, locks)).resolves.toBe(
+      command
+    )
+  }
+  expect(
+    executorRequestPriority('device.execute_command', { command_key: 'git_status_porcelain' })
+  ).toBe('background')
   second.resolve()
   await vi.waitFor(() => expect(entered).toHaveBeenCalledTimes(3))
   first.resolve()

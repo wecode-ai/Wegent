@@ -44,13 +44,28 @@ export function executorRequestPriority(
   if (method === 'device.execute_command') {
     const command = String(params.command_key ?? '')
     return command.startsWith('connection_observer_') ||
-      command.startsWith('git_') ||
+      BACKGROUND_DEVICE_COMMANDS.has(command) ||
       command === 'runtime_auth_status'
       ? 'background'
       : 'foreground'
   }
   return BACKGROUND_EXECUTOR_METHODS.has(method) ? 'background' : 'foreground'
 }
+
+const BACKGROUND_DEVICE_COMMANDS = new Set([
+  'git_branch',
+  'git_branch_diff',
+  'git_branch_diff_shortstat',
+  'git_diff',
+  'git_diff_last_commit',
+  'git_diff_staged',
+  'git_diff_unstaged',
+  'git_github_cli_status',
+  'git_gitlab_cli_status',
+  'git_is_worktree',
+  'git_remote_url',
+  'git_status_porcelain',
+])
 
 const BACKGROUND_EXECUTOR_METHODS = new Set([
   'runtime.tasks.list',
