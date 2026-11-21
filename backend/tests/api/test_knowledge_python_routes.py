@@ -118,6 +118,24 @@ def _create_document(db, kb_id, user_id, name):
     )
 
 
+def test_settings_update_saves_default_view_with_other_fields(
+    test_client, test_db, test_user, test_token
+):
+    kb_id = _create_kb(test_db, test_user.id, "default-view-settings")
+    path = f"/api/knowledge-bases/{kb_id}"
+    headers = {"Authorization": f"Bearer {test_token}"}
+    data = {"kb_type": "classic", "description": "Updated together"}
+
+    response = test_client.put(path, headers=headers, json=data)
+    assert response.status_code == 200, response.text
+    assert {field: response.json()[field] for field in data} == data
+
+    updated = test_client.put(path, headers=headers, json={"description": "Later edit"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["kb_type"] == "classic"
+    assert updated.json()["description"] == "Later edit"
+
+
 def test_open_document_list_filters_paginates_and_isolates_libraries(
     test_client, test_db, test_user, test_token
 ):

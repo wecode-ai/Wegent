@@ -944,6 +944,42 @@ const syncedWikiDocument: KnowledgeDocument = {
 }
 
 describe('DocumentDetailDialog manual source sync', () => {
+  it('shows the DingTalk authorization error and offers only a source retry for an empty copy', async () => {
+    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={createDingtalkCopy({
+          attachment_id: null,
+          index_status: 'failed',
+          processing_error: {
+            code: 'dingtalk_authorization_required',
+            stage: 'system',
+            message: 'Reconnect the service',
+            retryable: true,
+            generation: 1,
+            occurred_at: '2026-04-02T00:00:00Z',
+          },
+        })}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+
+    expect(
+      screen.getByText(
+        'knowledge:document.document.processingError.codes.dingtalkAuthorizationRequired'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Reconnect the service')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'common:actions.retry' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'document.document.syncRetry' }))
+    expect(mockSynchronizeExternalDocument).toHaveBeenCalledWith(41)
+    expect(mockRefreshDetail).not.toHaveBeenCalled()
+  })
+
   it('does not synchronize expired links until the user explicitly clicks sync', async () => {
     mockFullContent =
       '[expired.pdf](https://cdn.example.com/expired.pdf?Expires=1&Signature=expired)'
